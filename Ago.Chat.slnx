@@ -11,5 +11,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Ago.Chat.Architecture.Tests/Ago.Chat.Architecture.Tests.csproj" />
+    <Project Path="tests/Ago.Chat.Domain.Tests/Ago.Chat.Domain.Tests.csproj" />
   </Folder>
 </Solution>
