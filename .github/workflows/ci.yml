@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Not a dependency in the repository sense - a source checkout this job packs itself, so
+      # this build proves it restores Ago.Platform.* as a real .nupkg (nuget.ci.config), never as
+      # a ProjectReference. AgoPlatformDevOverride is never set here, so the dev-override branch of
+      # every .csproj (Directory.Build.props) stays off - a branch merged with it left on fails
+      # exactly here (adr/0015, repositories.md).
+      - name: Checkout ago-platform (main)
+        uses: actions/checkout@v4
+        with:
+          repository: golyakoff/ago-platform
+          ref: main
+          path: ago-platform-src
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Pack ago-platform into the CI-local feed
+        run: dotnet pack ago-platform-src/Ago.Platform.slnx -c Release -o nuget-feed-ci
+
+      - name: Restore
+        run: dotnet restore Ago.Chat.slnx --configfile nuget.ci.config
+
+      - name: Format check
+        run: dotnet format Ago.Chat.slnx --verify-no-changes
+
+      - name: Build
+        run: dotnet build Ago.Chat.slnx --no-restore -c Release
+
+      # Ago.Chat.Architecture.Tests is an ordinary test project in this solution, so the layering
+      # and platform-boundary rules it encodes run here with no separate job.
+      - name: Test
+        run: >
+          dotnet test Ago.Chat.slnx --no-build -c Release
+          --logger trx --results-directory TestResults
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
