@@ -1,0 +1,13 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.1.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.1.0" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+  </ItemGroup>
+
+</Project>
