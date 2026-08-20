@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Mono.Cecil" />
+    <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Referencing every product assembly here, once, is what lets each test load an assembly by
+      simple name (TestAssemblies.cs) instead of by a fragile hard-coded output path - MSBuild
+      guarantees these .dlls sit next to this test project's own output.
+    -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Domain\Ago.Chat.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+  </ItemGroup>
+
+</Project>

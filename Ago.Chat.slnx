@@ -9,4 +9,7 @@
     <Project Path="src/Ago.Chat.Webhooks/Ago.Chat.Webhooks.csproj" />
     <Project Path="src/Ago.Chat.Worker/Ago.Chat.Worker.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ago.Chat.Architecture.Tests/Ago.Chat.Architecture.Tests.csproj" />
+  </Folder>
 </Solution>
