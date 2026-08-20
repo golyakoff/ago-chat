@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ago.Chat.Api/Ago.Chat.Api.csproj" />
+    <Project Path="src/Ago.Chat.Application/Ago.Chat.Application.csproj" />
+    <Project Path="src/Ago.Chat.Contracts/Ago.Chat.Contracts.csproj" />
+    <Project Path="src/Ago.Chat.Domain/Ago.Chat.Domain.csproj" />
+    <Project Path="src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.csproj" />
+    <Project Path="src/Ago.Chat.Module/Ago.Chat.Module.csproj" />
+    <Project Path="src/Ago.Chat.Webhooks/Ago.Chat.Webhooks.csproj" />
+    <Project Path="src/Ago.Chat.Worker/Ago.Chat.Worker.csproj" />
+  </Folder>
+</Solution>

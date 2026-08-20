@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Domain\Ago.Chat.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

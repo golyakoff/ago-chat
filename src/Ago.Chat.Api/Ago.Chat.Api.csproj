@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+  </ItemGroup>
+
+</Project>
