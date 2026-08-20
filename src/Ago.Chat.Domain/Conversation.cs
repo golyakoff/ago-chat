@@ -1,0 +1,131 @@
+﻿namespace Ago.Chat.Domain;
+
+/// <summary>
+/// The aggregate root for a support conversation: one visitor, at most one assigned operator, its
+/// messages, and the <c>Waiting -&gt; Assigned -&gt; Closed</c> state machine that governs both. One
+/// aggregate per transaction (data-model.md, adr/0004) - <c>Ago.Chat.Infrastructure.Postgres</c>
+/// (`1-04`) persists exactly this shape in one `SaveChangesAsync`.
+///
+/// <see cref="AssignTo"/> here is a trivial direct assignment - the caller (Application, `1-02`) has
+/// already resolved who is allowed to claim it. It is not the queue/capacity-aware assignment engine,
+/// which is Stage 4's centerpiece and does not exist yet.
+/// </summary>
+public sealed class Conversation
+{
+    private readonly List<Message> _messages = [];
+    private readonly List<IDomainEvent> _domainEvents = [];
+
+    public ConversationId Id { get; }
+
+    public SiteId SiteId { get; }
+
+    public VisitorId VisitorId { get; }
+
+    public OperatorId? OperatorId { get; private set; }
+
+    public ConversationState State { get; private set; }
+
+    public int LastSequence { get; private set; }
+
+    public DateTimeOffset CreatedAt { get; }
+
+    public IReadOnlyList<Message> Messages => _messages;
+
+    public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
+
+    private Conversation(ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now)
+    {
+        Id = id;
+        SiteId = siteId;
+        VisitorId = visitorId;
+        State = ConversationState.Waiting;
+        CreatedAt = now;
+    }
+
+    public static Conversation Start(ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now)
+    {
+        var conversation = new Conversation(id, siteId, visitorId, now);
+        conversation._domainEvents.Add(new ConversationStarted(id, siteId, visitorId, now));
+        return conversation;
+    }
+
+    /// <summary>Direct-claim by one operator - see the type-level remarks on what this is not.</summary>
+    public void AssignTo(OperatorId operatorId, DateTimeOffset now)
+    {
+        if (State != ConversationState.Waiting)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot assign conversation {Id.Value} from state {State}; only {ConversationState.Waiting} can be assigned.");
+        }
+
+        OperatorId = operatorId;
+        State = ConversationState.Assigned;
+        _domainEvents.Add(new ConversationAssigned(Id, operatorId, now));
+    }
+
+    public void Close(DateTimeOffset now)
+    {
+        if (State == ConversationState.Closed)
+        {
+            throw new InvalidConversationStateException(
+                $"Conversation {Id.Value} is already {ConversationState.Closed}.");
+        }
+
+        State = ConversationState.Closed;
+        _domainEvents.Add(new ConversationClosed(Id, now));
+    }
+
+    /// <summary>
+    /// The visitor may write while waiting for an operator, or after one is assigned - just never
+    /// after the conversation is closed.
+    /// </summary>
+    public Message AddVisitorMessage(VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now)
+    {
+        if (authorId != VisitorId)
+        {
+            throw new ConversationParticipantMismatchException(
+                $"Visitor {authorId.Value} is not the visitor of conversation {Id.Value}.");
+        }
+
+        if (State == ConversationState.Closed)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot add a message to closed conversation {Id.Value}.");
+        }
+
+        return AddMessage(MessageAuthorKind.Visitor, authorId.Value, messageId, body, now);
+    }
+
+    /// <summary>An operator may write only once assigned, and only to their own conversation.</summary>
+    public Message AddOperatorMessage(OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now)
+    {
+        // State first: with no operator assigned yet, "wrong state" is the true cause - checking
+        // participant identity first would misreport it as "wrong operator" when there is no
+        // operator to be right about.
+        if (State != ConversationState.Assigned)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot add an operator message to conversation {Id.Value} in state {State}; " +
+                $"only {ConversationState.Assigned} accepts one.");
+        }
+
+        if (authorId != OperatorId!.Value)
+        {
+            throw new ConversationParticipantMismatchException(
+                $"Operator {authorId.Value} is not the assigned operator of conversation {Id.Value}.");
+        }
+
+        return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, now);
+    }
+
+    public void ClearDomainEvents() => _domainEvents.Clear();
+
+    private Message AddMessage(
+        MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body, DateTimeOffset now)
+    {
+        LastSequence++;
+        var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, now);
+        _messages.Add(message);
+        return message;
+    }
+}
