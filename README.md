@@ -1,5 +1,7 @@
 # AGO Chat
 
+[![CI](https://github.com/golyakoff/ago-chat/actions/workflows/ci.yml/badge.svg)](https://github.com/golyakoff/ago-chat/actions/workflows/ci.yml)
+
 The first product on AGO Platform: an embeddable customer-support chat. A shop drops one script tag
 on its site, visitors chat from a widget, operators answer from a console.
 
