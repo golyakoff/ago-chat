@@ -10,6 +10,7 @@
     <Project Path="src/Ago.Chat.Worker/Ago.Chat.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Ago.Chat.Application.Tests/Ago.Chat.Application.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Architecture.Tests/Ago.Chat.Architecture.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Domain.Tests/Ago.Chat.Domain.Tests.csproj" />
   </Folder>
