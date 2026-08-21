@@ -8,9 +8,9 @@ public sealed class Site
 {
     public SiteId Id { get; }
 
-    public string PublicKey { get; }
+    public string PublicKey { get; } = string.Empty;
 
-    private readonly List<string> _allowedOrigins;
+    private readonly List<string> _allowedOrigins = [];
 
     public IReadOnlyList<string> AllowedOrigins => _allowedOrigins;
 
@@ -24,5 +24,11 @@ public sealed class Site
         Id = id;
         PublicKey = publicKey;
         _allowedOrigins = [.. allowedOrigins];
+    }
+
+    // EF Core materialization only (1-04) - every field above is overwritten via reflection
+    // immediately after construction; never called by domain code.
+    private Site()
+    {
     }
 }

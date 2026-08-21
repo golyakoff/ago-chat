@@ -29,4 +29,9 @@ public sealed class Operator
         Status = status;
         Capacity = capacity;
     }
+
+    // EF Core materialization only (1-04) - never called by domain code.
+    private Operator()
+    {
+    }
 }

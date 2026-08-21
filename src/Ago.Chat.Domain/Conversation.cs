@@ -42,6 +42,13 @@ public sealed class Conversation
         CreatedAt = now;
     }
 
+    // EF Core materialization only (1-04) - every field is overwritten via reflection immediately
+    // after construction (including _messages, which EF populates as the Messages navigation), so
+    // this never runs Start's logic or raises ConversationStarted for a row that already exists.
+    private Conversation()
+    {
+    }
+
     public static Conversation Start(ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now)
     {
         var conversation = new Conversation(id, siteId, visitorId, now);

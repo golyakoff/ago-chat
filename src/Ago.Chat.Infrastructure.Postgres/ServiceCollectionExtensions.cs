@@ -1,0 +1,32 @@
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
+
+namespace Ago.Chat.Infrastructure.Postgres;
+
+/// <summary>
+/// The only place that knows this is Postgres (clean-architecture.md: "Hosts... AddPostgresPersistence()
+/// extension methods live in their own Infrastructure projects and are selected by configuration").
+/// Nothing calls this yet - `1-06` is the first real host wiring.
+/// </summary>
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddPostgresPersistence(this IServiceCollection services, string connectionString)
+    {
+        // One NpgsqlDataSource for the process: EF's writes and Dapper's reads (ConversationReadStore)
+        // share the same connection pool instead of each opening its own.
+        var dataSource = new NpgsqlDataSourceBuilder(connectionString).Build();
+        services.AddSingleton(dataSource);
+        services.AddDbContext<AgoChatDbContext>((provider, options) =>
+            options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
+
+        services.AddScoped<IConversationRepository, ConversationRepository>();
+        services.AddScoped<IVisitorRepository, VisitorRepository>();
+        services.AddScoped<IConversationReadStore, ConversationReadStore>();
+        services.AddScoped<IPermissionChecker, PermissionChecker>();
+
+        return services;
+    }
+}
