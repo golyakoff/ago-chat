@@ -13,19 +13,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 0.2.2: three fixes found while building and proving 2-04's dispatcher, all on
-         ago-platform - Persistence.Postgres's Version/CorrelationId gap, Messaging.RabbitMq's
-         shorter heartbeat, and RabbitMqEventPublisher discarding a channel after any failed publish
-         instead of trusting IChannel.IsOpen (observed staying true for 60s+ after a real outage
-         ended). ago-platform's projects share one <Version> in Directory.Build.props, so packing
-         bumps every Ago.Platform.* package together even where a given package's own content did
-         not change (Hosting/Kernel/Abstractions here). -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.2.2" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.2.2" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.2.2" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.2.2" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.2.2" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.2.2" />
+    <!-- 0.3.0: adds Ago.Platform.Realtime (IConnectionRegistry, ConnectionHeartbeat,
+         LocalConnectionTracker - 3-01). ago-platform's CI packs every Ago.Platform.* project at
+         one shared version read from ago-platform's own CHANGELOG.md at pack time
+         (-p:Version=..., not Directory.Build.props's <Version> there, which packing ignores), so
+         every package here bumps together even where a given package's own content did not change
+         (Hosting/Kernel/Persistence.Postgres/Messaging.RabbitMq this time). -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.3.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.3.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.3.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.3.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.3.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.3.0" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">
