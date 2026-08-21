@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.SendMessage;
@@ -7,7 +9,8 @@ namespace Ago.Chat.Application.UseCases.SendMessage;
 public sealed class SendVisitorMessageHandler(
     IConversationRepository conversations,
     IClock clock,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    IOutboxWriter outbox)
 {
     public async Task<Result<int>> HandleAsync(SendVisitorMessage command, CancellationToken cancellationToken)
     {
@@ -37,6 +40,13 @@ public sealed class SendVisitorMessageHandler(
         try
         {
             var message = conversation.AddVisitorMessage(command.AuthorId, messageId, body, now);
+
+            // adr/0005: staged here, persisted by the same SaveAsync call below - never a separate
+            // transaction, so an outbox row can never exist without the message it describes.
+            var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
+            outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
+            conversation.ClearDomainEvents();
+
             await conversations.SaveAsync(conversation, cancellationToken);
             return message.Sequence;
         }

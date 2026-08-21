@@ -133,6 +133,7 @@ public sealed class Conversation
         LastSequence++;
         var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, now);
         _messages.Add(message);
+        _domainEvents.Add(new MessageAdded(messageId, Id, SiteId, LastSequence, authorKind, now));
         return message;
     }
 }

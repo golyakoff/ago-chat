@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Domain;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 
 namespace Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -15,5 +16,8 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AgoChatDbContext).Assembly);
+        // adr/0017: the one line a product's DbContext needs to opt into the shared outbox/inbox
+        // schema - Ago.Platform.Persistence.Postgres owns the table shape, not this project.
+        modelBuilder.ApplyOutboxInboxConfiguration();
     }
 }

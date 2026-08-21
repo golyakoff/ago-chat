@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -27,6 +28,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISiteRepository, SiteRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
+        // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
+        services.AddOutboxInbox<AgoChatDbContext>();
 
         return services;
     }

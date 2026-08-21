@@ -15,7 +15,8 @@ public class SendOperatorMessageHandlerTests
         SendOperatorMessageHandler Handler,
         FakeConversationRepository Conversations,
         FakePermissionChecker Permissions,
-        Conversation Conversation)
+        Conversation Conversation,
+        FakeOutboxWriter Outbox)
         CreateHandlerWithAssignedConversation(bool grantPermission = true)
     {
         var conversations = new FakeConversationRepository();
@@ -29,15 +30,16 @@ public class SendOperatorMessageHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ConversationSend);
         }
 
+        var outbox = new FakeOutboxWriter();
         var handler = new SendOperatorMessageHandler(
-            conversations, permissions, new FakeClock(Now), new FakeIdGenerator());
-        return (handler, conversations, permissions, conversation);
+            conversations, permissions, new FakeClock(Now), new FakeIdGenerator(), outbox);
+        return (handler, conversations, permissions, conversation, outbox);
     }
 
     [Fact]
     public async Task HandleAsync_WhenTheOperatorIsAssignedAndPermitted_Succeeds()
     {
-        var (handler, _, _, conversation) = CreateHandlerWithAssignedConversation();
+        var (handler, _, _, conversation, _) = CreateHandlerWithAssignedConversation();
 
         var result = await handler.HandleAsync(
             new SendOperatorMessage(conversation.Id, OperatorId, SiteId, "how can I help?"), CancellationToken.None);
@@ -47,9 +49,22 @@ public class SendOperatorMessageHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WhenTheOperatorIsAssignedAndPermitted_EnqueuesMessageAccepted()
+    {
+        var (handler, _, _, conversation, outbox) = CreateHandlerWithAssignedConversation();
+
+        await handler.HandleAsync(
+            new SendOperatorMessage(conversation.Id, OperatorId, SiteId, "how can I help?"), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        Assert.Equal("MessageAccepted", envelope.Type);
+        Assert.Equal(conversation.Id.Value.ToString(), envelope.PartitionKey);
+    }
+
+    [Fact]
     public async Task HandleAsync_WhenTheOperatorLacksThePermission_ReturnsForbidden_BeforeTouchingTheConversation()
     {
-        var (handler, _, _, conversation) = CreateHandlerWithAssignedConversation(grantPermission: false);
+        var (handler, _, _, conversation, _) = CreateHandlerWithAssignedConversation(grantPermission: false);
 
         var result = await handler.HandleAsync(
             new SendOperatorMessage(conversation.Id, OperatorId, SiteId, "hi"), CancellationToken.None);
@@ -62,7 +77,7 @@ public class SendOperatorMessageHandlerTests
     [Fact]
     public async Task HandleAsync_WhenPermittedButNotTheAssignedOperator_ReturnsForbidden()
     {
-        var (handler, _, permissions, conversation) = CreateHandlerWithAssignedConversation();
+        var (handler, _, permissions, conversation, _) = CreateHandlerWithAssignedConversation();
         var someoneElse = new OperatorId(Guid.NewGuid());
         permissions.Grant(someoneElse, SiteId, Permission.ConversationSend);
 
@@ -81,7 +96,7 @@ public class SendOperatorMessageHandlerTests
         conversations.Seed(waiting);
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationSend);
-        var handler = new SendOperatorMessageHandler(conversations, permissions, new FakeClock(Now), new FakeIdGenerator());
+        var handler = new SendOperatorMessageHandler(conversations, permissions, new FakeClock(Now), new FakeIdGenerator(), new FakeOutboxWriter());
 
         var result = await handler.HandleAsync(
             new SendOperatorMessage(waiting.Id, OperatorId, SiteId, "hi"), CancellationToken.None);

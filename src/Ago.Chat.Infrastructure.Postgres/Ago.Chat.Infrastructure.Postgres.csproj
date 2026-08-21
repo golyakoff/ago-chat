@@ -19,4 +19,12 @@
     <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Persistence.Postgres" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Persistence.Postgres\Ago.Platform.Persistence.Postgres.csproj" />
+  </ItemGroup>
+
 </Project>

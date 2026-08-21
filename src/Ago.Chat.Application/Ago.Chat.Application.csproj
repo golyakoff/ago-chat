@@ -2,14 +2,17 @@
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
     <PackageReference Include="Ago.Platform.Kernel" />
+    <PackageReference Include="Ago.Platform.Abstractions" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Kernel\Ago.Platform.Kernel.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Abstractions\Ago.Platform.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Domain\Ago.Chat.Domain.csproj" />
+    <ProjectReference Include="..\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
   </ItemGroup>
 
 </Project>
