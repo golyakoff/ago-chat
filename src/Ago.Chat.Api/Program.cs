@@ -1,8 +1,10 @@
 ﻿using System.Security.Cryptography;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Hubs;
+using Ago.Chat.Api.Realtime;
 using Ago.Chat.Module;
 using Ago.Platform.Kernel;
+using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
@@ -12,6 +14,12 @@ builder.Services.AddHealthChecks();
 builder.Services.AddSignalR();
 
 new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
+
+// 3-01: Ago.Chat.Api is the only host holding SignalR connections, so it is the only one that
+// actually needs the heartbeat running - ChatModule registers the registry's DI surface for every
+// host, but only resolving IConnectionRegistry (which this triggers) opens the Redis connection.
+builder.Services.AddHostedService<ConnectionHeartbeat>();
+builder.Services.AddSingleton<HubConnectionRegistration>();
 
 // Generated fresh on every start, never configured or committed - consistent with "no secrets,
 // ever" (repositories.md), even for a throwaway dev value. Tokens do not survive a restart, which

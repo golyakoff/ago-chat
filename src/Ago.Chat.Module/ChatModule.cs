@@ -6,6 +6,7 @@ using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Platform.Hosting;
 using Ago.Platform.Messaging.RabbitMq;
+using Ago.Platform.Realtime;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -31,6 +32,10 @@ public sealed class ChatModule : IProductModule
         services.AddPostgresPersistence(connectionString);
         services.AddPlatformKernel();
         services.AddRabbitMqMessaging(configuration);
+        // Registered for every host (matching AddRabbitMqMessaging's own shape) but only ever
+        // resolved - and only then does it open a Redis connection - by Ago.Chat.Api, which is the
+        // only host holding SignalR connections (3-01). Worker/Webhooks never trigger it.
+        services.AddConnectionRegistry(configuration);
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
