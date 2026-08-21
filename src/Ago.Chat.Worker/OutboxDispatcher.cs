@@ -39,7 +39,6 @@ public sealed class OutboxDispatcher(
 
         var notificationPump = PumpNotificationsAsync(listenConnection, stoppingToken);
 
-        using var timer = new PeriodicTimer(options.Value.PollInterval);
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -55,8 +54,17 @@ public sealed class OutboxDispatcher(
                     logger.LogError(ex, "Outbox dispatch cycle failed; retrying next cycle.");
                 }
 
+                // A fresh Task.Delay every iteration, not a shared PeriodicTimer: PeriodicTimer.
+                // WaitForNextTickAsync allows only one in-flight call at a time, and racing it inside
+                // Task.WhenAny against the wake signal means the losing call is abandoned mid-flight
+                // whenever a notification wins - the next iteration's call to the same timer then
+                // violates that single-consumer contract and never completes, permanently stalling
+                // the loop after the first notification-driven wakeup (found live: the dispatcher
+                // stopped claiming batches entirely, with no exception, no log, nothing - a Postgres
+                // NOTIFY had simply out-raced the poll tick once). Task.Delay has no such restriction,
+                // so the abandoned loser is simply discarded and garbage-collected.
                 var wakeTask = wake.Reader.WaitToReadAsync(stoppingToken).AsTask();
-                var pollTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+                var pollTask = Task.Delay(options.Value.PollInterval, stoppingToken);
                 await Task.WhenAny(wakeTask, pollTask);
                 while (wake.Reader.TryRead(out _))
                 {

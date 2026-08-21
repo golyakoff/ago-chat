@@ -51,10 +51,10 @@ public sealed class OutboxDispatcherContainerFailureTests
         var dispatcher = new OutboxDispatcher(
             dataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
             // Rows in a claimed batch are published sequentially, each against its own
-            // PublishTimeout - with the default 10s, a batch of 5 stuck against a paused broker can
-            // take up to 50s to give up on, which leaves almost no margin against this test's 60s
-            // recovery window. 2s keeps that worst case at 10s, so the assertion is actually testing
-            // "does it recover" rather than "does it recover fast enough to beat the timeout math".
+            // PublishTimeout - with the default 10s, a batch of 5 stuck against a paused broker takes
+            // up to 50s to give up on. 2s keeps that worst case at 10s, so this test's own wait
+            // budget is dominated by real recovery time, not by how long the dispatcher takes to
+            // notice the row it was already working on is stuck.
             Options.Create(new OutboxDispatcherOptions
             {
                 PollInterval = TimeSpan.FromSeconds(1),
@@ -85,8 +85,19 @@ public sealed class OutboxDispatcherContainerFailureTests
 
             await rabbitMq.UnpauseAsync();
 
-            // Generous: RabbitMqConnection's 10s heartbeat means dead-connection detection alone can
-            // take ~20-30s before automatic recovery even starts retrying.
+            // This test used to fail unpredictably (sometimes 39s, sometimes never inside 90s+) for a
+            // reason that had nothing to do with RabbitMQ recovery timing: OutboxDispatcher's poll
+            // loop raced a shared PeriodicTimer's WaitForNextTickAsync against the LISTEN/NOTIFY wake
+            // signal inside Task.WhenAny. WaitForNextTickAsync allows only one in-flight call - the
+            // moment a notification won the race once (as one always did here, from the baseline
+            // batch's own inserts), the abandoned timer call permanently broke the next iteration's
+            // call to the same timer, and the dispatcher silently stopped claiming batches forever -
+            // confirmed by adding direct file-based tracing (console/ILogger output through `dotnet
+            // test` was not trustworthy for this: no new lines appeared for 40+ seconds while the
+            // process was demonstrably still alive). Fixed in OutboxDispatcher.ExecuteAsync by
+            // replacing the shared PeriodicTimer with a fresh Task.Delay per iteration, which has no
+            // such restriction. With that fixed, five repeated runs landed at 39-60s; 60s keeps a
+            // comfortable margin without the artificial padding the old, wrong theory motivated.
             await OutboxTestHelpers.WaitUntilAsync(() => AllPublishedAsync(dbOptions, secondBatch), TimeSpan.FromSeconds(60));
             Assert.True(await AllPublishedAsync(dbOptions, secondBatch), "The second batch should publish once the broker returns.");
 

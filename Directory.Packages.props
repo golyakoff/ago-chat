@@ -13,16 +13,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 0.2.0: 1-06 is the first consumer of Ago.Platform.Hosting's AddPlatformKernel() (1-03) -
-         SystemClock and UuidV7Generator, wired into the real host for the first time. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.2.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.2.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.2.0" />
-    <!-- Persistence.Postgres's Version/CorrelationId fix (found while building 2-04) isn't on
-         ago-platform's main yet - building here right now still needs AgoPlatformDevOverride=true
-         (repositories.md) until that PR lands and CI packs it. -->
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.2.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.2.0" />
+    <!-- 0.2.2: three fixes found while building and proving 2-04's dispatcher, all on
+         ago-platform - Persistence.Postgres's Version/CorrelationId gap, Messaging.RabbitMq's
+         shorter heartbeat, and RabbitMqEventPublisher discarding a channel after any failed publish
+         instead of trusting IChannel.IsOpen (observed staying true for 60s+ after a real outage
+         ended). ago-platform's projects share one <Version> in Directory.Build.props, so packing
+         bumps every Ago.Platform.* package together even where a given package's own content did
+         not change (Hosting/Kernel/Abstractions here). -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.2.2" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.2.2" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.2.2" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.2.2" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.2.2" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">
