@@ -6,7 +6,10 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public class ConversationRepositoryTests(PostgresFixture fixture)
 {
-    private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    // Real time, not a fixed date - 2-06 partitions messages by created_at, and only the current
+    // month plus the next two ever have a partition. Truncated to whole seconds so it round-trips
+    // through Postgres's timestamptz unchanged (this file asserts Now against a reloaded value).
+    private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
     [Fact]
     public async Task SaveThenReload_PreservesEveryFieldAcrossANewDbContext()

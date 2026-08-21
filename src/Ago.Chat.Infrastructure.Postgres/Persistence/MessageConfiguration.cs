@@ -9,6 +9,14 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
     public void Configure(EntityTypeBuilder<Message> builder)
     {
         builder.ToTable("messages");
+        // EF's logical key stays id-only - MessageId (UUID v7) never collides in practice, and
+        // nothing here needs composite-key change-tracking semantics. The *physical* primary key
+        // is (id, created_at): Postgres requires every unique/PK constraint on a RANGE-partitioned
+        // table to include the partition column, so Stage2PartitionMessages creates that composite
+        // PK by hand via raw SQL (`data-model.md`'s Partitioning section) - this HasKey deliberately
+        // does not mirror it, since EF never validates a DbContext's model against the live schema
+        // and doing so would drag composite-key ceremony into every place a Message is tracked, for
+        // no behavioural gain (2-06).
         builder.HasKey(m => m.Id);
         builder.Property(m => m.Id).HasColumnName("id").HasConversion(IdConverters.Message).ValueGeneratedNever();
         builder.Property(m => m.ConversationId).HasColumnName("conversation_id").HasConversion(IdConverters.Conversation);
@@ -18,7 +26,13 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.Body).HasColumnName("body").HasConversion(MessageBodyConverter.Instance);
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
 
-        // data-model.md: turns duplicate delivery into a no-op insert at the storage level.
-        builder.HasIndex(m => new { m.ConversationId, m.Sequence }).IsUnique();
+        // data-model.md: turns duplicate delivery into a no-op insert at the storage level. Widened
+        // to include created_at in 2-06 for the same partitioning reason as the PK above - a real,
+        // documented weakening (adr/0019): two racing inserts for the same (conversation_id,
+        // sequence) no longer collide here if their created_at values differ enough to land in
+        // different partitions. The primary defence against a genuine duplicate sequence was always
+        // the conversation aggregate's optimistic-concurrency load-mutate-save (xmin), not this
+        // index - this stays the last line of defence, not the first.
+        builder.HasIndex(m => new { m.ConversationId, m.Sequence, m.CreatedAt }).IsUnique();
     }
 }

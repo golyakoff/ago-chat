@@ -15,7 +15,10 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public class SendMessageOutboxTests(PostgresFixture fixture)
 {
-    private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    // Real time, not a fixed date - see MessageUniqueSequenceTests: 2-06's partitioned messages
+    // table only ever has partitions for the current month and the next two. Truncated to whole
+    // seconds so it round-trips through Postgres's timestamptz unchanged.
+    private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
     private static readonly IIdGenerator IdGenerator = new UuidV7Generator();
 
     [Fact]

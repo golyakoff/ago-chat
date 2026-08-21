@@ -10,7 +10,13 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public class MessageUniqueSequenceTests(PostgresFixture fixture)
 {
-    private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    // Real time, not a fixed date: 2-06 partitions messages by created_at, and the migration only
+    // ever creates the current month's partition plus the next two (whenever it runs) - a fixed
+    // past date would fall outside every partition that exists and fail with "no partition found
+    // for row" instead of the unique-violation this test means to prove. Truncated to whole
+    // seconds so it round-trips through Postgres's timestamptz (microsecond precision) unchanged,
+    // same as the literal it replaces.
+    private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
     [Fact]
     public async Task InsertingTwoMessagesWithTheSameConversationAndSequence_TheSecondIsRejected()

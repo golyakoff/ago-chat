@@ -19,6 +19,12 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<UnreadCounterConsumer>();
 
+builder.Services
+    .AddOptions<PartitionMaintenanceJobOptions>()
+    .Bind(builder.Configuration.GetSection(PartitionMaintenanceJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<PartitionMaintenanceJob>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()
