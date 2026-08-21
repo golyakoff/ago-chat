@@ -1,0 +1,4 @@
+# Normalizes line endings to LF in the repository regardless of core.autocrlf on any clone -
+# matches .editorconfig's `end_of_line = lf` (applies to every extension there, not just *.cs).
+# Deliberately per-repo, not a global git config change.
+* text=auto eol=lf
