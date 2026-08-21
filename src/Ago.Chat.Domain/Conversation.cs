@@ -29,6 +29,12 @@ public sealed class Conversation
 
     public DateTimeOffset CreatedAt { get; }
 
+    /// <summary>Messages the visitor has not yet seen - i.e. authored by the operator.</summary>
+    public int VisitorUnreadCount { get; private set; }
+
+    /// <summary>Messages the operator has not yet seen - i.e. authored by the visitor.</summary>
+    public int OperatorUnreadCount { get; private set; }
+
     public IReadOnlyList<Message> Messages => _messages;
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -123,6 +129,25 @@ public sealed class Conversation
         }
 
         return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, now);
+    }
+
+    /// <summary>
+    /// 2-05: the unread-counter consumer's write, applied against an already-accepted message - the
+    /// message itself already passed <see cref="AddVisitorMessage"/>/<see cref="AddOperatorMessage"/>'s
+    /// state and participant checks when it was first added, so there is no new invariant to enforce
+    /// here, only which side's count moves. No domain event: nothing downstream reacts to an unread
+    /// count changing (2-05's backlog item is explicit that exposing it is a separate, later concern).
+    /// </summary>
+    public void IncrementUnreadCount(MessageAuthorKind authorKind)
+    {
+        if (authorKind == MessageAuthorKind.Visitor)
+        {
+            OperatorUnreadCount++;
+        }
+        else
+        {
+            VisitorUnreadCount++;
+        }
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();
