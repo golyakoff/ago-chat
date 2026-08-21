@@ -1,9 +1,12 @@
 ﻿using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Realtime;
+using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
@@ -19,9 +22,27 @@ public sealed class VisitorHub(
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
-    IHubContext<OperatorHub> operatorHub) : Hub
+    IHubContext<OperatorHub> operatorHub,
+    HubConnectionRegistration connectionRegistration) : Hub
 {
     private const int DefaultPageSize = 50;
+
+    /// <summary>3-01: registers this connection so any node can later resolve "where is this
+    /// visitor" (realtime.md). Site/visitor identity comes from the JWT, already validated before a
+    /// hub method or lifecycle event ever runs.</summary>
+    public override async Task OnConnectedAsync()
+    {
+        var principal = PrincipalKeys.ForVisitor(Context.User!.GetVisitorId());
+        await connectionRegistration.OnConnectedAsync(new ConnectionId(Context.ConnectionId), principal, Context.ConnectionAborted);
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        var principal = PrincipalKeys.ForVisitor(Context.User!.GetVisitorId());
+        await connectionRegistration.OnDisconnectedAsync(new ConnectionId(Context.ConnectionId), principal);
+        await base.OnDisconnectedAsync(exception);
+    }
 
     /// <summary>Called once, right after connecting - starts or resumes the visitor's conversation
     /// and joins its group, so a later reply reaches this connection.</summary>

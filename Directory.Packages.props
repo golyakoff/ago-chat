@@ -25,6 +25,7 @@
     <PackageVersion Include="Ago.Platform.Abstractions" Version="0.2.2" />
     <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.2.2" />
     <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.2.2" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.2.2" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">
@@ -55,6 +56,7 @@
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
+    <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>

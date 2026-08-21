@@ -1,9 +1,12 @@
 ﻿using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Realtime;
+using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
@@ -17,8 +20,24 @@ public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
-    IHubContext<VisitorHub> visitorHub) : Hub
+    IHubContext<VisitorHub> visitorHub,
+    HubConnectionRegistration connectionRegistration) : Hub
 {
+    /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment.</summary>
+    public override async Task OnConnectedAsync()
+    {
+        var principal = PrincipalKeys.ForOperator(Context.User!.GetOperatorId());
+        await connectionRegistration.OnConnectedAsync(new ConnectionId(Context.ConnectionId), principal, Context.ConnectionAborted);
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        var principal = PrincipalKeys.ForOperator(Context.User!.GetOperatorId());
+        await connectionRegistration.OnDisconnectedAsync(new ConnectionId(Context.ConnectionId), principal);
+        await base.OnDisconnectedAsync(exception);
+    }
+
     public async Task<HistoryPage> JoinConversationAsync(Guid conversationId)
     {
         var operatorId = Context.User!.GetOperatorId();
