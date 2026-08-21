@@ -17,11 +17,12 @@
          SystemClock and UuidV7Generator, wired into the real host for the first time. -->
     <PackageVersion Include="Ago.Platform.Hosting" Version="0.2.0" />
     <PackageVersion Include="Ago.Platform.Kernel" Version="0.2.0" />
-    <!-- Not yet on ago-platform's main (2-01 is still on its own branch there) - this pin only
-         resolves once that lands and CI packs it. Building here right now requires
-         AgoPlatformDevOverride=true (repositories.md). -->
     <PackageVersion Include="Ago.Platform.Abstractions" Version="0.2.0" />
+    <!-- Persistence.Postgres's Version/CorrelationId fix (found while building 2-04) isn't on
+         ago-platform's main yet - building here right now still needs AgoPlatformDevOverride=true
+         (repositories.md) until that PR lands and CI packs it. -->
     <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.2.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">
@@ -51,6 +52,7 @@
     <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
