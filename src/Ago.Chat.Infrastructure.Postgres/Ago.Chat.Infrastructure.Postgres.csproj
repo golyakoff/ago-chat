@@ -1,6 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- adr/0004: EF Core owns writes (aggregates, transactions, migrations); Dapper owns reads. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Explicit, not just transitive via Npgsql.EntityFrameworkCore.PostgreSQL - keeps this
+         project resolving the same EFCore version as Microsoft.EntityFrameworkCore.Design below. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Dapper" />
+    <!-- Migration tooling only - never used at runtime, so it never ships in a container image. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
   </ItemGroup>
 

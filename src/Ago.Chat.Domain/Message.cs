@@ -39,4 +39,9 @@ public sealed class Message
         Body = body;
         CreatedAt = now;
     }
+
+    // EF Core materialization only (1-04) - never called by domain code, not even by Conversation.
+    private Message()
+    {
+    }
 }
