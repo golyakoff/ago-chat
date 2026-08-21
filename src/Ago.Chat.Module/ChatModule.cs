@@ -4,6 +4,7 @@ using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Platform.Hosting;
+using Ago.Platform.Messaging.RabbitMq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -28,6 +29,7 @@ public sealed class ChatModule : IProductModule
                 "Set AGO_CHAT_CONNECTION_STRING - e.g. the docker-compose Postgres from local-dev.md.");
         services.AddPostgresPersistence(connectionString);
         services.AddPlatformKernel();
+        services.AddRabbitMqMessaging(configuration);
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
