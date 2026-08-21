@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
@@ -43,5 +44,6 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetConversationHistoryHandler>();
         services.AddScoped<AssignConversationHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
+        services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
     }
 }

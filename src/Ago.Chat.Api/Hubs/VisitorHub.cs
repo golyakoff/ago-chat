@@ -22,7 +22,6 @@ public sealed class VisitorHub(
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
-    IHubContext<OperatorHub> operatorHub,
     HubConnectionRegistration connectionRegistration) : Hub
 {
     private const int DefaultPageSize = 50;
@@ -44,8 +43,8 @@ public sealed class VisitorHub(
         await base.OnDisconnectedAsync(exception);
     }
 
-    /// <summary>Called once, right after connecting - starts or resumes the visitor's conversation
-    /// and joins its group, so a later reply reaches this connection.</summary>
+    /// <summary>Called once, right after connecting - starts or resumes the visitor's
+    /// conversation.</summary>
     public async Task<VisitorJoinResult> JoinAsync()
     {
         var siteId = Context.User!.GetSiteId();
@@ -54,8 +53,6 @@ public sealed class VisitorHub(
         var started = await startConversation.HandleAsync(
             new StartConversation(siteId, visitorId), Context.ConnectionAborted);
         var conversationId = started.Value.ConversationId;
-
-        await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(conversationId), Context.ConnectionAborted);
 
         var history = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, BeforeSequence: null, DefaultPageSize),
@@ -75,7 +72,7 @@ public sealed class VisitorHub(
             throw new HubException(sent.Error!.Value.Message);
         }
 
-        await BroadcastAsync(id, visitorId, sent.Value);
+        await EchoToCallerAsync(id, visitorId, sent.Value);
         return sent.Value;
     }
 
@@ -94,25 +91,25 @@ public sealed class VisitorHub(
     }
 
     /// <summary>
-    /// SignalR hubs are isolated from each other - a "conversation:X" group in <see cref="VisitorHub"/>
-    /// and one of the same name in <see cref="OperatorHub"/> are two different groups, each scoped to
-    /// its own <c>HubLifetimeManager&lt;THub&gt;</c> (found by running this: the operator's own
-    /// connection always received its own broadcast; the visitor's connection never did, from any
-    /// hub other than its own). Reaching the operator's side needs their hub's own
-    /// <see cref="IHubContext{THub}"/>, not this hub's <c>Clients</c>.
+    /// 3-02: an immediate local echo to the sender's own connection, without waiting on the broker
+    /// round trip - a pure latency optimisation (a same-node fast path is legitimate; a second,
+    /// divergent delivery mechanism is not). Every other participant - other tabs of this same
+    /// visitor, the assigned operator, and technically this same connection again - is reached
+    /// through the one real delivery path: <c>ConnectionFanoutConsumer</c> (`Ago.Chat.Worker`)
+    /// reacts to this message's own `MessageAccepted` and publishes through
+    /// <c>INodeFanoutPublisher</c> (realtime.md's Fan-out path). The resulting duplicate push back to
+    /// this same connection is accepted, not special-cased away: messaging.md's client-side dedupe by
+    /// message id already covers a redelivered push the same way it covers a redelivered broker
+    /// message.
     /// </summary>
-    private async Task BroadcastAsync(ConversationId conversationId, VisitorId visitorId, int sequence)
+    private async Task EchoToCallerAsync(ConversationId conversationId, VisitorId visitorId, int sequence)
     {
         var page = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, sequence + 1, 1), Context.ConnectionAborted);
         var sentMessage = page.Value.Messages.Single();
         var dto = ToDto(sentMessage);
-        var group = GroupName(conversationId);
-        await Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
-        await operatorHub.Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
+        await Clients.Caller.SendAsync("MessageReceived", dto, Context.ConnectionAborted);
     }
-
-    internal static string GroupName(ConversationId conversationId) => $"conversation:{conversationId.Value}";
 
     private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item) =>
         new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt);

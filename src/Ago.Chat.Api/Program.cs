@@ -3,6 +3,7 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Module;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -20,6 +21,11 @@ new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
 // host, but only resolving IConnectionRegistry (which this triggers) opens the Redis connection.
 builder.Services.AddHostedService<ConnectionHeartbeat>();
 builder.Services.AddSingleton<HubConnectionRegistration>();
+
+// 3-02: the receiving half of realtime.md's Fan-out path - consumes this node's own topic and
+// pushes to whichever local hub each connection belongs to (SignalRConnectionDispatcher).
+builder.Services.AddSingleton<ILocalConnectionDispatcher, SignalRConnectionDispatcher>();
+builder.Services.AddHostedService<NodeDeliveryConsumer>();
 
 // Generated fresh on every start, never configured or committed - consistent with "no secrets,
 // ever" (repositories.md), even for a throwaway dev value. Tokens do not survive a restart, which
