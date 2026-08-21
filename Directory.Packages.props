@@ -13,18 +13,19 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 0.3.0: adds Ago.Platform.Realtime (IConnectionRegistry, ConnectionHeartbeat,
-         LocalConnectionTracker - 3-01). ago-platform's CI packs every Ago.Platform.* project at
-         one shared version read from ago-platform's own CHANGELOG.md at pack time
-         (-p:Version=..., not Directory.Build.props's <Version> there, which packing ignores), so
-         every package here bumps together even where a given package's own content did not change
+    <!-- 0.4.0: adds NodeDelivery/ILocalConnectionDispatcher/INodeFanoutPublisher to Abstractions
+         and NodeTopics/NodeFanoutPublisher/NodeDeliveryConsumer to Realtime (3-02's cross-node
+         fan-out). ago-platform's CI packs every Ago.Platform.* project at one shared version read
+         from ago-platform's own CHANGELOG.md at pack time (-p:Version=..., not
+         Directory.Build.props's <Version> there, which packing ignores), so every package here
+         bumps together even where a given package's own content did not change
          (Hosting/Kernel/Persistence.Postgres/Messaging.RabbitMq this time). -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.3.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.3.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.3.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.3.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.3.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.3.0" />
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.4.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.4.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.4.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.4.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.4.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.4.0" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">

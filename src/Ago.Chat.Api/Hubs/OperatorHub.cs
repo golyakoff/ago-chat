@@ -20,7 +20,6 @@ public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
-    IHubContext<VisitorHub> visitorHub,
     HubConnectionRegistration connectionRegistration) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment.</summary>
@@ -51,8 +50,6 @@ public sealed class OperatorHub(
             throw new HubException(assigned.Error!.Value.Message);
         }
 
-        await Groups.AddToGroupAsync(Context.ConnectionId, VisitorHub.GroupName(id), Context.ConnectionAborted);
-
         var history = await getHistory.HandleAsOperatorAsync(
             new GetConversationHistoryAsOperator(id, operatorId, siteId, BeforeSequence: null, PageSize: 50),
             Context.ConnectionAborted);
@@ -76,16 +73,14 @@ public sealed class OperatorHub(
             throw new HubException(sent.Error!.Value.Message);
         }
 
+        // 3-02: local echo only, same reasoning as VisitorHub.EchoToCallerAsync - the real delivery
+        // to every participant (including this operator's other tabs and the visitor) goes through
+        // ConnectionFanoutConsumer reacting to this message's own MessageAccepted.
         var page = await getHistory.HandleAsOperatorAsync(
             new GetConversationHistoryAsOperator(id, operatorId, siteId, sent.Value + 1, 1), Context.ConnectionAborted);
         var sentMessage = page.Value.Messages.Single();
         var dto = ToDto(sentMessage);
-        var group = VisitorHub.GroupName(id);
-        // Own hub's Clients reaches other operator connections in this group; a hub's groups are
-        // isolated per hub type (see VisitorHub.BroadcastAsync), so reaching the visitor needs
-        // their hub's own IHubContext, not this one's Clients.
-        await Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
-        await visitorHub.Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
+        await Clients.Caller.SendAsync("MessageReceived", dto, Context.ConnectionAborted);
 
         return sent.Value;
     }

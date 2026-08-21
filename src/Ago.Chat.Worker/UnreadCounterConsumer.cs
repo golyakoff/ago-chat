@@ -9,8 +9,10 @@ namespace Ago.Chat.Worker;
 
 /// <summary>
 /// 2-05's first real consumer of `MessageAccepted`: <c>Competing</c>, so any number of `Worker`
-/// replicas share the load rather than each processing every message (unlike the still-Stage-3
-/// fan-out-to-connections consumer, which will need `Broadcast`). One DI scope per message - the
+/// replicas share the load rather than each processing every message - `ConnectionFanoutConsumer`
+/// (3-02) subscribes to the same topic the same way, for the same reason: resolving a message's
+/// recipients and publishing the per-node fan-out only needs to happen once per message, not once
+/// per `Worker` replica. One DI scope per message - the
 /// handler's `IConversationRepository`/`IInboxChecker` are `Scoped` (they share one `DbContext`
 /// per unit of work), and this class itself is registered as a singleton `BackgroundService`
 /// (concurrency.md), so it cannot hold a scoped dependency in its own constructor.

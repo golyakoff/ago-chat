@@ -25,6 +25,12 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<PartitionMaintenanceJob>();
 
+builder.Services
+    .AddOptions<ConnectionFanoutConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(ConnectionFanoutConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ConnectionFanoutConsumer>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()
