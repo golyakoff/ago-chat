@@ -11,27 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Not a dependency in the repository sense - a source checkout this job packs itself, so
-      # this build proves it restores Ago.Platform.* as a real .nupkg (nuget.ci.config), never as
-      # a ProjectReference. AgoPlatformDevOverride is never set here, so the dev-override branch of
-      # every .csproj (Directory.Build.props) stays off - a branch merged with it left on fails
-      # exactly here (adr/0015, repositories.md).
-      - name: Checkout ago-platform (main)
-        uses: actions/checkout@v4
-        with:
-          repository: golyakoff/ago-platform
-          ref: main
-          path: ago-platform-src
-
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      - name: Pack ago-platform into the CI-local feed
-        run: dotnet pack ago-platform-src/Ago.Platform.slnx -c Release -o nuget-feed-ci
-
+      # This build proves it restores Ago.Platform.* as a real, published .nupkg
+      # (nuget.ci.config), never as a ProjectReference. AgoPlatformDevOverride is never set here,
+      # so the dev-override branch of every .csproj (Directory.Build.props) stays off - a branch
+      # merged with it left on fails exactly here (repositories.md). AGO_PLATFORM_PACKAGES_TOKEN
+      # is a repository secret: a classic PAT scoped to read:packages only (adr/0018) - GitHub
+      # does not allow anonymous reads of NuGet packages even on a public repository.
       - name: Restore
         run: dotnet restore Ago.Chat.slnx --configfile nuget.ci.config
+        env:
+          AGO_PLATFORM_PACKAGES_TOKEN: ${{ secrets.AGO_PLATFORM_PACKAGES_TOKEN }}
 
       - name: Format check
         run: dotnet format Ago.Chat.slnx --verify-no-changes
