@@ -10,20 +10,21 @@ public class SendVisitorMessageHandlerTests
     private static readonly VisitorId VisitorId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
-    private static (SendVisitorMessageHandler Handler, FakeConversationRepository Conversations, Conversation Conversation)
+    private static (SendVisitorMessageHandler Handler, FakeConversationRepository Conversations, Conversation Conversation, FakeOutboxWriter Outbox)
         CreateHandlerWithWaitingConversation()
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(conversation);
-        var handler = new SendVisitorMessageHandler(conversations, new FakeClock(Now), new FakeIdGenerator());
-        return (handler, conversations, conversation);
+        var outbox = new FakeOutboxWriter();
+        var handler = new SendVisitorMessageHandler(conversations, new FakeClock(Now), new FakeIdGenerator(), outbox);
+        return (handler, conversations, conversation, outbox);
     }
 
     [Fact]
     public async Task HandleAsync_WhenTheVisitorOwnsTheConversation_Succeeds()
     {
-        var (handler, _, conversation) = CreateHandlerWithWaitingConversation();
+        var (handler, _, conversation, _) = CreateHandlerWithWaitingConversation();
 
         var result = await handler.HandleAsync(
             new SendVisitorMessage(conversation.Id, VisitorId, "hello"), CancellationToken.None);
@@ -33,10 +34,22 @@ public class SendVisitorMessageHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WhenTheVisitorOwnsTheConversation_EnqueuesMessageAccepted()
+    {
+        var (handler, _, conversation, outbox) = CreateHandlerWithWaitingConversation();
+
+        await handler.HandleAsync(new SendVisitorMessage(conversation.Id, VisitorId, "hello"), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        Assert.Equal("MessageAccepted", envelope.Type);
+        Assert.Equal(conversation.Id.Value.ToString(), envelope.PartitionKey);
+    }
+
+    [Fact]
     public async Task HandleAsync_WhenConversationDoesNotExist_ReturnsNotFound()
     {
         var conversations = new FakeConversationRepository();
-        var handler = new SendVisitorMessageHandler(conversations, new FakeClock(Now), new FakeIdGenerator());
+        var handler = new SendVisitorMessageHandler(conversations, new FakeClock(Now), new FakeIdGenerator(), new FakeOutboxWriter());
 
         var result = await handler.HandleAsync(
             new SendVisitorMessage(new ConversationId(Guid.NewGuid()), VisitorId, "hello"), CancellationToken.None);
@@ -48,7 +61,7 @@ public class SendVisitorMessageHandlerTests
     [Fact]
     public async Task HandleAsync_WhenTheAuthorIsNotThisConversationsVisitor_ReturnsForbidden()
     {
-        var (handler, _, conversation) = CreateHandlerWithWaitingConversation();
+        var (handler, _, conversation, _) = CreateHandlerWithWaitingConversation();
         var someoneElse = new VisitorId(Guid.NewGuid());
 
         var result = await handler.HandleAsync(
@@ -61,7 +74,7 @@ public class SendVisitorMessageHandlerTests
     [Fact]
     public async Task HandleAsync_WhenTheBodyIsEmpty_ReturnsInvalidBody()
     {
-        var (handler, _, conversation) = CreateHandlerWithWaitingConversation();
+        var (handler, _, conversation, _) = CreateHandlerWithWaitingConversation();
 
         var result = await handler.HandleAsync(
             new SendVisitorMessage(conversation.Id, VisitorId, "   "), CancellationToken.None);
@@ -73,7 +86,7 @@ public class SendVisitorMessageHandlerTests
     [Fact]
     public async Task HandleAsync_WhenTheConversationIsClosed_ReturnsInvalidState()
     {
-        var (handler, conversations, conversation) = CreateHandlerWithWaitingConversation();
+        var (handler, conversations, conversation, _) = CreateHandlerWithWaitingConversation();
         conversation.Close(Now);
         await conversations.SaveAsync(conversation, CancellationToken.None);
 

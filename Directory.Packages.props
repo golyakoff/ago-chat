@@ -17,6 +17,11 @@
          SystemClock and UuidV7Generator, wired into the real host for the first time. -->
     <PackageVersion Include="Ago.Platform.Hosting" Version="0.2.0" />
     <PackageVersion Include="Ago.Platform.Kernel" Version="0.2.0" />
+    <!-- Not yet on ago-platform's main (2-01 is still on its own branch there) - this pin only
+         resolves once that lands and CI packs it. Building here right now requires
+         AgoPlatformDevOverride=true (repositories.md). -->
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.2.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">
