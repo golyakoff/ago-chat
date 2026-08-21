@@ -16,7 +16,8 @@ namespace Ago.Chat.Api.Hubs;
 public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
-    GetConversationHistoryHandler getHistory) : Hub
+    GetConversationHistoryHandler getHistory,
+    IHubContext<VisitorHub> visitorHub) : Hub
 {
     public async Task<HistoryPage> JoinConversationAsync(Guid conversationId)
     {
@@ -59,8 +60,13 @@ public sealed class OperatorHub(
         var page = await getHistory.HandleAsOperatorAsync(
             new GetConversationHistoryAsOperator(id, operatorId, siteId, sent.Value + 1, 1), Context.ConnectionAborted);
         var sentMessage = page.Value.Messages.Single();
-        await Clients.Group(VisitorHub.GroupName(id)).SendAsync(
-            "MessageReceived", ToDto(sentMessage), Context.ConnectionAborted);
+        var dto = ToDto(sentMessage);
+        var group = VisitorHub.GroupName(id);
+        // Own hub's Clients reaches other operator connections in this group; a hub's groups are
+        // isolated per hub type (see VisitorHub.BroadcastAsync), so reaching the visitor needs
+        // their hub's own IHubContext, not this one's Clients.
+        await Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
+        await visitorHub.Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
 
         return sent.Value;
     }
