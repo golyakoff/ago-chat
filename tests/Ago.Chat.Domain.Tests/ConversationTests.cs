@@ -192,6 +192,40 @@ public class ConversationTests
     }
 
     [Fact]
+    public void IncrementUnreadCount_VisitorAuthored_IncrementsOperatorCountOnly()
+    {
+        var conversation = StartConversation();
+
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
+
+        Assert.Equal(1, conversation.OperatorUnreadCount);
+        Assert.Equal(0, conversation.VisitorUnreadCount);
+    }
+
+    [Fact]
+    public void IncrementUnreadCount_OperatorAuthored_IncrementsVisitorCountOnly()
+    {
+        var conversation = StartConversation();
+
+        conversation.IncrementUnreadCount(MessageAuthorKind.Operator);
+
+        Assert.Equal(1, conversation.VisitorUnreadCount);
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void IncrementUnreadCount_CalledRepeatedly_Accumulates()
+    {
+        var conversation = StartConversation();
+
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
+
+        Assert.Equal(3, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
     public void ClearDomainEvents_RemovesEverythingRaisedSoFar()
     {
         var conversation = StartConversation();

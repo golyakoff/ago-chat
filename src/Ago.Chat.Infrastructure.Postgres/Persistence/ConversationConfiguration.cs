@@ -17,6 +17,8 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property(c => c.State).HasColumnName("state").HasConversion<string>();
         builder.Property(c => c.LastSequence).HasColumnName("last_sequence");
         builder.Property(c => c.CreatedAt).HasColumnName("created_at");
+        builder.Property(c => c.VisitorUnreadCount).HasColumnName("visitor_unread_count");
+        builder.Property(c => c.OperatorUnreadCount).HasColumnName("operator_unread_count");
 
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
         builder.HasOne<Visitor>().WithMany().HasForeignKey(c => c.VisitorId);
