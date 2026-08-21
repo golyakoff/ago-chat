@@ -13,8 +13,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.1.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.1.0" />
+    <!-- 0.2.0: 1-06 is the first consumer of Ago.Platform.Hosting's AddPlatformKernel() (1-03) -
+         SystemClock and UuidV7Generator, wired into the real host for the first time. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.2.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.2.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Realtime and auth">
+    <!-- 1-06: JWT is the token shape for both the visitor capability and the operator dev-auth
+         stub (authorization.md - OIDC access tokens are JWTs too, so this is the shape Stage 5
+         inherits, not a throwaway one). -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
   </ItemGroup>
 
   <ItemGroup Label="Persistence">

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AGO Chat - dev harness (1-06, not the real widget/console)</title>
+<script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; display: flex; gap: 24px; padding: 16px; }
+  .pane { flex: 1; border: 1px solid #ccc; border-radius: 8px; padding: 12px; }
+  .pane h2 { margin-top: 0; }
+  .log { height: 300px; overflow-y: auto; border: 1px solid #eee; padding: 8px; margin-bottom: 8px; background: #fafafa; }
+  .log div { margin-bottom: 4px; }
+  .log .self { color: #0a5; }
+  .log .other { color: #05a; }
+  .log .system { color: #999; font-style: italic; }
+  input { width: 100%; box-sizing: border-box; margin-bottom: 4px; }
+  small { color: #777; }
+</style>
+</head>
+<body>
+<!-- This page exists only to manually prove 1-06's "done when": two tabs (or, here, two panes)
+     exchange messages through one running Ago.Chat.Api, and history survives a reload. It is not
+     the widget (ago-widget, Stage 5) or the operator console (ago-console, Stage 5) - both replace
+     this outright. -->
+<div class="pane">
+  <h2>Visitor</h2>
+  <small>Public key: <code>demo_site</code> (seeded by 1-05)</small>
+  <div id="visitor-log" class="log"></div>
+  <div>Conversation id: <code id="visitor-conversation-id">-</code></div>
+  <input id="visitor-message" placeholder="Message" />
+  <button onclick="sendVisitorMessage()">Send</button>
+  <button onclick="resetVisitor()">Forget this visitor (clear localStorage)</button>
+</div>
+
+<div class="pane">
+  <h2>Operator</h2>
+  <small>Seeded demo operator/site ids (1-05)</small>
+  <input id="operator-id" value="00000000-0000-0000-0000-000000000002" placeholder="Operator id" />
+  <input id="operator-site-id" value="00000000-0000-0000-0000-000000000001" placeholder="Site id" />
+  <button onclick="connectOperator()">Connect</button>
+  <div id="operator-log" class="log"></div>
+  <input id="operator-conversation-id" placeholder="Conversation id (paste from Visitor pane)" />
+  <button onclick="joinConversation()">Join conversation</button>
+  <input id="operator-message" placeholder="Message" />
+  <button onclick="sendOperatorMessage()">Send</button>
+</div>
+
+<script>
+  function log(paneId, text, cls) {
+    const el = document.getElementById(paneId);
+    const line = document.createElement('div');
+    line.className = cls || 'system';
+    line.textContent = text;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function renderMessage(paneId, m, selfKind) {
+    log(paneId, `[${m.sequence}] ${m.authorKind}: ${m.body}`, m.authorKind === selfKind ? 'self' : 'other');
+  }
+
+  // --- Visitor ---
+  let visitorConnection, visitorConversationId;
+
+  async function startVisitor() {
+    let token = localStorage.getItem('ago-visitor-token');
+    if (!token) {
+      const res = await fetch('/api/v1/visitor-sessions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicKey: 'demo_site' })
+      });
+      if (!res.ok) { log('visitor-log', `Failed to start session: ${res.status}`); return; }
+      const body = await res.json();
+      token = body.token;
+      localStorage.setItem('ago-visitor-token', token);
+      log('visitor-log', 'New visitor - fresh token issued.');
+    } else {
+      log('visitor-log', 'Returning visitor - reusing stored token.');
+    }
+
+    visitorConnection = new signalR.HubConnectionBuilder()
+      .withUrl(`/hubs/visitor?access_token=${token}`)
+      .withAutomaticReconnect()
+      .build();
+    visitorConnection.on('MessageReceived', m => renderMessage('visitor-log', m, 'Visitor'));
+    await visitorConnection.start();
+
+    const join = await visitorConnection.invoke('JoinAsync');
+    visitorConversationId = join.conversationId;
+    document.getElementById('visitor-conversation-id').textContent = visitorConversationId;
+    log('visitor-log', join.isNew ? 'New conversation started.' : 'Resumed existing conversation.');
+    join.history.slice().reverse().forEach(m => renderMessage('visitor-log', m, 'Visitor'));
+  }
+
+  async function sendVisitorMessage() {
+    const input = document.getElementById('visitor-message');
+    if (!input.value || !visitorConnection) return;
+    await visitorConnection.invoke('SendMessageAsync', visitorConversationId, input.value);
+    input.value = '';
+  }
+
+  function resetVisitor() {
+    localStorage.removeItem('ago-visitor-token');
+    location.reload();
+  }
+
+  startVisitor();
+
+  // --- Operator ---
+  let operatorConnection;
+
+  async function connectOperator() {
+    const operatorId = document.getElementById('operator-id').value;
+    const siteId = document.getElementById('operator-site-id').value;
+    const res = await fetch('/dev/operator-session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operatorId, siteId })
+    });
+    if (!res.ok) { log('operator-log', `Failed to start session: ${res.status}`); return; }
+    const { token } = await res.json();
+
+    operatorConnection = new signalR.HubConnectionBuilder()
+      .withUrl(`/hubs/operator?access_token=${token}`)
+      .withAutomaticReconnect()
+      .build();
+    operatorConnection.on('MessageReceived', m => renderMessage('operator-log', m, 'Operator'));
+    await operatorConnection.start();
+    log('operator-log', 'Connected.');
+  }
+
+  async function joinConversation() {
+    const conversationId = document.getElementById('operator-conversation-id').value;
+    if (!operatorConnection || !conversationId) return;
+    const page = await operatorConnection.invoke('JoinConversationAsync', conversationId);
+    log('operator-log', 'Joined conversation - now assigned.');
+    page.messages.slice().reverse().forEach(m => renderMessage('operator-log', m, 'Operator'));
+    document.getElementById('operator-conversation-id').dataset.joined = conversationId;
+  }
+
+  async function sendOperatorMessage() {
+    const input = document.getElementById('operator-message');
+    const conversationId = document.getElementById('operator-conversation-id').value;
+    if (!input.value || !operatorConnection || !conversationId) return;
+    await operatorConnection.invoke('SendMessageAsync', conversationId, input.value);
+    input.value = '';
+  }
+</script>
+</body>
+</html>
