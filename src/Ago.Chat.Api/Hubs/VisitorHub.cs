@@ -18,7 +18,8 @@ namespace Ago.Chat.Api.Hubs;
 public sealed class VisitorHub(
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendMessage,
-    GetConversationHistoryHandler getHistory) : Hub
+    GetConversationHistoryHandler getHistory,
+    IHubContext<OperatorHub> operatorHub) : Hub
 {
     private const int DefaultPageSize = 50;
 
@@ -71,13 +72,23 @@ public sealed class VisitorHub(
         return new HistoryPage(ToDtos(page.Value.Messages), page.Value.NextBeforeSequence);
     }
 
+    /// <summary>
+    /// SignalR hubs are isolated from each other - a "conversation:X" group in <see cref="VisitorHub"/>
+    /// and one of the same name in <see cref="OperatorHub"/> are two different groups, each scoped to
+    /// its own <c>HubLifetimeManager&lt;THub&gt;</c> (found by running this: the operator's own
+    /// connection always received its own broadcast; the visitor's connection never did, from any
+    /// hub other than its own). Reaching the operator's side needs their hub's own
+    /// <see cref="IHubContext{THub}"/>, not this hub's <c>Clients</c>.
+    /// </summary>
     private async Task BroadcastAsync(ConversationId conversationId, VisitorId visitorId, int sequence)
     {
         var page = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, sequence + 1, 1), Context.ConnectionAborted);
         var sentMessage = page.Value.Messages.Single();
-        await Clients.Group(GroupName(conversationId)).SendAsync(
-            "MessageReceived", ToDto(sentMessage), Context.ConnectionAborted);
+        var dto = ToDto(sentMessage);
+        var group = GroupName(conversationId);
+        await Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
+        await operatorHub.Clients.Group(group).SendAsync("MessageReceived", dto, Context.ConnectionAborted);
     }
 
     internal static string GroupName(ConversationId conversationId) => $"conversation:{conversationId.Value}";
