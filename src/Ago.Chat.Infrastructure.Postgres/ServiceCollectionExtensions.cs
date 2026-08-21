@@ -9,7 +9,7 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// <summary>
 /// The only place that knows this is Postgres (clean-architecture.md: "Hosts... AddPostgresPersistence()
 /// extension methods live in their own Infrastructure projects and are selected by configuration").
-/// Nothing calls this yet - `1-06` is the first real host wiring.
+/// `1-06` is its first real caller.
 /// </summary>
 public static class ServiceCollectionExtensions
 {
@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
+        services.AddScoped<ISiteRepository, SiteRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
 
