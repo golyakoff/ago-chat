@@ -118,4 +118,60 @@ public class AttachmentTests
 
         Assert.Throws<InvalidAttachmentStateException>(() => attachment.MarkDeleted());
     }
+
+    [Fact]
+    public void ConfirmReady_RaisesAttachmentReady()
+    {
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+
+        attachment.ConfirmReady(42, "image/png", Now);
+
+        var raised = Assert.Single(attachment.DomainEvents);
+        var ready = Assert.IsType<AttachmentReady>(raised);
+        Assert.Equal(attachment.Id, ready.AttachmentId);
+        Assert.Equal(SiteId, ready.SiteId);
+        Assert.Equal(ConversationId, ready.ConversationId);
+        Assert.Equal(attachment.ObjectKey, ready.ObjectKey);
+        Assert.Equal("image/png", ready.ContentType);
+    }
+
+    [Fact]
+    public void ClearDomainEvents_RemovesEverythingRaisedSoFar()
+    {
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+        attachment.ConfirmReady(42, "image/png", Now);
+
+        attachment.ClearDomainEvents();
+
+        Assert.Empty(attachment.DomainEvents);
+    }
+
+    [Fact]
+    public void SetThumbnail_WhenReady_SetsThumbnailKey()
+    {
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+        attachment.ConfirmReady(42, "image/png", Now);
+
+        attachment.SetThumbnail("site/x/conv/y/z_thumb.jpg");
+
+        Assert.Equal("site/x/conv/y/z_thumb.jpg", attachment.ThumbnailKey);
+    }
+
+    [Fact]
+    public void SetThumbnail_WhenStillPending_ThrowsInvalidAttachmentStateException()
+    {
+        var attachment = CreatePending();
+
+        Assert.Throws<InvalidAttachmentStateException>(() => attachment.SetThumbnail("site/x/conv/y/z_thumb.jpg"));
+    }
+
+    [Fact]
+    public void SetThumbnail_WhenAlreadySet_ThrowsInvalidAttachmentStateException()
+    {
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+        attachment.ConfirmReady(42, "image/png", Now);
+        attachment.SetThumbnail("site/x/conv/y/z_thumb.jpg");
+
+        Assert.Throws<InvalidAttachmentStateException>(() => attachment.SetThumbnail("site/x/conv/y/z_thumb2.jpg"));
+    }
 }

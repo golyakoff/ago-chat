@@ -30,6 +30,15 @@
     <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.10.0" />
   </ItemGroup>
 
+  <ItemGroup Label="Attachments">
+    <!-- `5-04`: AttachmentThumbnailGenerator (Ago.Chat.Worker) only - MIT license, unconditionally
+         free for commercial use (see Ago.Chat.Worker.csproj's own remarks on why this was chosen
+         over SixLabors.ImageSharp's revenue-gated split license). -->
+    <PackageVersion Include="SkiaSharp" Version="4.151.1" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+  </ItemGroup>
+
   <ItemGroup Label="Realtime and auth">
     <!-- 1-06: JWT is the token shape for both the visitor capability and the operator dev-auth
          stub (authorization.md - OIDC access tokens are JWTs too, so this is the shape Stage 5

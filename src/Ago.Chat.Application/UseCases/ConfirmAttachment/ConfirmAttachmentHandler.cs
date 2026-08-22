@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -11,12 +12,22 @@ namespace Ago.Chat.Application.UseCases.ConfirmAttachment;
 /// handler is the one place that calls <see cref="IFileStorage.GetMetadataAsync"/> to find out what
 /// is actually on the object store before flipping <see cref="Domain.Attachment"/> to
 /// <see cref="AttachmentState.Ready"/>.
+///
+/// `5-04`: injects <see cref="IOutboxWriter"/> directly rather than going through Infrastructure the
+/// way `MessageBatchWriter` does - this is a plain, unbatched per-request handler (no shared
+/// multi-conversation transaction to coordinate), so the same "stage on the tracked entity, one
+/// `SaveChangesAsync` commits both" shape `SendVisitorMessageHandler` used before `4-05`'s batching
+/// need arrived applies directly here (`adr/0005`: state change and integration event, one
+/// transaction). <see cref="IOutboxWriter"/>/<see cref="IIdGenerator"/> are dependency-free platform
+/// abstractions, safe for Application to reference (`clean-architecture.md`).
 /// </summary>
 public sealed class ConfirmAttachmentHandler(
     IAttachmentRepository attachments,
     IConversationRepository conversations,
     IFileStorage fileStorage,
     IPermissionChecker permissions,
+    IOutboxWriter outbox,
+    IIdGenerator idGenerator,
     IClock clock)
 {
     public async Task<Result> HandleAsVisitorAsync(ConfirmAttachmentAsVisitor command, CancellationToken cancellationToken)
@@ -80,6 +91,10 @@ public sealed class ConfirmAttachmentHandler(
         {
             return ConversationErrors.InvalidState(ex.Message);
         }
+
+        var domainEvent = attachment.DomainEvents.OfType<AttachmentReady>().Single();
+        outbox.Enqueue(AttachmentConfirmedMapper.ToEnvelope(domainEvent, idGenerator));
+        attachment.ClearDomainEvents();
 
         await attachments.SaveAsync(attachment, cancellationToken);
         return Result.Success();

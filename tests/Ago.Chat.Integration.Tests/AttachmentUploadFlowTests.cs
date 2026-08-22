@@ -5,6 +5,7 @@ using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 
 namespace Ago.Chat.Integration.Tests;
@@ -107,7 +108,13 @@ public sealed class AttachmentUploadFlowTests(AttachmentFixture fixture)
         new SystemClock());
 
     private ConfirmAttachmentHandler CreateConfirmHandler(AgoChatDbContext db) => new(
-        new AttachmentRepository(db), new ConversationRepository(db), fixture.FileStorage, new PermissionChecker(db), new SystemClock());
+        new AttachmentRepository(db),
+        new ConversationRepository(db),
+        fixture.FileStorage,
+        new PermissionChecker(db),
+        new EfOutboxWriter<AgoChatDbContext>(db),
+        new UuidV7Generator(),
+        new SystemClock());
 
     private async Task<(VisitorId VisitorId, ConversationId ConversationId)> SeedWaitingConversationAsync()
     {

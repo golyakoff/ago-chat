@@ -85,6 +85,25 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<SiteCacheInvalidationConsumer>();
 
+// `5-04`: AttachmentOptions itself is already bound by ChatModule (every host); this is just the
+// thumbnail job's own dimensions/quality and the consumer's retry shape.
+builder.Services
+    .AddOptions<AttachmentThumbnailOptions>()
+    .Bind(builder.Configuration.GetSection(AttachmentThumbnailOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddScoped<AttachmentThumbnailGenerator>();
+builder.Services
+    .AddOptions<AttachmentThumbnailConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(AttachmentThumbnailConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<AttachmentThumbnailConsumer>();
+
+builder.Services
+    .AddOptions<AttachmentOrphanSweepJobOptions>()
+    .Bind(builder.Configuration.GetSection(AttachmentOrphanSweepJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<AttachmentOrphanSweepJob>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()
