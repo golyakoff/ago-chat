@@ -73,6 +73,18 @@ public static class AuthEndpoints
                 title: "Site not found", statusCode: StatusCodes.Status404NotFound, type: "site-not-found");
         }
 
+        // 5-01, layer 2: the real per-site boundary - SiteOriginCorsPolicyProvider (layer 1) only
+        // proved this Origin belongs to *some* site's AllowedOrigins, not *this* one. A missing
+        // Origin header (a same-origin caller - the dev harness, local-dev.md) has no cross-origin
+        // claim to verify and is left alone; a present Origin not in this specific site's list is
+        // rejected even though CORS already let the request through.
+        var origin = httpContext.Request.Headers.Origin.ToString();
+        if (!string.IsNullOrEmpty(origin) && !site.AllowedOrigins.Contains(origin))
+        {
+            return Results.Problem(
+                title: "Origin not allowed for this site", statusCode: StatusCodes.Status403Forbidden, type: "origin-not-allowed");
+        }
+
         var visitorId = new VisitorId(idGenerator.NewId(clock.UtcNow));
         var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
         return Results.Created(

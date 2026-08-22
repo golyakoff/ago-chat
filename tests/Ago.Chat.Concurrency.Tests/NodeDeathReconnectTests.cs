@@ -1,10 +1,12 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
@@ -123,8 +125,12 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(registry, tracker, node);
+        // FakeHubCallerContext.Features is always empty, so HubOriginValidator's own Origin check
+        // short-circuits before ever calling GetSiteConfigByIdHandler - real SiteRepository/no-op
+        // cache is fine, never exercised (same reasoning as ReconnectResumeTests' own CreateHub).
+        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
 
-        return new VisitorHub(startConversation, null!, getHistory, registration, new DrainState())
+        return new VisitorHub(startConversation, null!, getHistory, registration, originValidator, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, VisitorPrincipal(siteId, visitorId)),
             Clients = new FakeHubCallerClients(),
@@ -142,8 +148,9 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(registry, tracker, node);
         var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
+        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
 
-        return new OperatorHub(assignConversation, sendMessage, getHistory, registration, presencePublisher, new DrainState())
+        return new OperatorHub(assignConversation, sendMessage, getHistory, registration, originValidator, presencePublisher, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),
@@ -222,6 +229,23 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         public IClientProxy Others => Proxy;
 
         public IClientProxy OthersInGroup(string groupName) => Proxy;
+    }
+
+    /// <summary>Always misses - `caching.md`'s own documented Redis-failure behaviour, reused here
+    /// since this file has no Redis fixture and `HubOriginValidator` never actually reaches it (see
+    /// <see cref="CreateVisitorHub"/>/<see cref="CreateOperatorHub"/>'s own remarks).</summary>
+    private sealed class NoOpCache : ICache
+    {
+        public Task<T?> GetAsync<T>(CacheKey key, CancellationToken cancellationToken) where T : class => Task.FromResult<T?>(default);
+
+        public Task SetAsync<T>(CacheKey key, T value, CacheEntryOptions options, CancellationToken cancellationToken) where T : class =>
+            Task.CompletedTask;
+
+        public Task<T> GetOrCreateAsync<T>(
+            CacheKey key, Func<CancellationToken, Task<T>> factory, CacheEntryOptions options, CancellationToken cancellationToken) where T : class =>
+            factory(cancellationToken);
+
+        public Task RemoveAsync(CacheKey key, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class FakeHubCallerContext(string connectionId, ClaimsPrincipal user) : HubCallerContext

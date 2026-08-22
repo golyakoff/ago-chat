@@ -1,8 +1,10 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
@@ -102,11 +104,15 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(
             new NoOpConnectionRegistry(), new LocalConnectionTracker(), new NodeId("test-node"));
+        // FakeHubCallerContext.Features is always empty, so GetHttpContext() (and therefore Origin)
+        // is always null here - HubOriginValidator's own check short-circuits before ever calling
+        // GetSiteConfigByIdHandler, so a real SiteRepository/no-op cache is fine, never exercised.
+        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
 
         // sendMessage is never used - only JoinAsync is exercised in this file, and messages are
         // seeded directly through SendVisitorMessageHandler in the test body instead of through
         // the hub's SendMessageAsync (which also echoes to Clients.Caller, irrelevant here).
-        var hub = new VisitorHub(startConversation, null!, getHistory, registration, new DrainState())
+        var hub = new VisitorHub(startConversation, null!, getHistory, registration, originValidator, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, ClaimsPrincipalFor(siteId, visitorId)),
         };
@@ -136,6 +142,23 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
             Task.FromResult<IReadOnlyCollection<RegisteredConnection>>([]);
 
         public Task RemoveNodeAsync(NodeId nodeId, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>Always misses - `caching.md`'s own documented Redis-failure behaviour, reused here
+    /// since this file has no Redis fixture and `HubOriginValidator` never actually reaches it (see
+    /// <see cref="CreateHub"/>'s own remarks).</summary>
+    private sealed class NoOpCache : ICache
+    {
+        public Task<T?> GetAsync<T>(CacheKey key, CancellationToken cancellationToken) where T : class => Task.FromResult<T?>(default);
+
+        public Task SetAsync<T>(CacheKey key, T value, CacheEntryOptions options, CancellationToken cancellationToken) where T : class =>
+            Task.CompletedTask;
+
+        public Task<T> GetOrCreateAsync<T>(
+            CacheKey key, Func<CancellationToken, Task<T>> factory, CacheEntryOptions options, CancellationToken cancellationToken) where T : class =>
+            factory(cancellationToken);
+
+        public Task RemoveAsync(CacheKey key, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     /// <summary>Microsoft's own supported seam for unit-testing a <see cref="Hub"/> without a real

@@ -13,19 +13,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 0.8.0: adds RedisDistributedLock to Ago.Platform.Caching.Redis (4-03's fail-closed
-         per-operator lock, the assignment engine's Redis-based alternative to SKIP LOCKED).
-         ago-platform's CI packs every Ago.Platform.* project at one shared version read from
-         ago-platform's own CHANGELOG.md at pack time (-p:Version=..., not Directory.Build.props's
-         <Version> there, which packing ignores), so every package here bumps together even where a
-         given package's own content did not change. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.8.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.8.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.8.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.8.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.8.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.8.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.8.0" />
+    <!-- 0.9.0: ICache.GetAsync<T>/SetAsync<T>/GetOrCreateAsync<T> now constrain `where T : class` -
+         a real bug fix found live while building 5-01 (CORS): an unconstrained generic T's `T?`
+         return annotation has no runtime effect for a value-type T (default(T?) for T = bool is
+         `false`, not a distinguishable null), so GetOrCreateAsync could never tell a cold key apart
+         from a genuinely-cached `false`/`0` for a raw value type. Breaking for any caller that passed
+         a value type directly - wrap it in a small reference-type record instead (every existing
+         caller already did). ago-platform's CI packs every Ago.Platform.* project at one shared
+         version read from ago-platform's own CHANGELOG.md at pack time (-p:Version=..., not
+         Directory.Build.props's <Version> there, which packing ignores), so every package here bumps
+         together even where a given package's own content did not change. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.9.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.9.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.9.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.9.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.9.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.9.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.9.0" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">

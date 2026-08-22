@@ -74,5 +74,17 @@ public sealed class SiteConfigCachingTests(SiteCachingFixture fixture)
             Calls++;
             return inner.GetByPublicKeyAsync(publicKey, cancellationToken);
         }
+
+        public Task<Site?> GetByIdAsync(SiteId id, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return inner.GetByIdAsync(id, cancellationToken);
+        }
+
+        public Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return inner.AnyAllowsOriginAsync(origin, cancellationToken);
+        }
     }
 }

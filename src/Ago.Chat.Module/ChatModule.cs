@@ -1,7 +1,9 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
+using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
@@ -80,6 +82,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<SendOperatorMessageHandler>();
         services.AddScoped<GetConversationHistoryHandler>();
         services.AddScoped<GetSiteConfigByPublicKeyHandler>();
+        services.AddScoped<GetSiteConfigByIdHandler>();
+        services.AddScoped<CheckCorsOriginHandler>();
         services.AddScoped<AssignConversationHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
