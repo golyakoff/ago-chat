@@ -47,5 +47,13 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         // In-memory-only facts (1-01) - nothing publishes them yet (outbox is Stage 2), so there is
         // nothing here for EF to persist.
         builder.Ignore(c => c.DomainEvents);
+
+        // 4-01: data-model.md named this index from the start ("Keys and indexes") but nothing had
+        // actually created it until WaitingConversationClaimQuery gave it a real reader - without it,
+        // 4-02's SKIP LOCKED claim is a full-table scan under lock, which defeats the whole point of
+        // letting multiple Worker replicas claim in parallel.
+        builder.HasIndex(c => c.SiteId)
+            .HasDatabaseName("ix_conversations_waiting")
+            .HasFilter("state = 'Waiting'");
     }
 }

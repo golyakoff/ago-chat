@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260822144759_Stage4AddOperatorActiveChats")]
+    partial class Stage4AddOperatorActiveChats
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -72,9 +75,7 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.HasIndex("OperatorId");
 
-                    b.HasIndex("SiteId")
-                        .HasDatabaseName("ix_conversations_waiting")
-                        .HasFilter("state = 'Waiting'");
+                    b.HasIndex("SiteId");
 
                     b.HasIndex("VisitorId");
 
