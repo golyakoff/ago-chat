@@ -4,6 +4,7 @@ using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Module;
 using Ago.Platform.Abstractions;
+using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -32,6 +33,11 @@ builder.Services.AddSingleton<HubConnectionRegistration>();
 // pushes to whichever local hub each connection belongs to (SignalRConnectionDispatcher).
 builder.Services.AddSingleton<ILocalConnectionDispatcher, SignalRConnectionDispatcher>();
 builder.Services.AddHostedService<NodeDeliveryConsumer>();
+
+// 3-04: Ago.Chat.Api is the only host that ever reads the cache (the site-config lookup on the
+// widget handshake path), so it is the only one that needs to hear about invalidations - the same
+// "registered everywhere, only this host runs the hosted service" shape as NodeDeliveryConsumer above.
+builder.Services.AddHostedService<CacheInvalidationConsumer>();
 
 // Generated fresh on every start, never configured or committed - consistent with "no secrets,
 // ever" (repositories.md), even for a throwaway dev value. Tokens do not survive a restart, which

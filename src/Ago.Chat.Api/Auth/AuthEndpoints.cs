@@ -1,4 +1,4 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -12,15 +12,19 @@ public static class AuthEndpoints
         // site's public key (not a secret - api-design.md) can start a session; nothing sensitive is
         // granted until the visitor sends a message, at which point Conversation.AddVisitorMessage
         // (1-01) checks it is this same visitor.
+        //
+        // 3-04: this is caching.md's "the hot one" - every widget bootstrap hits it, so the site
+        // lookup goes through GetSiteConfigByPublicKeyHandler's cache-aside read rather than ISiteRepository
+        // directly, the way it did before this slice.
         app.MapPost("/api/v1/visitor-sessions", async (
             VisitorSessionRequest request,
-            ISiteRepository sites,
+            GetSiteConfigByPublicKeyHandler getSite,
             IIdGenerator idGenerator,
             IClock clock,
             JwtTokenService tokens,
             CancellationToken cancellationToken) =>
         {
-            var site = await sites.GetByPublicKeyAsync(request.PublicKey, cancellationToken);
+            var site = await getSite.HandleAsync(new GetSiteConfigByPublicKey(request.PublicKey), cancellationToken);
             if (site is null)
             {
                 return Results.Problem(
@@ -28,7 +32,7 @@ public static class AuthEndpoints
             }
 
             var visitorId = new VisitorId(idGenerator.NewId(clock.UtcNow));
-            var token = tokens.IssueVisitorToken(visitorId, site.Id);
+            var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
             return Results.Created(
                 $"/api/v1/visitor-sessions/{visitorId.Value}",
                 new VisitorSessionResponse(token, visitorId.Value));

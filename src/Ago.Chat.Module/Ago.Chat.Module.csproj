@@ -4,12 +4,14 @@
     <PackageReference Include="Ago.Platform.Hosting" />
     <PackageReference Include="Ago.Platform.Messaging.RabbitMq" />
     <PackageReference Include="Ago.Platform.Realtime" />
+    <PackageReference Include="Ago.Platform.Caching.Redis" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Hosting\Ago.Platform.Hosting.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Messaging.RabbitMq\Ago.Platform.Messaging.RabbitMq.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Realtime\Ago.Platform.Realtime.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Caching.Redis\Ago.Platform.Caching.Redis.csproj" />
   </ItemGroup>
 
   <ItemGroup>
