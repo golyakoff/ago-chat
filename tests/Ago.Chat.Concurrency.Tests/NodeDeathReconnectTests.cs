@@ -10,6 +10,7 @@ using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Chat.Module;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
@@ -140,8 +141,9 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(registry, tracker, node);
+        var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
 
-        return new OperatorHub(assignConversation, sendMessage, getHistory, registration, new DrainState())
+        return new OperatorHub(assignConversation, sendMessage, getHistory, registration, presencePublisher, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),
@@ -159,6 +161,11 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         new Claim(JwtRegisteredClaimNames.Sub, operatorId.Value.ToString()),
         new Claim("site_id", siteId.Value.ToString()),
     ]));
+
+    private sealed class NoOpEventPublisher : IEventPublisher
+    {
+        public Task PublishAsync(EventEnvelope envelope, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
 
     private sealed class NoOpLocalConnectionDispatcher : ILocalConnectionDispatcher
     {

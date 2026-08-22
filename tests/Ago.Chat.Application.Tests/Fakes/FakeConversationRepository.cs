@@ -14,6 +14,11 @@ public sealed class FakeConversationRepository : IConversationRepository
         Task.FromResult(_byId.Values.FirstOrDefault(
             c => c.VisitorId == visitorId && c.State != ConversationState.Closed));
 
+    public Task<IReadOnlyList<Conversation>> GetAssignedToOperatorAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Conversation>>(_byId.Values
+            .Where(c => c.OperatorId == operatorId && c.State == ConversationState.Assigned)
+            .ToList());
+
     public Task SaveAsync(Conversation conversation, CancellationToken cancellationToken)
     {
         _byId[conversation.Id] = conversation;

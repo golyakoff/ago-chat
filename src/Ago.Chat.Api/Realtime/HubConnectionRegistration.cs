@@ -20,13 +20,19 @@ public sealed class HubConnectionRegistration(
         return connectionRegistry.RegisterAsync(connectionId, currentNode, principal, cancellationToken);
     }
 
-    public Task OnDisconnectedAsync(ConnectionId connectionId, PrincipalKey principal)
+    /// <summary>Returns whether <paramref name="principal"/> has zero connections left anywhere,
+    /// not just on this node - `4-04`'s operator-disconnect grace period is the one caller that
+    /// needs this; `VisitorHub` calls the same method and simply does not act on the result
+    /// (visitor-side disconnect handling beyond reconnect/resume, `3-03`, is out of scope there).</summary>
+    public async Task<bool> OnDisconnectedAsync(ConnectionId connectionId, PrincipalKey principal)
     {
         connectionTracker.Remove(connectionId);
         // Deliberately CancellationToken.None, not the caller's token: by the time a hub calls this
         // from OnDisconnectedAsync, Context.ConnectionAborted may already be signalled, and this
         // cleanup must still complete rather than being cancelled by the very disconnect that
         // triggered it.
-        return connectionRegistry.UnregisterAsync(connectionId, currentNode, principal, CancellationToken.None);
+        await connectionRegistry.UnregisterAsync(connectionId, currentNode, principal, CancellationToken.None);
+        var remaining = await connectionRegistry.GetConnectionsAsync(principal, CancellationToken.None);
+        return remaining.Count == 0;
     }
 }

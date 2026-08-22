@@ -16,5 +16,9 @@ public interface IConversationRepository
     /// <c>StartConversation</c> uses to resume instead of always starting a new one.</summary>
     Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken);
 
+    /// <summary>Every conversation currently `Assigned` to this operator - `4-04`'s
+    /// disconnect-grace-period release needs all of them, not just one.</summary>
+    Task<IReadOnlyList<Conversation>> GetAssignedToOperatorAsync(OperatorId operatorId, CancellationToken cancellationToken);
+
     Task SaveAsync(Conversation conversation, CancellationToken cancellationToken);
 }

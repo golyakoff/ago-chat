@@ -37,9 +37,11 @@ public sealed class ChatModule : IProductModule
         services.AddPostgresPersistence(connectionString);
         services.AddPlatformKernel();
         services.AddRabbitMqMessaging(configuration);
-        // Registered for every host (matching AddRabbitMqMessaging's own shape) but only ever
-        // resolved - and only then does it open a Redis connection - by Ago.Chat.Api, which is the
-        // only host holding SignalR connections (3-01). Worker/Webhooks never trigger it.
+        // Registered for every host (matching AddRabbitMqMessaging's own shape). Ago.Chat.Api
+        // resolves it for its own connection lifecycle (3-01, the only host holding SignalR
+        // connections); Ago.Chat.Worker resolves it too as of 4-04 - OperatorDisconnectGraceConsumer/
+        // OperatorDisconnectSweepJob read presence to decide whether an operator's conversations
+        // should be released, without themselves ever holding a connection.
         services.AddConnectionRegistry(configuration);
         // Same "registered everywhere, resolved where it matters" shape: Ago.Chat.Api resolves
         // ICache (the site-config read) and CacheInvalidationConsumer; Ago.Chat.Worker resolves only
@@ -67,5 +69,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
+
+        // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
+        // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
+        services.AddSingleton<OperatorPresencePublisher>();
     }
 }
