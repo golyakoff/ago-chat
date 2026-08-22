@@ -79,4 +79,26 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         Assert.Empty(page.Messages);
         Assert.Null(page.NextBeforeSequence);
     }
+
+    [Fact]
+    public async Task GetDeltaAsync_ReturnsOnlyMessagesAfterTheGivenSequence_OldestFirst()
+    {
+        var conversationId = await SeedConversationWithMessages(5);
+        var store = new ConversationReadStore(fixture.DataSource);
+
+        var delta = await store.GetDeltaAsync(conversationId, afterSequence: 3, CancellationToken.None);
+
+        Assert.Equal([4, 5], delta.Select(m => m.Sequence));
+    }
+
+    [Fact]
+    public async Task GetDeltaAsync_WhenNothingIsNewerThanTheGivenSequence_ReturnsAnEmptyList()
+    {
+        var conversationId = await SeedConversationWithMessages(3);
+        var store = new ConversationReadStore(fixture.DataSource);
+
+        var delta = await store.GetDeltaAsync(conversationId, afterSequence: 3, CancellationToken.None);
+
+        Assert.Empty(delta);
+    }
 }

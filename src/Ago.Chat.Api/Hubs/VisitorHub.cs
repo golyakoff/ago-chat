@@ -43,9 +43,17 @@ public sealed class VisitorHub(
         await base.OnDisconnectedAsync(exception);
     }
 
-    /// <summary>Called once, right after connecting - starts or resumes the visitor's
-    /// conversation.</summary>
-    public async Task<VisitorJoinResult> JoinAsync()
+    /// <summary>
+    /// Called once, right after connecting - starts or resumes the visitor's conversation.
+    ///
+    /// `3-03`: <paramref name="lastKnownSequence"/> is how a client that dropped and reconnected asks
+    /// for exactly what it missed (realtime.md's Client protocol section) instead of the usual most-
+    /// recent page - the client already has everything up to that sequence, so replaying it again
+    /// would duplicate what is already on screen. Ignored for a conversation this call itself just
+    /// created (<c>IsNew</c>): a sequence remembered from a previous conversation means nothing here,
+    /// there is nothing to have missed.
+    /// </summary>
+    public async Task<VisitorJoinResult> JoinAsync(int? lastKnownSequence = null)
     {
         var siteId = Context.User!.GetSiteId();
         var visitorId = Context.User!.GetVisitorId();
@@ -54,12 +62,30 @@ public sealed class VisitorHub(
             new StartConversation(siteId, visitorId), Context.ConnectionAborted);
         var conversationId = started.Value.ConversationId;
 
+        if (lastKnownSequence is { } afterSequence && !started.Value.IsNew)
+        {
+            var delta = await getHistory.HandleDeltaAsVisitorAsync(
+                new GetConversationDeltaAsVisitor(conversationId, visitorId, afterSequence), Context.ConnectionAborted);
+            return new VisitorJoinResult(conversationId.Value, IsNew: false, ToDtos(delta.Value));
+        }
+
         var history = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, BeforeSequence: null, DefaultPageSize),
             Context.ConnectionAborted);
 
         return new VisitorJoinResult(conversationId.Value, started.Value.IsNew, ToDtos(history.Value.Messages));
     }
+
+    /// <summary>
+    /// `3-03`: the wire-level half of realtime.md's "server may send `reconnect(after: jitteredDelay)`
+    /// before shutting down" - stubbed now, called by nothing yet. `3-06` (graceful shutdown) is the
+    /// real caller, and it runs from a background service with no live hub invocation to be "Caller"
+    /// of - it will need `IHubContext&lt;VisitorHub&gt;.Clients.Client(connectionId)` instead of this
+    /// method. This stub exists so the wire contract (the client already listens for a `Reconnect`
+    /// push - see dev-harness.html) is provable before that caller exists.
+    /// </summary>
+    public Task ReconnectAsync(TimeSpan after) =>
+        Clients.Caller.SendAsync("Reconnect", new { after }, Context.ConnectionAborted);
 
     public async Task<int> SendMessageAsync(Guid conversationId, string body)
     {
