@@ -90,8 +90,12 @@ public sealed class UnreadCounterShutdownTests
                     Options.Create(new UnreadCounterConsumerOptions()),
                     NullLogger<UnreadCounterConsumer>.Instance);
 
+                // See UnreadCounterIdempotencyTests' matching comment: a fixed delay here is not a
+                // real readiness signal for "the durable queue exists and is bound" - awaiting
+                // ExecuteTask is (found live: this test dropped all MessageCount messages on a
+                // slower CI runner where the fixed delay was not enough).
                 await consumer1.StartAsync(CancellationToken.None);
-                await Task.Delay(TimeSpan.FromMilliseconds(500));
+                await consumer1.ExecuteTask!;
 
                 await using (var publisherConnection = new RabbitMqConnection(rabbitOptions))
                 {
