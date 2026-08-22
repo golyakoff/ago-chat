@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
+using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
@@ -22,15 +23,27 @@ public sealed class VisitorHub(
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
-    HubConnectionRegistration connectionRegistration) : Hub
+    HubConnectionRegistration connectionRegistration,
+    DrainState drainState) : Hub
 {
     private const int DefaultPageSize = 50;
 
     /// <summary>3-01: registers this connection so any node can later resolve "where is this
     /// visitor" (realtime.md). Site/visitor identity comes from the JWT, already validated before a
-    /// hub method or lifecycle event ever runs.</summary>
+    /// hub method or lifecycle event ever runs.
+    ///
+    /// 3-06: "stop accepting new hub connections" once this node starts draining - readiness
+    /// already routes new traffic elsewhere, but a connection already in flight when that
+    /// propagates must not be allowed to settle in only to be told to reconnect a moment later.
+    /// </summary>
     public override async Task OnConnectedAsync()
     {
+        if (drainState.IsDraining)
+        {
+            Context.Abort();
+            return;
+        }
+
         var principal = PrincipalKeys.ForVisitor(Context.User!.GetVisitorId());
         await connectionRegistration.OnConnectedAsync(new ConnectionId(Context.ConnectionId), principal, Context.ConnectionAborted);
         await base.OnConnectedAsync();
@@ -75,17 +88,6 @@ public sealed class VisitorHub(
 
         return new VisitorJoinResult(conversationId.Value, started.Value.IsNew, ToDtos(history.Value.Messages));
     }
-
-    /// <summary>
-    /// `3-03`: the wire-level half of realtime.md's "server may send `reconnect(after: jitteredDelay)`
-    /// before shutting down" - stubbed now, called by nothing yet. `3-06` (graceful shutdown) is the
-    /// real caller, and it runs from a background service with no live hub invocation to be "Caller"
-    /// of - it will need `IHubContext&lt;VisitorHub&gt;.Clients.Client(connectionId)` instead of this
-    /// method. This stub exists so the wire contract (the client already listens for a `Reconnect`
-    /// push - see dev-harness.html) is provable before that caller exists.
-    /// </summary>
-    public Task ReconnectAsync(TimeSpan after) =>
-        Clients.Caller.SendAsync("Reconnect", new { after }, Context.ConnectionAborted);
 
     public async Task<int> SendMessageAsync(Guid conversationId, string body)
     {

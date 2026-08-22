@@ -106,7 +106,7 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         // sendMessage is never used - only JoinAsync is exercised in this file, and messages are
         // seeded directly through SendVisitorMessageHandler in the test body instead of through
         // the hub's SendMessageAsync (which also echoes to Clients.Caller, irrelevant here).
-        var hub = new VisitorHub(startConversation, null!, getHistory, registration)
+        var hub = new VisitorHub(startConversation, null!, getHistory, registration, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, ClaimsPrincipalFor(siteId, visitorId)),
         };

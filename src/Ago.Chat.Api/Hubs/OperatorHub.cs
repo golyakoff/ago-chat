@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
+using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
@@ -20,11 +21,19 @@ public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
-    HubConnectionRegistration connectionRegistration) : Hub
+    HubConnectionRegistration connectionRegistration,
+    DrainState drainState) : Hub
 {
-    /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment.</summary>
+    /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
+    /// drain check.</summary>
     public override async Task OnConnectedAsync()
     {
+        if (drainState.IsDraining)
+        {
+            Context.Abort();
+            return;
+        }
+
         var principal = PrincipalKeys.ForOperator(Context.User!.GetOperatorId());
         await connectionRegistration.OnConnectedAsync(new ConnectionId(Context.ConnectionId), principal, Context.ConnectionAborted);
         await base.OnConnectedAsync();
@@ -79,10 +88,6 @@ public sealed class OperatorHub(
 
         return new HistoryPage(ToDtos(history.Value.Messages), history.Value.NextBeforeSequence);
     }
-
-    /// <summary>`3-03` stub - see <c>VisitorHub.ReconnectAsync</c>'s remarks.</summary>
-    public Task ReconnectAsync(TimeSpan after) =>
-        Clients.Caller.SendAsync("Reconnect", new { after }, Context.ConnectionAborted);
 
     public async Task<int> SendMessageAsync(Guid conversationId, string body)
     {
