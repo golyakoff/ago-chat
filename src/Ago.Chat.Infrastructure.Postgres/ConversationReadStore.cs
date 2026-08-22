@@ -15,7 +15,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // materialize (found by running the integration tests against a real Postgres).
     private const string Sql = """
         select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
-               author_id as "AuthorId", body as "Body", created_at as "CreatedAt"
+               author_id as "AuthorId", body as "Body", created_at as "CreatedAt",
+               attachment_id as "AttachmentId"
         from messages
         where conversation_id = @ConversationId
           and (@BeforeSequence is null or sequence < @BeforeSequence)
@@ -27,7 +28,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // why this direction does not need keyset paging the way GetHistoryAsync's backward one does.
     private const string DeltaSql = """
         select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
-               author_id as "AuthorId", body as "Body", created_at as "CreatedAt"
+               author_id as "AuthorId", body as "Body", created_at as "CreatedAt",
+               attachment_id as "AttachmentId"
         from messages
         where conversation_id = @ConversationId
           and sequence > @AfterSequence
@@ -69,5 +71,6 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         Enum.Parse<MessageAuthorKind>(r.AuthorKind),
         r.AuthorId,
         r.Body,
-        new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)));
+        new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
+        r.AttachmentId is { } attachmentId ? new AttachmentId(attachmentId) : null);
 }

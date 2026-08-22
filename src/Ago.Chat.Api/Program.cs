@@ -1,4 +1,5 @@
 ﻿using System.Security.Cryptography;
+using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
@@ -140,6 +141,7 @@ app.MapHealthChecks("/healthz/live", new HealthCheckOptions { Predicate = _ => f
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
 app.MapAuthEndpoints();
+app.MapAttachmentEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 

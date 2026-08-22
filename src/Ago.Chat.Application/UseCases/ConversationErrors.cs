@@ -42,4 +42,27 @@ public static class ConversationErrors
     /// now," always safe to retry.</summary>
     public static Error Unavailable(string reason) =>
         new("Message.Unavailable", reason);
+
+    // `5-03`: attachments get their own codes under the same shared vocabulary, rather than a
+    // separate error class - Message.InvalidBody/RateLimited above already established that this
+    // file holds every use case's errors, not just Conversation's own, so a client branching on
+    // `type` (api-design.md) has exactly one place to look regardless of which use case raised it.
+    public static Error AttachmentNotFound(Guid attachmentId) =>
+        new("Attachment.NotFound", $"Attachment {attachmentId} was not found.");
+
+    public static Error AttachmentInvalidContentType(string contentType) =>
+        new("Attachment.InvalidContentType", $"Content type '{contentType}' is not allowed.");
+
+    public static Error AttachmentTooLarge(long declaredSizeBytes, long maxSizeBytes) =>
+        new("Attachment.TooLarge", $"Declared size {declaredSizeBytes} bytes exceeds the {maxSizeBytes}-byte limit.");
+
+    /// <summary>The client's "uploaded" claim did not survive a HEAD-verify against the real object -
+    /// no real upload found, or its size/content-type does not match what was declared at presign
+    /// time. The attachment itself stays `Pending` (<see cref="Domain.Attachment.ConfirmReady"/>), so
+    /// this is always safe to retry once the real upload lands.</summary>
+    public static Error AttachmentVerificationFailed(string reason) =>
+        new("Attachment.VerificationFailed", reason);
+
+    public static Error AttachmentNotReady(string reason) =>
+        new("Attachment.NotReady", reason);
 }

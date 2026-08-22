@@ -76,7 +76,8 @@ public sealed class SendVisitorMessageHandler(
         // invariants) still run - just inside the pipeline worker, once it reloads this same
         // conversation. Reaching them there and failing means the caller's own token/conversation
         // pairing was already stale or wrong, exactly as before.
-        var pending = new PendingMessage(command.ConversationId, MessageAuthorKind.Visitor, command.AuthorId.Value, body);
+        var pending = new PendingMessage(
+            command.ConversationId, MessageAuthorKind.Visitor, command.AuthorId.Value, body, command.AttachmentId);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

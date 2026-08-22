@@ -10,6 +10,7 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<Visitor> Visitors => Set<Visitor>();
     public DbSet<Operator> Operators => Set<Operator>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<Attachment> Attachments => Set<Attachment>();
     internal DbSet<RoleRecord> Roles => Set<RoleRecord>();
     internal DbSet<OperatorRoleRecord> OperatorRoles => Set<OperatorRoleRecord>();
 

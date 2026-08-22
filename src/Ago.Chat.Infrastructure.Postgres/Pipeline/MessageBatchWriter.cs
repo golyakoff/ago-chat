@@ -66,13 +66,51 @@ public sealed class MessageBatchWriter(
                     continue;
                 }
 
+                // `5-03`: validated read-only, before either aggregate is touched - an invalid
+                // attachment reference must not burn a sequence number on Conversation nor mutate
+                // Attachment at all. EF's identity map is what makes the "already linked" check safe
+                // even within one batch: a second item in this same flush referencing the same
+                // attachment re-resolves the *same* tracked instance the first item's LinkToMessage
+                // (below) already mutated, not a stale read.
+                Attachment? attachment = null;
+                if (item.Message.AttachmentId is { } attachmentId)
+                {
+                    attachment = await db.Attachments.FirstOrDefaultAsync(a => a.Id == attachmentId, cancellationToken);
+                    if (attachment is null)
+                    {
+                        item.Ack.TrySetResult(ConversationErrors.AttachmentNotFound(attachmentId.Value));
+                        continue;
+                    }
+
+                    if (attachment.ConversationId != conversation.Id)
+                    {
+                        item.Ack.TrySetResult(ConversationErrors.Forbidden(
+                            $"Attachment {attachmentId.Value} does not belong to this conversation."));
+                        continue;
+                    }
+
+                    if (attachment.State != AttachmentState.Ready || attachment.MessageId is not null)
+                    {
+                        item.Ack.TrySetResult(ConversationErrors.AttachmentNotReady(
+                            $"Attachment {attachmentId.Value} is not available to reference."));
+                        continue;
+                    }
+                }
+
                 var now = clock.UtcNow;
                 var messageId = new MessageId(idGenerator.NewId(now));
                 try
                 {
                     var message = item.Message.AuthorKind == MessageAuthorKind.Visitor
-                        ? conversation.AddVisitorMessage(new VisitorId(item.Message.AuthorId), messageId, item.Message.Body, now)
-                        : conversation.AddOperatorMessage(new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now);
+                        ? conversation.AddVisitorMessage(
+                            new VisitorId(item.Message.AuthorId), messageId, item.Message.Body, now, item.Message.AttachmentId)
+                        : conversation.AddOperatorMessage(
+                            new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now, item.Message.AttachmentId);
+
+                    // Only after the message itself landed in the aggregate - see the read-only
+                    // validation above for why Attachment is never mutated on a path that might still
+                    // fail.
+                    attachment?.LinkToMessage(messageId, conversation.Id);
 
                     var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
                     outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
@@ -88,6 +126,12 @@ public sealed class MessageBatchWriter(
                 catch (InvalidConversationStateException ex)
                 {
                     item.Ack.TrySetResult(ConversationErrors.InvalidState(ex.Message));
+                }
+                catch (InvalidAttachmentStateException ex)
+                {
+                    // Defensive, not expected to trigger: the read-only checks above already proved
+                    // this attachment was Ready, unlinked, and belonged to this conversation.
+                    item.Ack.TrySetResult(ConversationErrors.AttachmentNotReady(ex.Message));
                 }
             }
 

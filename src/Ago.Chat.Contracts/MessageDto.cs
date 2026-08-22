@@ -4,4 +4,4 @@
 /// in Ago.Chat.Contracts and are versioned with the same additive-only rule as integration
 /// events").</summary>
 public sealed record MessageDto(
-    Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTimeOffset CreatedAt);
+    Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTimeOffset CreatedAt, Guid? AttachmentId = null);

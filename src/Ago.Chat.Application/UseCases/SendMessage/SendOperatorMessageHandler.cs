@@ -41,7 +41,8 @@ public sealed class SendOperatorMessageHandler(
         // (1-01) still separately checks "is this operator the one assigned to *this* conversation" -
         // a fact about the conversation, not a permission (adr/0016 draws that line) - now enforced
         // inside the pipeline worker once it loads the conversation fresh.
-        var pending = new PendingMessage(command.ConversationId, MessageAuthorKind.Operator, command.AuthorId.Value, body);
+        var pending = new PendingMessage(
+            command.ConversationId, MessageAuthorKind.Operator, command.AuthorId.Value, body, command.AttachmentId);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

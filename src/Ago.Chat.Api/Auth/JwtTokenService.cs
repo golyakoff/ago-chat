@@ -26,6 +26,11 @@ public sealed class JwtTokenService(SigningCredentials signingCredentials, strin
         {
             new Claim(JwtRegisteredClaimNames.Sub, subject),
             new Claim(AgoClaimTypes.SiteId, siteId.Value.ToString()),
+            // `5-03`: the audience already distinguishes the two schemes for token *validation*, but
+            // AttachmentEndpoints accepts either scheme on one route and needs to tell them apart
+            // from inside the handler - cheaper and less fragile than inferring it from which
+            // AddAuthenticationSchemes entry produced the winning identity.
+            new Claim(AgoClaimTypes.Kind, audience == JwtSchemes.Visitor ? "visitor" : "operator"),
         };
 
         var token = new JwtSecurityToken(

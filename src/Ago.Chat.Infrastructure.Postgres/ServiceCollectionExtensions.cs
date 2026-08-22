@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
             options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
+        services.AddScoped<IAttachmentRepository, AttachmentRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();

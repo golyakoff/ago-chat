@@ -13,23 +13,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 0.9.0: ICache.GetAsync<T>/SetAsync<T>/GetOrCreateAsync<T> now constrain `where T : class` -
-         a real bug fix found live while building 5-01 (CORS): an unconstrained generic T's `T?`
-         return annotation has no runtime effect for a value-type T (default(T?) for T = bool is
-         `false`, not a distinguishable null), so GetOrCreateAsync could never tell a cold key apart
-         from a genuinely-cached `false`/`0` for a raw value type. Breaking for any caller that passed
-         a value type directly - wrap it in a small reference-type record instead (every existing
-         caller already did). ago-platform's CI packs every Ago.Platform.* project at one shared
-         version read from ago-platform's own CHANGELOG.md at pack time (-p:Version=..., not
-         Directory.Build.props's <Version> there, which packing ignores), so every package here bumps
-         together even where a given package's own content did not change. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.9.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.9.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.9.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.9.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.9.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.9.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.9.0" />
+    <!-- 0.10.0: adds Ago.Platform.Abstractions.IFileStorage (presigned upload/download, `adr/0008`)
+         and the new Ago.Platform.Storage.S3 package that implements it - `5-02`'s adapter, consumed
+         here starting with `5-03`'s attachment endpoints. ago-platform's CI packs every
+         Ago.Platform.* project at one shared version read from ago-platform's own CHANGELOG.md at
+         pack time (-p:Version=..., not Directory.Build.props's <Version> there, which packing
+         ignores), so every package here bumps together even where a given package's own content did
+         not change. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.10.0" />
   </ItemGroup>
 
   <ItemGroup Label="Realtime and auth">
@@ -66,6 +64,11 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />
+    <!-- `5-03`: MinioFixture-equivalent for Ago.Chat.Integration.Tests' attachment flow tests -
+         ago-platform's own Ago.Platform.Integration.Tests pins the same image tag (5-02). -->
+    <PackageVersion Include="Testcontainers.Minio" Version="4.14.0" />
+    <!-- AttachmentFixture builds the bucket directly via the S3 API, same version ago-platform pins. -->
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.102.3" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>

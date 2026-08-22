@@ -5,6 +5,9 @@
     <PackageReference Include="Ago.Platform.Messaging.RabbitMq" />
     <PackageReference Include="Ago.Platform.Realtime" />
     <PackageReference Include="Ago.Platform.Caching.Redis" />
+    <!-- `5-03`: AddS3FileStorage is registered here, alongside AddRedisCaching/AddRabbitMqMessaging -
+         ChatModule.ConfigureServices is where every host-agnostic port gets wired up. -->
+    <PackageReference Include="Ago.Platform.Storage.S3" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
@@ -12,6 +15,7 @@
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Messaging.RabbitMq\Ago.Platform.Messaging.RabbitMq.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Realtime\Ago.Platform.Realtime.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Caching.Redis\Ago.Platform.Caching.Redis.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Storage.S3\Ago.Platform.Storage.S3.csproj" />
   </ItemGroup>
 
   <ItemGroup>

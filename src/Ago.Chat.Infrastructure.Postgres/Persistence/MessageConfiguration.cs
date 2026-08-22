@@ -24,6 +24,10 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.AuthorKind).HasColumnName("author_kind").HasConversion<string>();
         builder.Property(m => m.AuthorId).HasColumnName("author_id");
         builder.Property(m => m.Body).HasColumnName("body").HasConversion(MessageBodyConverter.Instance);
+        // `5-03`: "message references the attachment, not the reverse" (`file-storage.md`). No FK
+        // here either, for the same partitioning reason as attachments.message_id
+        // (AttachmentConfiguration's own remarks) - this table is the partitioned side.
+        builder.Property(m => m.AttachmentId).HasColumnName("attachment_id").HasConversion(IdConverters.NullableAttachment);
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
 
         // data-model.md: turns duplicate delivery into a no-op insert at the storage level. Widened
