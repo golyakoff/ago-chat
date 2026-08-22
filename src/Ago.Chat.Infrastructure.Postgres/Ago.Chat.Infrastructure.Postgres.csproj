@@ -8,6 +8,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Dapper" />
+    <!-- 3-06: PostgresHealthCheck lives here, not Ago.Chat.Module - see its own remarks. -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" />
     <!-- Migration tooling only - never used at runtime, so it never ships in a container image. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>

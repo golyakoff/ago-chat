@@ -2,17 +2,28 @@
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHealthChecks();
+// 3-06: readiness now means "can do the job" - Postgres (conversations), RabbitMQ (outbox/fan-out
+// consumers), Redis (cache, connection registry) - matching Ago.Chat.Worker's own
+// PostgresHealthCheck/RabbitMqHealthCheck pattern (2-04), plus the new Redis check and a drain
+// check neither host needed before this slice. Liveness stays the trivial "process responded" check
+// both hosts already use - conflating the two is exactly what edge.md warns against.
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: ["ready"])
+    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"])
+    .AddCheck<DrainHealthCheck>("drain", tags: ["ready"]);
 builder.Services.AddSignalR(options =>
 {
     // A hub exception's real message and stack trace go to a client only in Development - the
@@ -39,6 +50,11 @@ builder.Services.AddHostedService<NodeDeliveryConsumer>();
 // "registered everywhere, only this host runs the hosted service" shape as NodeDeliveryConsumer above.
 builder.Services.AddHostedService<CacheInvalidationConsumer>();
 
+// 3-06: concurrency.md's graceful-shutdown sequence - only Ago.Chat.Api holds hub connections to
+// drain, the same "registered everywhere (AddConnectionRegistry), only this host runs the hosted
+// service" shape as NodeDeliveryConsumer/ConnectionHeartbeat above.
+builder.Services.AddHostedService<ConnectionDrainCoordinator>();
+
 // 3-05: bound here, not ChatModule - AuthEndpoints is the only consumer, and it lives in Ago.Chat.Api
 // itself (unlike MessageSendRateLimitOptions, which sits beside SendVisitorMessageHandler in
 // Application because that handler is registered for every host).
@@ -47,12 +63,21 @@ builder.Services
     .Bind(builder.Configuration.GetSection(VisitorSessionRateLimitOptions.SectionName))
     .ValidateOnStart();
 
-// Generated fresh on every start, never configured or committed - consistent with "no secrets,
-// ever" (repositories.md), even for a throwaway dev value. Tokens do not survive a restart, which
-// is fine for a Stage 1 stub proving the shape (authorization.md), not a production concern -
-// Stage 5's OIDC direction replaces this signing story outright, it does not evolve from it.
+// 3-06: a per-process random key (this project's original Stage 1 choice) only tolerates a single
+// Ago.Chat.Api instance - found live, against the 3-replica overlay, when a token issued by one pod
+// 401'd on a negotiate request the Gateway's least_conn balancer routed to a different pod (no
+// sticky sessions - edge.md - so this is not a rare race, it is the normal case). Auth:SigningKey
+// lets every replica share one key (bound from infra-credentials the same way Postgres/RabbitMQ
+// passwords already are - docker/.env, gitignored, never committed); its absence falls back to the
+// original random-per-process key, which is still correct for the single-instance dotnet-run loop
+// local-dev.md describes. Still a throwaway dev value either way - Stage 5's OIDC direction replaces
+// this signing story outright, it does not evolve from it (authorization.md).
 const string issuer = "ago-chat-api";
-var signingKey = new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32));
+var configuredSigningKey = builder.Configuration["Auth:SigningKey"];
+var signingKeyBytes = configuredSigningKey is { Length: > 0 }
+    ? Convert.FromBase64String(configuredSigningKey)
+    : RandomNumberGenerator.GetBytes(32);
+var signingKey = new SymmetricSecurityKey(signingKeyBytes);
 var signingCredentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
 builder.Services.AddSingleton(sp => new JwtTokenService(signingCredentials, issuer, sp.GetRequiredService<IClock>()));
 
@@ -80,12 +105,11 @@ var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Liveness and readiness are the same trivial check for now - no real dependency (Postgres,
-// RabbitMQ, Redis) is wired up yet to report on. They diverge once Stage 1+ adds one
-// (docs/architecture/edge.md: readiness must go false while a dependency is unreachable or the
-// node is draining; liveness must not).
-app.MapHealthChecks("/healthz/live");
-app.MapHealthChecks("/healthz/ready");
+// 3-06: readiness and liveness genuinely diverge now (edge.md) - readiness runs the "ready"-tagged
+// checks above (dependencies plus drain state), liveness stays the trivial "process responded"
+// check Ago.Chat.Worker already uses (Predicate: _ => false runs no registered check at all).
+app.MapHealthChecks("/healthz/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 
 app.MapAuthEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");

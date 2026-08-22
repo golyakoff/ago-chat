@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Module;
+﻿using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Module;
 using Ago.Chat.Worker;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;

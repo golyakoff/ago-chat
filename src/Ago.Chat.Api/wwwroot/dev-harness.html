@@ -115,14 +115,24 @@
     }
 
     visitorConnection = new signalR.HubConnectionBuilder()
-      .withUrl(`/hubs/visitor?access_token=${token}`)
+      // 3-06: skipping negotiation makes the whole handshake one WebSocket request, so it lands on
+      // exactly one Ago.Chat.Api pod by construction - negotiate and a separate transport upgrade
+      // are two HTTP requests, and the Gateway has no sticky sessions (edge.md) to keep them on the
+      // same pod otherwise (found live, running 3 replicas for real: a negotiate handled by one pod
+      // 404'd when the upgrade landed on another).
+      .withUrl(`/hubs/visitor?access_token=${token}`, {
+        skipNegotiation: true,
+        transport: signalR.HttpTransportType.WebSockets,
+      })
       .withAutomaticReconnect(jitteredBackoff('visitor-log'))
       .build();
     visitorConnection.on('MessageReceived', m => trackVisitorMessage(m));
-    // 3-03 stub: nothing calls VisitorHub.ReconnectAsync yet (3-06 is the real caller) - this
-    // listener exists so the wire contract is provable end-to-end once it does.
+    // 3-06: ConnectionDrainCoordinator (Ago.Platform.Realtime) sends this to every connection a
+    // draining node owns, telling the client to reconnect on its own schedule rather than waiting
+    // to be dropped - onreconnecting/onreconnected below handle the resulting disconnect the same
+    // way they handle any other one.
     visitorConnection.on('Reconnect', ({ after }) =>
-      log('visitor-log', `Server requested a reconnect in ${after} (stub - no caller until 3-06).`, 'reconnect'));
+      log('visitor-log', `Server requested a reconnect in ${after} (node is draining).`, 'reconnect'));
     visitorConnection.onreconnecting(error =>
       log('visitor-log', `Connection lost${error ? ': ' + error.message : ''} - reconnecting...`, 'reconnect'));
     visitorConnection.onreconnected(async () => {
@@ -177,12 +187,16 @@
     const { token } = await res.json();
 
     operatorConnection = new signalR.HubConnectionBuilder()
-      .withUrl(`/hubs/operator?access_token=${token}`)
+      // 3-06: see the matching comment on visitorConnection above - same reason.
+      .withUrl(`/hubs/operator?access_token=${token}`, {
+        skipNegotiation: true,
+        transport: signalR.HttpTransportType.WebSockets,
+      })
       .withAutomaticReconnect(jitteredBackoff('operator-log'))
       .build();
     operatorConnection.on('MessageReceived', m => trackOperatorMessage(m));
     operatorConnection.on('Reconnect', ({ after }) =>
-      log('operator-log', `Server requested a reconnect in ${after} (stub - no caller until 3-06).`, 'reconnect'));
+      log('operator-log', `Server requested a reconnect in ${after} (node is draining).`, 'reconnect'));
     operatorConnection.onreconnecting(error =>
       log('operator-log', `Connection lost${error ? ': ' + error.message : ''} - reconnecting...`, 'reconnect'));
     operatorConnection.onreconnected(async () => {
