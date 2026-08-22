@@ -1,11 +1,13 @@
 ﻿using System.Security.Cryptography;
 using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module;
 using Ago.Chat.Module.Pipeline;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
@@ -35,6 +37,17 @@ builder.Services.AddSignalR(options =>
 });
 
 new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
+
+// 5-01: edge.md/api-design.md - CORS is per-site, driven by Site.AllowedOrigins from the database,
+// never a wildcard, never an ingress annotation. AddCors() wires the framework's CORS services;
+// SiteOriginCorsPolicyProvider replaces the usual named-policy lookup with a per-request decision
+// (a preflight cannot say which site it is for, only which Origin - see that class's own remarks and
+// CheckCorsOriginHandler's for the two-layer design this is only the first half of).
+builder.Services.AddCors();
+builder.Services.AddSingleton<ICorsPolicyProvider, SiteOriginCorsPolicyProvider>();
+// 5-01, layer 2: scoped, like the GetSiteConfigByIdHandler it wraps - a hub connection's own DI
+// scope (one per connection) is what SignalR gives a Hub's constructor dependencies.
+builder.Services.AddScoped<HubOriginValidator>();
 
 // 3-01: Ago.Chat.Api is the only host holding SignalR connections, so it is the only one that
 // actually needs the heartbeat running - ChatModule registers the registry's DI surface for every
@@ -116,6 +129,7 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -131,8 +145,8 @@ app.MapHub<OperatorHub>("/hubs/operator");
 
 if (app.Environment.IsDevelopment())
 {
-    // The manual two-tab verification harness (1-06) - same-origin, so no CORS story is needed
-    // for it. Real cross-origin widget CORS is Stage 5 (api-design.md).
+    // The manual two-tab verification harness (1-06) - same-origin, so it never exercises the CORS
+    // policy above at all. Real cross-origin widget CORS shipped in 5-01 (api-design.md).
     app.UseDefaultFiles();
     app.UseStaticFiles();
 }

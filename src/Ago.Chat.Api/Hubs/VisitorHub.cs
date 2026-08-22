@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
@@ -24,6 +25,7 @@ public sealed class VisitorHub(
     SendVisitorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
     HubConnectionRegistration connectionRegistration,
+    HubOriginValidator originValidator,
     DrainState drainState) : Hub
 {
     private const int DefaultPageSize = 50;
@@ -35,10 +37,21 @@ public sealed class VisitorHub(
     /// 3-06: "stop accepting new hub connections" once this node starts draining - readiness
     /// already routes new traffic elsewhere, but a connection already in flight when that
     /// propagates must not be allowed to settle in only to be told to reconnect a moment later.
+    ///
+    /// 5-01: a WebSocket upgrade's `Origin` is not covered by the CORS policy the way plain HTTP is
+    /// (`HubOriginValidator`'s own remarks) - this is the actual enforcement point for a hub
+    /// connection, checked before registering anything so a rejected connection never gets recorded.
     /// </summary>
     public override async Task OnConnectedAsync()
     {
         if (drainState.IsDraining)
+        {
+            Context.Abort();
+            return;
+        }
+
+        var siteId = Context.User!.GetSiteId();
+        if (!await originValidator.IsAllowedAsync(Context, siteId))
         {
             Context.Abort();
             return;

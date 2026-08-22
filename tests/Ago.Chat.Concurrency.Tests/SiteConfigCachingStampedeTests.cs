@@ -56,5 +56,19 @@ public sealed class SiteConfigCachingStampedeTests(SiteCachingConcurrencyFixture
             await using var db = fixture.CreateDbContext();
             return await new SiteRepository(db).GetByPublicKeyAsync(publicKey, cancellationToken);
         }
+
+        public async Task<Site?> GetByIdAsync(SiteId id, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            await using var db = fixture.CreateDbContext();
+            return await new SiteRepository(db).GetByIdAsync(id, cancellationToken);
+        }
+
+        public async Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            await using var db = fixture.CreateDbContext();
+            return await new SiteRepository(db).AnyAllowsOriginAsync(origin, cancellationToken);
+        }
     }
 }

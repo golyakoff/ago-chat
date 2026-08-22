@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
@@ -23,14 +24,22 @@ public sealed class OperatorHub(
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
     HubConnectionRegistration connectionRegistration,
+    HubOriginValidator originValidator,
     OperatorPresencePublisher presencePublisher,
     DrainState drainState) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
-    /// drain check.</summary>
+    /// drain check and `5-01`'s origin check.</summary>
     public override async Task OnConnectedAsync()
     {
         if (drainState.IsDraining)
+        {
+            Context.Abort();
+            return;
+        }
+
+        var siteId = Context.User!.GetSiteId();
+        if (!await originValidator.IsAllowedAsync(Context, siteId))
         {
             Context.Abort();
             return;

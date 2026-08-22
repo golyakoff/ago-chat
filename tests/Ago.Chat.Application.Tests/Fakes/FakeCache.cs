@@ -13,10 +13,10 @@ public sealed class FakeCache : ICache
 
     public int FactoryCalls { get; private set; }
 
-    public Task<T?> GetAsync<T>(CacheKey key, CancellationToken cancellationToken) =>
+    public Task<T?> GetAsync<T>(CacheKey key, CancellationToken cancellationToken) where T : class =>
         Task.FromResult(_store.TryGetValue(key.Value, out var value) ? (T?)value : default);
 
-    public Task SetAsync<T>(CacheKey key, T value, CacheEntryOptions options, CancellationToken cancellationToken)
+    public Task SetAsync<T>(CacheKey key, T value, CacheEntryOptions options, CancellationToken cancellationToken) where T : class
     {
         _store[key.Value] = value;
         return Task.CompletedTask;
@@ -24,6 +24,7 @@ public sealed class FakeCache : ICache
 
     public async Task<T> GetOrCreateAsync<T>(
         CacheKey key, Func<CancellationToken, Task<T>> factory, CacheEntryOptions options, CancellationToken cancellationToken)
+        where T : class
     {
         if (_store.TryGetValue(key.Value, out var cached))
         {
