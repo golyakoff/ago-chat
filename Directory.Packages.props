@@ -45,6 +45,9 @@
          inherits, not a throwaway one). -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
     <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
+    <!-- `5-05`: TestServer for the OIDC integration test - a real in-memory ASP.NET Core auth
+         pipeline, not JWT-validation-in-isolation. -->
+    <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup Label="Persistence">
@@ -76,6 +79,9 @@
     <!-- `5-03`: MinioFixture-equivalent for Ago.Chat.Integration.Tests' attachment flow tests -
          ago-platform's own Ago.Platform.Integration.Tests pins the same image tag (5-02). -->
     <PackageVersion Include="Testcontainers.Minio" Version="4.14.0" />
+    <!-- `5-05`: a real Keycloak for the OIDC token-resolution integration test - matches every other
+         Testcontainers package's pinned version in this project. -->
+    <PackageVersion Include="Testcontainers.Keycloak" Version="4.14.0" />
     <!-- AttachmentFixture builds the bucket directly via the S3 API, same version ago-platform pins. -->
     <PackageVersion Include="AWSSDK.S3" Version="4.0.102.3" />
     <PackageVersion Include="xunit" Version="2.9.3" />

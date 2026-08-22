@@ -13,6 +13,7 @@ using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -109,6 +110,19 @@ var signingKey = new SymmetricSecurityKey(signingKeyBytes);
 var signingCredentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
 builder.Services.AddSingleton(sp => new JwtTokenService(signingCredentials, issuer, sp.GetRequiredService<IClock>()));
 
+// `5-05`/`adr/0022`: the Operator scheme's issuer/signing key now comes from Keycloak, not the
+// local SigningCredentials below - Authority (required, fails fast like AGO_CHAT_CONNECTION_STRING)
+// drives ASP.NET Core's own JWKS discovery, so there is no local key to configure for this scheme at
+// all. RequireHttpsMetadata off by default: no host in this project terminates TLS internally
+// (edge.md - that is the Gateway's job), and local Keycloak runs over plain HTTP.
+var keycloakAuthority = builder.Configuration["Auth:Keycloak:Authority"]
+    ?? throw new InvalidOperationException(
+        "Set Auth:Keycloak:Authority - e.g. http://localhost:8081/realms/ago-chat for the local compose loop.");
+var keycloakAudience = builder.Configuration["Auth:Keycloak:Audience"] ?? "ago-console";
+var keycloakRequireHttpsMetadata = builder.Configuration.GetValue("Auth:Keycloak:RequireHttpsMetadata", false);
+
+builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
+
 builder.Services.AddAuthentication()
     .AddJwtBearer(JwtSchemes.Visitor, options =>
     {
@@ -123,10 +137,30 @@ builder.Services.AddAuthentication()
     .AddJwtBearer(JwtSchemes.Operator, options =>
     {
         options.MapInboundClaims = false;
-        options.TokenValidationParameters = TokenValidationParametersFor(JwtSchemes.Operator);
+        options.Authority = keycloakAuthority;
+        options.RequireHttpsMetadata = keycloakRequireHttpsMetadata;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateAudience = true,
+            ValidAudience = keycloakAudience,
+            ValidateLifetime = true,
+            // ValidateIssuer/ValidateIssuerSigningKey stay at their default (true) - Authority above
+            // is what supplies the expected issuer and the JWKS to validate the signature against,
+            // discovered automatically rather than configured by hand the way the Visitor scheme's
+            // local key is.
+        };
         options.Events = HubTokenFromQueryString("/hubs/operator");
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // `5-05`: turns "no operator matched this Keycloak subject" into a clean rejection at the
+    // authorization layer - OperatorIdentityClaimsTransformation adds no OperatorId claim when the
+    // lookup fails, and without this policy that would only surface as
+    // ClaimsPrincipalExtensions.GetOperatorId throwing deep inside a handler instead.
+    options.AddPolicy("RequireOperatorIdentity", policy => policy
+        .AddAuthenticationSchemes(JwtSchemes.Operator)
+        .RequireClaim(AgoClaimTypes.OperatorId));
+});
 
 var app = builder.Build();
 

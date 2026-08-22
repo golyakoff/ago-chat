@@ -14,6 +14,11 @@ internal sealed class OperatorConfiguration : IEntityTypeConfiguration<Operator>
         builder.Property(o => o.SiteId).HasColumnName("site_id").HasConversion(IdConverters.Site);
         builder.Property(o => o.Status).HasColumnName("status").HasConversion<string>();
         builder.Property(o => o.Capacity).HasColumnName("capacity");
+        // `5-05`/`adr/0022`: nullable - not every existing row has one, and there is no backfill for
+        // a Keycloak identity that never existed. Unique when present: two operators must never
+        // resolve to the same Keycloak subject.
+        builder.Property(o => o.ExternalSubjectId).HasColumnName("external_subject_id");
+        builder.HasIndex(o => o.ExternalSubjectId).IsUnique().HasFilter("external_subject_id IS NOT NULL");
 
         // 4-01: a shadow property, not a CLR property on Operator - EF needs to know this column
         // exists so `dotnet ef migrations add` generates a real ALTER TABLE from the model diff, but

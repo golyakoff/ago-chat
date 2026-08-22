@@ -44,9 +44,9 @@
 
 <div class="pane">
   <h2>Operator</h2>
-  <small>Seeded demo operator/site ids (1-05)</small>
-  <input id="operator-id" value="00000000-0000-0000-0000-000000000002" placeholder="Operator id" />
-  <input id="operator-site-id" value="00000000-0000-0000-0000-000000000001" placeholder="Site id" />
+  <small>Paste a token for the seeded demo operator - local-dev.md's "Getting a working operator
+    session locally" has the curl command against Keycloak's own token endpoint.</small>
+  <input id="operator-token" placeholder="Operator access token (from Keycloak)" style="width: 100%" />
   <button onclick="connectOperator()">Connect</button>
   <div id="operator-log" class="log"></div>
   <input id="operator-conversation-id" placeholder="Conversation id (paste from Visitor pane)" />
@@ -177,14 +177,11 @@
   }
 
   async function connectOperator() {
-    const operatorId = document.getElementById('operator-id').value;
-    const siteId = document.getElementById('operator-site-id').value;
-    const res = await fetch('/dev/operator-session', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operatorId, siteId })
-    });
-    if (!res.ok) { log('operator-log', `Failed to start session: ${res.status}`); return; }
-    const { token } = await res.json();
+    // `5-05`: no session-issuance endpoint anymore - the token itself comes from Keycloak
+    // (adr/0022), pasted in directly rather than redirected through here (the real
+    // Authorization Code + PKCE redirect flow is 5-06's console, not this harness).
+    const token = document.getElementById('operator-token').value;
+    if (!token) { log('operator-log', 'Paste an operator token first.'); return; }
 
     operatorConnection = new signalR.HubConnectionBuilder()
       // 3-06: see the matching comment on visitorConnection above - same reason.

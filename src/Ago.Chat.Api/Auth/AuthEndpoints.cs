@@ -26,18 +26,10 @@ public static class AuthEndpoints
         // needed, the same "construct it directly, no full server" seam 3-03 used for VisitorHub.
         app.MapPost("/api/v1/visitor-sessions", HandleVisitorSessionAsync);
 
-        // Dev-only: trades an operator id for a session token directly, no password, no check that
-        // the id is real - IPermissionChecker (adr/0016) is what actually gates anything this token
-        // is used for. Mapped only in Development, never reachable otherwise, and replaced outright
-        // by OIDC at Stage 5, not evolved into it (authorization.md).
-        if (app.Environment.IsDevelopment())
-        {
-            app.MapPost("/dev/operator-session", (OperatorSessionRequest request, JwtTokenService tokens) =>
-            {
-                var token = tokens.IssueOperatorToken(new OperatorId(request.OperatorId), new SiteId(request.SiteId));
-                return Results.Ok(new OperatorSessionResponse(token));
-            });
-        }
+        // `POST /dev/operator-session` (the Development-only stub - no password, no check that the
+        // operator id was real) is removed outright in `5-05`, not left behind a flag - `adr/0022`
+        // replaces it with real Keycloak-issued tokens, `Ago.Chat.Api`'s Operator scheme now
+        // validates directly against Keycloak's JWKS (`Program.cs`).
     }
 
     public static async Task<IResult> HandleVisitorSessionAsync(
@@ -95,8 +87,4 @@ public static class AuthEndpoints
     public sealed record VisitorSessionRequest(string PublicKey);
 
     public sealed record VisitorSessionResponse(string Token, Guid VisitorId);
-
-    public sealed record OperatorSessionRequest(Guid OperatorId, Guid SiteId);
-
-    public sealed record OperatorSessionResponse(string Token);
 }

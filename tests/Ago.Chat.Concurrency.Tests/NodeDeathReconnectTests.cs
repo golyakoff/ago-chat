@@ -163,10 +163,15 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         new Claim("site_id", siteId.Value.ToString()),
     ]));
 
+    // `5-05`/`adr/0022`: `sub` is no longer this project's own OperatorId (it is Keycloak's own
+    // subject once real tokens are validated) - constructing the hub directly, this test bypasses
+    // OperatorIdentityClaimsTransformation entirely, so it adds the same "operator_id" claim that
+    // transformation would have produced by hand, exactly like `site_id` above.
     private static ClaimsPrincipal OperatorPrincipal(SiteId siteId, OperatorId operatorId) => new(new ClaimsIdentity(
     [
         new Claim(JwtRegisteredClaimNames.Sub, operatorId.Value.ToString()),
         new Claim("site_id", siteId.Value.ToString()),
+        new Claim("operator_id", operatorId.Value.ToString()),
     ]));
 
     private sealed class NoOpEventPublisher : IEventPublisher

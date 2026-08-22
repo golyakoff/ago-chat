@@ -18,7 +18,11 @@ namespace Ago.Chat.Api.Hubs;
 /// <summary>realtime.md: authenticated by the operator's JWT, scoped to one site. Who issues that
 /// token is `1-06`'s dev-only stub today, OIDC at Stage 5 (authorization.md) - this hub does not
 /// change either way, since both are JWTs.</summary>
-[Authorize(AuthenticationSchemes = JwtSchemes.Operator)]
+// `5-05`: the policy, not just the scheme - a Keycloak token can validate (real signature, real
+// issuer) yet resolve to no known operator (OperatorIdentityClaimsTransformation adds no OperatorId
+// claim), and RequireOperatorIdentity is what rejects that cleanly rather than
+// ClaimsPrincipalExtensions.GetOperatorId throwing deep inside a hub method.
+[Authorize(AuthenticationSchemes = JwtSchemes.Operator, Policy = "RequireOperatorIdentity")]
 public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
