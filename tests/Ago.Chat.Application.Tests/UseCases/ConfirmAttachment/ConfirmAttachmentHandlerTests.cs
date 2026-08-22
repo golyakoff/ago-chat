@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 
@@ -12,7 +13,11 @@ public class ConfirmAttachmentHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
     private sealed record Fixture(
-        ConfirmAttachmentHandler Handler, FakeAttachmentRepository Attachments, FakeFileStorage FileStorage, Attachment Attachment);
+        ConfirmAttachmentHandler Handler,
+        FakeAttachmentRepository Attachments,
+        FakeFileStorage FileStorage,
+        FakeOutboxWriter Outbox,
+        Attachment Attachment);
 
     private static Fixture CreateFixture()
     {
@@ -26,10 +31,11 @@ public class ConfirmAttachmentHandlerTests
         attachments.Seed(attachment);
 
         var fileStorage = new FakeFileStorage();
+        var outbox = new FakeOutboxWriter();
         var handler = new ConfirmAttachmentHandler(
-            attachments, conversations, fileStorage, new FakePermissionChecker(), new FakeClock(Now));
+            attachments, conversations, fileStorage, new FakePermissionChecker(), outbox, new FakeIdGenerator(), new FakeClock(Now));
 
-        return new Fixture(handler, attachments, fileStorage, attachment);
+        return new Fixture(handler, attachments, fileStorage, outbox, attachment);
     }
 
     [Fact]
@@ -44,6 +50,14 @@ public class ConfirmAttachmentHandlerTests
         Assert.True(result.IsSuccess);
         var saved = await fixture.Attachments.GetByIdAsync(fixture.Attachment.Id, CancellationToken.None);
         Assert.Equal(AttachmentState.Ready, saved!.State);
+
+        // `5-04`: the outbox row a real ConfirmAttachmentHandler stages alongside the state change
+        // (the same tracked entity's SaveChangesAsync commits both, in real Infrastructure -
+        // Ago.Chat.Integration.Tests proves the transaction; this only proves the handler enqueues
+        // the right envelope at all).
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+        Assert.Equal(nameof(AttachmentConfirmed), envelope.Type);
+        Assert.Equal(fixture.Attachment.Id.Value, envelope.MessageId);
     }
 
     [Fact]
@@ -57,6 +71,7 @@ public class ConfirmAttachmentHandlerTests
             new ConfirmAttachmentAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
 
         Assert.True(result.IsFailure);
+        Assert.Empty(fixture.Outbox.Enqueued);
         Assert.Equal("Attachment.VerificationFailed", result.Error!.Value.Code);
         var saved = await fixture.Attachments.GetByIdAsync(fixture.Attachment.Id, CancellationToken.None);
         Assert.Equal(AttachmentState.Pending, saved!.State);

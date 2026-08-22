@@ -21,6 +21,8 @@
 /// </summary>
 public sealed class Attachment
 {
+    private readonly List<IDomainEvent> _domainEvents = [];
+
     public AttachmentId Id { get; }
 
     public SiteId SiteId { get; }
@@ -44,6 +46,11 @@ public sealed class Attachment
     public string? ThumbnailKey { get; private set; }
 
     public DateTimeOffset CreatedAt { get; }
+
+    /// <summary>`5-03` had no consumer for this yet, so <see cref="Attachment"/> raised nothing;
+    /// `5-04`'s thumbnail consumer is the first real one - same "no domain-event plumbing ahead of a
+    /// real subscriber" discipline as `ConfirmReady`'s own original remarks.</summary>
+    public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
 
     private Attachment(
         AttachmentId id,
@@ -103,6 +110,7 @@ public sealed class Attachment
         }
 
         State = AttachmentState.Ready;
+        _domainEvents.Add(new AttachmentReady(Id, SiteId, ConversationId, ObjectKey, ContentType, now));
     }
 
     /// <summary>
@@ -149,4 +157,28 @@ public sealed class Attachment
 
         State = AttachmentState.Deleted;
     }
+
+    /// <summary>
+    /// `5-04`: the only writer of `thumbnail_key`, reserved by `5-03`'s own schema. The consumer's
+    /// own idempotency check (`AttachmentThumbnailGenerator`: skip if `ThumbnailKey` is already set)
+    /// is what actually prevents a redelivered `AttachmentReady` from generating a second thumbnail -
+    /// this method only guards the invariant a caller that skipped that check would otherwise violate.
+    /// </summary>
+    public void SetThumbnail(string thumbnailKey)
+    {
+        if (State != AttachmentState.Ready)
+        {
+            throw new InvalidAttachmentStateException(
+                $"Cannot set a thumbnail for attachment {Id.Value} in state {State}; only {AttachmentState.Ready} accepts one.");
+        }
+
+        if (ThumbnailKey is not null)
+        {
+            throw new InvalidAttachmentStateException($"Attachment {Id.Value} already has a thumbnail.");
+        }
+
+        ThumbnailKey = thumbnailKey;
+    }
+
+    public void ClearDomainEvents() => _domainEvents.Clear();
 }

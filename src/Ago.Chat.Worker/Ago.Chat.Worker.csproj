@@ -8,4 +8,15 @@
     <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- `5-04`: MIT-licensed, free for commercial use unconditionally - unlike
+         SixLabors.ImageSharp's revenue-gated split license, the author's own choice for
+         AttachmentThumbnailGenerator. Native binding (Skia), so both a managed and a native-assets
+         package are needed; Linux for the container image, Win32 for local `dotnet run`/tests on
+         this dev machine. -->
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
+  </ItemGroup>
+
 </Project>
