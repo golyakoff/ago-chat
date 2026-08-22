@@ -23,5 +23,16 @@ public class OperatorTests
         Assert.Equal(siteId, op.SiteId);
         Assert.Equal(OperatorStatus.Online, op.Status);
         Assert.Equal(5, op.Capacity);
+        Assert.Null(op.ExternalSubjectId);
+    }
+
+    [Fact]
+    public void Constructor_WithAnExternalSubjectId_SetsIt()
+    {
+        var op = new Operator(
+            new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5,
+            externalSubjectId: "keycloak-sub-123");
+
+        Assert.Equal("keycloak-sub-123", op.ExternalSubjectId);
     }
 }

@@ -1,0 +1,64 @@
+{
+  "realm": "ago-chat-test",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 5,
+  "clients": [
+    {
+      "clientId": "ago-console",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["*"],
+      "protocolMappers": [
+        {
+          "name": "ago-console-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "ago-console",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "00000000-0000-0000-0000-0000000000f0",
+      "username": "demo-operator",
+      "email": "demo-operator@example.test",
+      "firstName": "Demo",
+      "lastName": "Operator",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-operator-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000f1",
+      "username": "orphan-operator",
+      "email": "orphan-operator@example.test",
+      "firstName": "Orphan",
+      "lastName": "Operator",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-operator-password",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

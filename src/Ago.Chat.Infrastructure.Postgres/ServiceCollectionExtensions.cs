@@ -25,6 +25,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+        services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();

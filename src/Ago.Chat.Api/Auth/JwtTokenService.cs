@@ -13,32 +13,27 @@ namespace Ago.Chat.Api.Auth;
 /// </summary>
 public sealed class JwtTokenService(SigningCredentials signingCredentials, string issuer, IClock clock)
 {
-    public string IssueVisitorToken(VisitorId visitorId, SiteId siteId) =>
-        Issue(JwtSchemes.Visitor, visitorId.Value.ToString(), siteId, TimeSpan.FromDays(30));
-
-    public string IssueOperatorToken(OperatorId operatorId, SiteId siteId) =>
-        Issue(JwtSchemes.Operator, operatorId.Value.ToString(), siteId, TimeSpan.FromHours(8));
-
-    private string Issue(string audience, string subject, SiteId siteId, TimeSpan lifetime)
+    /// <summary>The Operator scheme's own counterpart, `IssueOperatorToken`, was deleted in `5-05` -
+    /// `adr/0022` replaces it outright with real OIDC (Keycloak issues operator tokens now), never
+    /// evolves it. Visitors were never behind that stub, so this is untouched.</summary>
+    public string IssueVisitorToken(VisitorId visitorId, SiteId siteId)
     {
         var now = clock.UtcNow;
         var claims = new[]
         {
-            new Claim(JwtRegisteredClaimNames.Sub, subject),
+            new Claim(JwtRegisteredClaimNames.Sub, visitorId.Value.ToString()),
             new Claim(AgoClaimTypes.SiteId, siteId.Value.ToString()),
-            // `5-03`: the audience already distinguishes the two schemes for token *validation*, but
-            // AttachmentEndpoints accepts either scheme on one route and needs to tell them apart
-            // from inside the handler - cheaper and less fragile than inferring it from which
-            // AddAuthenticationSchemes entry produced the winning identity.
-            new Claim(AgoClaimTypes.Kind, audience == JwtSchemes.Visitor ? "visitor" : "operator"),
+            // `5-03`: AttachmentEndpoints accepts either scheme on one route and needs to tell them
+            // apart from inside the handler.
+            new Claim(AgoClaimTypes.Kind, "visitor"),
         };
 
         var token = new JwtSecurityToken(
             issuer: issuer,
-            audience: audience,
+            audience: JwtSchemes.Visitor,
             claims: claims,
             notBefore: now.UtcDateTime,
-            expires: now.Add(lifetime).UtcDateTime,
+            expires: now.AddDays(30).UtcDateTime,
             signingCredentials: signingCredentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

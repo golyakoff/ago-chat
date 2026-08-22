@@ -10,6 +10,7 @@ using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
+using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
@@ -114,6 +115,7 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<CreateAttachmentHandler>();
         services.AddScoped<ConfirmAttachmentHandler>();
         services.AddScoped<GetAttachmentDownloadUrlHandler>();
+        services.AddScoped<ResolveOperatorIdentityHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

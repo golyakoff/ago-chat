@@ -29,12 +29,20 @@
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Include="Testcontainers.Minio" />
+    <PackageReference Include="Testcontainers.Keycloak" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="keycloak-realm-import.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>

@@ -16,7 +16,14 @@ public sealed class Operator
 
     public int Capacity { get; }
 
-    public Operator(OperatorId id, SiteId siteId, OperatorStatus status, int capacity)
+    /// <summary>`5-05`: the Keycloak-issued `sub` claim identifying this operator to the IdP - how
+    /// `Ago.Chat.Api`'s `IClaimsTransformation` resolves a validated OIDC token back to this row
+    /// (`adr/0022`). Optional, not required at construction, so every existing caller that builds an
+    /// `Operator` without an external identity (every test in this codebase today) keeps compiling -
+    /// nothing before `5-05` had one to provide.</summary>
+    public string? ExternalSubjectId { get; }
+
+    public Operator(OperatorId id, SiteId siteId, OperatorStatus status, int capacity, string? externalSubjectId = null)
     {
         if (capacity <= 0)
         {
@@ -28,6 +35,7 @@ public sealed class Operator
         SiteId = siteId;
         Status = status;
         Capacity = capacity;
+        ExternalSubjectId = externalSubjectId;
     }
 
     // EF Core materialization only (1-04) - never called by domain code.
