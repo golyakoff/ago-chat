@@ -1,0 +1,31 @@
+﻿using System.Text.Json;
+using Ago.Chat.Application.Realtime;
+using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
+using Ago.Platform.Kernel;
+
+namespace Ago.Chat.Application.UseCases.ResolveConversationAssignment;
+
+/// <summary>
+/// `4-02`: the product-specific half of realtime.md's Fan-out path for the assignment engine's own
+/// notification - resolve-by-node, publish-per-node mechanics stay in `Ago.Platform.Realtime`'s
+/// <see cref="INodeFanoutPublisher"/>, which this handler only calls. No conversation load
+/// (contrast <c>ResolveMessageDeliveryTargetsHandler</c>): the event already carries both recipients.
+/// </summary>
+public sealed class ResolveConversationAssignmentTargetsHandler(INodeFanoutPublisher fanout)
+{
+    public async Task<Result> HandleAsync(ResolveConversationAssignmentTargets command, CancellationToken cancellationToken)
+    {
+        var recipients = new List<PrincipalKey>
+        {
+            PrincipalKeys.ForVisitor(new VisitorId(command.VisitorId)),
+            PrincipalKeys.ForOperator(new OperatorId(command.OperatorId)),
+        };
+
+        var dto = new ConversationAssignedDto(command.ConversationId, command.OperatorId, command.OccurredAt);
+        await fanout.PublishAsync(recipients, "ConversationAssigned", JsonSerializer.Serialize(dto), command.CorrelationId, cancellationToken);
+
+        return Result.Success();
+    }
+}

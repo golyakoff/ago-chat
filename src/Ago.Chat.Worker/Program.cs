@@ -33,6 +33,18 @@ builder.Services
 builder.Services.AddHostedService<ConnectionFanoutConsumer>();
 
 builder.Services
+    .AddOptions<ConversationAssignmentFanoutConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(ConversationAssignmentFanoutConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ConversationAssignmentFanoutConsumer>();
+
+builder.Services
+    .AddOptions<ConversationAssignmentJobOptions>()
+    .Bind(builder.Configuration.GetSection(ConversationAssignmentJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ConversationAssignmentJob>();
+
+builder.Services
     .AddOptions<SiteCacheInvalidationConsumerOptions>()
     .Bind(builder.Configuration.GetSection(SiteCacheInvalidationConsumerOptions.SectionName))
     .ValidateOnStart();
