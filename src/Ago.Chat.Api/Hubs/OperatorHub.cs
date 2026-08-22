@@ -6,6 +6,7 @@ using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Chat.Module;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authorization;
@@ -22,6 +23,7 @@ public sealed class OperatorHub(
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
     HubConnectionRegistration connectionRegistration,
+    OperatorPresencePublisher presencePublisher,
     DrainState drainState) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
@@ -39,10 +41,21 @@ public sealed class OperatorHub(
         await base.OnConnectedAsync();
     }
 
+    /// <summary>`4-04`: the query-at-disconnect fast path - if this was the operator's last
+    /// connection anywhere, publish immediately rather than waiting for the periodic sweep
+    /// (`OperatorDisconnectSweepJob`, `Ago.Chat.Worker`) to notice. The sweep is still the
+    /// backstop this relies on for a disconnect that never fires this event at all (a hard
+    /// process kill on the client side, or this very host dying before the publish completes).</summary>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        var principal = PrincipalKeys.ForOperator(Context.User!.GetOperatorId());
-        await connectionRegistration.OnDisconnectedAsync(new ConnectionId(Context.ConnectionId), principal);
+        var operatorId = Context.User!.GetOperatorId();
+        var principal = PrincipalKeys.ForOperator(operatorId);
+        var lastConnectionGone = await connectionRegistration.OnDisconnectedAsync(new ConnectionId(Context.ConnectionId), principal);
+        if (lastConnectionGone)
+        {
+            await presencePublisher.PublishLostAsync(operatorId, Context.User!.GetSiteId(), CancellationToken.None);
+        }
+
         await base.OnDisconnectedAsync(exception);
     }
 

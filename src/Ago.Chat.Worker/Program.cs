@@ -63,6 +63,22 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ConversationAssignmentJob>();
 
+// 4-04: OperatorConversationReleaser is stateless beyond the shared NpgsqlDataSource pool, matching
+// SkipLockedAssignmentClaimer/RedisLockAssignmentClaimer's own registration shape.
+builder.Services.AddSingleton<OperatorConversationReleaser>();
+
+builder.Services
+    .AddOptions<OperatorDisconnectGraceConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorDisconnectGraceConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorDisconnectGraceConsumer>();
+
+builder.Services
+    .AddOptions<OperatorDisconnectSweepJobOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorDisconnectSweepJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorDisconnectSweepJob>();
+
 builder.Services
     .AddOptions<SiteCacheInvalidationConsumerOptions>()
     .Bind(builder.Configuration.GetSection(SiteCacheInvalidationConsumerOptions.SectionName))
