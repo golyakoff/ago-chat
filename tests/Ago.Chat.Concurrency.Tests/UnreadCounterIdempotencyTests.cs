@@ -55,12 +55,20 @@ public sealed class UnreadCounterIdempotencyTests(ConcurrencyTestFixture fixture
         // published before any queue is bound to it (Competing mode's durable queue is only
         // declared once SubscribeAsync runs) - publishing first would silently lose it, not defer
         // it, unlike a real deployment where Worker replicas are already subscribed before traffic
-        // starts flowing.
+        // starts flowing. A fixed delay here (this test's original approach) is not a real
+        // readiness signal - RabbitMqEventConsumer.SubscribeAsync's declare/bind/consume chain is
+        // several broker round trips, and BackgroundService.StartAsync returns as soon as
+        // ExecuteAsync is scheduled, not once it has run (the same class of race 3-06's
+        // ConnectionDrainCoordinator hit). Found live: this exact test dropped every message on a
+        // slower CI runner where 500ms was not enough. UnreadCounterConsumer.ExecuteAsync is
+        // literally `return consumer.SubscribeAsync(...)`, and SubscribeAsync's own Task completes
+        // right after BasicConsumeAsync registers the handler (event-driven delivery afterward does
+        // not block it) - so awaiting ExecuteTask is the actual "queue exists and is bound" signal,
+        // not a guess at how long that might take.
         await consumer.StartAsync(CancellationToken.None);
+        await consumer.ExecuteTask!;
         try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(500));
-
             await using var publisherConnection = new RabbitMqConnection(rabbitOptions);
             var publisher = new RabbitMqEventPublisher(publisherConnection);
             await publisher.PublishAsync(envelope, CancellationToken.None);
