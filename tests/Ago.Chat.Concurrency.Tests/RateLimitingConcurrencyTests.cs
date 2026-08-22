@@ -58,8 +58,7 @@ public sealed class RateLimitingConcurrencyTests(SiteCachingConcurrencyFixture f
         {
             await using var db = fixture.CreateDbContext();
             var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(db), new SystemClock(), new UuidV7Generator(), new EfOutboxWriter<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>(db),
-                limiter, options);
+                new ConversationRepository(db), limiter, options, new SynchronousMessagePipeline(fixture.DataSource));
             return await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
         }));
 

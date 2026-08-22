@@ -52,8 +52,8 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         await using (var writeDb = fixture.CreateDbContext())
         {
             var sendMessage = new SendVisitorMessageHandler(
-                new ConversationRepository(writeDb), new SystemClock(), new UuidV7Generator(),
-                new EfOutboxWriter<AgoChatDbContext>(writeDb), new FakeRateLimiter(), new MessageSendRateLimitOptions());
+                new ConversationRepository(writeDb), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
+                new SynchronousMessagePipeline(fixture.DataSource));
             for (var i = 1; i <= 5; i++)
             {
                 var sent = await sendMessage.HandleAsync(

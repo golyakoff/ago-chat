@@ -47,8 +47,7 @@ public sealed class ReconnectDeliversViaHistoryTests(ConcurrencyTestFixture fixt
         await using (var db = fixture.CreateDbContext())
         {
             var sendMessage = new SendOperatorMessageHandler(
-                new ConversationRepository(db), new PermissionChecker(db), new SystemClock(), new UuidV7Generator(),
-                new EfOutboxWriter<AgoChatDbContext>(db));
+                new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
             for (var i = 1; i <= 3; i++)
             {
                 var sent = await sendMessage.HandleAsync(

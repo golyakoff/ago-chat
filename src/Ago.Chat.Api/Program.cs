@@ -3,7 +3,9 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module;
+using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
@@ -54,6 +56,18 @@ builder.Services.AddHostedService<CacheInvalidationConsumer>();
 // drain, the same "registered everywhere (AddConnectionRegistry), only this host runs the hosted
 // service" shape as NodeDeliveryConsumer/ConnectionHeartbeat above.
 builder.Services.AddHostedService<ConnectionDrainCoordinator>();
+
+// 4-05: concurrency.md's "In-process pipeline (Api)" - ChatModule registers IMessagePipeline's
+// implementation (ChannelMessagePipeline) for every host, the same "registered everywhere, only
+// this host runs the hosted service" shape as everything else on this page; only Ago.Chat.Api
+// actually drains it, since only Ago.Chat.Api's hubs ever enqueue onto it. ConversationSequencer,
+// BatchAccumulator and MessageBatchWriter are internal plumbing MessagePipelineWorkerHost/
+// BatchFlusherService share, not needed anywhere else.
+builder.Services.AddSingleton<ConversationSequencer>();
+builder.Services.AddSingleton<BatchAccumulator>();
+builder.Services.AddSingleton<MessageBatchWriter>();
+builder.Services.AddHostedService<MessagePipelineWorkerHost>();
+builder.Services.AddHostedService<BatchFlusherService>();
 
 // 3-05: bound here, not ChatModule - AuthEndpoints is the only consumer, and it lives in Ago.Chat.Api
 // itself (unlike MessageSendRateLimitOptions, which sits beside SendVisitorMessageHandler in

@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.UseCases.AssignConversation;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.RecordUnread;
@@ -7,6 +8,7 @@ using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Messaging.RabbitMq;
@@ -59,6 +61,19 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(MessageSendRateLimitOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageSendRateLimitOptions>>().Value);
+
+        // 4-05: bound and registered here, not Ago.Chat.Api's Program.cs - the same DI-validation
+        // reason as OperatorPresencePublisher (4-04), see ChannelMessagePipeline's own remarks.
+        // SendVisitorMessageHandler/SendOperatorMessageHandler are registered for every host below
+        // and now depend on IMessagePipeline, so an implementation must be resolvable everywhere
+        // even though only Ago.Chat.Api's MessagePipelineWorkerHost/BatchFlusherService (registered
+        // in its own Program.cs) ever actually drain it.
+        services
+            .AddOptions<MessagePipelineOptions>()
+            .Bind(configuration.GetSection(MessagePipelineOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<ChannelMessagePipeline>();
+        services.AddSingleton<IMessagePipeline>(sp => sp.GetRequiredService<ChannelMessagePipeline>());
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();

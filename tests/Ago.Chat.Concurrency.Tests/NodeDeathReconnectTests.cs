@@ -137,7 +137,7 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var db = fixture.CreateDbContext();
         var assignConversation = new AssignConversationHandler(new ConversationRepository(db), new PermissionChecker(db), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
-            new ConversationRepository(db), new PermissionChecker(db), new SystemClock(), new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db));
+            new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(registry, tracker, node);

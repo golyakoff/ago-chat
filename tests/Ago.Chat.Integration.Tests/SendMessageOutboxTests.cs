@@ -19,7 +19,6 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
     // table only ever has partitions for the current month and the next two. Truncated to whole
     // seconds so it round-trips through Postgres's timestamptz unchanged.
     private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
-    private static readonly IIdGenerator IdGenerator = new UuidV7Generator();
 
     [Fact]
     public async Task SendVisitorMessage_WritesOneMessageRowAndOneMatchingOutboxRow()
@@ -39,7 +38,8 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(db), new FixedClock(Now), IdGenerator, new EfOutboxWriter<AgoChatDbContext>(db), new FakeRateLimiter(), new MessageSendRateLimitOptions());
+                new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
+                new SynchronousMessagePipeline(fixture.DataSource));
 
             var result = await handler.HandleAsync(
                 new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
@@ -75,7 +75,8 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(db), new FixedClock(Now), IdGenerator, new EfOutboxWriter<AgoChatDbContext>(db), new FakeRateLimiter(), new MessageSendRateLimitOptions());
+                new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
+                new SynchronousMessagePipeline(fixture.DataSource));
 
             var result = await handler.HandleAsync(
                 new SendVisitorMessage(conversationId, visitorId, "   "), CancellationToken.None);
@@ -86,10 +87,5 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         Assert.False(await verify.Set<Message>().AnyAsync(CancellationToken.None));
         Assert.False(await verify.Set<OutboxMessage>().AnyAsync(CancellationToken.None));
-    }
-
-    private sealed class FixedClock(DateTimeOffset now) : IClock
-    {
-        public DateTimeOffset UtcNow => now;
     }
 }
