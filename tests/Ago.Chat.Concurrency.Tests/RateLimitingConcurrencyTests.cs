@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
@@ -71,53 +72,28 @@ public sealed class RateLimitingConcurrencyTests(SiteCachingConcurrencyFixture f
     [Fact]
     public async Task ADeniedRequest_RetryAfterIsHonoured_WaitingThenRetryingSucceeds()
     {
-        var siteId = new SiteId(Guid.NewGuid());
-        var visitorId = new VisitorId(Guid.NewGuid());
-        var conversationId = new ConversationId(Guid.NewGuid());
-        await using (var db = fixture.CreateDbContext())
-        {
-            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
-            await db.SaveChangesAsync();
-        }
-
+        // Checks IRateLimiter directly rather than through SendVisitorMessageHandler - the wiring
+        // through the handler is Ago.Chat.Integration.Tests.RateLimitingTests' job; this test is
+        // specifically about the timing contract (deny now, allow again after RetryAfter), which a
+        // real Postgres round trip between calls would put at the mercy of CI-runner latency
+        // variance sitting in the same window as the bucket's own refill - found flaky in CI for
+        // exactly that reason (a slower-than-local round trip let enough of a token regenerate
+        // between the first and second call to allow it too). Waiting the exact RetryAfter Redis
+        // itself returned, not a value re-derived from the configured rate, removes the guesswork.
         var limiter = new RedisRateLimiter(
             fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(), NullLogger<RedisRateLimiter>.Instance);
-        // 2 tokens/sec (0.5s to refill) - fast enough the test does not sleep long, slow enough that
-        // it comfortably outlasts the real Postgres round trip between the first and second call
-        // (a much faster refill made the second call flaky: it could complete after enough of a
-        // token had already regenerated to be allowed too).
-        var options = new MessageSendRateLimitOptions
-        {
-            PerVisitorCapacity = 1,
-            PerVisitorRefillPerSecond = 2,
-            PerSiteCapacity = 1000,
-            PerSiteRefillPerSecond = 1000,
-        };
+        var key = new RateLimitKey($"test:{Guid.NewGuid():N}");
+        var rule = new RateLimitRule(Capacity: 1, RefillPerSecond: 5);
 
-        async Task<Ago.Platform.Kernel.Result<int>> SendAsync(string body)
-        {
-            await using var db = fixture.CreateDbContext();
-            var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(db), new SystemClock(), new UuidV7Generator(),
-                new EfOutboxWriter<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>(db), limiter, options);
-            return await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, body), CancellationToken.None);
-        }
+        var first = await limiter.CheckAsync(key, rule, CancellationToken.None);
+        Assert.True(first.Allowed);
 
-        var firstResult = await SendAsync("one");
-        Assert.True(firstResult.IsSuccess);
+        var denied = await limiter.CheckAsync(key, rule, CancellationToken.None);
+        Assert.False(denied.Allowed);
 
-        var deniedResult = await SendAsync("two");
-        Assert.True(deniedResult.IsFailure);
+        await Task.Delay(denied.RetryAfter + TimeSpan.FromMilliseconds(100));
 
-        // The retry-after rides in the message text (Ago.Platform.Kernel.Error has no structured
-        // field) - re-derive the wait from the same rule directly rather than parsing it back out
-        // of a human-readable string.
-        var retryAfter = TimeSpan.FromSeconds(1.0 / options.PerVisitorRefillPerSecond);
-        await Task.Delay(retryAfter + TimeSpan.FromMilliseconds(50));
-
-        var afterWaitingResult = await SendAsync("three");
-        Assert.True(afterWaitingResult.IsSuccess);
+        var afterWaiting = await limiter.CheckAsync(key, rule, CancellationToken.None);
+        Assert.True(afterWaiting.Allowed);
     }
 }
