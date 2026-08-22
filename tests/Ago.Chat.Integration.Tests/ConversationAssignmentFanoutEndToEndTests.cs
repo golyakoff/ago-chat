@@ -84,7 +84,8 @@ public sealed class ConversationAssignmentFanoutEndToEndTests(ConnectionFanoutFi
         try
         {
             var job = new ConversationAssignmentJob(
-                fixture.DataSource, new SystemClock(), new UuidV7Generator(),
+                fixture.DataSource,
+                new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator()),
                 Options.Create(new ConversationAssignmentJobOptions()), NullLogger<ConversationAssignmentJob>.Instance);
             await job.RunOnceAsync(CancellationToken.None);
 
