@@ -2,6 +2,7 @@
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -65,5 +66,6 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<AssignConversationHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
+        services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
     }
 }

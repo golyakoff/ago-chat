@@ -21,10 +21,17 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
         const int capacity = 5;
         const int attempts = 20;
         var (siteId, operatorId) = await SeedOperatorAsync(capacity);
-        var store = new OperatorCapacityStore(fixture.DataSource);
 
+        // A fresh AgoChatDbContext per attempt, not one store shared across all of them - DbContext
+        // is not thread-safe, and a Scoped-per-unit-of-work DbContext is exactly how this port is
+        // actually used in production (4-02's per-conversation transaction), so the test should not
+        // paper over that with one shared instance.
         var results = await Task.WhenAll(Enumerable.Range(0, attempts)
-            .Select(_ => store.TryClaimAsync(operatorId, CancellationToken.None)));
+            .Select(async _ =>
+            {
+                await using var db = fixture.CreateDbContext();
+                return await new OperatorCapacityStore(db).TryClaimAsync(operatorId, CancellationToken.None);
+            }));
 
         Assert.Equal(capacity, results.Count(claimed => claimed));
         Assert.Equal(attempts - capacity, results.Count(claimed => !claimed));
@@ -36,14 +43,22 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
     {
         const int capacity = 2;
         var (siteId, operatorId) = await SeedOperatorAsync(capacity);
-        var store = new OperatorCapacityStore(fixture.DataSource);
-        Assert.True(await store.TryClaimAsync(operatorId, CancellationToken.None));
+        await using (var db = fixture.CreateDbContext())
+        {
+            Assert.True(await new OperatorCapacityStore(db).TryClaimAsync(operatorId, CancellationToken.None));
+        }
 
-        await store.ReleaseAsync(operatorId, CancellationToken.None);
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new OperatorCapacityStore(db).ReleaseAsync(operatorId, CancellationToken.None);
+        }
         Assert.Equal(0, await ReadActiveChatsAsync(operatorId));
 
         // A duplicate/racing release must not push the count negative.
-        await store.ReleaseAsync(operatorId, CancellationToken.None);
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new OperatorCapacityStore(db).ReleaseAsync(operatorId, CancellationToken.None);
+        }
         Assert.Equal(0, await ReadActiveChatsAsync(operatorId));
     }
 
@@ -52,10 +67,16 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
     {
         const int capacity = 1;
         var (siteId, operatorId) = await SeedOperatorAsync(capacity);
-        var store = new OperatorCapacityStore(fixture.DataSource);
-        Assert.True(await store.TryClaimAsync(operatorId, CancellationToken.None));
+        await using (var db = fixture.CreateDbContext())
+        {
+            Assert.True(await new OperatorCapacityStore(db).TryClaimAsync(operatorId, CancellationToken.None));
+        }
 
-        var secondClaim = await store.TryClaimAsync(operatorId, CancellationToken.None);
+        bool secondClaim;
+        await using (var db = fixture.CreateDbContext())
+        {
+            secondClaim = await new OperatorCapacityStore(db).TryClaimAsync(operatorId, CancellationToken.None);
+        }
 
         Assert.False(secondClaim);
         Assert.Equal(1, await ReadActiveChatsAsync(operatorId));

@@ -1,46 +1,46 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
-using Npgsql;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace Ago.Chat.Infrastructure.Postgres;
 
 /// <summary>
-/// `4-01`'s `IOperatorCapacity` - raw Npgsql, not EF, for the same reason
-/// <c>ConversationReadStore</c> already is (`adr/0004`): the atomic compare-and-set
-/// `concurrency.md` specifies has no LINQ shape, and this store never needs change tracking. The
-/// only writer of `operators.active_chats` - <c>OperatorConfiguration</c>'s shadow property exists
-/// so EF knows the column for migrations, but SaveChanges never touches it.
+/// `4-01`'s `IOperatorCapacity` - raw SQL, not LINQ (the atomic compare-and-set has no LINQ shape),
+/// but issued through <see cref="AgoChatDbContext"/>'s own connection via
+/// <c>ExecuteSqlInterpolatedAsync</c> rather than a separate <c>NpgsqlDataSource</c> connection.
+///
+/// `4-02` needs this: a claim and the conversation assignment it enables must commit atomically -
+/// crash or fail between the two and a capacity slot leaks forever, permanently invisible to any
+/// future claim query, with no assigned conversation to account for it. EF's <c>ExecuteSqlAsync</c>
+/// family participates in <c>Database.CurrentTransaction</c> automatically when the caller has one
+/// open (exactly what `4-02`'s per-batch transaction needs), and still works standalone with its own
+/// implicit transaction when there is none (exactly what `4-01`'s original, still-standalone tests
+/// need) - one implementation serves both without the port itself changing shape.
 /// </summary>
-public sealed class OperatorCapacityStore(NpgsqlDataSource dataSource) : IOperatorCapacity
+public sealed class OperatorCapacityStore(AgoChatDbContext db) : IOperatorCapacity
 {
     public async Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken)
     {
-        const string sql = """
+        var rowsAffected = await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
             UPDATE operators
             SET active_chats = active_chats + 1
-            WHERE id = @id AND active_chats < capacity
-            """;
+            WHERE id = {operatorId.Value} AND active_chats < capacity
+            """,
+            cancellationToken);
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("id", operatorId.Value);
-
-        var rowsAffected = await command.ExecuteNonQueryAsync(cancellationToken);
         return rowsAffected > 0;
     }
 
     public async Task ReleaseAsync(OperatorId operatorId, CancellationToken cancellationToken)
     {
-        const string sql = """
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
             UPDATE operators
             SET active_chats = active_chats - 1
-            WHERE id = @id AND active_chats > 0
-            """;
-
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("id", operatorId.Value);
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            WHERE id = {operatorId.Value} AND active_chats > 0
+            """,
+            cancellationToken);
     }
 }
