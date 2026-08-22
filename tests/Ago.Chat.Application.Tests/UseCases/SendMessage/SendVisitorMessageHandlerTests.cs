@@ -17,7 +17,8 @@ public class SendVisitorMessageHandlerTests
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(conversation);
         var outbox = new FakeOutboxWriter();
-        var handler = new SendVisitorMessageHandler(conversations, new FakeClock(Now), new FakeIdGenerator(), outbox);
+        var handler = new SendVisitorMessageHandler(
+            conversations, new FakeClock(Now), new FakeIdGenerator(), outbox, new FakeRateLimiter(), new MessageSendRateLimitOptions());
         return (handler, conversations, conversation, outbox);
     }
 
@@ -49,13 +50,34 @@ public class SendVisitorMessageHandlerTests
     public async Task HandleAsync_WhenConversationDoesNotExist_ReturnsNotFound()
     {
         var conversations = new FakeConversationRepository();
-        var handler = new SendVisitorMessageHandler(conversations, new FakeClock(Now), new FakeIdGenerator(), new FakeOutboxWriter());
+        var handler = new SendVisitorMessageHandler(
+            conversations, new FakeClock(Now), new FakeIdGenerator(), new FakeOutboxWriter(),
+            new FakeRateLimiter(), new MessageSendRateLimitOptions());
 
         var result = await handler.HandleAsync(
             new SendVisitorMessage(new ConversationId(Guid.NewGuid()), VisitorId, "hello"), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenThePerVisitorRateLimitIsExceeded_ReturnsRateLimited_BeforeTouchingTheConversation()
+    {
+        var conversations = new FakeConversationRepository();
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversations.Seed(conversation);
+        var limiter = new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5));
+        var handler = new SendVisitorMessageHandler(
+            conversations, new FakeClock(Now), new FakeIdGenerator(), new FakeOutboxWriter(), limiter, new MessageSendRateLimitOptions());
+
+        var result = await handler.HandleAsync(
+            new SendVisitorMessage(conversation.Id, VisitorId, "hello"), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Message.RateLimited", result.Error!.Value.Code);
+        Assert.Contains("5.0s", result.Error!.Value.Message);
+        Assert.Empty(conversation.Messages); // denied before ever touching the conversation
     }
 
     [Fact]

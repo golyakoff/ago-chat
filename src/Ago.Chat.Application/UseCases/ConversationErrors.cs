@@ -1,4 +1,5 @@
-﻿using Ago.Platform.Kernel;
+﻿using System.Globalization;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases;
 
@@ -18,4 +19,12 @@ internal static class ConversationErrors
 
     public static Error InvalidBody(string reason) =>
         new("Message.InvalidBody", reason);
+
+    // The retry-after rides in the message text, not a structured field - Error only ever carries
+    // Code+Message (Ago.Platform.Kernel), and every caller of this handler already just forwards
+    // Error.Message verbatim (VisitorHub's HubException, matching every other failure here).
+    // InvariantCulture, not the current culture - found by running the test suite on a machine
+    // whose culture formats a decimal point as a comma, turning "5.0s" into "5,0s".
+    public static Error RateLimited(TimeSpan retryAfter) =>
+        new("Message.RateLimited", $"Too many messages - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
 }

@@ -110,7 +110,7 @@ public sealed class UnreadCounterEndToEndTests
                 await using var db = new AgoChatDbContext(dbOptions);
                 var handler = new SendVisitorMessageHandler(
                     new ConversationRepository(db), new SystemClock(), new UuidV7Generator(),
-                    new EfOutboxWriter<AgoChatDbContext>(db));
+                    new EfOutboxWriter<AgoChatDbContext>(db), new FakeRateLimiter(), new MessageSendRateLimitOptions());
 
                 var result = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
                 Assert.True(result.IsSuccess);

@@ -39,7 +39,7 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(db), new FixedClock(Now), IdGenerator, new EfOutboxWriter<AgoChatDbContext>(db));
+                new ConversationRepository(db), new FixedClock(Now), IdGenerator, new EfOutboxWriter<AgoChatDbContext>(db), new FakeRateLimiter(), new MessageSendRateLimitOptions());
 
             var result = await handler.HandleAsync(
                 new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
@@ -75,7 +75,7 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(db), new FixedClock(Now), IdGenerator, new EfOutboxWriter<AgoChatDbContext>(db));
+                new ConversationRepository(db), new FixedClock(Now), IdGenerator, new EfOutboxWriter<AgoChatDbContext>(db), new FakeRateLimiter(), new MessageSendRateLimitOptions());
 
             var result = await handler.HandleAsync(
                 new SendVisitorMessage(conversationId, visitorId, "   "), CancellationToken.None);
