@@ -1,107 +1,92 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.Tests.UseCases.SendMessage;
 
+/// <summary>
+/// `4-05`: same shrink as `SendVisitorMessageHandlerTests` - RBAC and body-shape checks stay here
+/// (no conversation load needed for either, see the handler's own remarks), the participant/state
+/// checks `AddOperatorMessage` enforces and the actual write move to
+/// `Ago.Chat.Integration.Tests.MessageBatchWriterTests`.
+/// </summary>
 public class SendOperatorMessageHandlerTests
 {
     private static readonly SiteId SiteId = new(Guid.NewGuid());
-    private static readonly VisitorId VisitorId = new(Guid.NewGuid());
     private static readonly OperatorId OperatorId = new(Guid.NewGuid());
-    private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    private static readonly ConversationId ConversationId = new(Guid.NewGuid());
 
-    private static (
-        SendOperatorMessageHandler Handler,
-        FakeConversationRepository Conversations,
-        FakePermissionChecker Permissions,
-        Conversation Conversation,
-        FakeOutboxWriter Outbox)
-        CreateHandlerWithAssignedConversation(bool grantPermission = true)
+    private static (SendOperatorMessageHandler Handler, FakePermissionChecker Permissions, FakeMessagePipeline Pipeline)
+        CreateHandler(bool grantPermission = true, FakeMessagePipeline? pipeline = null)
     {
-        var conversations = new FakeConversationRepository();
-        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
-        conversation.AssignTo(OperatorId, Now);
-        conversations.Seed(conversation);
-
         var permissions = new FakePermissionChecker();
         if (grantPermission)
         {
             permissions.Grant(OperatorId, SiteId, Permission.ConversationSend);
         }
 
-        var outbox = new FakeOutboxWriter();
-        var handler = new SendOperatorMessageHandler(
-            conversations, permissions, new FakeClock(Now), new FakeIdGenerator(), outbox);
-        return (handler, conversations, permissions, conversation, outbox);
+        pipeline ??= new FakeMessagePipeline();
+        var handler = new SendOperatorMessageHandler(permissions, pipeline);
+        return (handler, permissions, pipeline);
     }
 
     [Fact]
-    public async Task HandleAsync_WhenTheOperatorIsAssignedAndPermitted_Succeeds()
+    public async Task HandleAsync_WhenPermitted_EnqueuesTheMessageAndReturnsThePipelinesResult()
     {
-        var (handler, _, _, conversation, _) = CreateHandlerWithAssignedConversation();
+        var pipeline = new FakeMessagePipeline(7);
+        var (handler, _, _) = CreateHandler(pipeline: pipeline);
 
         var result = await handler.HandleAsync(
-            new SendOperatorMessage(conversation.Id, OperatorId, SiteId, "how can I help?"), CancellationToken.None);
+            new SendOperatorMessage(ConversationId, OperatorId, SiteId, "how can I help?"), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal(1, result.Value);
+        Assert.Equal(7, result.Value);
+        var pending = Assert.Single(pipeline.Enqueued);
+        Assert.Equal(ConversationId, pending.ConversationId);
+        Assert.Equal(MessageAuthorKind.Operator, pending.AuthorKind);
+        Assert.Equal(OperatorId.Value, pending.AuthorId);
+        Assert.Equal("how can I help?", pending.Body.Value);
     }
 
     [Fact]
-    public async Task HandleAsync_WhenTheOperatorIsAssignedAndPermitted_EnqueuesMessageAccepted()
+    public async Task HandleAsync_WhenTheOperatorLacksThePermission_ReturnsForbidden_WithoutEnqueueing()
     {
-        var (handler, _, _, conversation, outbox) = CreateHandlerWithAssignedConversation();
-
-        await handler.HandleAsync(
-            new SendOperatorMessage(conversation.Id, OperatorId, SiteId, "how can I help?"), CancellationToken.None);
-
-        var envelope = Assert.Single(outbox.Enqueued);
-        Assert.Equal("MessageAccepted", envelope.Type);
-        Assert.Equal(conversation.Id.Value.ToString(), envelope.PartitionKey);
-    }
-
-    [Fact]
-    public async Task HandleAsync_WhenTheOperatorLacksThePermission_ReturnsForbidden_BeforeTouchingTheConversation()
-    {
-        var (handler, _, _, conversation, _) = CreateHandlerWithAssignedConversation(grantPermission: false);
+        var (handler, _, pipeline) = CreateHandler(grantPermission: false);
 
         var result = await handler.HandleAsync(
-            new SendOperatorMessage(conversation.Id, OperatorId, SiteId, "hi"), CancellationToken.None);
+            new SendOperatorMessage(ConversationId, OperatorId, SiteId, "hi"), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
-        Assert.Empty(conversation.Messages);
+        Assert.Empty(pipeline.Enqueued);
     }
 
     [Fact]
-    public async Task HandleAsync_WhenPermittedButNotTheAssignedOperator_ReturnsForbidden()
+    public async Task HandleAsync_WhenTheBodyIsEmpty_ReturnsInvalidBody_WithoutEnqueueing()
     {
-        var (handler, _, permissions, conversation, _) = CreateHandlerWithAssignedConversation();
-        var someoneElse = new OperatorId(Guid.NewGuid());
-        permissions.Grant(someoneElse, SiteId, Permission.ConversationSend);
+        var (handler, _, pipeline) = CreateHandler();
 
         var result = await handler.HandleAsync(
-            new SendOperatorMessage(conversation.Id, someoneElse, SiteId, "hi"), CancellationToken.None);
+            new SendOperatorMessage(ConversationId, OperatorId, SiteId, "   "), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Message.InvalidBody", result.Error!.Value.Code);
+        Assert.Empty(pipeline.Enqueued);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenThePipelineReportsAFailure_ForwardsItVerbatim()
+    {
+        var pipeline = new FakeMessagePipeline(Result<int>.Failure(
+            ConversationErrors.Forbidden("This operator is not assigned to this conversation.")));
+        var (handler, _, _) = CreateHandler(pipeline: pipeline);
+
+        var result = await handler.HandleAsync(
+            new SendOperatorMessage(ConversationId, OperatorId, SiteId, "hi"), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
-    }
-
-    [Fact]
-    public async Task HandleAsync_WhenConversationIsStillWaiting_ReturnsInvalidState()
-    {
-        var conversations = new FakeConversationRepository();
-        var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
-        conversations.Seed(waiting);
-        var permissions = new FakePermissionChecker();
-        permissions.Grant(OperatorId, SiteId, Permission.ConversationSend);
-        var handler = new SendOperatorMessageHandler(conversations, permissions, new FakeClock(Now), new FakeIdGenerator(), new FakeOutboxWriter());
-
-        var result = await handler.HandleAsync(
-            new SendOperatorMessage(waiting.Id, OperatorId, SiteId, "hi"), CancellationToken.None);
-
-        Assert.True(result.IsFailure);
-        Assert.Equal("Conversation.InvalidState", result.Error!.Value.Code);
     }
 }

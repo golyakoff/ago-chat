@@ -1,17 +1,22 @@
 ﻿using Ago.Chat.Application.Abstractions;
-using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
-using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.SendMessage;
 
+/// <summary>
+/// `4-05`: same split as `SendVisitorMessageHandler` - the write moved to
+/// `Ago.Chat.Api.Pipeline.MessageBatchWriter`, batched off a queue behind `IMessagePipeline`
+/// (concurrency.md's "In-process pipeline (Api)"). Unlike the visitor handler, there is *no*
+/// pre-enqueue conversation load here at all - RBAC's `SiteId` comes straight from the operator's
+/// own token claims (`SendOperatorMessage`'s own doc comment), not from a lookup, and there is no
+/// per-operator/per-site rate limit on this path (`3-05` scoped rate limiting to the visitor side
+/// only). `NotFound` and the participant/state checks `AddOperatorMessage` enforces are all
+/// discovered inside the pipeline worker instead of here.
+/// </summary>
 public sealed class SendOperatorMessageHandler(
-    IConversationRepository conversations,
     IPermissionChecker permissions,
-    IClock clock,
-    IIdGenerator idGenerator,
-    IOutboxWriter outbox)
+    IMessagePipeline pipeline)
 {
     public async Task<Result<int>> HandleAsync(SendOperatorMessage command, CancellationToken cancellationToken)
     {
@@ -20,12 +25,6 @@ public sealed class SendOperatorMessageHandler(
         if (!allowed)
         {
             return ConversationErrors.Forbidden("Operator does not have permission to send messages for this site.");
-        }
-
-        var conversation = await conversations.GetByIdAsync(command.ConversationId, cancellationToken);
-        if (conversation is null)
-        {
-            return ConversationErrors.NotFound(command.ConversationId.Value);
         }
 
         MessageBody body;
@@ -38,32 +37,11 @@ public sealed class SendOperatorMessageHandler(
             return ConversationErrors.InvalidBody(ex.Message);
         }
 
-        var now = clock.UtcNow;
-        var messageId = new MessageId(idGenerator.NewId(now));
-
         // The RBAC check above answers "may this operator send at all"; Conversation.AddOperatorMessage
         // (1-01) still separately checks "is this operator the one assigned to *this* conversation" -
-        // a fact about the conversation, not a permission (adr/0016 draws that line).
-        try
-        {
-            var message = conversation.AddOperatorMessage(command.AuthorId, messageId, body, now);
-
-            // adr/0005: staged here, persisted by the same SaveAsync call below - never a separate
-            // transaction, so an outbox row can never exist without the message it describes.
-            var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-            outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
-            conversation.ClearDomainEvents();
-
-            await conversations.SaveAsync(conversation, cancellationToken);
-            return message.Sequence;
-        }
-        catch (ConversationParticipantMismatchException)
-        {
-            return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
-        }
-        catch (InvalidConversationStateException ex)
-        {
-            return ConversationErrors.InvalidState(ex.Message);
-        }
+        // a fact about the conversation, not a permission (adr/0016 draws that line) - now enforced
+        // inside the pipeline worker once it loads the conversation fresh.
+        var pending = new PendingMessage(command.ConversationId, MessageAuthorKind.Operator, command.AuthorId.Value, body);
+        return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

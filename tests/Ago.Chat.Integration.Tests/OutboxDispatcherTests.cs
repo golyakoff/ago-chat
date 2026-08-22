@@ -40,11 +40,9 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
         {
             var handler = new SendVisitorMessageHandler(
                 new Ago.Chat.Infrastructure.Postgres.ConversationRepository(db),
-                new SystemClock(),
-                new UuidV7Generator(),
-                new Ago.Platform.Persistence.Postgres.EfOutboxWriter<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>(db),
                 new FakeRateLimiter(),
-                new Ago.Chat.Application.UseCases.SendMessage.MessageSendRateLimitOptions());
+                new Ago.Chat.Application.UseCases.SendMessage.MessageSendRateLimitOptions(),
+                new SynchronousMessagePipeline(fixture.DataSource));
 
             var result = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
             Assert.True(result.IsSuccess);

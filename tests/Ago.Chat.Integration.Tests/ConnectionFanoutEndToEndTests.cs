@@ -93,8 +93,8 @@ public sealed class ConnectionFanoutEndToEndTests(ConnectionFanoutFixture fixtur
         {
             await using var writeDb = fixture.CreateDbContext();
             var handler = new SendVisitorMessageHandler(
-                new ConversationRepository(writeDb), new SystemClock(), new UuidV7Generator(),
-                new EfOutboxWriter<AgoChatDbContext>(writeDb), new FakeRateLimiter(), new MessageSendRateLimitOptions());
+                new ConversationRepository(writeDb), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
+                new SynchronousMessagePipeline(fixture.DataSource));
 
             var result = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello from node A"), CancellationToken.None);
             Assert.True(result.IsSuccess);

@@ -109,8 +109,8 @@ public sealed class UnreadCounterEndToEndTests
                 // the message and the outbox row in one SaveChangesAsync.
                 await using var db = new AgoChatDbContext(dbOptions);
                 var handler = new SendVisitorMessageHandler(
-                    new ConversationRepository(db), new SystemClock(), new UuidV7Generator(),
-                    new EfOutboxWriter<AgoChatDbContext>(db), new FakeRateLimiter(), new MessageSendRateLimitOptions());
+                    new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
+                    new SynchronousMessagePipeline(dataSource));
 
                 var result = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
                 Assert.True(result.IsSuccess);

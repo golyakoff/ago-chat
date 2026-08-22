@@ -1,5 +1,4 @@
 ﻿using Ago.Chat.Application.Abstractions;
-using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -13,14 +12,23 @@ namespace Ago.Chat.Application.UseCases.SendMessage;
 /// result; the host's DI registration resolves `IOptions&lt;T&gt;.Value` once and hands this handler
 /// the POCO, the same way it hands over `IConversationRepository` without Application knowing
 /// `AgoChatDbContext` exists.
+///
+/// `4-05`: this handler no longer writes to Postgres itself - <see cref="Ago.Platform.Kernel"/>'s
+/// `IClock`/`IIdGenerator`, `IOutboxWriter`, and `IConversationRepository.SaveAsync` all moved to
+/// `Ago.Chat.Api.Pipeline.MessageBatchWriter`, which does the actual mutation+outbox+save off a
+/// queue, batched (concurrency.md's "In-process pipeline (Api)"). What stays here is exactly what
+/// the backlog's Scope calls "cheap checks, no reason to hold a queue slot for a request that was
+/// always going to be rejected": rate limiting and body shape. The conversation load below is *not*
+/// new work moved forward - it already ran here before `4-05`, because the per-site rate limit
+/// needs `SiteId` and nothing else in this call chain knows it yet. `CLAUDE.md` rule 8 is why this
+/// same load can never be reused for the write below: a sequence decision must read fresh, inside
+/// the write's own transaction, not from a read a queue-wait earlier.
 /// </summary>
 public sealed class SendVisitorMessageHandler(
     IConversationRepository conversations,
-    IClock clock,
-    IIdGenerator idGenerator,
-    IOutboxWriter outbox,
     IRateLimiter rateLimiter,
-    MessageSendRateLimitOptions options)
+    MessageSendRateLimitOptions options,
+    IMessagePipeline pipeline)
 {
     public async Task<Result<int>> HandleAsync(SendVisitorMessage command, CancellationToken cancellationToken)
     {
@@ -64,33 +72,11 @@ public sealed class SendVisitorMessageHandler(
             return ConversationErrors.InvalidBody(ex.Message);
         }
 
-        var now = clock.UtcNow;
-        var messageId = new MessageId(idGenerator.NewId(now));
-
-        // The participant check lives in Conversation.AddVisitorMessage itself (1-01) - there is
-        // nothing left for this handler to verify beforehand, since a visitor holds no role for
-        // IPermissionChecker to look up (adr/0016). Reaching either catch here means the caller's
-        // own token/conversation pairing was already stale or wrong by the time it got this far.
-        try
-        {
-            var message = conversation.AddVisitorMessage(command.AuthorId, messageId, body, now);
-
-            // adr/0005: staged here, persisted by the same SaveAsync call below - never a separate
-            // transaction, so an outbox row can never exist without the message it describes.
-            var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-            outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
-            conversation.ClearDomainEvents();
-
-            await conversations.SaveAsync(conversation, cancellationToken);
-            return message.Sequence;
-        }
-        catch (ConversationParticipantMismatchException)
-        {
-            return ConversationErrors.Forbidden("This visitor is not a participant of this conversation.");
-        }
-        catch (InvalidConversationStateException ex)
-        {
-            return ConversationErrors.InvalidState(ex.Message);
-        }
+        // The participant/state checks that used to run inline here (AddVisitorMessage's own
+        // invariants) still run - just inside the pipeline worker, once it reloads this same
+        // conversation. Reaching them there and failing means the caller's own token/conversation
+        // pairing was already stale or wrong, exactly as before.
+        var pending = new PendingMessage(command.ConversationId, MessageAuthorKind.Visitor, command.AuthorId.Value, body);
+        return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

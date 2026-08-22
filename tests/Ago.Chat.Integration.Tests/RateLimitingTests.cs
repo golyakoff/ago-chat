@@ -46,7 +46,7 @@ public sealed class RateLimitingTests(SiteCachingFixture fixture)
         var options = new MessageSendRateLimitOptions { PerVisitorCapacity = 1, PerVisitorRefillPerSecond = 0.001, PerSiteCapacity = 1000, PerSiteRefillPerSecond = 1000 };
         await using var db2 = fixture.CreateDbContext();
         var handler = new SendVisitorMessageHandler(
-            new ConversationRepository(db2), new SystemClock(), new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db2), limiter, options);
+            new ConversationRepository(db2), limiter, options, new SynchronousMessagePipeline(fixture.DataSource));
 
         var first = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "one"), CancellationToken.None);
         var second = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "two"), CancellationToken.None);
