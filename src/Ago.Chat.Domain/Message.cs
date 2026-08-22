@@ -20,6 +20,13 @@ public sealed class Message
 
     public MessageBody Body { get; }
 
+    /// <summary>`5-03`: "message references the attachment, not the reverse" (`file-storage.md`) -
+    /// this is that reference. Set once, at construction, alongside the same
+    /// <c>Conversation.AddVisitorMessage</c>/<c>AddOperatorMessage</c> call that assigns
+    /// <see cref="Sequence"/> - never mutated afterward, since a message's attachment is decided when
+    /// the message is sent, not edited in later.</summary>
+    public AttachmentId? AttachmentId { get; }
+
     public DateTimeOffset CreatedAt { get; }
 
     internal Message(
@@ -29,6 +36,7 @@ public sealed class Message
         MessageAuthorKind authorKind,
         Guid authorId,
         MessageBody body,
+        AttachmentId? attachmentId,
         DateTimeOffset now)
     {
         Id = id;
@@ -37,6 +45,7 @@ public sealed class Message
         AuthorKind = authorKind;
         AuthorId = authorId;
         Body = body;
+        AttachmentId = attachmentId;
         CreatedAt = now;
     }
 

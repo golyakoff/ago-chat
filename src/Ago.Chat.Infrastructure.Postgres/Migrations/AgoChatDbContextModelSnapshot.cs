@@ -23,6 +23,60 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Ago.Chat.Domain.Attachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content_type");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<string>("ObjectKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("object_key");
+
+                    b.Property<Guid>("SiteId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("site_id");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("state");
+
+                    b.Property<string>("ThumbnailKey")
+                        .HasColumnType("text")
+                        .HasColumnName("thumbnail_key");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("SiteId");
+
+                    b.ToTable("attachments", (string)null);
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.Conversation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -86,6 +140,10 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<Guid?>("AttachmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("attachment_id");
 
                     b.Property<Guid>("AuthorId")
                         .HasColumnType("uuid")
@@ -311,6 +369,21 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasFilter("published_at IS NULL");
 
                     b.ToTable("outbox", (string)null);
+                });
+
+            modelBuilder.Entity("Ago.Chat.Domain.Attachment", b =>
+                {
+                    b.HasOne("Ago.Chat.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Ago.Chat.Domain.Site", null)
+                        .WithMany()
+                        .HasForeignKey("SiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Ago.Chat.Domain.Conversation", b =>

@@ -12,4 +12,5 @@
 /// crosses back over <c>IConversationReadStore</c> - `DateTime` never leaves Infrastructure
 /// (date-and-time.md, the arch test `DateTimeType_NeverAppearsOutsideInfrastructure`).
 /// </summary>
-internal sealed record MessageRow(Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTime CreatedAt);
+internal sealed record MessageRow(
+    Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTime CreatedAt, Guid? AttachmentId);

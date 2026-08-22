@@ -9,6 +9,7 @@
     <PackageReference Include="Ago.Platform.Messaging.RabbitMq" />
     <PackageReference Include="Ago.Platform.Realtime" />
     <PackageReference Include="Ago.Platform.Caching.Redis" />
+    <PackageReference Include="Ago.Platform.Storage.S3" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
@@ -16,15 +17,18 @@
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Messaging.RabbitMq\Ago.Platform.Messaging.RabbitMq.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Realtime\Ago.Platform.Realtime.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Caching.Redis\Ago.Platform.Caching.Redis.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Storage.S3\Ago.Platform.Storage.S3.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Polly.Core" />
+    <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="Testcontainers.Minio" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>

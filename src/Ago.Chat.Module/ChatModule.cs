@@ -1,6 +1,9 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
+using Ago.Chat.Application.UseCases.ConfirmAttachment;
+using Ago.Chat.Application.UseCases.CreateAttachment;
+using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
@@ -15,6 +18,7 @@ using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Messaging.RabbitMq;
 using Ago.Platform.Realtime;
+using Ago.Platform.Storage.S3;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -64,6 +68,25 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageSendRateLimitOptions>>().Value);
 
+        // `5-03`: the platform's presigned-upload/download port (`5-02`) - registered here rather
+        // than a host's own Program.cs for the same reason as everything else on this page:
+        // CreateAttachmentHandler/ConfirmAttachmentHandler/GetAttachmentDownloadUrlHandler are
+        // registered for every host below.
+        services.AddS3FileStorage(configuration);
+
+        // Same "bound here, plain-value-not-IOptions<T> handed to the handler" shape as
+        // MessageSendRateLimitOptions above - CreateAttachmentHandler is the only consumer of either.
+        services
+            .AddOptions<AttachmentOptions>()
+            .Bind(configuration.GetSection(AttachmentOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AttachmentOptions>>().Value);
+        services
+            .AddOptions<AttachmentRateLimitOptions>()
+            .Bind(configuration.GetSection(AttachmentRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AttachmentRateLimitOptions>>().Value);
+
         // 4-05: bound and registered here, not Ago.Chat.Api's Program.cs - the same DI-validation
         // reason as OperatorPresencePublisher (4-04), see ChannelMessagePipeline's own remarks.
         // SendVisitorMessageHandler/SendOperatorMessageHandler are registered for every host below
@@ -88,6 +111,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
+        services.AddScoped<CreateAttachmentHandler>();
+        services.AddScoped<ConfirmAttachmentHandler>();
+        services.AddScoped<GetAttachmentDownloadUrlHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

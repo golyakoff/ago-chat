@@ -128,7 +128,8 @@ public sealed class Conversation
     /// The visitor may write while waiting for an operator, or after one is assigned - just never
     /// after the conversation is closed.
     /// </summary>
-    public Message AddVisitorMessage(VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now)
+    public Message AddVisitorMessage(
+        VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now, AttachmentId? attachmentId = null)
     {
         if (authorId != VisitorId)
         {
@@ -142,11 +143,12 @@ public sealed class Conversation
                 $"Cannot add a message to closed conversation {Id.Value}.");
         }
 
-        return AddMessage(MessageAuthorKind.Visitor, authorId.Value, messageId, body, now);
+        return AddMessage(MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, now);
     }
 
     /// <summary>An operator may write only once assigned, and only to their own conversation.</summary>
-    public Message AddOperatorMessage(OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now)
+    public Message AddOperatorMessage(
+        OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now, AttachmentId? attachmentId = null)
     {
         // State first: with no operator assigned yet, "wrong state" is the true cause - checking
         // participant identity first would misreport it as "wrong operator" when there is no
@@ -164,7 +166,7 @@ public sealed class Conversation
                 $"Operator {authorId.Value} is not the assigned operator of conversation {Id.Value}.");
         }
 
-        return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, now);
+        return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, now);
     }
 
     /// <summary>
@@ -189,10 +191,10 @@ public sealed class Conversation
     public void ClearDomainEvents() => _domainEvents.Clear();
 
     private Message AddMessage(
-        MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body, DateTimeOffset now)
+        MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body, AttachmentId? attachmentId, DateTimeOffset now)
     {
         LastSequence++;
-        var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, now);
+        var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, now);
         _messages.Add(message);
         _domainEvents.Add(new MessageAdded(messageId, Id, SiteId, LastSequence, authorKind, now));
         return message;

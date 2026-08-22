@@ -18,3 +18,14 @@ public sealed class RateLimitedFakeRateLimiter(TimeSpan retryAfter) : IRateLimit
     public Task<RateLimitDecision> CheckAsync(RateLimitKey key, RateLimitRule rule, CancellationToken cancellationToken) =>
         Task.FromResult(new RateLimitDecision(false, retryAfter));
 }
+
+/// <summary>Denies only keys containing <paramref name="denyKeyContains"/>, allows everything else -
+/// for proving a *specific* bucket (e.g. the per-site one) is actually consulted, not just that some
+/// bucket exists, without needing a real Redis token-bucket implementation.</summary>
+public sealed class SelectiveFakeRateLimiter(string denyKeyContains, TimeSpan retryAfter) : IRateLimiter
+{
+    public Task<RateLimitDecision> CheckAsync(RateLimitKey key, RateLimitRule rule, CancellationToken cancellationToken) =>
+        Task.FromResult(key.Value.Contains(denyKeyContains, StringComparison.Ordinal)
+            ? new RateLimitDecision(false, retryAfter)
+            : new RateLimitDecision(true, TimeSpan.Zero));
+}

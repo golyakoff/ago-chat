@@ -111,13 +111,15 @@ public sealed class OperatorHub(
         return new HistoryPage(ToDtos(history.Value.Messages), history.Value.NextBeforeSequence);
     }
 
-    public async Task<int> SendMessageAsync(Guid conversationId, string body)
+    public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null)
     {
         var operatorId = Context.User!.GetOperatorId();
         var siteId = Context.User!.GetSiteId();
         var id = new ConversationId(conversationId);
 
-        var sent = await sendMessage.HandleAsync(new SendOperatorMessage(id, operatorId, siteId, body), Context.ConnectionAborted);
+        var sent = await sendMessage.HandleAsync(
+            new SendOperatorMessage(id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null),
+            Context.ConnectionAborted);
         if (sent.IsFailure)
         {
             throw new HubException(sent.Error!.Value.Message);
@@ -151,7 +153,7 @@ public sealed class OperatorHub(
     }
 
     private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item) =>
-        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt);
+        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt, item.AttachmentId?.Value);
 
     private static IReadOnlyList<MessageDto> ToDtos(IReadOnlyList<Application.Abstractions.MessageHistoryItem> items) =>
         [.. items.Select(ToDto)];

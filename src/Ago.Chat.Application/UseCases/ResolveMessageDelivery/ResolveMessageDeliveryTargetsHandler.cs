@@ -42,7 +42,8 @@ public sealed class ResolveMessageDeliveryTargetsHandler(
 
         var page = await readStore.GetHistoryAsync(command.ConversationId, command.Sequence + 1, pageSize: 1, cancellationToken);
         var item = page.Messages.Single();
-        var dto = new MessageDto(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt);
+        var dto = new MessageDto(
+            item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt, item.AttachmentId?.Value);
 
         await fanout.PublishAsync(recipients, "MessageReceived", JsonSerializer.Serialize(dto), command.CorrelationId, cancellationToken);
 
