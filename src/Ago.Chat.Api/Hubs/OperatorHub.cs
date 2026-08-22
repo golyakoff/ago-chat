@@ -37,7 +37,14 @@ public sealed class OperatorHub(
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task<HistoryPage> JoinConversationAsync(Guid conversationId)
+    /// <summary>
+    /// `3-03`: <paramref name="lastKnownSequence"/> is the reconnect case - see
+    /// <c>VisitorHub.JoinAsync</c>'s remarks, the same reasoning applies here. Calling
+    /// <c>AssignConversationHandler</c> again on every join, including a reconnect, is what makes
+    /// <c>Conversation.AssignTo</c>'s same-operator no-op (`3-03`) load-bearing: without it, an
+    /// operator reconnecting to a conversation they already hold would fail this call outright.
+    /// </summary>
+    public async Task<HistoryPage> JoinConversationAsync(Guid conversationId, int? lastKnownSequence = null)
     {
         var operatorId = Context.User!.GetOperatorId();
         var siteId = Context.User!.GetSiteId();
@@ -50,6 +57,18 @@ public sealed class OperatorHub(
             throw new HubException(assigned.Error!.Value.Message);
         }
 
+        if (lastKnownSequence is { } afterSequence)
+        {
+            var delta = await getHistory.HandleDeltaAsOperatorAsync(
+                new GetConversationDeltaAsOperator(id, operatorId, siteId, afterSequence), Context.ConnectionAborted);
+            if (delta.IsFailure)
+            {
+                throw new HubException(delta.Error!.Value.Message);
+            }
+
+            return new HistoryPage(ToDtos(delta.Value), NextBeforeSequence: null);
+        }
+
         var history = await getHistory.HandleAsOperatorAsync(
             new GetConversationHistoryAsOperator(id, operatorId, siteId, BeforeSequence: null, PageSize: 50),
             Context.ConnectionAborted);
@@ -60,6 +79,10 @@ public sealed class OperatorHub(
 
         return new HistoryPage(ToDtos(history.Value.Messages), history.Value.NextBeforeSequence);
     }
+
+    /// <summary>`3-03` stub - see <c>VisitorHub.ReconnectAsync</c>'s remarks.</summary>
+    public Task ReconnectAsync(TimeSpan after) =>
+        Clients.Caller.SendAsync("Reconnect", new { after }, Context.ConnectionAborted);
 
     public async Task<int> SendMessageAsync(Guid conversationId, string body)
     {

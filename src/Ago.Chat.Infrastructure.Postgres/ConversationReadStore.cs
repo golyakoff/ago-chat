@@ -23,6 +23,17 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         limit @PageSize
         """;
 
+    // `3-03`: forward, unbounded, no LIMIT - see IConversationReadStore.GetDeltaAsync's remarks on
+    // why this direction does not need keyset paging the way GetHistoryAsync's backward one does.
+    private const string DeltaSql = """
+        select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
+               author_id as "AuthorId", body as "Body", created_at as "CreatedAt"
+        from messages
+        where conversation_id = @ConversationId
+          and sequence > @AfterSequence
+        order by sequence asc
+        """;
+
     public async Task<ConversationHistoryPage> GetHistoryAsync(
         ConversationId conversationId, int? beforeSequence, int pageSize, CancellationToken cancellationToken)
     {
@@ -33,17 +44,30 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
             new { ConversationId = conversationId.Value, BeforeSequence = beforeSequence, PageSize = pageSize },
             cancellationToken: cancellationToken));
 
-        var items = rows
-            .Select(r => new MessageHistoryItem(
-                new MessageId(r.Id),
-                r.Sequence,
-                Enum.Parse<MessageAuthorKind>(r.AuthorKind),
-                r.AuthorId,
-                r.Body,
-                new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc))))
-            .ToList();
+        var items = rows.Select(ToHistoryItem).ToList();
 
         var nextCursor = items.Count == pageSize ? items[^1].Sequence : (int?)null;
         return new ConversationHistoryPage(items, nextCursor);
     }
+
+    public async Task<IReadOnlyList<MessageHistoryItem>> GetDeltaAsync(
+        ConversationId conversationId, int afterSequence, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var rows = await connection.QueryAsync<MessageRow>(new CommandDefinition(
+            DeltaSql,
+            new { ConversationId = conversationId.Value, AfterSequence = afterSequence },
+            cancellationToken: cancellationToken));
+
+        return rows.Select(ToHistoryItem).ToList();
+    }
+
+    private static MessageHistoryItem ToHistoryItem(MessageRow r) => new(
+        new MessageId(r.Id),
+        r.Sequence,
+        Enum.Parse<MessageAuthorKind>(r.AuthorKind),
+        r.AuthorId,
+        r.Body,
+        new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)));
 }

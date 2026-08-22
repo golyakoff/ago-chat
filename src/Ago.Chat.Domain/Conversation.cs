@@ -62,9 +62,22 @@ public sealed class Conversation
         return conversation;
     }
 
-    /// <summary>Direct-claim by one operator - see the type-level remarks on what this is not.</summary>
+    /// <summary>
+    /// Direct-claim by one operator - see the type-level remarks on what this is not.
+    ///
+    /// `3-03`: a repeat call by the operator who already holds this conversation is a no-op, not an
+    /// error - <c>OperatorHub.JoinConversationAsync</c> calls this on every join, including a
+    /// reconnect after a dropped connection, and a reconnect is not a new claim. Assigning to a
+    /// *different* operator while already assigned is still rejected below - that invariant (one
+    /// operator at a time) is exactly what this no-op must not weaken.
+    /// </summary>
     public void AssignTo(OperatorId operatorId, DateTimeOffset now)
     {
+        if (State == ConversationState.Assigned && OperatorId == operatorId)
+        {
+            return;
+        }
+
         if (State != ConversationState.Waiting)
         {
             throw new InvalidConversationStateException(

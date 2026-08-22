@@ -50,6 +50,20 @@ public class ConversationTests
     }
 
     [Fact]
+    public void AssignTo_WhenAlreadyAssignedToTheSameOperator_IsANoOp()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.ClearDomainEvents();
+
+        conversation.AssignTo(OperatorId, Now.AddMinutes(5));
+
+        Assert.Equal(ConversationState.Assigned, conversation.State);
+        Assert.Equal(OperatorId, conversation.OperatorId);
+        Assert.Empty(conversation.DomainEvents);
+    }
+
+    [Fact]
     public void AssignTo_WhenClosed_ThrowsInvalidConversationStateException()
     {
         var conversation = StartConversation();

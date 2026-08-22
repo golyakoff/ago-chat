@@ -58,4 +58,53 @@ public sealed class GetConversationHistoryHandler(
             query.ConversationId, query.BeforeSequence, query.PageSize, cancellationToken);
         return page;
     }
+
+    /// <summary>
+    /// `3-03`: the same access checks as <see cref="HandleAsVisitorAsync"/>, a different cursor
+    /// direction on the same read store - not a new handler class, per realtime.md's Client protocol
+    /// section (the delta since a known sequence is the same query as the history page, read forward).
+    /// </summary>
+    public async Task<Result<IReadOnlyList<MessageHistoryItem>>> HandleDeltaAsVisitorAsync(
+        GetConversationDeltaAsVisitor query, CancellationToken cancellationToken)
+    {
+        var conversation = await conversations.GetByIdAsync(query.ConversationId, cancellationToken);
+        if (conversation is null)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
+        }
+
+        if (conversation.VisitorId != query.RequestedBy)
+        {
+            return ConversationErrors.Forbidden("This visitor is not a participant of this conversation.");
+        }
+
+        var delta = await readStore.GetDeltaAsync(query.ConversationId, query.AfterSequence, cancellationToken);
+        return Result<IReadOnlyList<MessageHistoryItem>>.Success(delta);
+    }
+
+    /// <summary>Operator-side equivalent of <see cref="HandleDeltaAsVisitorAsync"/> - see its remarks.</summary>
+    public async Task<Result<IReadOnlyList<MessageHistoryItem>>> HandleDeltaAsOperatorAsync(
+        GetConversationDeltaAsOperator query, CancellationToken cancellationToken)
+    {
+        var allowed = await permissions.HasPermissionAsync(
+            query.RequestedBy, query.SiteId, Permission.ConversationRead, cancellationToken);
+        if (!allowed)
+        {
+            return ConversationErrors.Forbidden("Operator does not have permission to read conversations for this site.");
+        }
+
+        var conversation = await conversations.GetByIdAsync(query.ConversationId, cancellationToken);
+        if (conversation is null)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
+        }
+
+        if (conversation.OperatorId != query.RequestedBy)
+        {
+            return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
+        }
+
+        var delta = await readStore.GetDeltaAsync(query.ConversationId, query.AfterSequence, cancellationToken);
+        return Result<IReadOnlyList<MessageHistoryItem>>.Success(delta);
+    }
 }

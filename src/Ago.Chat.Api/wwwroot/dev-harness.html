@@ -13,15 +13,25 @@
   .log .self { color: #0a5; }
   .log .other { color: #05a; }
   .log .system { color: #999; font-style: italic; }
+  .log .reconnect { color: #c60; font-weight: bold; }
   input { width: 100%; box-sizing: border-box; margin-bottom: 4px; }
   small { color: #777; }
 </style>
 </head>
 <body>
-<!-- This page exists only to manually prove 1-06's "done when": two tabs (or, here, two panes)
-     exchange messages through one running Ago.Chat.Api, and history survives a reload. It is not
-     the widget (ago-widget, Stage 5) or the operator console (ago-console, Stage 5) - both replace
-     this outright. -->
+<!-- This page exists to manually prove 1-06's "done when" (two tabs exchange messages, history
+     survives a reload) and 3-03's (a dropped connection reconnects with jittered backoff and
+     resumes from its last known sequence - no gap, no full replay). It is not the widget
+     (ago-widget, Stage 5) or the operator console (ago-console, Stage 5) - both replace this
+     outright, reconnect UX included (3-03's backlog item is explicit: this is a manual-harness
+     proof of the wire protocol, not production reconnect UX).
+
+     To exercise 3-03 by hand: open this page, send a few visitor messages, then actually kill the
+     connection - stop `dotnet run` for Ago.Chat.Api and start it again (a real node death), or
+     toggle the browser devtools "Offline" throttling preset for a few seconds. Watch the log for
+     the "Reconnecting (attempt N, waiting Nms)" lines (the jittered backoff), then "Reconnected -
+     resuming from sequence N" followed by exactly the messages sent while disconnected - not the
+     whole history again. -->
 <div class="pane">
   <h2>Visitor</h2>
   <small>Public key: <code>demo_site</code> (seeded by 1-05)</small>
@@ -59,8 +69,34 @@
     log(paneId, `[${m.sequence}] ${m.authorKind}: ${m.body}`, m.authorKind === selfKind ? 'self' : 'other');
   }
 
+  // 3-03: exponential backoff with full jitter (edge.md - without jitter a rolling restart becomes
+  // a self-inflicted thundering herd), logged visibly so the harness demonstrates it, not just
+  // performs it. SignalR calls this once per attempt; returning null stops retrying.
+  function jitteredBackoff(paneId) {
+    const maxDelayMs = 30000;
+    let attempt = 0;
+    return {
+      nextRetryDelayInMilliseconds() {
+        attempt++;
+        if (attempt > 10) {
+          log(paneId, 'Giving up reconnecting after 10 attempts.', 'reconnect');
+          return null;
+        }
+        const cap = Math.min(1000 * 2 ** (attempt - 1), maxDelayMs);
+        const delay = Math.round(Math.random() * cap);
+        log(paneId, `Reconnecting (attempt ${attempt}, waiting ${delay}ms)...`, 'reconnect');
+        return delay;
+      },
+    };
+  }
+
   // --- Visitor ---
-  let visitorConnection, visitorConversationId;
+  let visitorConnection, visitorConversationId, visitorLastSequence = 0;
+
+  function trackVisitorMessage(m) {
+    renderMessage('visitor-log', m, 'Visitor');
+    visitorLastSequence = Math.max(visitorLastSequence, m.sequence);
+  }
 
   async function startVisitor() {
     let token = localStorage.getItem('ago-visitor-token');
@@ -80,16 +116,32 @@
 
     visitorConnection = new signalR.HubConnectionBuilder()
       .withUrl(`/hubs/visitor?access_token=${token}`)
-      .withAutomaticReconnect()
+      .withAutomaticReconnect(jitteredBackoff('visitor-log'))
       .build();
-    visitorConnection.on('MessageReceived', m => renderMessage('visitor-log', m, 'Visitor'));
+    visitorConnection.on('MessageReceived', m => trackVisitorMessage(m));
+    // 3-03 stub: nothing calls VisitorHub.ReconnectAsync yet (3-06 is the real caller) - this
+    // listener exists so the wire contract is provable end-to-end once it does.
+    visitorConnection.on('Reconnect', ({ after }) =>
+      log('visitor-log', `Server requested a reconnect in ${after} (stub - no caller until 3-06).`, 'reconnect'));
+    visitorConnection.onreconnecting(error =>
+      log('visitor-log', `Connection lost${error ? ': ' + error.message : ''} - reconnecting...`, 'reconnect'));
+    visitorConnection.onreconnected(async () => {
+      log('visitor-log', `Reconnected - resuming from sequence ${visitorLastSequence}.`, 'reconnect');
+      const resumed = await visitorConnection.invoke('JoinAsync', visitorLastSequence);
+      resumed.history.forEach(m => trackVisitorMessage(m));
+      log('visitor-log', resumed.history.length ? `Caught up on ${resumed.history.length} missed message(s).` : 'Nothing missed.', 'reconnect');
+    });
     await visitorConnection.start();
 
-    const join = await visitorConnection.invoke('JoinAsync');
+    // SignalR's binder matches invocations by argument count, not by C#'s optional-parameter
+    // defaults - it does not fill in a missing trailing argument, so a fresh join must pass `null`
+    // explicitly rather than omitting the argument (found by running this against a live server:
+    // omitting it throws "Invocation provides 0 argument(s) but target expects 1").
+    const join = await visitorConnection.invoke('JoinAsync', null);
     visitorConversationId = join.conversationId;
     document.getElementById('visitor-conversation-id').textContent = visitorConversationId;
     log('visitor-log', join.isNew ? 'New conversation started.' : 'Resumed existing conversation.');
-    join.history.slice().reverse().forEach(m => renderMessage('visitor-log', m, 'Visitor'));
+    join.history.slice().reverse().forEach(m => trackVisitorMessage(m));
   }
 
   async function sendVisitorMessage() {
@@ -107,7 +159,12 @@
   startVisitor();
 
   // --- Operator ---
-  let operatorConnection;
+  let operatorConnection, operatorConversationId, operatorLastSequence = 0;
+
+  function trackOperatorMessage(m) {
+    renderMessage('operator-log', m, 'Operator');
+    operatorLastSequence = Math.max(operatorLastSequence, m.sequence);
+  }
 
   async function connectOperator() {
     const operatorId = document.getElementById('operator-id').value;
@@ -121,9 +178,20 @@
 
     operatorConnection = new signalR.HubConnectionBuilder()
       .withUrl(`/hubs/operator?access_token=${token}`)
-      .withAutomaticReconnect()
+      .withAutomaticReconnect(jitteredBackoff('operator-log'))
       .build();
-    operatorConnection.on('MessageReceived', m => renderMessage('operator-log', m, 'Operator'));
+    operatorConnection.on('MessageReceived', m => trackOperatorMessage(m));
+    operatorConnection.on('Reconnect', ({ after }) =>
+      log('operator-log', `Server requested a reconnect in ${after} (stub - no caller until 3-06).`, 'reconnect'));
+    operatorConnection.onreconnecting(error =>
+      log('operator-log', `Connection lost${error ? ': ' + error.message : ''} - reconnecting...`, 'reconnect'));
+    operatorConnection.onreconnected(async () => {
+      if (!operatorConversationId) return;
+      log('operator-log', `Reconnected - resuming conversation ${operatorConversationId} from sequence ${operatorLastSequence}.`, 'reconnect');
+      const page = await operatorConnection.invoke('JoinConversationAsync', operatorConversationId, operatorLastSequence);
+      page.messages.forEach(m => trackOperatorMessage(m));
+      log('operator-log', page.messages.length ? `Caught up on ${page.messages.length} missed message(s).` : 'Nothing missed.', 'reconnect');
+    });
     await operatorConnection.start();
     log('operator-log', 'Connected.');
   }
@@ -131,10 +199,11 @@
   async function joinConversation() {
     const conversationId = document.getElementById('operator-conversation-id').value;
     if (!operatorConnection || !conversationId) return;
-    const page = await operatorConnection.invoke('JoinConversationAsync', conversationId);
+    // Same argument-count binding rule as JoinAsync above - null, not omitted.
+    const page = await operatorConnection.invoke('JoinConversationAsync', conversationId, null);
+    operatorConversationId = conversationId;
     log('operator-log', 'Joined conversation - now assigned.');
-    page.messages.slice().reverse().forEach(m => renderMessage('operator-log', m, 'Operator'));
-    document.getElementById('operator-conversation-id').dataset.joined = conversationId;
+    page.messages.slice().reverse().forEach(m => trackOperatorMessage(m));
   }
 
   async function sendOperatorMessage() {

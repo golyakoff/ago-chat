@@ -25,4 +25,17 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         var nextCursor = items.Count == pageSize ? items[^1].Sequence : (int?)null;
         return Task.FromResult(new ConversationHistoryPage(items, nextCursor));
     }
+
+    public Task<IReadOnlyList<MessageHistoryItem>> GetDeltaAsync(
+        ConversationId conversationId, int afterSequence, CancellationToken cancellationToken)
+    {
+        var conversation = _bySource[conversationId];
+        IReadOnlyList<MessageHistoryItem> items = conversation.Messages
+            .Where(m => m.Sequence > afterSequence)
+            .OrderBy(m => m.Sequence)
+            .Select(m => new MessageHistoryItem(m.Id, m.Sequence, m.AuthorKind, m.AuthorId, m.Body.Value, m.CreatedAt))
+            .ToList();
+
+        return Task.FromResult(items);
+    }
 }

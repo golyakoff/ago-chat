@@ -115,4 +115,56 @@ public class GetConversationHistoryHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
     }
+
+    [Fact]
+    public async Task HandleDeltaAsVisitorAsync_ReturnsOnlyMessagesAfterTheGivenSequence_OldestFirst()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+
+        var result = await handler.HandleDeltaAsVisitorAsync(
+            new GetConversationDeltaAsVisitor(conversation.Id, VisitorId, AfterSequence: 1), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var item = Assert.Single(result.Value);
+        Assert.Equal(2, item.Sequence);
+    }
+
+    [Fact]
+    public async Task HandleDeltaAsVisitorAsync_WhenTheRequesterIsNotThisConversationsVisitor_ReturnsForbidden()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+        var someoneElse = new VisitorId(Guid.NewGuid());
+
+        var result = await handler.HandleDeltaAsVisitorAsync(
+            new GetConversationDeltaAsVisitor(conversation.Id, someoneElse, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleDeltaAsOperatorAsync_ReturnsOnlyMessagesAfterTheGivenSequence_OldestFirst()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+
+        var result = await handler.HandleDeltaAsOperatorAsync(
+            new GetConversationDeltaAsOperator(conversation.Id, OperatorId, SiteId, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal([1, 2], result.Value.Select(m => m.Sequence));
+    }
+
+    [Fact]
+    public async Task HandleDeltaAsOperatorAsync_WhenNotAssignedToThisConversation_ReturnsForbidden()
+    {
+        var (handler, permissions, conversation) = CreateHandlerWithHistory();
+        var someoneElse = new OperatorId(Guid.NewGuid());
+        permissions.Grant(someoneElse, SiteId, Permission.ConversationRead);
+
+        var result = await handler.HandleDeltaAsOperatorAsync(
+            new GetConversationDeltaAsOperator(conversation.Id, someoneElse, SiteId, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
 }

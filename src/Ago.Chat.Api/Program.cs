@@ -12,7 +12,13 @@ using Microsoft.IdentityModel.Tokens;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHealthChecks();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    // A hub exception's real message and stack trace go to a client only in Development - the
+    // generic "Failed to invoke 'X' due to an error on the server" SignalR sends by default is not
+    // enough to debug against by hand (dev-harness.html), and never worth risking in production.
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+});
 
 new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
 
