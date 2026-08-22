@@ -1,8 +1,12 @@
-﻿using Ago.Chat.Infrastructure.Postgres;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module;
 using Ago.Chat.Worker;
+using Ago.Platform.Caching.Redis;
+using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +41,21 @@ builder.Services
     .Bind(builder.Configuration.GetSection(ConversationAssignmentFanoutConsumerOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddHostedService<ConversationAssignmentFanoutConsumer>();
+
+// 4-03: which mechanism actually performs the claim - concurrency.md's "two mechanisms, both
+// implemented, compared" - chosen once at startup, not per-request. SkipLocked is the default
+// (concurrency.md: "no extra infrastructure, no lock-lease expiry problems").
+var assignmentMechanism = builder.Configuration["AssignmentEngine:Mechanism"] ?? "SkipLocked";
+builder.Services.AddSingleton<IAssignmentClaimer>(sp => assignmentMechanism switch
+{
+    "SkipLocked" => new SkipLockedAssignmentClaimer(
+        sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<IClock>(), sp.GetRequiredService<IIdGenerator>()),
+    "RedisLock" => new RedisLockAssignmentClaimer(
+        sp.GetRequiredService<RedisDistributedLock>(), sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<IClock>(), sp.GetRequiredService<IIdGenerator>()),
+    _ => throw new InvalidOperationException(
+        $"Unknown AssignmentEngine:Mechanism '{assignmentMechanism}' - expected 'SkipLocked' or 'RedisLock'."),
+});
 
 builder.Services
     .AddOptions<ConversationAssignmentJobOptions>()
