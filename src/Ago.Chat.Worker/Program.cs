@@ -31,6 +31,12 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ConnectionFanoutConsumer>();
 
+builder.Services
+    .AddOptions<SiteCacheInvalidationConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(SiteCacheInvalidationConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<SiteCacheInvalidationConsumer>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()

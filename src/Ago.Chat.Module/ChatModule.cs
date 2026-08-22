@@ -1,10 +1,12 @@
 ﻿using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Messaging.RabbitMq;
 using Ago.Platform.Realtime;
@@ -37,11 +39,18 @@ public sealed class ChatModule : IProductModule
         // resolved - and only then does it open a Redis connection - by Ago.Chat.Api, which is the
         // only host holding SignalR connections (3-01). Worker/Webhooks never trigger it.
         services.AddConnectionRegistry(configuration);
+        // Same "registered everywhere, resolved where it matters" shape: Ago.Chat.Api resolves
+        // ICache (the site-config read) and CacheInvalidationConsumer; Ago.Chat.Worker resolves only
+        // CacheInvalidationPublisher (via SiteCacheInvalidationConsumer) - TryAddSingleton means
+        // whichever of AddConnectionRegistry/AddRedisCaching a host wires up first opens the one
+        // Redis connection the other reuses (3-04).
+        services.AddRedisCaching(configuration);
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
         services.AddScoped<SendOperatorMessageHandler>();
         services.AddScoped<GetConversationHistoryHandler>();
+        services.AddScoped<GetSiteConfigByPublicKeyHandler>();
         services.AddScoped<AssignConversationHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();

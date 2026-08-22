@@ -8,17 +8,20 @@
     <PackageReference Include="Ago.Platform.Kernel" />
     <PackageReference Include="Ago.Platform.Messaging.RabbitMq" />
     <PackageReference Include="Ago.Platform.Realtime" />
+    <PackageReference Include="Ago.Platform.Caching.Redis" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Kernel\Ago.Platform.Kernel.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Messaging.RabbitMq\Ago.Platform.Messaging.RabbitMq.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Realtime\Ago.Platform.Realtime.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Caching.Redis\Ago.Platform.Caching.Redis.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Polly.Core" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Testcontainers.Redis" />
