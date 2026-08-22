@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISiteRepository, SiteRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
+        services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

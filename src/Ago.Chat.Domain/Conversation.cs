@@ -89,6 +89,29 @@ public sealed class Conversation
         _domainEvents.Add(new ConversationAssigned(Id, operatorId, now));
     }
 
+    /// <summary>
+    /// `4-01`: the symmetric opposite of <see cref="AssignTo"/> - takes an `Assigned` conversation
+    /// back to `Waiting` so `4-02`'s assignment engine can hand it to someone else. Two real callers
+    /// exist in the roadmap for this, neither wired yet: `4-02`'s "claimed the row but no operator
+    /// had capacity" path, and `4-04`'s operator-disconnect grace period. Unlike <see cref="AssignTo"/>,
+    /// there is no same-operator no-op case to preserve - releasing is never called twice in a row for
+    /// the same reason without an assignment in between, so any call while already `Waiting` is a
+    /// genuine caller bug, not a redundant retry to tolerate.
+    /// </summary>
+    public void ReleaseToQueue(DateTimeOffset now)
+    {
+        if (State != ConversationState.Assigned)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot release conversation {Id.Value} from state {State}; only {ConversationState.Assigned} can be released.");
+        }
+
+        var previousOperatorId = OperatorId!.Value;
+        OperatorId = null;
+        State = ConversationState.Waiting;
+        _domainEvents.Add(new ConversationReleased(Id, previousOperatorId, now));
+    }
+
     public void Close(DateTimeOffset now)
     {
         if (State == ConversationState.Closed)

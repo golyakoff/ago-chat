@@ -72,6 +72,56 @@ public class ConversationTests
         Assert.Throws<InvalidConversationStateException>(() => conversation.AssignTo(OperatorId, Now));
     }
 
+    [Fact]
+    public void ReleaseToQueue_WhenAssigned_TransitionsToWaiting_ClearsOperatorId_AndRaisesConversationReleased()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.ClearDomainEvents();
+
+        conversation.ReleaseToQueue(Now.AddMinutes(5));
+
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Null(conversation.OperatorId);
+        var raised = Assert.Single(conversation.DomainEvents);
+        var released = Assert.IsType<ConversationReleased>(raised);
+        Assert.Equal(conversation.Id, released.ConversationId);
+        Assert.Equal(OperatorId, released.PreviousOperatorId);
+        Assert.Equal(Now.AddMinutes(5), released.OccurredAt);
+    }
+
+    [Fact]
+    public void ReleaseToQueue_WhenWaiting_ThrowsInvalidConversationStateException()
+    {
+        var conversation = StartConversation();
+
+        Assert.Throws<InvalidConversationStateException>(() => conversation.ReleaseToQueue(Now));
+    }
+
+    [Fact]
+    public void ReleaseToQueue_WhenClosed_ThrowsInvalidConversationStateException()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.Close(Now);
+
+        Assert.Throws<InvalidConversationStateException>(() => conversation.ReleaseToQueue(Now));
+    }
+
+    [Fact]
+    public void ReleaseToQueue_ThenAssignToADifferentOperator_Succeeds()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.ReleaseToQueue(Now);
+        var anotherOperator = new OperatorId(Guid.NewGuid());
+
+        conversation.AssignTo(anotherOperator, Now);
+
+        Assert.Equal(ConversationState.Assigned, conversation.State);
+        Assert.Equal(anotherOperator, conversation.OperatorId);
+    }
+
     [Theory]
     [MemberData(nameof(NonClosedStates))]
     public void Close_WhenNotAlreadyClosed_TransitionsToClosed_AndRaisesConversationClosed(

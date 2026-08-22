@@ -15,6 +15,14 @@ internal sealed class OperatorConfiguration : IEntityTypeConfiguration<Operator>
         builder.Property(o => o.Status).HasColumnName("status").HasConversion<string>();
         builder.Property(o => o.Capacity).HasColumnName("capacity");
 
+        // 4-01: a shadow property, not a CLR property on Operator - EF needs to know this column
+        // exists so `dotnet ef migrations add` generates a real ALTER TABLE from the model diff, but
+        // nothing may ever write it through SaveChanges. The only writer is OperatorCapacityStore's
+        // atomic `UPDATE ... WHERE active_chats < capacity` (IOperatorCapacity) - an EF load-mutate-
+        // save race against that raw SQL is exactly the failure mode this port exists to avoid, so
+        // the aggregate must have no way to touch the column at all, not just a convention not to.
+        builder.Property<int>("active_chats").HasColumnName("active_chats").HasDefaultValue(0);
+
         builder.HasOne<Site>().WithMany().HasForeignKey(o => o.SiteId);
     }
 }
