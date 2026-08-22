@@ -12,6 +12,7 @@ using Ago.Platform.Messaging.RabbitMq;
 using Ago.Platform.Realtime;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Module;
 
@@ -45,6 +46,16 @@ public sealed class ChatModule : IProductModule
         // whichever of AddConnectionRegistry/AddRedisCaching a host wires up first opens the one
         // Redis connection the other reuses (3-04).
         services.AddRedisCaching(configuration);
+
+        // 3-05: bound here (not Ago.Chat.Api's Program.cs) because SendVisitorMessageHandler, the
+        // only consumer, lives in Application and is registered for every host - the handler itself
+        // takes the plain MessageSendRateLimitOptions value, never IOptions<T> (see the handler's
+        // own remarks), so this factory is the one place that unwraps it.
+        services
+            .AddOptions<MessageSendRateLimitOptions>()
+            .Bind(configuration.GetSection(MessageSendRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageSendRateLimitOptions>>().Value);
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();

@@ -39,6 +39,14 @@ builder.Services.AddHostedService<NodeDeliveryConsumer>();
 // "registered everywhere, only this host runs the hosted service" shape as NodeDeliveryConsumer above.
 builder.Services.AddHostedService<CacheInvalidationConsumer>();
 
+// 3-05: bound here, not ChatModule - AuthEndpoints is the only consumer, and it lives in Ago.Chat.Api
+// itself (unlike MessageSendRateLimitOptions, which sits beside SendVisitorMessageHandler in
+// Application because that handler is registered for every host).
+builder.Services
+    .AddOptions<VisitorSessionRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(VisitorSessionRateLimitOptions.SectionName))
+    .ValidateOnStart();
+
 // Generated fresh on every start, never configured or committed - consistent with "no secrets,
 // ever" (repositories.md), even for a throwaway dev value. Tokens do not survive a restart, which
 // is fine for a Stage 1 stub proving the shape (authorization.md), not a production concern -

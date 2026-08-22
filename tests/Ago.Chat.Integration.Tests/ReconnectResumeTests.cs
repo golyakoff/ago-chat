@@ -53,7 +53,7 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         {
             var sendMessage = new SendVisitorMessageHandler(
                 new ConversationRepository(writeDb), new SystemClock(), new UuidV7Generator(),
-                new EfOutboxWriter<AgoChatDbContext>(writeDb));
+                new EfOutboxWriter<AgoChatDbContext>(writeDb), new FakeRateLimiter(), new MessageSendRateLimitOptions());
             for (var i = 1; i <= 5; i++)
             {
                 var sent = await sendMessage.HandleAsync(

@@ -42,7 +42,9 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
                 new Ago.Chat.Infrastructure.Postgres.ConversationRepository(db),
                 new SystemClock(),
                 new UuidV7Generator(),
-                new Ago.Platform.Persistence.Postgres.EfOutboxWriter<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>(db));
+                new Ago.Platform.Persistence.Postgres.EfOutboxWriter<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>(db),
+                new FakeRateLimiter(),
+                new Ago.Chat.Application.UseCases.SendMessage.MessageSendRateLimitOptions());
 
             var result = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
             Assert.True(result.IsSuccess);
