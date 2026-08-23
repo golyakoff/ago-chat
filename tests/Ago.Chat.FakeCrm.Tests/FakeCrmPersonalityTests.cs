@@ -80,15 +80,22 @@ public sealed class FakeCrmPersonalityTests(FakeCrmProcessFixture fixture)
     public async Task Disappears_RefusesTheConnectionAtTheTransportLayer_RawSocket()
     {
         using var client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, fixture.DisappearPort);
 
-        // The handshake itself succeeds (this is an accept-then-RST, not a closed port) - the reset
-        // arrives right after, which a read observes as a real SocketException, never HTTP bytes.
-        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        // Accept-then-RST: the reset can surface either during the connect handshake itself or on
+        // the first read right after, depending on the OS TCP stack's own timing - observed live,
+        // not assumed from docs: Windows tends to let ConnectAsync succeed and the RST shows up on
+        // read; Linux (this project's CI runner) can surface it during ConnectAsync itself. Both are
+        // the same accept-then-reset behaviour the harness performs, just observed at a different
+        // point, so the assertion covers the whole sequence rather than pinning down where.
+        var exception = await Record.ExceptionAsync(async () =>
+        {
+            await client.ConnectAsync(IPAddress.Loopback, fixture.DisappearPort);
+            await Task.Delay(TimeSpan.FromMilliseconds(200));
 
-        var stream = client.GetStream();
-        var buffer = new byte[1];
-        var exception = await Record.ExceptionAsync(() => stream.ReadAsync(buffer).AsTask());
+            var stream = client.GetStream();
+            var buffer = new byte[1];
+            _ = await stream.ReadAsync(buffer);
+        });
 
         var socketException = FindInChain<SocketException>(exception);
         Assert.NotNull(socketException);
