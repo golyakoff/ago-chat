@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
+﻿using System.Net;
+using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 
 namespace Ago.Chat.Application.Tests.UseCases.RegisterWebhookEndpoint;
 
@@ -78,5 +79,34 @@ public class WebhookUrlValidatorTests
         var result = WebhookUrlValidator.Validate(new Uri("https://[fd00::1]/webhooks/ago"));
 
         Assert.NotNull(result);
+    }
+
+    /// <summary>
+    /// `6-05`: <see cref="WebhookUrlValidator.IsDisallowedResolvedAddress"/> is the same private-range
+    /// predicate <see cref="WebhookUrlValidator.Validate"/> already uses for an IP-literal URL, exposed
+    /// so `Ago.Chat.Webhooks`'s own delivery-time SSRF recheck (a `SocketsHttpHandler.ConnectCallback`,
+    /// `Program.cs`) can apply it to whatever address DNS actually resolves to, not just what a
+    /// registration-time URL literally spelled out. These cases mirror the theories above one level
+    /// down the stack - a plain <see cref="IPAddress"/>, not a <see cref="Uri"/> to parse first.
+    /// </summary>
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("169.254.169.254")] // cloud metadata endpoint
+    [InlineData("10.0.0.5")]
+    [InlineData("172.16.0.1")]
+    [InlineData("192.168.1.1")]
+    [InlineData("::1")]
+    [InlineData("fd00::1")]
+    public void IsDisallowedResolvedAddress_APrivateLoopbackOrLinkLocalAddress_ReturnsTrue(string address)
+    {
+        Assert.True(WebhookUrlValidator.IsDisallowedResolvedAddress(IPAddress.Parse(address)));
+    }
+
+    [Theory]
+    [InlineData("93.184.216.34")] // example.com's own long-standing public address
+    [InlineData("8.8.8.8")]
+    public void IsDisallowedResolvedAddress_AnOrdinaryPublicAddress_ReturnsFalse(string address)
+    {
+        Assert.False(WebhookUrlValidator.IsDisallowedResolvedAddress(IPAddress.Parse(address)));
     }
 }

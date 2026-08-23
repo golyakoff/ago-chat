@@ -49,6 +49,13 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Worker\Ago.Chat.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Api\Ago.Chat.Api.csproj" />
+    <!-- `6-05`: the dispatcher under test. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Webhooks\Ago.Chat.Webhooks.csproj" />
+    <!-- `6-05`: reuses FakeCrmProcessFixture (real-process launch, dynamic ports) rather than
+         duplicating that ~130-line technique here - a test-project-to-test-project reference, unusual
+         but the same "make other tests real" project Ago.Chat.FakeCrm.csproj's own remarks describe;
+         transitively pulls in Ago.Chat.FakeCrm itself. -->
+    <ProjectReference Include="..\Ago.Chat.FakeCrm.Tests\Ago.Chat.FakeCrm.Tests.csproj" />
   </ItemGroup>
 
 </Project>

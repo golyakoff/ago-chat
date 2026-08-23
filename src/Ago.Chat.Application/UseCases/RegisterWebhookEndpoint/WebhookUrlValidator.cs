@@ -18,6 +18,16 @@ namespace Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 /// The honest fix is at the other end of that gap: `6-05`'s dispatcher must re-validate the resolved
 /// address immediately before it connects, not trust that this check already covered it. Flagging this
 /// now so `6-05`'s planning session does not have to rediscover the reasoning.
+///
+/// `6-05`: that dispatcher is <see cref="Ago.Chat.Webhooks.HttpWebhookDeliveryClient"/>, and
+/// <see cref="IsDisallowedResolvedAddress"/> below is what closes the gap - a
+/// <c>SocketsHttpHandler.ConnectCallback</c> resolves DNS itself, checks every candidate address
+/// against this exact predicate before ever opening a socket, and connects to the validated address
+/// directly (never re-resolving the hostname a second time inside the actual connect, which would
+/// reopen the same TOCTOU window this whole method exists to close). Exposed as a public method on
+/// this same class rather than duplicated in the host project - one private-address definition, reused
+/// by both the registration-time check and the delivery-time recheck, so the two can never drift apart
+/// on what counts as "private."
 /// </summary>
 public static class WebhookUrlValidator
 {
@@ -47,10 +57,14 @@ public static class WebhookUrlValidator
 
         return hostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6
             && IPAddress.TryParse(host, out var address)
-            && IsPrivateLoopbackOrLinkLocal(address);
+            && IsDisallowedResolvedAddress(address);
     }
 
-    private static bool IsPrivateLoopbackOrLinkLocal(IPAddress address)
+    /// <summary>The resolved-address half of this validator's own SSRF check - public so
+    /// `6-05`'s dispatcher can re-run it against whatever address DNS actually resolved to,
+    /// immediately before connecting (this class's own remarks: the TOCTOU gap this file's
+    /// registration-time check cannot close on its own).</summary>
+    public static bool IsDisallowedResolvedAddress(IPAddress address)
     {
         if (address.IsIPv4MappedToIPv6)
         {

@@ -25,6 +25,23 @@ public sealed class FakeCrmProcessFixture : IAsyncLifetime
     // AttachmentFixture's MinIO username/password.
     public const string SigningSecret = "fake-crm-tests-only-signing-secret";
 
+    // `6-05`: settable, defaults to null (unset) - existing callers get exactly today's behaviour
+    // (FakeCrmOptions.DefaultBehavior null -> Program.cs falls back to the header alone, "succeeds" if
+    // that is absent too). `6-05`'s own tests set this before calling InitializeAsync (not through
+    // FakeCrmCollection/ICollectionFixture, which offers no way to parameterise a shared fixture per
+    // test) to run one instance per fixed personality needed, several running concurrently.
+    //
+    // A property, not a second constructor overload - xUnit's own `ICollectionFixture<T>` requires
+    // exactly one public constructor on the fixture type (`"may only define a single public
+    // constructor"`, found by actually running `Ago.Chat.FakeCrm.Tests` after first trying a second
+    // constructor overload, not assumed) and does not supply C# default argument values for an
+    // optional parameter on a lone constructor either (found the same way, with the equally real
+    // "unresolved constructor arguments" failure a bare optional parameter produced). A mutable
+    // property set before `InitializeAsync` is called satisfies both constraints: the parameterless
+    // constructor xUnit's own reflection-based activation needs stays exactly that, and `6-05`'s own
+    // tests still get a fixed personality per instance.
+    public string? DefaultBehavior { get; set; }
+
     private Process? _process;
 
     public int Port { get; private set; }
@@ -54,6 +71,11 @@ public sealed class FakeCrmProcessFixture : IAsyncLifetime
                 },
             },
         };
+        if (DefaultBehavior is not null)
+        {
+            _process.StartInfo.Environment["FakeCrm__DefaultBehavior"] = DefaultBehavior;
+        }
+
         _process.Start();
 
         await WaitUntilHealthyAsync();

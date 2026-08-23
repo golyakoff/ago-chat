@@ -45,4 +45,26 @@ public sealed class FakeCrmOptions
     /// immediate RST" - as <see cref="System.Net.Sockets.SocketError.ConnectionRefused"/> instead.
     /// </summary>
     public bool DisappearPortListens { get; set; } = true;
+
+    /// <summary>
+    /// `6-05`: an additive extension, not a change to the three-personalities-via-header scheme this
+    /// project's own README documents - the header, when a caller sends one, still wins outright
+    /// (`Program.cs`'s own `HandleDeliverAsync`). Every existing test in
+    /// `Ago.Chat.FakeCrm.Tests.FakeCrmPersonalityTests` sends its own header on every request and never
+    /// sets this, so its behaviour is unchanged by this option's mere existence.
+    ///
+    /// The gap this closes: `X-Fake-Crm-Behavior` can only be set by whoever calls this harness, and
+    /// `6-05`'s own dispatcher - a *production* HTTP client calling a tenant's real endpoint - has no
+    /// business ever sending a header this specific test double invented. Proving the breaker opens
+    /// per-endpoint (one endpoint `5xxs`, a different one `succeeds`, concurrently) or the bulkhead
+    /// holds per-tenant (one site's endpoints all `hang`, another site's do not) needs several
+    /// endpoints answering with *different, fixed* personalities at once, driven only by which URL a
+    /// registered `WebhookEndpoint` points at - not by a header the real dispatcher would never send.
+    /// This is that fixed personality: same grammar as the header
+    /// (<see cref="FakeCrmBehavior.Parse"/> - <c>succeeds</c>/<c>500</c>/<c>503</c>/<c>5xx</c>/
+    /// <c>hang</c>/<c>hang-&lt;seconds&gt;</c>), read only when a request carries no header of its own,
+    /// so one running process, started with a distinct <c>FakeCrm__DefaultBehavior</c> per instance,
+    /// stands in for one endpoint's fixed, known-in-advance personality for the whole test.
+    /// </summary>
+    public string? DefaultBehavior { get; set; }
 }

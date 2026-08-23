@@ -75,6 +75,17 @@ Three of the four are chosen by the `X-Fake-Crm-Behavior` header on `/webhooks/d
 An unrecognised value gets `400`, not `401` - distinct from a signature failure, so a typo in a driver
 script does not look like a broken signing implementation.
 
+**`6-05` addition**: `FakeCrm:DefaultBehavior` (env var `FakeCrm__DefaultBehavior`) sets the personality
+used when a request carries *no* `X-Fake-Crm-Behavior` header at all - the header still wins outright
+when present, so this is purely additive and every existing header-driven test is unaffected. This
+exists because `6-05`'s own dispatcher is a production HTTP client calling what it treats as a real
+tenant endpoint; it has no business ever sending this harness's own test-only header. Proving its
+per-endpoint circuit breaker or per-tenant bulkhead needs several endpoints answering with different,
+fixed personalities at once, driven only by which URL a registered `WebhookEndpoint` points at - so
+`6-05`'s own integration tests start one `Ago.Chat.FakeCrm` process per fixed personality needed
+(`FakeCrm__DefaultBehavior=5xx`, `FakeCrm__DefaultBehavior=hang-30s`, etc.), each on its own port,
+rather than one process serving every personality via a header the dispatcher never sends.
+
 The fourth personality, **disappears**, is deliberately **not** a header value. Refusing a TCP
 connection has to happen before any HTTP request on it is even readable, so it cannot be chosen from
 inside the request it would need to inspect to make that choice - the backlog's own illustrative

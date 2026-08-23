@@ -53,10 +53,15 @@ static async Task<IResult> HandleDeliverAsync(HttpContext context, IOptions<Fake
         return Results.Json(new { error = verification.ToString() }, statusCode: StatusCodes.Status401Unauthorized);
     }
 
+    // `6-05`: the header still wins outright when present - DefaultBehavior only ever fills in for a
+    // request that carries none, so every existing header-driven test keeps behaving exactly as before.
+    string? behaviorHeader = context.Request.Headers["X-Fake-Crm-Behavior"];
+    var behaviorSource = string.IsNullOrEmpty(behaviorHeader) ? options.Value.DefaultBehavior : behaviorHeader;
+
     FakeCrmBehavior behavior;
     try
     {
-        behavior = FakeCrmBehavior.Parse(context.Request.Headers["X-Fake-Crm-Behavior"]);
+        behavior = FakeCrmBehavior.Parse(behaviorSource);
     }
     catch (FakeCrmBehaviorException ex)
     {

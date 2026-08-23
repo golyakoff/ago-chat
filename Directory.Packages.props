@@ -30,6 +30,13 @@
     <PackageVersion Include="Ago.Platform.Realtime" Version="0.11.0" />
     <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.11.0" />
     <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.11.0" />
+    <!-- 0.12.0, not 0.11.0 like every package above: Ago.Platform.Resilience is a new project as of
+         that version (ago-platform's own CHANGELOG.md, `6-01`) - it did not exist to pin at 0.11.0.
+         ago-platform packs every Ago.Platform.* project at one shared version regardless of whether
+         a given package's own content changed (see the remark on the block above), so this being one
+         minor version ahead of its siblings here is temporary: the next bump that touches any of them
+         brings all of them back to the same number. -->
+    <PackageVersion Include="Ago.Platform.Resilience" Version="0.12.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">
