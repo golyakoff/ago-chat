@@ -21,13 +21,16 @@ public sealed class AttachmentThumbnailConsumer(
     IOptions<AttachmentThumbnailConsumerOptions> options,
     ILogger<AttachmentThumbnailConsumer> logger) : BackgroundService
 {
+    // `5-11`: this consumer's own stable identity - see `ConnectionFanoutConsumer`'s own remarks.
+    private const string ConsumerName = "attachment-thumbnail";
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
-            options.Value.MaxAttempts, options.Value.InitialBackoff, "attachment-thumbnail.dlq");
+            options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
         return consumer.SubscribeAsync(
-            nameof(AttachmentConfirmed), SubscriptionMode.Competing, retryPolicy, HandleAsync, stoppingToken);
+            nameof(AttachmentConfirmed), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
     }
 
     private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)

@@ -63,9 +63,33 @@ public class ResolveMessageDeliveryTargetsHandlerTests
         var call = Assert.Single(fanout.Calls);
         Assert.Equal("MessageReceived", call.Method);
         Assert.Equal(correlationId, call.CorrelationId);
-        var dto = JsonSerializer.Deserialize<MessageDto>(call.PayloadJson);
+        // `5-11`: camelCase, matching SignalR's own hub-protocol default - WireJsonOptions's own doc
+        // comment has the full story of why this must not be a plain JsonSerializer.Deserialize call.
+        var dto = JsonSerializer.Deserialize<MessageDto>(call.PayloadJson, WireJsonOptions.Options);
         Assert.Equal("hello there", dto!.Body);
         Assert.Equal(message.Sequence, dto.Sequence);
+    }
+
+    [Fact]
+    public async Task HandleAsync_PublishesThePayloadWithCamelCasePropertyNames()
+    {
+        // `5-11`: found live - the fan-out path pre-serializes to a JSON string that survives a
+        // JsonElement round-trip before reaching SignalR, so it must already carry the same
+        // camelCase names SignalR's own hub protocol would apply to a POCO sent directly (the local
+        // echo path). A PascalCase payload here means every field arrives `undefined` client-side.
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var message = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var (handler, fanout) = CreateHandler(conversation);
+
+        await handler.HandleAsync(
+            new ResolveMessageDeliveryTargets(conversation.Id, message.Sequence, Guid.NewGuid()),
+            CancellationToken.None);
+
+        var call = Assert.Single(fanout.Calls);
+        Assert.Contains("\"sequence\"", call.PayloadJson);
+        Assert.Contains("\"authorKind\"", call.PayloadJson);
+        Assert.DoesNotContain("\"Sequence\"", call.PayloadJson);
+        Assert.DoesNotContain("\"AuthorKind\"", call.PayloadJson);
     }
 
     [Fact]

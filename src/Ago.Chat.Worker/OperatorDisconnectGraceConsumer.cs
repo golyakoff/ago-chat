@@ -34,13 +34,16 @@ public sealed class OperatorDisconnectGraceConsumer(
     IOptions<OperatorDisconnectGraceConsumerOptions> options,
     ILogger<OperatorDisconnectGraceConsumer> logger) : BackgroundService
 {
+    // `5-11`: this consumer's own stable identity - see `ConnectionFanoutConsumer`'s own remarks.
+    private const string ConsumerName = "operator-disconnect-grace";
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
-            options.Value.MaxAttempts, options.Value.InitialBackoff, "operator-disconnect-grace.dlq");
+            options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
         return consumer.SubscribeAsync(
-            nameof(OperatorPresenceLost), SubscriptionMode.Competing, retryPolicy, HandleAsync, stoppingToken);
+            nameof(OperatorPresenceLost), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
     }
 
     private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)

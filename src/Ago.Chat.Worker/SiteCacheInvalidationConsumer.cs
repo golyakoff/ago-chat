@@ -26,13 +26,16 @@ public sealed class SiteCacheInvalidationConsumer(
     IOptions<SiteCacheInvalidationConsumerOptions> options,
     ILogger<SiteCacheInvalidationConsumer> logger) : BackgroundService
 {
+    // `5-11`: this consumer's own stable identity - see `ConnectionFanoutConsumer`'s own remarks.
+    private const string ConsumerName = "site-cache-invalidation";
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
-            options.Value.MaxAttempts, options.Value.InitialBackoff, "site-cache-invalidation.dlq");
+            options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
         return consumer.SubscribeAsync(
-            nameof(SiteSettingsChanged), SubscriptionMode.Competing, retryPolicy, HandleAsync, stoppingToken);
+            nameof(SiteSettingsChanged), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
     }
 
     private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)

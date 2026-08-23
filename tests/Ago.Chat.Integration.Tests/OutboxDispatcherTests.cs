@@ -55,7 +55,7 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
         var consumer = new RabbitMqEventConsumer(connection);
         var received = new ConcurrentBag<EventEnvelope>();
         await consumer.SubscribeAsync(
-            "MessageAccepted", SubscriptionMode.Broadcast, new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
+            "MessageAccepted", SubscriptionMode.Broadcast, "test-consumer", new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
             (envelope, ctx, ct) => { received.Add(envelope); return ctx.AckAsync(ct); }, CancellationToken.None);
 
         var dispatcher = CreateDispatcher(connection);
@@ -91,7 +91,7 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
         var consumer = new RabbitMqEventConsumer(consumerConnection);
         var receivedIds = new ConcurrentBag<Guid>();
         await consumer.SubscribeAsync(
-            "MessageAccepted", SubscriptionMode.Broadcast, new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
+            "MessageAccepted", SubscriptionMode.Broadcast, "test-consumer", new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
             (envelope, ctx, ct) => { receivedIds.Add(envelope.MessageId); return ctx.AckAsync(ct); }, CancellationToken.None);
 
         var dispatcherA = CreateDispatcher(connectionA);

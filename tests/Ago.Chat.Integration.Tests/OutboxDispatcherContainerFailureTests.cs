@@ -44,7 +44,7 @@ public sealed class OutboxDispatcherContainerFailureTests
         var consumer = new RabbitMqEventConsumer(consumerConnection);
         var receivedIds = new ConcurrentBag<Guid>();
         await consumer.SubscribeAsync(
-            "MessageAccepted", SubscriptionMode.Broadcast, new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
+            "MessageAccepted", SubscriptionMode.Broadcast, "test-consumer", new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
             (envelope, ctx, ct) => { receivedIds.Add(envelope.MessageId); return ctx.AckAsync(ct); }, CancellationToken.None);
 
         await using var dispatcherConnection = new RabbitMqConnection(rabbitOptions);

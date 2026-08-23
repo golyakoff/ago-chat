@@ -20,13 +20,18 @@ public sealed class ConversationAssignmentFanoutConsumer(
     IOptions<ConversationAssignmentFanoutConsumerOptions> options,
     ILogger<ConversationAssignmentFanoutConsumer> logger) : BackgroundService
 {
+    // `5-11`: this consumer's own stable identity, required so a second Competing subscriber of
+    // ConversationAssignedToOperator (added later) gets its own queue instead of silently sharing
+    // this one - see `ConnectionFanoutConsumer`'s own remarks for the live bug this pattern fixes.
+    private const string ConsumerName = "conversation-assignment-fanout";
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
-            options.Value.MaxAttempts, options.Value.InitialBackoff, "conversation-assignment-fanout.dlq");
+            options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
         return consumer.SubscribeAsync(
-            nameof(ConversationAssignedToOperator), SubscriptionMode.Competing, retryPolicy, HandleAsync, stoppingToken);
+            nameof(ConversationAssignedToOperator), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
     }
 
     private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)

@@ -26,13 +26,18 @@ public sealed class ConnectionFanoutConsumer(
     IOptions<ConnectionFanoutConsumerOptions> options,
     ILogger<ConnectionFanoutConsumer> logger) : BackgroundService
 {
+    // `5-11`: this consumer's own stable identity - `UnreadCounterConsumer` subscribes `Competing` to
+    // this same `MessageAccepted` topic too, and before this name existed the two silently shared one
+    // RabbitMQ queue, splitting messages between them instead of each seeing every one.
+    private const string ConsumerName = "connection-fanout";
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
-            options.Value.MaxAttempts, options.Value.InitialBackoff, "connection-fanout.dlq");
+            options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
         return consumer.SubscribeAsync(
-            nameof(MessageAccepted), SubscriptionMode.Competing, retryPolicy, HandleAsync, stoppingToken);
+            nameof(MessageAccepted), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
     }
 
     private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)
