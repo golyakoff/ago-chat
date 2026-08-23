@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
+using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
@@ -131,6 +132,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetAllConversationsForSiteHandler>();
         services.AddScoped<DeleteAttachmentHandler>();
         services.AddScoped<GetMyPermissionsHandler>();
+        // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
+        services.AddScoped<CloseConversationHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
