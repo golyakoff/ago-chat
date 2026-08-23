@@ -34,7 +34,16 @@ public interface IMessagePipeline
 /// `5-07`: <see cref="ClientMessageId"/> is optional for the same reason - forwarded verbatim to
 /// <c>Conversation.AddVisitorMessage</c>/<c>AddOperatorMessage</c>, which is where the actual
 /// retry-dedup decision happens (see that method's own remarks).
+///
+/// `7-01`: <see cref="TraceParent"/> is the W3C `traceparent` of the hub method's own manual span
+/// (`VisitorHub.SendMessageAsync`/`OperatorHub.SendMessageAsync`), a plain string carried through
+/// exactly like <see cref="ClientMessageId"/> - Application never touches
+/// <c>System.Diagnostics.Activity</c> itself, only passes this value on to
+/// <c>MessageBatchWriter</c>, the pipeline worker that actually starts the DB-write span and tags
+/// the outbox row with it (concurrency.md's "In-process pipeline (Api)" already hands the write off
+/// through a channel to a different async context, where the hub's own ambient
+/// <c>Activity.Current</c> would not otherwise flow - this field is what survives that hop).
 /// </summary>
 public sealed record PendingMessage(
     ConversationId ConversationId, MessageAuthorKind AuthorKind, Guid AuthorId, MessageBody Body,
-    AttachmentId? AttachmentId = null, Guid? ClientMessageId = null);
+    AttachmentId? AttachmentId = null, Guid? ClientMessageId = null, string? TraceParent = null);

@@ -6,4 +6,4 @@ namespace Ago.Chat.Application.UseCases.SendMessage;
 /// (adr/0016) - it comes from the operator's own token claims, not a lookup.</summary>
 public sealed record SendOperatorMessage(
     ConversationId ConversationId, OperatorId AuthorId, SiteId SiteId, string Body, AttachmentId? AttachmentId = null,
-    Guid? ClientMessageId = null);
+    Guid? ClientMessageId = null, string? TraceParent = null);

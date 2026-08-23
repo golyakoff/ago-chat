@@ -43,7 +43,7 @@ public sealed class SendOperatorMessageHandler(
         // inside the pipeline worker once it loads the conversation fresh.
         var pending = new PendingMessage(
             command.ConversationId, MessageAuthorKind.Operator, command.AuthorId.Value, body,
-            command.AttachmentId, command.ClientMessageId);
+            command.AttachmentId, command.ClientMessageId, command.TraceParent);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

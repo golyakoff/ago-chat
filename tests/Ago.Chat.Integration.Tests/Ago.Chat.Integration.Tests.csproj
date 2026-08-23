@@ -31,6 +31,10 @@
     <PackageReference Include="Testcontainers.Minio" />
     <PackageReference Include="Testcontainers.Keycloak" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <!-- `7-01`: TracingEndToEndTests' own in-memory span exporter - this item's Done-when proves
+         correctness against one, not a live Jaeger (that is 7-03's job). -->
+    <PackageReference Include="OpenTelemetry" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>

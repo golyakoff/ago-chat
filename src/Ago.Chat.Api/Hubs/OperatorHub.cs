@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Api.Auth;
+﻿using System.Diagnostics;
+using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
@@ -123,14 +124,18 @@ public sealed class OperatorHub(
     // VisitorConnection, which calls the visitor-side twin of this method with 2 or 3 positional
     // args) keeps binding correctly with clientMessageId simply omitted - inserting it earlier would
     // have silently reinterpreted an existing 3-argument call's attachmentId as a clientMessageId.
+    // `7-01`: same trace-root shape as VisitorHub.SendMessageAsync - see its own remarks.
     public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
     {
+        using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
+
         var operatorId = Context.User!.GetOperatorId();
         var siteId = Context.User!.GetSiteId();
         var id = new ConversationId(conversationId);
 
         var sent = await sendMessage.HandleAsync(
-            new SendOperatorMessage(id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId),
+            new SendOperatorMessage(
+                id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
             Context.ConnectionAborted);
         if (sent.IsFailure)
         {

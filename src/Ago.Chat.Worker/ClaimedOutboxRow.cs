@@ -20,7 +20,8 @@ internal sealed record ClaimedOutboxRow(
     string Payload,
     string PartitionKey,
     Guid CorrelationId,
-    int Attempts)
+    int Attempts,
+    string? TraceContext)
 {
     public EventEnvelope ToEnvelope() => new(
         MessageId: Id,

@@ -78,7 +78,7 @@ public sealed class SendVisitorMessageHandler(
         // pairing was already stale or wrong, exactly as before.
         var pending = new PendingMessage(
             command.ConversationId, MessageAuthorKind.Visitor, command.AuthorId.Value, body,
-            command.AttachmentId, command.ClientMessageId);
+            command.AttachmentId, command.ClientMessageId, command.TraceParent);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

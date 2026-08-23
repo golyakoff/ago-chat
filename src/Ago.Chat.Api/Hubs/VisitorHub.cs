@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Api.Auth;
+﻿using System.Diagnostics;
+using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
@@ -105,13 +106,23 @@ public sealed class VisitorHub(
     // `5-07`: clientMessageId appended last, after attachmentId - see OperatorHub.SendMessageAsync's
     // matching comment for why the position (not just optionality) matters for every caller built
     // before this shipped.
+    //
+    // `7-01`: the trace root for nfr.md's "hub -> handler -> DB -> outbox -> broker -> consumer ->
+    // delivery" - a Server-kind span (SignalR is this hub method's own transport, the same role
+    // ASP.NET Core instrumentation gives an ordinary HTTP request) that instrumentation packages
+    // cannot see on their own, since a SignalR hub invocation is not itself a fresh HTTP request.
+    // Its own traceparent is threaded through the command/PendingMessage as plain data (that record's
+    // own remarks) rather than Application ever touching System.Diagnostics.Activity directly.
     public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
     {
+        using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
+
         var visitorId = Context.User!.GetVisitorId();
         var id = new ConversationId(conversationId);
 
         var sent = await sendMessage.HandleAsync(
-            new SendVisitorMessage(id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId),
+            new SendVisitorMessage(
+                id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
             Context.ConnectionAborted);
         if (sent.IsFailure)
         {
