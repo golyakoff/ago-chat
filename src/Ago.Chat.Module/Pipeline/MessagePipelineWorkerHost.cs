@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Application.UseCases;
+﻿using System.Diagnostics;
+using Ago.Chat.Application.UseCases;
+using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -49,6 +51,11 @@ public sealed class MessagePipelineWorkerHost(
         var inFlight = new List<Task>();
         await foreach (var item in pipeline.Reader.ReadAllAsync(CancellationToken.None))
         {
+            // `7-02`: nfr.md's "enqueue-wait histogram" - the time between ChannelMessagePipeline.
+            // EnqueueAsync writing this item and a worker actually dequeuing it here, i.e. genuine
+            // queueing delay rather than processing time.
+            ChatMetrics.RecordEnqueueWait(Stopwatch.GetElapsedTime(item.EnqueuedTimestamp));
+
             inFlight.Add(RunSequencedAsync(item));
             inFlight.RemoveAll(t => t.IsCompleted);
         }

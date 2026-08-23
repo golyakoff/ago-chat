@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +31,14 @@ public sealed class OperatorCapacityStore(AgoChatDbContext db) : IOperatorCapaci
             """,
             cancellationToken);
 
-        return rowsAffected > 0;
+        // `7-02`: nfr.md's "assignment attempts vs conflicts" - counted here, the single choke point
+        // both IAssignmentClaimer implementations (SkipLockedAssignmentClaimer, RedisLockAssignmentClaimer)
+        // call through, rather than in either caller separately. concurrency.md's own words: a rows-
+        // affected count of 0 is "a normal outcome to retry, not an error to log at Error level" -
+        // this item counts it instead of only logging it at Debug, exactly as the backlog item asks.
+        var claimed = rowsAffected > 0;
+        ChatMetrics.RecordCapacityClaimAttempt(claimed);
+        return claimed;
     }
 
     public async Task ReleaseAsync(OperatorId operatorId, CancellationToken cancellationToken)
