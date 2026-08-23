@@ -90,13 +90,20 @@ public sealed class GetAttachmentDownloadUrlHandler(
             {
                 var url = await fileStorage.CreateDownloadUrlAsync(
                     new ObjectKey(attachment.ObjectKey), options.DownloadLifetime, ct);
-                return new CachedDownload(url, clock.UtcNow.Add(options.DownloadLifetime));
+                // `5-10`: the same cached entry carries the thumbnail's own presigned URL, one
+                // presign call each - not two round trips through this handler for a client that
+                // wants both. Only presigned when `5-04`'s job actually produced one; a non-image
+                // attachment's `ThumbnailKey` stays null forever, and this stays null right with it.
+                var thumbnailUrl = attachment.ThumbnailKey is { } thumbnailKey
+                    ? await fileStorage.CreateDownloadUrlAsync(new ObjectKey(thumbnailKey), options.DownloadLifetime, ct)
+                    : null;
+                return new CachedDownload(url, attachment.ContentType, thumbnailUrl, clock.UtcNow.Add(options.DownloadLifetime));
             },
             new CacheEntryOptions(cacheTtl),
             cancellationToken);
 
-        return new AttachmentDownload(cached.Url, cached.ExpiresAt);
+        return new AttachmentDownload(cached.Url, cached.ContentType, cached.ThumbnailUrl, cached.ExpiresAt);
     }
 
-    private sealed record CachedDownload(Uri Url, DateTimeOffset ExpiresAt);
+    private sealed record CachedDownload(Uri Url, string ContentType, Uri? ThumbnailUrl, DateTimeOffset ExpiresAt);
 }
