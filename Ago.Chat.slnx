@@ -17,5 +17,7 @@
     <Project Path="tests/Ago.Chat.FakeCrm/Ago.Chat.FakeCrm.csproj" />
     <Project Path="tests/Ago.Chat.FakeCrm.Tests/Ago.Chat.FakeCrm.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Integration.Tests/Ago.Chat.Integration.Tests.csproj" />
+    <Project Path="tests/Ago.Chat.WebhookDispatchRunner/Ago.Chat.WebhookDispatchRunner.csproj" />
+    <Project Path="tests/Ago.Chat.LoadDriver/Ago.Chat.LoadDriver.csproj" />
   </Folder>
 </Solution>
