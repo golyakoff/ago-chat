@@ -45,7 +45,7 @@ public sealed class ResolveMessageDeliveryTargetsHandler(
         var dto = new MessageDto(
             item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt, item.AttachmentId?.Value);
 
-        await fanout.PublishAsync(recipients, "MessageReceived", JsonSerializer.Serialize(dto), command.CorrelationId, cancellationToken);
+        await fanout.PublishAsync(recipients, "MessageReceived", JsonSerializer.Serialize(dto, WireJsonOptions.Options), command.CorrelationId, cancellationToken);
 
         return Result.Success();
     }

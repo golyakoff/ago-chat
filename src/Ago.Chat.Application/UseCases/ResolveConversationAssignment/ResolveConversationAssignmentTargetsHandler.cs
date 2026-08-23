@@ -24,7 +24,10 @@ public sealed class ResolveConversationAssignmentTargetsHandler(INodeFanoutPubli
         };
 
         var dto = new ConversationAssignedDto(command.ConversationId, command.OperatorId, command.OccurredAt);
-        await fanout.PublishAsync(recipients, "ConversationAssigned", JsonSerializer.Serialize(dto), command.CorrelationId, cancellationToken);
+        // `5-11`: must match SignalR's own camelCase hub-protocol default - see WireJsonOptions's own
+        // doc comment for why a plain JsonSerializer.Serialize(dto) here would silently ship every
+        // field as `undefined` to the client once it survives the JsonElement round-trip.
+        await fanout.PublishAsync(recipients, "ConversationAssigned", JsonSerializer.Serialize(dto, WireJsonOptions.Options), command.CorrelationId, cancellationToken);
 
         return Result.Success();
     }

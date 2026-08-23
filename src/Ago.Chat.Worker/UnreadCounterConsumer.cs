@@ -34,7 +34,8 @@ public sealed class UnreadCounterConsumer(
             options.Value.MaxAttempts, options.Value.InitialBackoff, $"{RecordUnreadMessageHandler.ConsumerName}.dlq");
 
         return consumer.SubscribeAsync(
-            nameof(MessageAccepted), SubscriptionMode.Competing, retryPolicy, HandleAsync, stoppingToken);
+            nameof(MessageAccepted), SubscriptionMode.Competing, RecordUnreadMessageHandler.ConsumerName,
+            retryPolicy, HandleAsync, stoppingToken);
     }
 
     private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)
