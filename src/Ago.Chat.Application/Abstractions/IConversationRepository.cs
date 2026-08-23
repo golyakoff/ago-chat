@@ -33,5 +33,9 @@ public interface IConversationRepository
     /// </summary>
     Task<IReadOnlyList<Conversation>> GetWaitingForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
 
+    /// <summary>`6-08`: throws <see cref="ConversationConcurrencyConflictException"/>, never a raw
+    /// ORM exception, if the row backing <paramref name="conversation"/> changed since it was loaded -
+    /// see that type's own remarks for why the translation happens here, at the adapter, rather than
+    /// inside a handler.</summary>
     Task SaveAsync(Conversation conversation, CancellationToken cancellationToken);
 }

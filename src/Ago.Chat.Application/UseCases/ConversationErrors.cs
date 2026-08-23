@@ -24,6 +24,15 @@ public static class ConversationErrors
     public static Error InvalidState(string reason) =>
         new("Conversation.InvalidState", reason);
 
+    /// <summary>`6-08`: a second `DbUpdateConcurrencyException` on the same request, after the handler
+    /// already reloaded the row once and retried against it - a third writer landed inside that narrow
+    /// retry window. Distinct from <see cref="InvalidState"/> (a real business-state conflict the
+    /// domain method itself detected on fresh data) - this is "the row would not sit still long enough
+    /// to save," so the caller's own remedy is genuinely "retry the whole request," not "you did
+    /// something wrong."</summary>
+    public static Error ConcurrencyConflict(Guid conversationId) =>
+        new("Conversation.ConcurrencyConflict", $"Conversation {conversationId} was modified concurrently; retry the request.");
+
     public static Error InvalidBody(string reason) =>
         new("Message.InvalidBody", reason);
 
