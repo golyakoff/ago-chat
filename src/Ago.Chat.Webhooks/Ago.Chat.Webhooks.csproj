@@ -8,4 +8,21 @@
     <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
   </ItemGroup>
 
+  <!-- `6-05`: the only host that needs Ago.Platform.Resilience directly - its per-endpoint
+       breaker/per-tenant bulkhead pipelines are built here (WebhookResiliencePipelines), not behind a
+       ChatModule registration shared by every host, because nothing but this dispatcher's own
+       IWebhookDeliveryClient implementation ever touches a ResiliencePipeline
+       (Ago.Platform.Architecture.Tests' ResilienceLayeringTests, ago-platform, enforces that only
+       Ago.Platform.Resilience itself may construct a Polly ResiliencePipelineBuilder - this project
+       only ever calls the already-built ResiliencePolicyBuilder, never that type directly). Same
+       dual PackageReference/ProjectReference-behind-AgoPlatformDevOverride shape every other
+       Ago.Platform.* dependency in this repo already uses (Ago.Chat.Module.csproj, CLAUDE.md). -->
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Resilience" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Resilience\Ago.Platform.Resilience.csproj" />
+  </ItemGroup>
+
 </Project>

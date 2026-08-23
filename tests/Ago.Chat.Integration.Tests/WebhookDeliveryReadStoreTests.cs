@@ -27,7 +27,7 @@ public class WebhookDeliveryReadStoreTests(PostgresFixture fixture)
     private async Task SeedDelivery(WebhookEndpointId endpointId, DateTimeOffset createdAt, WebhookDeliveryStatus status)
     {
         var delivery = WebhookDelivery.Record(
-            new WebhookDeliveryId(IdGenerator.NewId(createdAt)), endpointId, "message.created", "{\"foo\":1}",
+            new WebhookDeliveryId(IdGenerator.NewId(createdAt)), endpointId, Guid.NewGuid(), "message.created", "{\"foo\":1}",
             attempt: 1, status, responseStatus: status == WebhookDeliveryStatus.Delivered ? 200 : null,
             responseSnippet: status == WebhookDeliveryStatus.Delivered ? "OK" : null, createdAt,
             deliveredAt: status == WebhookDeliveryStatus.Delivered ? createdAt : null);

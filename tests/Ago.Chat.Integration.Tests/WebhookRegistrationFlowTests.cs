@@ -91,7 +91,7 @@ public class WebhookRegistrationFlowTests(PostgresFixture fixture)
         await using (var deliveryDb = fixture.CreateDbContext())
         {
             var delivery = WebhookDelivery.Record(
-                new WebhookDeliveryId(new UuidV7Generator().NewId(Now)), endpointId, "message.created", "{}",
+                new WebhookDeliveryId(new UuidV7Generator().NewId(Now)), endpointId, Guid.NewGuid(), "message.created", "{}",
                 attempt: 1, WebhookDeliveryStatus.Delivered, 200, "OK", Now, Now);
             await new WebhookDeliveryRepository(deliveryDb).SaveAsync(delivery, CancellationToken.None);
         }
