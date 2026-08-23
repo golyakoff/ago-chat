@@ -1,4 +1,6 @@
-﻿using System.Threading.Channels;
+﻿using System.Diagnostics;
+using System.Threading.Channels;
+using Ago.Chat.Contracts;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
@@ -110,6 +112,17 @@ public sealed class OutboxDispatcher(
             using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             publishCts.CancelAfter(options.Value.PublishTimeout);
 
+            // `7-01`: messaging.md's "trace id captured at write must survive the poll-and-publish
+            // handoff" - a new activity, parented to the context captured at write time (row.
+            // TraceContext, OutboxMessage's own remarks), not a fresh root. Ago.Platform.Messaging.
+            // RabbitMq's RabbitMqEventPublisher picks up whatever Activity is current right here and
+            // injects it as the outgoing `traceparent` header, so this is also the only place that
+            // needs to know a parent exists at all - the publisher itself stays generic.
+            ChatTracing.TryParseTraceParent(row.TraceContext, out var parentContext);
+            using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.OutboxDispatch, ActivityKind.Producer, parentContext);
+            activity?.SetTag("ago.outbox.id", row.Id);
+            activity?.SetTag("ago.outbox.type", row.Type);
+
             try
             {
                 await publisher.PublishAsync(row.ToEnvelope(), publishCts.Token);
@@ -141,7 +154,7 @@ public sealed class OutboxDispatcher(
         NpgsqlConnection connection, NpgsqlTransaction transaction, int batchSize, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT id, occurred_at, type, version, payload, partition_key, correlation_id, attempts
+            SELECT id, occurred_at, type, version, payload, partition_key, correlation_id, attempts, trace_context
             FROM outbox
             WHERE published_at IS NULL
             ORDER BY occurred_at
@@ -164,7 +177,8 @@ public sealed class OutboxDispatcher(
                 reader.GetString(4),
                 reader.GetString(5),
                 reader.GetGuid(6),
-                reader.GetInt32(7)));
+                reader.GetInt32(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8)));
         }
 
         return rows;

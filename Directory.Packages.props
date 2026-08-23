@@ -33,15 +33,22 @@
          satisfy. Pre-existing staleness found while restoring for 6-06, not something that item's own
          work introduced - every host in this repository was unbuildable against a current local feed
          until this bump. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.12.0" />
-    <PackageVersion Include="Ago.Platform.Resilience" Version="0.12.0" />
+    <!-- `7-01`: bumped from 0.12.0 to 0.13.0, every package here again, matching every previous move
+         on this page - `Ago.Platform.Abstractions.IOutboxWriter.Enqueue` gained an optional
+         `traceContext` parameter, `Ago.Platform.Persistence.Postgres.OutboxMessage` gained a new
+         `TraceContext` column, and `Ago.Platform.Hosting` gained `AddPlatformObservability` (see
+         ago-platform's own CHANGELOG.md `[0.13.0]` entry). None of that is a breaking change (the new
+         parameter is optional, defaulting to today's no-trace-context behaviour), but ago-platform
+         still packs every project together at one shared version regardless. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.13.0" />
+    <PackageVersion Include="Ago.Platform.Resilience" Version="0.13.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">
@@ -111,6 +118,15 @@
     <PackageVersion Include="AWSSDK.S3" Version="4.0.102.3" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup Label="Observability">
+    <!-- `7-01`: matches ago-platform's own Directory.Packages.props pin exactly - only
+         Ago.Chat.Integration.Tests references these, to build a raw in-memory-exported
+         TracerProvider for TracingEndToEndTests; production code never references the OTel SDK
+         directly, only Ago.Platform.Hosting.AddPlatformObservability. -->
+    <PackageVersion Include="OpenTelemetry" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.18.0" />
   </ItemGroup>
 
 </Project>

@@ -6,12 +6,16 @@ using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module;
 using Ago.Chat.Webhooks;
+using Ago.Platform.Hosting;
 using Ago.Platform.Resilience;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Polly;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// `7-01`: see Ago.Chat.Api's own remarks - one call per host, this host's own name.
+builder.Services.AddPlatformObservability(builder.Configuration, "Ago.Chat.Webhooks");
 
 new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
 

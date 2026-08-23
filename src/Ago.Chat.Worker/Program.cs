@@ -3,12 +3,16 @@ using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module;
 using Ago.Chat.Worker;
 using Ago.Platform.Caching.Redis;
+using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// `7-01`: see Ago.Chat.Api's own remarks - one call per host, this host's own name.
+builder.Services.AddPlatformObservability(builder.Configuration, "Ago.Chat.Worker");
 
 new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
 

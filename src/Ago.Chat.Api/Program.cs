@@ -14,6 +14,7 @@ using Ago.Chat.Module.Pipeline;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
+using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication;
@@ -22,6 +23,10 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// `7-01`: one call per host, this host's own name - AddPlatformObservability's own remarks on why
+// the name is a parameter, not a fourth near-identical appsettings.json.
+builder.Services.AddPlatformObservability(builder.Configuration, "Ago.Chat.Api");
 
 // 3-06: readiness now means "can do the job" - Postgres (conversations), RabbitMQ (outbox/fan-out
 // consumers), Redis (cache, connection registry) - matching Ago.Chat.Worker's own

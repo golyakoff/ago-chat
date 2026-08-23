@@ -11,5 +11,5 @@ public sealed class FakeOutboxWriter : IOutboxWriter
 
     public IReadOnlyList<EventEnvelope> Enqueued => _enqueued;
 
-    public void Enqueue(EventEnvelope envelope) => _enqueued.Add(envelope);
+    public void Enqueue(EventEnvelope envelope, string? traceContext = null) => _enqueued.Add(envelope);
 }

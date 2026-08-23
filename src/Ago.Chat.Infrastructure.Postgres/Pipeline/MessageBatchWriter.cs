@@ -1,5 +1,7 @@
-﻿using Ago.Chat.Application.Mapping;
+﻿using System.Diagnostics;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -44,6 +46,29 @@ public sealed class MessageBatchWriter(
         {
             return;
         }
+
+        // `7-01`: nfr.md's "DB" stage - one span per flush, covering the whole batch (this is a
+        // genuine batch write: several messages, possibly from several different senders' own
+        // traces, land in one transaction/one SaveChangesAsync). Real Npgsql instrumentation nests
+        // its own per-command spans inside this one for free, since Activity.Current is what it
+        // checks. Parenting is honest about the batching-vs-tracing tension rather than pretending
+        // it away: the first item's own trace becomes this span's real parent (correct, and the only
+        // case nfr.md's Done-when actually tests - a batch of one), every other item in the same
+        // flush gets an ActivityLink instead of a false second parent - OTel's own documented shape
+        // for "this span was influenced by, but is not a child of, several other traces." Each row's
+        // own outbox entry still gets *its own* correct trace context below, independent of this
+        // span's parent - see IOutboxWriter.Enqueue's own remarks for why that has to be explicit,
+        // not read from this ambient activity.
+        ChatTracing.TryParseTraceParent(batch[0].Message.TraceParent, out var batchParent);
+        var links = batch.Count > 1
+            ? batch.Skip(1)
+                .Select(item => ChatTracing.TryParseTraceParent(item.Message.TraceParent, out var context) ? new ActivityLink(context) : (ActivityLink?)null)
+                .OfType<ActivityLink>()
+                .ToList()
+            : [];
+        using var activity = ChatTracing.Source.StartActivity(
+            ChatTracing.SpanNames.PipelinePersistBatch, ActivityKind.Internal, batchParent, links: links);
+        activity?.SetTag("ago.batch.size", batch.Count);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -127,7 +152,11 @@ public sealed class MessageBatchWriter(
                     attachment?.LinkToMessage(messageId, conversation.Id);
 
                     var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-                    outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
+                    // `7-01`: this item's *own* captured trace context, not activity?.Id (this
+                    // batch's own span) - IOutboxWriter.Enqueue's own remarks explain why: a batch
+                    // covering several senders must not tag every row with whichever trace happened
+                    // to parent the shared DB-write span.
+                    outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator), item.Message.TraceParent);
                     pendingSuccesses.Add((item, message.Sequence));
                 }
                 catch (ConversationParticipantMismatchException)
