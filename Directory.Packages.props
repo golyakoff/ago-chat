@@ -22,20 +22,25 @@
          pack time (-p:Version=..., not Directory.Build.props's <Version> there, which packing
          ignores), so every package here bumps together even where a given package's own content did
          not change. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.11.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.11.0" />
-    <!-- 0.12.0, not 0.11.0 like every package above: Ago.Platform.Resilience is a new project as of
-         that version (ago-platform's own CHANGELOG.md, `6-01`) - it did not exist to pin at 0.11.0.
-         ago-platform packs every Ago.Platform.* project at one shared version regardless of whether
-         a given package's own content changed (see the remark on the block above), so this being one
-         minor version ahead of its siblings here is temporary: the next bump that touches any of them
-         brings all of them back to the same number. -->
+    <!-- `6-06`: bumped from 0.11.0 to 0.12.0 (every package here, not just Resilience) - ago-platform
+         packs every Ago.Platform.* project at one shared version per pack regardless of whether a
+         given package's own content changed (see Ago.Platform.Resilience's own history below), and
+         `6-01`'s merge to ago-platform's main already moved that shared version to 0.12.0. Restoring
+         this solution against a freshly packed local feed (workspace.md's own "pack ago-platform into
+         it first if it is empty" step) failed with NU1109 ("package downgrade... 0.12.0 to 0.12.0")
+         before this change - Hosting/Messaging.RabbitMq's own 0.12.0 packages depend on
+         Kernel/Abstractions >= 0.12.0 transitively, which the old 0.11.0 pins here could never
+         satisfy. Pre-existing staleness found while restoring for 6-06, not something that item's own
+         work introduced - every host in this repository was unbuildable against a current local feed
+         until this bump. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.12.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.12.0" />
     <PackageVersion Include="Ago.Platform.Resilience" Version="0.12.0" />
   </ItemGroup>
 
@@ -57,6 +62,10 @@
     <!-- `5-05`: TestServer for the OIDC integration test - a real in-memory ASP.NET Core auth
          pipeline, not JWT-validation-in-isolation. -->
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.11" />
+    <!-- `6-06`: Ago.Chat.LoadDriver's own real SignalR client - the same package a real widget/console
+         host would ship, matching this repo's .NET 10 / ASP.NET Core 10.0.11 pin above rather than an
+         older LTS line. -->
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup Label="Persistence">

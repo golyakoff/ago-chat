@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <!--
+    `6-06`: the message-traffic driver for the webhooks-isolation load proof
+    (load/reports/2026-08-23-webhooks-load-proof.md). Deliberately a black box - no ProjectReference
+    into any Ago.Chat.* source, only the same public SignalR/HTTP surface a real widget or console
+    would use (Microsoft.AspNetCore.SignalR.Client, the same package ago-widget/ago-console ship) - so
+    the latency this measures is genuinely client-observed, not shortcut through internals.
+
+    Deviation from this project's stated load-test tool (docs/runbooks/load-testing.md: k6): k6 is not
+    installed in this sandboxed session, and installing it here would mean downloading and running an
+    external binary this background session has no way to get explicit interactive confirmation for
+    (see this repo's own tool-use safety rules). Separately, and just as decisive: SignalR's hub
+    protocol is JSON messages framed with a 0x1e record-separator over the WebSocket, not plain
+    request/response - hand-rolling that framing in a k6 script from scratch, untested, risked
+    measuring bugs in this driver's own reimplementation rather than the real system. Using the real
+    .NET SignalR client instead - the same library this project's own concurrency/integration tests
+    already use by hand for exactly this reason (NodeDeathReconnectTests, ConnectionFanoutEndToEndTests)
+    - was the honest tradeoff. Stated plainly here and in the report, not silently substituted.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+  </ItemGroup>
+
+</Project>

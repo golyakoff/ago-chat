@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    `6-06`: a real, standalone process wired identically to `src/Ago.Chat.Webhooks/Program.cs` -
+    same ChatModule registration, same WebhookResiliencePipelines/HttpWebhookDeliveryClient/
+    resilience-options binding, same two real hosted consumers - with exactly one deliberate
+    difference, documented at the point it differs in this project's own Program.cs: the production
+    host's SocketsHttpHandler.ConnectCallback re-validates the resolved address against
+    WebhookUrlValidator's private/loopback/link-local rules before every connection (adr/0024's own
+    TOCTOU close), which is a real, correct security control - and one that makes it structurally
+    impossible to point the *real* Ago.Chat.Webhooks host at a fake-CRM target reachable only on this
+    machine (every address a local dev box owns - loopback, RFC1918, Docker/K8s pod and service
+    ranges - is exactly what that check exists to block, load/reports/2026-08-23-webhooks-load-proof.md
+    has the full reasoning). This runner exists so 6-06's load proof can still exercise the *real*
+    dispatch code end to end (real ChatModule DI, real RabbitMQ consumers reacting to real outbox
+    events the real Ago.Chat.Worker publishes, real Polly breaker/bulkhead pipelines, a real HTTP call
+    to a real running Ago.Chat.FakeCrm process) without a publicly routable HTTPS endpoint this
+    session has no way to stand up safely. Lives under tests/ (not src/) for the same reason
+    Ago.Chat.FakeCrm does: not one of the three hosts this repository ships to production
+    (naming-and-structure.md), a load-test-only tool that makes another real component provable.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+    <!-- The real consumer/dispatch-client types this runner reuses unmodified
+         (ConversationAssignmentWebhookDispatchConsumer, ConversationClosedWebhookDispatchConsumer,
+         HttpWebhookDeliveryClient, WebhookResiliencePipelines, WebhookHttpOptions) live in
+         src/Ago.Chat.Webhooks itself, not Ago.Chat.Module - referenced directly, same as
+         Ago.Chat.Webhooks.csproj references Ago.Chat.Module directly rather than duplicating it. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Webhooks\Ago.Chat.Webhooks.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Resilience" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Resilience\Ago.Platform.Resilience.csproj" />
+  </ItemGroup>
+
+</Project>
