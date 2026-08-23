@@ -1,4 +1,4 @@
-using Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Contracts;
