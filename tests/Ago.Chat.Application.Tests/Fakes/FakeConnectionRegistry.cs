@@ -1,4 +1,4 @@
-using Ago.Platform.Abstractions;
+﻿using Ago.Platform.Abstractions;
 
 namespace Ago.Chat.Application.Tests.Fakes;
 

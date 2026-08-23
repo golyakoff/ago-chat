@@ -1,4 +1,4 @@
-namespace Ago.Chat.Contracts;
+﻿namespace Ago.Chat.Contracts;
 
 /// <summary>
 /// `5-07`: the wire shape for one row of the console's queue view - deliberately thin (no message

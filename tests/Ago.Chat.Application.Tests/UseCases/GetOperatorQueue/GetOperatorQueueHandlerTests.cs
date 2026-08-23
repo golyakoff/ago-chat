@@ -1,4 +1,4 @@
-using Ago.Chat.Application.Tests.Fakes;
+﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Domain;
 
