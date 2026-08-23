@@ -95,12 +95,13 @@ public static class AttachmentEndpoints
             return result.Error!.Value.ToProblem(httpContext);
         }
 
-        return Results.Ok(new AttachmentDownloadResponse(result.Value.Url, result.Value.ExpiresAt));
+        return Results.Ok(new AttachmentDownloadResponse(
+            result.Value.Url, result.Value.ContentType, result.Value.ThumbnailUrl, result.Value.ExpiresAt));
     }
 
     public sealed record CreateAttachmentRequest(string ContentType, long SizeBytes);
 
     public sealed record CreateAttachmentResponse(Guid AttachmentId, Uri UploadUrl, DateTimeOffset ExpiresAt);
 
-    public sealed record AttachmentDownloadResponse(Uri Url, DateTimeOffset ExpiresAt);
+    public sealed record AttachmentDownloadResponse(Uri Url, string ContentType, Uri? ThumbnailUrl, DateTimeOffset ExpiresAt);
 }

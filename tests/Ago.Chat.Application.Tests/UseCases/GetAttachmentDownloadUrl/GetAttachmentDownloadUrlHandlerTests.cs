@@ -100,6 +100,33 @@ public class GetAttachmentDownloadUrlHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsVisitorAsync_WhenNoThumbnailWasEverGenerated_ReturnsANullThumbnailUrl()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.ThumbnailUrl);
+        Assert.Equal("image/png", result.Value.ContentType);
+    }
+
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenAThumbnailExists_ReturnsAPresignedThumbnailUrl()
+    {
+        var fixture = CreateFixture();
+        fixture.Attachment.SetThumbnail("site/x/conv/y/z-thumb.webp");
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Value.ThumbnailUrl);
+        Assert.Contains("z-thumb.webp", result.Value.ThumbnailUrl!.ToString());
+    }
+
+    [Fact]
     public async Task HandleAsVisitorAsync_CalledTwice_OnlyPresignsOnce_TheSecondCallIsServedFromCache()
     {
         var fixture = CreateFixture();
