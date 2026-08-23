@@ -27,6 +27,11 @@
     <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- `7-02`: MessagePipelineTests' channel-occupancy/batch-size/enqueue-wait tests resolve
+         OpenTelemetry's own in-memory reader, the same bar TracingEndToEndTests already holds
+         tracing to. -->
+    <PackageReference Include="OpenTelemetry" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
   </ItemGroup>
 
   <ItemGroup>

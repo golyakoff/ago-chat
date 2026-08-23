@@ -40,15 +40,27 @@
          ago-platform's own CHANGELOG.md `[0.13.0]` entry). None of that is a breaking change (the new
          parameter is optional, defaulting to today's no-trace-context behaviour), but ago-platform
          still packs every project together at one shared version regardless. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.13.0" />
-    <PackageVersion Include="Ago.Platform.Resilience" Version="0.13.0" />
+    <!-- `7-02`: bumped from 0.13.0 to 0.14.0, every package here again, same reasoning as every
+         previous move on this page - `Ago.Platform.Hosting.AddPlatformObservability` now also wires a
+         `MeterProvider`, and `Ago.Platform.Resilience.ResiliencePolicyBuilder`'s constructor gained a
+         required `pipelineName` parameter (a genuinely breaking change to this pre-1.0 package) -
+         `Ago.Chat.Webhooks.WebhookResiliencePipelines` (`6-05`'s own `"Webhooks"`-named pipeline, the
+         one real call site of this constructor in this repository) updated both of its call sites to
+         pass its own existing `PipelineName` constant; no other change needed there for the
+         breaker-state gauge and bulkhead-rejection counter this bump adds to cover webhook delivery
+         automatically, exactly as `7-02`'s own Out-of-scope section anticipated.
+         `Ago.Platform.Caching.Redis`/`Ago.Platform.Realtime`/`Ago.Platform.Messaging.RabbitMq` each
+         gained a new manual `Meter` too (see ago-platform's own CHANGELOG.md `[0.14.0]` entry for the
+         full list). -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.14.0" />
+    <PackageVersion Include="Ago.Platform.Resilience" Version="0.14.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">

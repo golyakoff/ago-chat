@@ -125,33 +125,44 @@ public sealed class OperatorHub(
     // args) keeps binding correctly with clientMessageId simply omitted - inserting it earlier would
     // have silently reinterpreted an existing 3-argument call's attachmentId as a clientMessageId.
     // `7-01`: same trace-root shape as VisitorHub.SendMessageAsync - see its own remarks.
+    // `7-02`: same placement decision as VisitorHub.SendMessageAsync - see its own remarks.
     public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
     {
         using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
+        var stopwatch = Stopwatch.StartNew();
+        var success = false;
 
-        var operatorId = Context.User!.GetOperatorId();
-        var siteId = Context.User!.GetSiteId();
-        var id = new ConversationId(conversationId);
-
-        var sent = await sendMessage.HandleAsync(
-            new SendOperatorMessage(
-                id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
-            Context.ConnectionAborted);
-        if (sent.IsFailure)
+        try
         {
-            throw new HubException(sent.Error!.Value.Message);
+            var operatorId = Context.User!.GetOperatorId();
+            var siteId = Context.User!.GetSiteId();
+            var id = new ConversationId(conversationId);
+
+            var sent = await sendMessage.HandleAsync(
+                new SendOperatorMessage(
+                    id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
+                Context.ConnectionAborted);
+            if (sent.IsFailure)
+            {
+                throw new HubException(sent.Error!.Value.Message);
+            }
+
+            // 3-02: local echo only, same reasoning as VisitorHub.EchoToCallerAsync - the real delivery
+            // to every participant (including this operator's other tabs and the visitor) goes through
+            // ConnectionFanoutConsumer reacting to this message's own MessageAccepted.
+            var page = await getHistory.HandleAsOperatorAsync(
+                new GetConversationHistoryAsOperator(id, operatorId, siteId, sent.Value + 1, 1), Context.ConnectionAborted);
+            var sentMessage = page.Value.Messages.Single();
+            var dto = ToDto(sentMessage, id);
+            await Clients.Caller.SendAsync("MessageReceived", dto, Context.ConnectionAborted);
+
+            success = true;
+            return sent.Value;
         }
-
-        // 3-02: local echo only, same reasoning as VisitorHub.EchoToCallerAsync - the real delivery
-        // to every participant (including this operator's other tabs and the visitor) goes through
-        // ConnectionFanoutConsumer reacting to this message's own MessageAccepted.
-        var page = await getHistory.HandleAsOperatorAsync(
-            new GetConversationHistoryAsOperator(id, operatorId, siteId, sent.Value + 1, 1), Context.ConnectionAborted);
-        var sentMessage = page.Value.Messages.Single();
-        var dto = ToDto(sentMessage, id);
-        await Clients.Caller.SendAsync("MessageReceived", dto, Context.ConnectionAborted);
-
-        return sent.Value;
+        finally
+        {
+            ChatMetrics.RecordHubMethod("OperatorHub", "SendMessage", stopwatch.Elapsed, success);
+        }
     }
 
     public async Task<HistoryPage> GetHistoryAsync(Guid conversationId, int? beforeSequence, int pageSize)

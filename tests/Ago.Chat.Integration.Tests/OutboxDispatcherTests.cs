@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
@@ -9,6 +10,8 @@ using Ago.Platform.Messaging.RabbitMq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -141,6 +144,126 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
         {
             await dispatcher.StopAsync(CancellationToken.None);
         }
+    }
+
+    /// <summary>
+    /// `7-02`'s Done-when: proves a real value change for the outbox-lag gauge - seeds a row with an
+    /// occurred_at well in the past, runs one dispatch cycle directly (not through the
+    /// BackgroundService loop, so timing is deterministic), and asserts ChatMetrics' gauge reports a
+    /// lag at least as large as the age seeded, not merely that the instrument exists.
+    /// </summary>
+    [Fact]
+    public async Task DispatchBatchAsync_WithAnOldUnpublishedRow_MovesTheOutboxLagGauge()
+    {
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        // This fixture's Postgres/RabbitMQ containers are shared across every test in this
+        // collection (OutboxDispatcherFixture's own remarks), with no per-test reset - a row this
+        // test inserts and successfully publishes must be deleted again once assertions are done, or
+        // it permanently pollutes sibling tests that assume an otherwise-empty outbox table
+        // (RowWrittenByTheRealHandlerPath_IsPublishedAndMarked's own SingleAsync() over the whole
+        // table) and a real dispatcher elsewhere in the suite could pick it up and publish it a
+        // second time (TwoDispatchers_RacingForTheSameBatch's own exact-count assertion).
+        var occurredAt = DateTimeOffset.UtcNow.AddSeconds(-30);
+        var rowId = Guid.NewGuid();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Add(new Ago.Platform.Persistence.Postgres.OutboxMessage(
+                rowId, occurredAt, "MessageAccepted", 1, "{}", $"key-{Guid.NewGuid():N}", Guid.NewGuid()));
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+
+        try
+        {
+            await using var connection = fixture.CreateRabbitMqConnection();
+            var dispatcher = CreateDispatcher(connection);
+            await dispatcher.DispatchBatchAsync(CancellationToken.None);
+
+            meterProvider.ForceFlush();
+            var gauge = exportedMetrics.Single(m => m.Name == ChatMetrics.OutboxLagInstrumentName);
+            double lagSeconds = 0;
+            foreach (ref readonly var point in gauge.GetMetricPoints())
+            {
+                lagSeconds = point.GetGaugeLastValueDouble();
+            }
+
+            Assert.True(lagSeconds >= 25, $"Expected the lag gauge to reflect the ~30s-old seeded row; observed {lagSeconds}s.");
+        }
+        finally
+        {
+            await DeleteOutboxRowAsync(rowId);
+        }
+    }
+
+    /// <summary>
+    /// `7-02`'s Done-when for the publish-failure counter - a publisher that always throws forces
+    /// every claimed row down the failure path, proving the counter moves on a real failure rather
+    /// than just existing.
+    /// </summary>
+    [Fact]
+    public async Task DispatchBatchAsync_WhenPublishingThrows_RecordsAPublishFailure()
+    {
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        // Same shared-fixture cleanup obligation as the lag-gauge test above - this row is never
+        // marked published (the publisher always throws), so it must be deleted explicitly rather
+        // than relying on published_at ever being set.
+        var rowId = Guid.NewGuid();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Add(new Ago.Platform.Persistence.Postgres.OutboxMessage(
+                rowId, DateTimeOffset.UtcNow, "MessageAccepted", 1, "{}", $"key-{Guid.NewGuid():N}", Guid.NewGuid()));
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+
+        try
+        {
+            var dispatcher = new OutboxDispatcher(
+                fixture.DataSource, new ThrowingEventPublisher(), new SystemClock(),
+                Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromSeconds(2), BatchSize = 20 }),
+                NullLogger<OutboxDispatcher>.Instance);
+
+            await dispatcher.DispatchBatchAsync(CancellationToken.None);
+
+            meterProvider.ForceFlush();
+            var failures = exportedMetrics.Single(m => m.Name == ChatMetrics.OutboxPublishFailuresInstrumentName);
+            long total = 0;
+            foreach (ref readonly var point in failures.GetMetricPoints())
+            {
+                total += point.GetSumLong();
+            }
+
+            Assert.Equal(1, total);
+        }
+        finally
+        {
+            await DeleteOutboxRowAsync(rowId);
+        }
+    }
+
+    private async Task DeleteOutboxRowAsync(Guid id)
+    {
+        await using var db = fixture.CreateDbContext();
+        var row = await db.Set<Ago.Platform.Persistence.Postgres.OutboxMessage>().FindAsync([id], CancellationToken.None);
+        if (row is not null)
+        {
+            db.Remove(row);
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class ThrowingEventPublisher : IEventPublisher
+    {
+        public Task PublishAsync(EventEnvelope envelope, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("forced publish failure for the outbox publish-failure metrics test");
     }
 
     private OutboxDispatcher CreateDispatcher(RabbitMqConnection connection, int batchSize = 20) =>

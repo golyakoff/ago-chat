@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Infrastructure.Postgres.Pipeline;
+﻿using Ago.Chat.Contracts;
+using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -60,6 +61,10 @@ public sealed class BatchFlusherService(
 
             if (buffer.Count > 0)
             {
+                // `7-02`: nfr.md's "batch size histogram" - recorded before the write itself, since
+                // this is about how large the attempted batch was, independent of whether the flush
+                // that follows succeeds.
+                ChatMetrics.RecordBatchSize(buffer.Count);
                 await writer.FlushAsync(buffer, CancellationToken.None);
                 buffer.Clear();
             }

@@ -113,24 +113,40 @@ public sealed class VisitorHub(
     // cannot see on their own, since a SignalR hub invocation is not itself a fresh HTTP request.
     // Its own traceparent is threaded through the command/PendingMessage as plain data (that record's
     // own remarks) rather than Application ever touching System.Diagnostics.Activity directly.
+    // `7-02`: nfr.md's "RED metrics per... hub method" - recorded at the same span boundary 7-01
+    // already named (ChatTracing.SpanNames.HubSendMessage above), not for every hub method: this is
+    // the one method that already has its own manual span boundary to attach a duration/outcome
+    // measurement to; JoinAsync/GetHistoryAsync are plain request/response calls ASP.NET Core-style
+    // RED does not reach either (no HTTP request of their own), but adding a boundary to them purely
+    // for this item was judged out of this item's own literal scope - see the handback report.
     public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
     {
         using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
+        var stopwatch = Stopwatch.StartNew();
+        var success = false;
 
-        var visitorId = Context.User!.GetVisitorId();
-        var id = new ConversationId(conversationId);
-
-        var sent = await sendMessage.HandleAsync(
-            new SendVisitorMessage(
-                id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
-            Context.ConnectionAborted);
-        if (sent.IsFailure)
+        try
         {
-            throw new HubException(sent.Error!.Value.Message);
-        }
+            var visitorId = Context.User!.GetVisitorId();
+            var id = new ConversationId(conversationId);
 
-        await EchoToCallerAsync(id, visitorId, sent.Value);
-        return sent.Value;
+            var sent = await sendMessage.HandleAsync(
+                new SendVisitorMessage(
+                    id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
+                Context.ConnectionAborted);
+            if (sent.IsFailure)
+            {
+                throw new HubException(sent.Error!.Value.Message);
+            }
+
+            await EchoToCallerAsync(id, visitorId, sent.Value);
+            success = true;
+            return sent.Value;
+        }
+        finally
+        {
+            ChatMetrics.RecordHubMethod("VisitorHub", "SendMessage", stopwatch.Elapsed, success);
+        }
     }
 
     public async Task<HistoryPage> GetHistoryAsync(Guid conversationId, int? beforeSequence, int pageSize)
