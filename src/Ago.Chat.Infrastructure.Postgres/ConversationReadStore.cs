@@ -16,7 +16,7 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     private const string Sql = """
         select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
                author_id as "AuthorId", body as "Body", created_at as "CreatedAt",
-               attachment_id as "AttachmentId"
+               attachment_id as "AttachmentId", client_message_id as "ClientMessageId"
         from messages
         where conversation_id = @ConversationId
           and (@BeforeSequence is null or sequence < @BeforeSequence)
@@ -29,7 +29,7 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     private const string DeltaSql = """
         select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
                author_id as "AuthorId", body as "Body", created_at as "CreatedAt",
-               attachment_id as "AttachmentId"
+               attachment_id as "AttachmentId", client_message_id as "ClientMessageId"
         from messages
         where conversation_id = @ConversationId
           and sequence > @AfterSequence
@@ -72,5 +72,6 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.AuthorId,
         r.Body,
         new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
-        r.AttachmentId is { } attachmentId ? new AttachmentId(attachmentId) : null);
+        r.AttachmentId is { } attachmentId ? new AttachmentId(attachmentId) : null,
+        r.ClientMessageId);
 }

@@ -68,6 +68,9 @@ public class ResolveMessageDeliveryTargetsHandlerTests
         var dto = JsonSerializer.Deserialize<MessageDto>(call.PayloadJson, WireJsonOptions.Options);
         Assert.Equal("hello there", dto!.Body);
         Assert.Equal(message.Sequence, dto.Sequence);
+        // `5-07`: found while building the console - a client with more than one open conversation
+        // cannot route this push without knowing which conversation it belongs to.
+        Assert.Equal(conversation.Id.Value, dto.ConversationId);
     }
 
     [Fact]

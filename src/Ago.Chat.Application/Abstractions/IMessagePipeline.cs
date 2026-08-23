@@ -30,6 +30,11 @@ public interface IMessagePipeline
 /// validates it (exists, `Ready`, belongs to this conversation) before the message is allowed to
 /// reference it - the same "cheap checks here, real validation in the worker's own transaction" split
 /// `SendVisitorMessageHandler`'s own remarks describe for the conversation load.
+///
+/// `5-07`: <see cref="ClientMessageId"/> is optional for the same reason - forwarded verbatim to
+/// <c>Conversation.AddVisitorMessage</c>/<c>AddOperatorMessage</c>, which is where the actual
+/// retry-dedup decision happens (see that method's own remarks).
 /// </summary>
 public sealed record PendingMessage(
-    ConversationId ConversationId, MessageAuthorKind AuthorKind, Guid AuthorId, MessageBody Body, AttachmentId? AttachmentId = null);
+    ConversationId ConversationId, MessageAuthorKind AuthorKind, Guid AuthorId, MessageBody Body,
+    AttachmentId? AttachmentId = null, Guid? ClientMessageId = null);

@@ -165,7 +165,13 @@
   async function sendVisitorMessage() {
     const input = document.getElementById('visitor-message');
     if (!input.value || !visitorConnection) return;
-    await visitorConnection.invoke('SendMessageAsync', visitorConversationId, input.value);
+    // `5-07`: SendMessageAsync now has 4 total parameters (attachmentId, then clientMessageId,
+    // both `5-03`/`5-07` additions) - same argument-count binding rule as JoinAsync's own comment
+    // above (local-dev.md's documented gotcha): every trailing optional must still be passed
+    // explicitly, `null` here since this harness does not exercise either. Found live while
+    // manually verifying `5-07`: this 2-argument call had silently been broken since `5-03` added
+    // the third parameter - nothing had exercised the visitor send path against a real server since.
+    await visitorConnection.invoke('SendMessageAsync', visitorConversationId, input.value, null, null);
     input.value = '';
   }
 
@@ -229,7 +235,8 @@
     const input = document.getElementById('operator-message');
     const conversationId = document.getElementById('operator-conversation-id').value;
     if (!input.value || !operatorConnection || !conversationId) return;
-    await operatorConnection.invoke('SendMessageAsync', conversationId, input.value);
+    // `5-07`: same fix as sendVisitorMessage's own matching comment - explicit null, not omitted.
+    await operatorConnection.invoke('SendMessageAsync', conversationId, input.value, null, null);
     input.value = '';
   }
 </script>

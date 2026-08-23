@@ -20,6 +20,13 @@ public sealed class Message
 
     public MessageBody Body { get; }
 
+    /// <summary>`5-07`: the client-generated id realtime.md's Client protocol section named as a
+    /// design intent since `3-03` and left unwired - see <see cref="Conversation.AddMessage"/> for
+    /// where it is actually used (retry-dedup, checked against every message already in memory).
+    /// <see langword="null"/> for a caller that never sent one (every pre-`5-07` client) - dedup is
+    /// simply unavailable for that send, never a validation failure forced on an old caller.</summary>
+    public Guid? ClientMessageId { get; }
+
     /// <summary>`5-03`: "message references the attachment, not the reverse" (`file-storage.md`) -
     /// this is that reference. Set once, at construction, alongside the same
     /// <c>Conversation.AddVisitorMessage</c>/<c>AddOperatorMessage</c> call that assigns
@@ -37,6 +44,7 @@ public sealed class Message
         Guid authorId,
         MessageBody body,
         AttachmentId? attachmentId,
+        Guid? clientMessageId,
         DateTimeOffset now)
     {
         Id = id;
@@ -46,6 +54,7 @@ public sealed class Message
         AuthorId = authorId;
         Body = body;
         AttachmentId = attachmentId;
+        ClientMessageId = clientMessageId;
         CreatedAt = now;
     }
 

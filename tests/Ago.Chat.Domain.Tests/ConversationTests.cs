@@ -256,6 +256,69 @@ public class ConversationTests
     }
 
     [Fact]
+    public void AddVisitorMessage_RepeatedClientMessageId_ReturnsOriginalMessage_BurnsNoNewSequence()
+    {
+        // `5-07`: realtime.md's Client protocol section - "a retried send after a flaky reconnect
+        // must not create a second message."
+        var conversation = StartConversation();
+        var clientMessageId = Guid.NewGuid();
+
+        var first = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now, clientMessageId: clientMessageId);
+        var retry = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now, clientMessageId: clientMessageId);
+
+        Assert.Same(first, retry);
+        Assert.Equal(1, conversation.LastSequence);
+        Assert.Single(conversation.Messages);
+    }
+
+    [Fact]
+    public void AddOperatorMessage_RepeatedClientMessageId_ReturnsOriginalMessage_BurnsNoNewSequence()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        var clientMessageId = Guid.NewGuid();
+
+        var first = conversation.AddOperatorMessage(
+            OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now, clientMessageId: clientMessageId);
+        var retry = conversation.AddOperatorMessage(
+            OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now, clientMessageId: clientMessageId);
+
+        Assert.Same(first, retry);
+        Assert.Equal(1, conversation.LastSequence);
+        Assert.Single(conversation.Messages);
+    }
+
+    [Fact]
+    public void AddVisitorMessage_DifferentClientMessageIds_BothLand()
+    {
+        var conversation = StartConversation();
+
+        var first = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now, clientMessageId: Guid.NewGuid());
+        var second = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("again"), Now, clientMessageId: Guid.NewGuid());
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(2, conversation.LastSequence);
+    }
+
+    [Fact]
+    public void AddVisitorMessage_NoClientMessageId_NeverDeduplicates()
+    {
+        // A caller that never sends one (every pre-`5-07` client) gets exactly the old behaviour -
+        // no dedup check applies at all, matching realtime.md's own "null skips the check" contract.
+        var conversation = StartConversation();
+
+        var first = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var second = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(2, conversation.LastSequence);
+    }
+
+    [Fact]
     public void IncrementUnreadCount_VisitorAuthored_IncrementsOperatorCountOnly()
     {
         var conversation = StartConversation();

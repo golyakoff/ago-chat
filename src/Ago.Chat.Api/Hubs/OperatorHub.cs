@@ -4,6 +4,7 @@ using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -27,6 +28,7 @@ public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
+    GetVisitorPresenceHandler getVisitorPresence,
     HubConnectionRegistration connectionRegistration,
     HubOriginValidator originValidator,
     OperatorPresencePublisher presencePublisher,
@@ -101,7 +103,7 @@ public sealed class OperatorHub(
                 throw new HubException(delta.Error!.Value.Message);
             }
 
-            return new HistoryPage(ToDtos(delta.Value), NextBeforeSequence: null);
+            return new HistoryPage(ToDtos(delta.Value, id), NextBeforeSequence: null);
         }
 
         var history = await getHistory.HandleAsOperatorAsync(
@@ -112,17 +114,23 @@ public sealed class OperatorHub(
             throw new HubException(history.Error!.Value.Message);
         }
 
-        return new HistoryPage(ToDtos(history.Value.Messages), history.Value.NextBeforeSequence);
+        return new HistoryPage(ToDtos(history.Value.Messages, id), history.Value.NextBeforeSequence);
     }
 
-    public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null)
+    // `5-07`: clientMessageId appended last, after attachmentId - SignalR's client binder matches
+    // invocations by argument count against this exact parameter order (local-dev.md's own
+    // documented gotcha), so a caller built before this shipped (dev-harness.html, ago-widget's
+    // VisitorConnection, which calls the visitor-side twin of this method with 2 or 3 positional
+    // args) keeps binding correctly with clientMessageId simply omitted - inserting it earlier would
+    // have silently reinterpreted an existing 3-argument call's attachmentId as a clientMessageId.
+    public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
     {
         var operatorId = Context.User!.GetOperatorId();
         var siteId = Context.User!.GetSiteId();
         var id = new ConversationId(conversationId);
 
         var sent = await sendMessage.HandleAsync(
-            new SendOperatorMessage(id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null),
+            new SendOperatorMessage(id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId),
             Context.ConnectionAborted);
         if (sent.IsFailure)
         {
@@ -135,7 +143,7 @@ public sealed class OperatorHub(
         var page = await getHistory.HandleAsOperatorAsync(
             new GetConversationHistoryAsOperator(id, operatorId, siteId, sent.Value + 1, 1), Context.ConnectionAborted);
         var sentMessage = page.Value.Messages.Single();
-        var dto = ToDto(sentMessage);
+        var dto = ToDto(sentMessage, id);
         await Clients.Caller.SendAsync("MessageReceived", dto, Context.ConnectionAborted);
 
         return sent.Value;
@@ -145,20 +153,41 @@ public sealed class OperatorHub(
     {
         var operatorId = Context.User!.GetOperatorId();
         var siteId = Context.User!.GetSiteId();
+        var id = new ConversationId(conversationId);
         var page = await getHistory.HandleAsOperatorAsync(
-            new GetConversationHistoryAsOperator(new ConversationId(conversationId), operatorId, siteId, beforeSequence, pageSize),
+            new GetConversationHistoryAsOperator(id, operatorId, siteId, beforeSequence, pageSize),
             Context.ConnectionAborted);
         if (page.IsFailure)
         {
             throw new HubException(page.Error!.Value.Message);
         }
 
-        return new HistoryPage(ToDtos(page.Value.Messages), page.Value.NextBeforeSequence);
+        return new HistoryPage(ToDtos(page.Value.Messages, id), page.Value.NextBeforeSequence);
     }
 
-    private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item) =>
-        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt, item.AttachmentId?.Value);
+    /// <summary>
+    /// `5-07`: a snapshot, not a subscription - see `GetVisitorPresenceHandler`'s own remarks for why
+    /// a periodic re-call from the console is the right shape here rather than a new push mechanism.
+    /// </summary>
+    public async Task<bool> GetVisitorPresenceAsync(Guid conversationId)
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        var siteId = Context.User!.GetSiteId();
 
-    private static IReadOnlyList<MessageDto> ToDtos(IReadOnlyList<Application.Abstractions.MessageHistoryItem> items) =>
-        [.. items.Select(ToDto)];
+        var presence = await getVisitorPresence.HandleAsync(
+            new GetVisitorPresence(new ConversationId(conversationId), operatorId, siteId), Context.ConnectionAborted);
+        if (presence.IsFailure)
+        {
+            throw new HubException(presence.Error!.Value.Message);
+        }
+
+        return presence.Value;
+    }
+
+    private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item, ConversationId conversationId) =>
+        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt,
+            item.AttachmentId?.Value, item.ClientMessageId, conversationId.Value);
+
+    private static IReadOnlyList<MessageDto> ToDtos(IReadOnlyList<Application.Abstractions.MessageHistoryItem> items, ConversationId conversationId) =>
+        [.. items.Select(item => ToDto(item, conversationId))];
 }

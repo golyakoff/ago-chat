@@ -28,6 +28,11 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         // here either, for the same partitioning reason as attachments.message_id
         // (AttachmentConfiguration's own remarks) - this table is the partitioned side.
         builder.Property(m => m.AttachmentId).HasColumnName("attachment_id").HasConversion(IdConverters.NullableAttachment);
+        // `5-07`: nullable - every caller before this shipped with no clientMessageId at all
+        // (realtime.md's Client protocol section called it "a design intent, not wired up" since
+        // `3-03`), and a NOT NULL column would reject their sends outright rather than simply
+        // skipping dedup for them.
+        builder.Property(m => m.ClientMessageId).HasColumnName("client_message_id");
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
 
         // data-model.md: turns duplicate delivery into a no-op insert at the storage level. Widened
@@ -38,5 +43,19 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         // the conversation aggregate's optimistic-concurrency load-mutate-save (xmin), not this
         // index - this stays the last line of defence, not the first.
         builder.HasIndex(m => new { m.ConversationId, m.Sequence, m.CreatedAt }).IsUnique();
+
+        // `5-07`: same adr/0019 shape (partition key `created_at` must be part of any unique
+        // constraint on this table) applied to the new retry-dedup column - the in-memory check in
+        // `Conversation.AddMessage` is the mechanism actually relied on in the normal path (it also
+        // catches a same-batch duplicate this index cannot, since both would still be un-committed
+        // when it runs); this index is the storage-level backstop for two concurrent processes each
+        // racing their own freshly-loaded copy of the aggregate, exactly the case adr/0019 already
+        // named as this table's storage-level indexes' real job. Filtered (partial) so the very
+        // common `NULL` case - a caller that sent no clientMessageId at all - never collides with
+        // itself; Postgres treats every `NULL` in a unique index as distinct already, but the filter
+        // also keeps the index smaller by not indexing rows it will never need to check.
+        builder.HasIndex(m => new { m.ConversationId, m.ClientMessageId, m.CreatedAt })
+            .IsUnique()
+            .HasFilter("client_message_id IS NOT NULL");
     }
 }

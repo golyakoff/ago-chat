@@ -9,4 +9,5 @@ public sealed record MessageHistoryItem(
     Guid AuthorId,
     string Body,
     DateTimeOffset CreatedAt,
-    AttachmentId? AttachmentId = null);
+    AttachmentId? AttachmentId = null,
+    Guid? ClientMessageId = null);
