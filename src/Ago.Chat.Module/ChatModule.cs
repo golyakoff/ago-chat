@@ -3,8 +3,11 @@ using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
+using Ago.Chat.Application.UseCases.DeleteAttachment;
+using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
@@ -122,6 +125,12 @@ public sealed class ChatModule : IProductModule
         // handler's own remarks for what gap it closes.
         services.AddScoped<GetOperatorQueueHandler>();
         services.AddScoped<GetVisitorPresenceHandler>();
+        // `5-08`: the admin role's own two new callers, plus the same kind of console-side gap
+        // GetOperatorQueueHandler/GetVisitorPresenceHandler closed for `5-07` - see each handler's
+        // own remarks.
+        services.AddScoped<GetAllConversationsForSiteHandler>();
+        services.AddScoped<DeleteAttachmentHandler>();
+        services.AddScoped<GetMyPermissionsHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 
 namespace Ago.Chat.Api.Conversations;
@@ -24,6 +25,14 @@ public static class ConversationsEndpoints
     {
         app.MapGet("/api/v1/conversations/queue", HandleGetQueueAsync)
             .RequireAuthorization("RequireOperatorIdentity");
+
+        // `5-08`: the admin/supervisor site-wide list - a sibling sub-resource to `/queue`, same
+        // "compound read gets its own sub-resource rather than a query-parameter mode switch on the
+        // plural `conversations` resource" reasoning as this file's own doc comment already gives for
+        // `/queue`. `beforeId`/`pageSize` are query parameters, not a route segment, because they page
+        // one already-identified resource rather than select which resource this is (api-design.md).
+        app.MapGet("/api/v1/conversations/all", HandleGetAllForSiteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
     }
 
     private static async Task<IResult> HandleGetQueueAsync(
@@ -32,6 +41,21 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new GetOperatorQueue(user.GetOperatorId(), user.GetSiteId()), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleGetAllForSiteAsync(
+        Guid? beforeId,
+        int? pageSize,
+        GetAllConversationsForSiteHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetAllConversationsForSite(user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 50),
+            cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }

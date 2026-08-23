@@ -15,4 +15,11 @@
     <ProjectReference Include="..\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- `5-08`: DeleteAttachmentHandler's own "log and continue" fallback - see
+         Directory.Packages.props's own remarks on why this abstraction-only package is in-bounds for
+         Application. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
 </Project>
