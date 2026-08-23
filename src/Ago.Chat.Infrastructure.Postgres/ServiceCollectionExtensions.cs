@@ -31,6 +31,17 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
+        // `6-03`
+        services.AddScoped<IWebhookEndpointRepository, WebhookEndpointRepository>();
+        services.AddScoped<IWebhookDeliveryRepository, WebhookDeliveryRepository>();
+        services.AddScoped<IWebhookDeliveryReadStore, WebhookDeliveryReadStore>();
+        services.AddSingleton<IWebhookSecretGenerator, WebhookSecretGenerator>();
+        // Scoped, not singleton, so a missing/malformed Webhooks:SecretEncryptionKey surfaces on the
+        // first request rather than only if something resolves it eagerly at startup - ChatModule's
+        // own ValidateOnStart() on WebhookSecretCipherOptions is what actually fails fast for the
+        // ordinary case; this is the same defense-in-depth belt-and-suspenders shape the constructor
+        // guard in WebhookSecretCipher itself already applies.
+        services.AddScoped<IWebhookSecretCipher, WebhookSecretCipher>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

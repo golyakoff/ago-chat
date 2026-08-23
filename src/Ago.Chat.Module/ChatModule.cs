@@ -13,10 +13,14 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
+using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
+using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Infrastructure.Postgres;
@@ -94,6 +98,18 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AttachmentRateLimitOptions>>().Value);
 
+        // `6-03`: bound here, not a host's own Program.cs - RegisterWebhookEndpointHandler is
+        // registered for every host below, the same MessageSendRateLimitOptions/AttachmentOptions
+        // shape. Deliberately no random-per-process fallback (WebhookSecretCipherOptions' own remarks)
+        // - Validate()+ValidateOnStart() is what turns a missing/malformed key into a startup failure
+        // instead of a silent, unrecoverable loss the first time a secret is encrypted.
+        services
+            .AddOptions<WebhookSecretCipherOptions>()
+            .Bind(configuration.GetSection(WebhookSecretCipherOptions.SectionName))
+            .Validate(IsValidBase64Aes256Key, "Webhooks:SecretEncryptionKey must be a base64-encoded 32-byte AES-256 key.")
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<WebhookSecretCipherOptions>>().Value);
+
         // 4-05: bound and registered here, not Ago.Chat.Api's Program.cs - the same DI-validation
         // reason as OperatorPresencePublisher (4-04), see ChannelMessagePipeline's own remarks.
         // SendVisitorMessageHandler/SendOperatorMessageHandler are registered for every host below
@@ -135,8 +151,33 @@ public sealed class ChatModule : IProductModule
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
         services.AddScoped<CloseConversationHandler>();
 
+        // `6-03`: the registration and delivery-history backend for a future self-service console
+        // screen - see each handler's own remarks. Registered for every host (the same shape as
+        // everything else on this page) even though only `Ago.Chat.Api` maps HTTP endpoints for them
+        // today; `6-05`'s dispatcher, a `Ago.Chat.Webhooks` consumer, is what will eventually resolve
+        // `IWebhookEndpointRepository`/`IWebhookDeliveryRepository` from that same host.
+        services.AddScoped<RegisterWebhookEndpointHandler>();
+        services.AddScoped<ListWebhookEndpointsHandler>();
+        services.AddScoped<RevokeWebhookEndpointHandler>();
+        services.AddScoped<GetWebhookDeliveriesHandler>();
+
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
         services.AddSingleton<OperatorPresencePublisher>();
+    }
+
+    // `6-03`: a plain boolean predicate rather than throwing inside the lambda - `.Validate()` expects
+    // one, and the actual "why" (must be base64, must decode to exactly 32 bytes for AES-256) is
+    // already stated in the message passed alongside it and in WebhookSecretCipherOptions' own remarks.
+    private static bool IsValidBase64Aes256Key(WebhookSecretCipherOptions options)
+    {
+        try
+        {
+            return Convert.FromBase64String(options.SecretEncryptionKey).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 }
