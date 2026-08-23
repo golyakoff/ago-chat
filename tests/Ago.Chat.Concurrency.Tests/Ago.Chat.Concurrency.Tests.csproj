@@ -37,6 +37,9 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Worker\Ago.Chat.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Api\Ago.Chat.Api.csproj" />
+    <!-- `6-07`: ConcurrentWebhookDispatchPump/PartitionSequencer are `internal` to
+         Ago.Chat.Webhooks - visible here via InternalsVisibleTo (see that project's AssemblyInfo). -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Webhooks\Ago.Chat.Webhooks.csproj" />
   </ItemGroup>
 
 </Project>

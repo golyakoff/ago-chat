@@ -22,6 +22,14 @@ namespace Ago.Chat.Webhooks;
 /// Runs in `Ago.Chat.Webhooks`, not `Ago.Chat.Worker` - `adr/0013`'s entire reason for a third
 /// deployable: this consumer's own work (an outbound HTTP call that may hang for 30s) must never share
 /// a process with `ConversationAssignmentFanoutConsumer`'s realtime fan-out or the outbox dispatcher.
+///
+/// `6-07`: `RabbitMqEventConsumer.SubscribeAsync` awaits its handler delegate inline, so at most one
+/// delivery was ever processed at a time for this subscription regardless of `PrefetchCount`
+/// (`6-06`'s own load-proof found this live - the per-tenant bulkhead's `MaxConcurrency=4` was
+/// structurally unreachable). The delegate registered below is now the fast one
+/// <see cref="ConcurrentWebhookDispatchPump"/>'s own remarks describe - it only enqueues and returns;
+/// <see cref="ProcessOneAsync"/> (this class's own former <c>HandleAsync</c>) is the real handler,
+/// now invoked by the pump's worker loops instead of directly by the broker client.
 /// </summary>
 public sealed class ConversationAssignmentWebhookDispatchConsumer(
     IEventConsumer consumer,
@@ -31,16 +39,35 @@ public sealed class ConversationAssignmentWebhookDispatchConsumer(
 {
     private const string ConsumerName = "conversation-assignment-webhook-dispatch";
 
+    private ConcurrentWebhookDispatchPump? _pump;
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
             options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
+        var pump = new ConcurrentWebhookDispatchPump(
+            options.Value.MaxConcurrency, options.Value.ChannelCapacity, ProcessOneAsync, logger, ConsumerName, stoppingToken);
+        _pump = pump;
+
         return consumer.SubscribeAsync(
-            nameof(ConversationAssignedToOperator), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
+            nameof(ConversationAssignedToOperator), SubscriptionMode.Competing, ConsumerName, retryPolicy,
+            (envelope, context, ct) => pump.EnqueueAsync(envelope, context, ct).AsTask(), stoppingToken);
     }
 
-    private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        using var timeoutCts = new CancellationTokenSource(options.Value.ShutdownDrainTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        await base.StopAsync(linked.Token);
+
+        if (_pump is not null)
+        {
+            await _pump.DrainAsync().WaitAsync(linked.Token);
+        }
+    }
+
+    private async Task ProcessOneAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)
     {
         try
         {

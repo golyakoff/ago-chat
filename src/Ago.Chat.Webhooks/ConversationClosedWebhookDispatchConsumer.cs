@@ -29,6 +29,10 @@ namespace Ago.Chat.Webhooks;
 /// published for one that existed and just closed, `adr/0005`'s "outbox commits in the same
 /// transaction as the state change") - thrown, not swallowed, so it dead-letters through the normal
 /// poison-message path instead of silently dropping a tenant's webhook.
+///
+/// `6-07`: see <see cref="ConversationAssignmentWebhookDispatchConsumer"/>'s own remarks - the same
+/// <see cref="ConcurrentWebhookDispatchPump"/> fix, applied to this consumer's own separate
+/// subscription/channel. <see cref="ProcessOneAsync"/> is this class's own former <c>HandleAsync</c>.
 /// </summary>
 public sealed class ConversationClosedWebhookDispatchConsumer(
     IEventConsumer consumer,
@@ -38,16 +42,35 @@ public sealed class ConversationClosedWebhookDispatchConsumer(
 {
     private const string ConsumerName = "conversation-closed-webhook-dispatch";
 
+    private ConcurrentWebhookDispatchPump? _pump;
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retryPolicy = new RetryPolicy(
             options.Value.MaxAttempts, options.Value.InitialBackoff, $"{ConsumerName}.dlq");
 
+        var pump = new ConcurrentWebhookDispatchPump(
+            options.Value.MaxConcurrency, options.Value.ChannelCapacity, ProcessOneAsync, logger, ConsumerName, stoppingToken);
+        _pump = pump;
+
         return consumer.SubscribeAsync(
-            nameof(ConversationEnded), SubscriptionMode.Competing, ConsumerName, retryPolicy, HandleAsync, stoppingToken);
+            nameof(ConversationEnded), SubscriptionMode.Competing, ConsumerName, retryPolicy,
+            (envelope, context, ct) => pump.EnqueueAsync(envelope, context, ct).AsTask(), stoppingToken);
     }
 
-    private async Task HandleAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        using var timeoutCts = new CancellationTokenSource(options.Value.ShutdownDrainTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        await base.StopAsync(linked.Token);
+
+        if (_pump is not null)
+        {
+            await _pump.DrainAsync().WaitAsync(linked.Token);
+        }
+    }
+
+    private async Task ProcessOneAsync(EventEnvelope envelope, IMessageContext context, CancellationToken cancellationToken)
     {
         try
         {
