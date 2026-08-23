@@ -1,4 +1,4 @@
-using Ago.Chat.Api.Auth;
+﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 

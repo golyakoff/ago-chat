@@ -1,4 +1,4 @@
-using Ago.Chat.Application.Realtime;
+﻿using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Domain;

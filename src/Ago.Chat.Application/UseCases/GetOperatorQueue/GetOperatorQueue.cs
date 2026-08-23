@@ -1,4 +1,4 @@
-using Ago.Chat.Domain;
+﻿using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.UseCases.GetOperatorQueue;
 

@@ -1,4 +1,4 @@
-using Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
