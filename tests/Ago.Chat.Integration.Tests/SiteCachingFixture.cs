@@ -15,6 +15,7 @@ public sealed class SiteCachingFixture : IAsyncLifetime
 {
     private PostgreSqlContainer _postgres = null!;
     private RedisContainer _redis = null!;
+    private IDisposable _dockerLock = null!;
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
@@ -22,6 +23,8 @@ public sealed class SiteCachingFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _dockerLock = await DockerResourceLock.AcquireAsync();
+
         _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
         _redis = new RedisBuilder("redis:7-alpine").Build();
         await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync());
@@ -38,6 +41,7 @@ public sealed class SiteCachingFixture : IAsyncLifetime
         await DataSource.DisposeAsync();
         await RedisMultiplexer.DisposeAsync();
         await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask());
+        _dockerLock.Dispose();
     }
 
     public AgoChatDbContext CreateDbContext()

@@ -31,6 +31,7 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
 
     private PostgreSqlContainer _postgres = null!;
     private KeycloakContainer _keycloak = null!;
+    private IDisposable _dockerLock = null!;
     private static readonly HttpClient Http = new();
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
@@ -45,6 +46,8 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _dockerLock = await DockerResourceLock.AcquireAsync();
+
         _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
         // Explicit image tag, matching every other Testcontainers builder in this project - the
         // parameterless/constant-based overloads are obsolete in the pinned Testcontainers.Keycloak
@@ -79,6 +82,7 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     {
         await DataSource.DisposeAsync();
         await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _keycloak.DisposeAsync().AsTask());
+        _dockerLock.Dispose();
     }
 
     public AgoChatDbContext CreateDbContext()

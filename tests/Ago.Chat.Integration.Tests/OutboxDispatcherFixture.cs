@@ -17,6 +17,7 @@ public sealed class OutboxDispatcherFixture : IAsyncLifetime
     private const string Password = "ago-test-local-dev";
 
     private PostgreSqlContainer _postgres = null!;
+    private IDisposable _dockerLock = null!;
 
     public RabbitMqContainer RabbitMq { get; private set; } = null!;
 
@@ -24,6 +25,8 @@ public sealed class OutboxDispatcherFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _dockerLock = await DockerResourceLock.AcquireAsync();
+
         _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
         RabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithUsername(Username).WithPassword(Password).Build();
         await Task.WhenAll(_postgres.StartAsync(), RabbitMq.StartAsync());
@@ -39,6 +42,7 @@ public sealed class OutboxDispatcherFixture : IAsyncLifetime
         await DataSource.DisposeAsync();
         await _postgres.DisposeAsync();
         await RabbitMq.DisposeAsync();
+        _dockerLock.Dispose();
     }
 
     public AgoChatDbContext CreateDbContext()

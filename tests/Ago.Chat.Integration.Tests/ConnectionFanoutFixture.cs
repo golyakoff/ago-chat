@@ -23,6 +23,7 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
     private PostgreSqlContainer _postgres = null!;
     private RabbitMqContainer _rabbitMq = null!;
     private RedisContainer _redis = null!;
+    private IDisposable _dockerLock = null!;
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
@@ -30,6 +31,8 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _dockerLock = await DockerResourceLock.AcquireAsync();
+
         _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
         _rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithUsername(RabbitMqUsername).WithPassword(RabbitMqPassword).Build();
         _redis = new RedisBuilder("redis:7-alpine").Build();
@@ -48,6 +51,7 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
         await DataSource.DisposeAsync();
         await RedisMultiplexer.DisposeAsync();
         await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _rabbitMq.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask());
+        _dockerLock.Dispose();
     }
 
     public AgoChatDbContext CreateDbContext()
