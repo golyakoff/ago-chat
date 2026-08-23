@@ -48,6 +48,44 @@ public sealed class CloseConversationHandler(
             return ConversationErrors.NotFound(command.ConversationId.Value);
         }
 
+        try
+        {
+            return await CloseAndSaveAsync(conversation, command, cancellationToken);
+        }
+        catch (ConversationConcurrencyConflictException)
+        {
+            // `6-08`: a concurrent writer (typically a message send bumping this row's `xmin`, `6-06`'s
+            // load-proof finding) committed between the read above and the save inside
+            // CloseAndSaveAsync - not that closing itself is wrong. Reloading and reapplying is safe
+            // exactly because Close() re-validates its own invariant against whatever is actually on
+            // disk now: if a second racing close (or any other state change) makes the fresh row
+            // unclosable, that surfaces as the ordinary Conversation.InvalidState/Forbidden result
+            // below, not a swallowed exception - the retry never bypasses a real business conflict, it
+            // only re-asks the same question against fresh data. Retried once, not in a loop: a second
+            // ConversationConcurrencyConflictException in the same request means a third writer landed
+            // inside this already-narrow window, and at that point the honest answer is "retry the
+            // whole request" (Conversation.ConcurrencyConflict, 409), matching this item's "single
+            // transparent retry, or a clean 409" scope - never an unbounded retry loop.
+            var fresh = await conversations.GetByIdAsync(command.ConversationId, cancellationToken);
+            if (fresh is null)
+            {
+                return ConversationErrors.NotFound(command.ConversationId.Value);
+            }
+
+            try
+            {
+                return await CloseAndSaveAsync(fresh, command, cancellationToken);
+            }
+            catch (ConversationConcurrencyConflictException)
+            {
+                return ConversationErrors.ConcurrencyConflict(command.ConversationId.Value);
+            }
+        }
+    }
+
+    private async Task<Result> CloseAndSaveAsync(
+        Conversation conversation, CloseConversation command, CancellationToken cancellationToken)
+    {
         if (conversation.OperatorId != command.OperatorId)
         {
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
@@ -66,6 +104,10 @@ public sealed class CloseConversationHandler(
         outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, idGenerator));
         conversation.ClearDomainEvents();
 
+        // May throw ConversationConcurrencyConflictException (IConversationRepository's own contract,
+        // `6-08`) - left to propagate to HandleAsync's retry wrapper rather than caught here, so this
+        // method stays "the one attempt" and HandleAsync stays the one place that owns the
+        // retry-once policy.
         await conversations.SaveAsync(conversation, cancellationToken);
         return Result.Success();
     }

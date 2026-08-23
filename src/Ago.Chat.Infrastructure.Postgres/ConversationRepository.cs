@@ -41,6 +41,27 @@ public sealed class ConversationRepository(AgoChatDbContext db) : IConversationR
             db.Conversations.Add(conversation);
         }
 
-        await db.SaveChangesAsync(cancellationToken);
+        // `6-08`: translated here, not left to propagate as EF's own type - IConversationRepository's
+        // own remarks (and ConversationConcurrencyConflictException's) explain why the port's contract
+        // is a technology-agnostic exception rather than Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException;
+        // this adapter is the one place in the whole call chain allowed to know which ORM raised it.
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // A failed SaveChangesAsync does not untrack anything - this conversation stays in the
+            // change tracker with our own now-untrustworthy local edit, and the outbox row the same
+            // handler staged in this same failed attempt stays tracked as a pending insert that never
+            // actually committed (the whole transaction rolled back with it). Left alone, a caller that
+            // catches ConversationConcurrencyConflictException and calls GetByIdAsync again on this same
+            // DbContext would hit the identity map and get back these same stale instances rather than
+            // Postgres's current row - silently defeating the entire point of a reload-and-retry.
+            // Clear() is what makes a caller's retry actually re-read the truth, and what stops the
+            // stale outbox row from riding along into whatever SaveChangesAsync call comes next.
+            db.ChangeTracker.Clear();
+            throw new ConversationConcurrencyConflictException(conversation.Id);
+        }
     }
 }

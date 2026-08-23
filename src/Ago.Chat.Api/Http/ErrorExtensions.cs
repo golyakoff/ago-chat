@@ -22,7 +22,7 @@ public static class ErrorExtensions
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
-                => StatusCodes.Status409Conflict,
+                or "Conversation.ConcurrencyConflict" => StatusCodes.Status409Conflict,
             "Message.RateLimited" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status500InternalServerError,
         };
