@@ -9,39 +9,51 @@
 /// lock exists purely to bound how many container fleets are alive on this machine's Docker daemon at
 /// once, a real CPU/memory contention risk Testcontainers' own isolation does not address.
 ///
-/// A <see cref="Semaphore"/>, not a <see cref="Mutex"/>, is used deliberately: <c>Mutex.Release</c>
-/// must run on the thread that called <c>WaitOne</c>, which an <c>async</c>/<c>await</c> continuation
-/// does not guarantee - <see cref="Semaphore"/> has no such thread affinity.
+/// Implemented as an exclusive-open lock file (<see cref="FileShare.None"/>), not a named
+/// <see cref="Semaphore"/>/<see cref="Mutex"/>: named kernel synchronization objects are a
+/// Windows-only feature in .NET - <c>new Semaphore(1, 1, "name")</c> throws
+/// <see cref="PlatformNotSupportedException"/> on Linux, which is exactly what this project's CI
+/// runner is (found live, the hard way, when this first shipped Windows-only-tested). A file opened
+/// with <see cref="FileShare.None"/> gives the same cross-process mutual exclusion on every platform
+/// .NET supports - Windows enforces it natively, Unix via an advisory <c>flock</c> under the hood -
+/// and releases itself automatically if the holding process dies, no stale-lock cleanup needed.
 ///
 /// Trade-off, stated explicitly: every fixture's container lifetime becomes fully sequential, even
 /// within a single test run that would otherwise start several collections' containers in parallel.
 /// That is the requested behaviour - protect against Docker resource contention from any source, not
 /// only cross-process - at the cost of a slower single-process test run than before this existed. If
-/// that cost turns out to matter more than the contention risk it prevents, raising
-/// <c>MaxConcurrentFixtures</c> to a small bounded count instead of strict 1 is the next thing to try;
-/// not done here since it was not asked for and would need its own justification.
+/// that cost turns out to matter more than the contention risk it prevents, capping the number of
+/// concurrent holders instead of enforcing strict exclusivity is the next thing to try; not done here
+/// since it was not asked for and would need its own justification.
 /// </summary>
 public static class DockerResourceLock
 {
-    private const int MaxConcurrentFixtures = 1;
+    private static readonly string LockFilePath = Path.Combine(Path.GetTempPath(), "ago-chat-testcontainers.lock");
 
-    private static readonly Semaphore Semaphore = new(
-        initialCount: MaxConcurrentFixtures,
-        maximumCount: MaxConcurrentFixtures,
-        name: @"Local\AgoChat.TestContainers.Lock");
-
-    /// <summary>Blocks (asynchronously) until this fixture is the only one starting/holding
+    /// <summary>Blocks (asynchronously, polling) until this fixture is the only one starting/holding
     /// Testcontainers-based containers on this machine, then returns a token that releases the slot
     /// on disposal. Acquire before <c>StartAsync</c>-ing any container; dispose after every container
     /// in the fixture has been disposed, not before - the whole "containers are alive" window is what
     /// this protects, not just the startup burst.</summary>
     public static async Task<IDisposable> AcquireAsync(CancellationToken cancellationToken = default)
     {
-        await Task.Run(() => Semaphore.WaitOne(), cancellationToken);
-        return new Releaser();
+        while (true)
+        {
+            try
+            {
+                var stream = new FileStream(LockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                return new Releaser(stream);
+            }
+            catch (IOException)
+            {
+                // Another fixture holds it - normal contention, not an error. Poll rather than block a
+                // thread; this runs under an async fixture lifecycle, not inside a lock statement.
+                await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            }
+        }
     }
 
-    private sealed class Releaser : IDisposable
+    private sealed class Releaser(FileStream stream) : IDisposable
     {
         private bool _released;
 
@@ -53,7 +65,7 @@ public static class DockerResourceLock
             }
 
             _released = true;
-            Semaphore.Release();
+            stream.Dispose();
         }
     }
 }
