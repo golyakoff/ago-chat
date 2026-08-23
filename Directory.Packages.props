@@ -64,6 +64,13 @@
     <PackageVersion Include="Dapper" Version="2.1.79" />
     <!-- 3-06: PostgresHealthCheck (Ago.Chat.Infrastructure.Postgres). -->
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.11" />
+    <!-- `5-08`: DeleteAttachmentHandler's own "log and continue" fallback for a storage-side delete
+         failure - the same category of dependency-free framework *abstraction* (interfaces only, no
+         concrete sink) Application already treats Ago.Platform.Kernel/Abstractions as being in-bounds
+         for, not a concrete logging provider. Api/Worker never needed this pin directly - they get
+         the interface transitively through the ASP.NET Core/Generic Host shared framework, which
+         Ago.Chat.Application (a plain class library, no Sdk.Web) does not reference. -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">

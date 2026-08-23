@@ -6,8 +6,16 @@
 /// one goes through the existing `JoinConversationAsync`/`GetHistoryAsync` hub methods, which already
 /// answer "what did this conversation actually say."
 /// </summary>
+/// <summary>
+/// `5-08`: <paramref name="OperatorId"/> is additive - <see langword="null"/> for any caller that
+/// never populates it (`api-design.md`'s additive-only wire-contract rule, same as `MessageDto`'s own
+/// `5-07` additions). The queue view's two lists never needed it (`Waiting` has none by definition,
+/// `AssignedToMe` is always the caller's own id); the admin's site-wide list is the first caller that
+/// does, since "who (if anyone) is handling this conversation" is the whole point of that view.
+/// </summary>
 public sealed record ConversationSummaryDto(
-    Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount);
+    Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
+    Guid? OperatorId = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

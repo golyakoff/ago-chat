@@ -14,6 +14,14 @@ public sealed class FakeFileStorage : IFileStorage
 
     public int CreateDownloadUrlCalls { get; private set; }
 
+    public int DeleteCalls { get; private set; }
+
+    /// <summary>`5-08`: lets a test simulate S3/MinIO being unreachable at delete time, the one
+    /// failure `DeleteAttachmentHandler`/`AttachmentOrphanSweepJob` both catch and log rather than
+    /// let fail the whole operation (`FileStorageUnavailableException`'s own doc comment,
+    /// `Ago.Platform.Abstractions`).</summary>
+    public bool ThrowUnavailableOnDelete { get; set; }
+
     public void SetMetadata(ObjectKey key, ObjectMetadata? metadata)
     {
         if (metadata is null)
@@ -43,6 +51,12 @@ public sealed class FakeFileStorage : IFileStorage
 
     public Task DeleteAsync(ObjectKey key, CancellationToken cancellationToken)
     {
+        DeleteCalls++;
+        if (ThrowUnavailableOnDelete)
+        {
+            throw new FileStorageUnavailableException($"Fake storage unavailable while deleting {key.Value}.");
+        }
+
         _metadata.Remove(key.Value);
         return Task.CompletedTask;
     }

@@ -4,6 +4,7 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
+using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
@@ -178,6 +179,7 @@ app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check
 app.MapAuthEndpoints();
 app.MapAttachmentEndpoints();
 app.MapConversationsEndpoints();
+app.MapOperatorsEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 

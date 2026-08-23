@@ -36,6 +36,20 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         order by sequence asc
         """;
 
+    // `5-08`: keyset on `id` alone - conversation ids are uuid v7 (IIdGenerator), so id order is
+    // already creation order, the same single-column cursor GetHistoryAsync uses `sequence` for.
+    // No state filter, unlike ix_conversations_waiting - this is the admin's "every conversation"
+    // read, backed by the new ix_conversations_site_all index (ConversationConfiguration).
+    private const string AllForSiteSql = """
+        select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
+               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount"
+        from conversations
+        where site_id = @SiteId
+          and (@BeforeId is null or id < @BeforeId)
+        order by id desc
+        limit @PageSize
+        """;
+
     public async Task<ConversationHistoryPage> GetHistoryAsync(
         ConversationId conversationId, int? beforeSequence, int pageSize, CancellationToken cancellationToken)
     {
@@ -64,6 +78,30 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
 
         return rows.Select(ToHistoryItem).ToList();
     }
+
+    public async Task<ConversationListPage> GetAllForSiteAsync(
+        SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var rows = await connection.QueryAsync<ConversationSummaryRow>(new CommandDefinition(
+            AllForSiteSql,
+            new { SiteId = siteId.Value, BeforeId = beforeId, PageSize = pageSize },
+            cancellationToken: cancellationToken));
+
+        var items = rows.Select(ToSummaryItem).ToList();
+
+        var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
+        return new ConversationListPage(items, nextCursor);
+    }
+
+    private static ConversationSummaryItem ToSummaryItem(ConversationSummaryRow r) => new(
+        new ConversationId(r.Id),
+        new VisitorId(r.VisitorId),
+        r.OperatorId is { } operatorId ? new OperatorId(operatorId) : null,
+        r.State,
+        new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
+        r.OperatorUnreadCount);
 
     private static MessageHistoryItem ToHistoryItem(MessageRow r) => new(
         new MessageId(r.Id),

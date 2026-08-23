@@ -55,5 +55,13 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.HasIndex(c => c.SiteId)
             .HasDatabaseName("ix_conversations_waiting")
             .HasFilter("state = 'Waiting'");
+
+        // `5-08`: the admin/supervisor site-wide conversation list has no state filter (unlike
+        // ix_conversations_waiting above), so that partial index cannot serve it -
+        // ConversationReadStore.GetAllForSiteAsync's own keyset (id descending) needs an index
+        // covering both the site_id filter and the id ordering, or it is a full-table scan sorted in
+        // memory the moment a site accumulates more than a handful of conversations.
+        builder.HasIndex(c => new { c.SiteId, c.Id })
+            .HasDatabaseName("ix_conversations_site_all");
     }
 }

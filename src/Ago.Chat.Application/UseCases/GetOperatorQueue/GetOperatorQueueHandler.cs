@@ -34,5 +34,5 @@ public sealed class GetOperatorQueueHandler(IConversationRepository conversation
 
     private static ConversationSummaryDto ToSummary(Conversation conversation) => new(
         conversation.Id.Value, conversation.VisitorId.Value, conversation.State.ToString(),
-        conversation.CreatedAt, conversation.OperatorUnreadCount);
+        conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.OperatorId?.Value);
 }

@@ -13,4 +13,11 @@ public sealed class FakePermissionChecker : IPermissionChecker
     public Task<bool> HasPermissionAsync(
         OperatorId operatorId, SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
         Task.FromResult(_granted.Contains((operatorId, siteId, permission)));
+
+    public Task<IReadOnlyList<string>> GetPermissionsAsync(
+        OperatorId operatorId, SiteId siteId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<string>>(_granted
+            .Where(g => g.Item1 == operatorId && g.Item2 == siteId)
+            .Select(g => g.Item3.Value)
+            .ToList());
 }

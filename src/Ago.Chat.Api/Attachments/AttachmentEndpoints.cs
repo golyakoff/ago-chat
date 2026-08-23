@@ -2,6 +2,7 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
+using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
@@ -34,6 +35,16 @@ public static class AttachmentEndpoints
         group.MapPost("/conversations/{conversationId:guid}/attachments", HandleCreateAsync);
         group.MapPost("/attachments/{attachmentId:guid}/confirm", HandleConfirmAsync);
         group.MapGet("/attachments/{attachmentId:guid}", HandleDownloadAsync);
+
+        // `5-08`: operator-only, unlike every route above - a visitor never held `attachment:delete`
+        // (see DeleteAttachmentAsOperator's own remarks). Mapped directly on `app`, not on `group` -
+        // stacking a second RequireAuthorization policy on top of the group's own dual-scheme one
+        // would combine (AND) both authentication requirements on the same endpoint rather than
+        // replace it, which is not what a single-scheme route wants; ConversationsEndpoints'
+        // operator-only `/conversations/queue` route makes the identical choice for the identical
+        // reason (it is not nested under any shared group either).
+        app.MapDelete("/api/v1/attachments/{attachmentId:guid}", HandleDeleteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
     }
 
     private static async Task<IResult> HandleCreateAsync(
@@ -97,6 +108,18 @@ public static class AttachmentEndpoints
 
         return Results.Ok(new AttachmentDownloadResponse(
             result.Value.Url, result.Value.ContentType, result.Value.ThumbnailUrl, result.Value.ExpiresAt));
+    }
+
+    private static async Task<IResult> HandleDeleteAsync(
+        Guid attachmentId, DeleteAttachmentHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var id = new AttachmentId(attachmentId);
+
+        var result = await handler.HandleAsOperatorAsync(
+            new DeleteAttachmentAsOperator(id, user.GetOperatorId(), user.GetSiteId()), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 
     public sealed record CreateAttachmentRequest(string ContentType, long SizeBytes);

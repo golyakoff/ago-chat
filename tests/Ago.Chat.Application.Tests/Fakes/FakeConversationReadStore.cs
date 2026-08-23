@@ -38,4 +38,22 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 
         return Task.FromResult(items);
     }
+
+    /// <summary>`5-08`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive)
+    /// over whatever this fake was seeded with for the requested site - good enough to test a
+    /// handler's own access-check and paging-forwarding logic without a real Postgres.</summary>
+    public Task<ConversationListPage> GetAllForSiteAsync(
+        SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken)
+    {
+        var items = _bySource.Values
+            .Where(c => c.SiteId == siteId && (beforeId is null || c.Id.Value.CompareTo(beforeId) < 0))
+            .OrderByDescending(c => c.Id.Value)
+            .Take(pageSize)
+            .Select(c => new ConversationSummaryItem(
+                c.Id, c.VisitorId, c.OperatorId, c.State.ToString(), c.CreatedAt, c.OperatorUnreadCount))
+            .ToList();
+
+        var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
+        return Task.FromResult(new ConversationListPage(items, nextCursor));
+    }
 }
