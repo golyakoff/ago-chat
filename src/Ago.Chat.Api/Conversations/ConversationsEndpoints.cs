@@ -1,7 +1,9 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Conversations;
 
@@ -33,6 +35,13 @@ public static class ConversationsEndpoints
         // one already-identified resource rather than select which resource this is (api-design.md).
         app.MapGet("/api/v1/conversations/all", HandleGetAllForSiteAsync)
             .RequireAuthorization("RequireOperatorIdentity");
+
+        // `6-02`: api-design.md's "actions that are not CRUD become sub-resources" example, verbatim -
+        // operator-only like `/queue` and `/all` above, for the identical reason (a visitor closing
+        // their own conversation is a different action - ending a chat session client-side - not this
+        // one; see CloseConversationHandler's own remarks).
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/close", HandleCloseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
     }
 
     private static async Task<IResult> HandleGetQueueAsync(
@@ -58,5 +67,16 @@ public static class ConversationsEndpoints
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleCloseAsync(
+        Guid conversationId, CloseConversationHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new CloseConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 }

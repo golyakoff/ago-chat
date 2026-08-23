@@ -13,6 +13,12 @@ public readonly record struct Permission(string Value)
     public static readonly Permission ConversationSend = new("conversation:send");
     public static readonly Permission ConversationAssign = new("conversation:assign");
 
+    // `6-02`: dedicated, not a reuse of ConversationAssign - adr/0016 chose granular permissions
+    // specifically so a future custom role (e.g. a supervisor who may close conversations but not
+    // reassign them) can grant one without the other; the marginal cost of one more named permission
+    // is small next to that flexibility.
+    public static readonly Permission ConversationClose = new("conversation:close");
+
     // `5-08`: the admin/supervisor role's own two permissions (authorization.md's "Permissions and
     // roles beyond Stage 1" - deferred there specifically until the console needed a real caller).
     // SiteConfigure gates the one caller this item actually builds (the site-wide conversation
