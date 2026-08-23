@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    `6-04`: a real, standalone process - not an xUnit-hosted TestServer - because `6-05`'s dispatcher
+    integration tests and `6-06`'s k6 load test both need to point real network traffic at a running
+    instance, over a real socket, the same way they will eventually point at a real third-party CRM.
+    Lives under tests/ anyway (not src/ beside Api/Worker/Webhooks): it is not one of the three hosts
+    this repository ships to production (naming-and-structure.md's ago-chat tree names exactly those
+    three under src/), it exists only to make other tests real - the same reasoning
+    AttachmentFixture/MinioFixture already established for "a lightweight, real dependency stood up
+    for tests," just for an HTTP server instead of an S3-compatible store, and needing its own
+    project (not a fixture class) because unlike Postgres/MinIO there is no Testcontainers image for
+    "a CRM that misbehaves."
+  -->
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Kernel" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Kernel\Ago.Platform.Kernel.csproj" />
+  </ItemGroup>
+
+</Project>

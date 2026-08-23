@@ -14,6 +14,8 @@
     <Project Path="tests/Ago.Chat.Architecture.Tests/Ago.Chat.Architecture.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Concurrency.Tests/Ago.Chat.Concurrency.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Domain.Tests/Ago.Chat.Domain.Tests.csproj" />
+    <Project Path="tests/Ago.Chat.FakeCrm/Ago.Chat.FakeCrm.csproj" />
+    <Project Path="tests/Ago.Chat.FakeCrm.Tests/Ago.Chat.FakeCrm.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Integration.Tests/Ago.Chat.Integration.Tests.csproj" />
   </Folder>
 </Solution>
