@@ -13,21 +13,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 0.10.0: adds Ago.Platform.Abstractions.IFileStorage (presigned upload/download, `adr/0008`)
-         and the new Ago.Platform.Storage.S3 package that implements it - `5-02`'s adapter, consumed
-         here starting with `5-03`'s attachment endpoints. ago-platform's CI packs every
+    <!-- 0.11.0: Ago.Platform.Abstractions.IEventConsumer.SubscribeAsync gained a required
+         consumerName parameter - a breaking port change (`5-11`). Every Competing-mode subscriber in
+         this repo now passes its own stable name; see each consumer's own updated call site for why
+         (two independent consumer types sharing one RabbitMQ queue, silently splitting messages
+         between them, found live while verifying `5-10`). ago-platform's CI packs every
          Ago.Platform.* project at one shared version read from ago-platform's own CHANGELOG.md at
          pack time (-p:Version=..., not Directory.Build.props's <Version> there, which packing
          ignores), so every package here bumps together even where a given package's own content did
          not change. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.10.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.10.0" />
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.11.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.11.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">
