@@ -129,7 +129,8 @@ public sealed class Conversation
     /// after the conversation is closed.
     /// </summary>
     public Message AddVisitorMessage(
-        VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now, AttachmentId? attachmentId = null)
+        VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
+        AttachmentId? attachmentId = null, Guid? clientMessageId = null)
     {
         if (authorId != VisitorId)
         {
@@ -143,12 +144,13 @@ public sealed class Conversation
                 $"Cannot add a message to closed conversation {Id.Value}.");
         }
 
-        return AddMessage(MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, now);
+        return AddMessage(MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, clientMessageId, now);
     }
 
     /// <summary>An operator may write only once assigned, and only to their own conversation.</summary>
     public Message AddOperatorMessage(
-        OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now, AttachmentId? attachmentId = null)
+        OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
+        AttachmentId? attachmentId = null, Guid? clientMessageId = null)
     {
         // State first: with no operator assigned yet, "wrong state" is the true cause - checking
         // participant identity first would misreport it as "wrong operator" when there is no
@@ -166,7 +168,7 @@ public sealed class Conversation
                 $"Operator {authorId.Value} is not the assigned operator of conversation {Id.Value}.");
         }
 
-        return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, now);
+        return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, clientMessageId, now);
     }
 
     /// <summary>
@@ -190,11 +192,40 @@ public sealed class Conversation
 
     public void ClearDomainEvents() => _domainEvents.Clear();
 
+    /// <summary>
+    /// `5-07`: <paramref name="clientMessageId"/> retry-dedup, the same no-op-on-repeat shape
+    /// <see cref="AssignTo"/> already established for "the caller already got what they asked for" -
+    /// a message retried after a dropped connection (realtime.md's Client protocol section:
+    /// "a retried send after a flaky reconnect must not create a second message") returns the
+    /// *original* <see cref="Message"/> unchanged, burning no new <see cref="Sequence"/> and raising
+    /// no second <see cref="MessageAdded"/>. Checked against <see cref="_messages"/> - already fully
+    /// loaded here (<c>ConversationRepository.GetByIdAsync</c>'s <c>Include("_messages")</c>), so this
+    /// costs nothing extra to look up and, unlike a database-only unique index, also catches a
+    /// duplicate arriving twice within the same in-process batch
+    /// (<c>MessageBatchWriter.FlushAsync</c>'s own multi-item loop) before either ever reaches SQL.
+    /// A database-level unique index still backs this up (`MessageConfiguration`) for the case this
+    /// in-memory check cannot see - two different processes racing the same retry concurrently, each
+    /// with its own freshly-loaded copy of this aggregate - matching adr/0019's own "the index is the
+    /// storage backstop, not the primary mechanism" reasoning for the neighbouring
+    /// <c>(conversation_id, sequence, created_at)</c> index. <see langword="null"/>
+    /// <paramref name="clientMessageId"/> (a caller that never sent one) always skips this check -
+    /// there is nothing to deduplicate against.
+    /// </summary>
     private Message AddMessage(
-        MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body, AttachmentId? attachmentId, DateTimeOffset now)
+        MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body,
+        AttachmentId? attachmentId, Guid? clientMessageId, DateTimeOffset now)
     {
+        if (clientMessageId is { } id)
+        {
+            var existing = _messages.FirstOrDefault(m => m.ClientMessageId == id);
+            if (existing is not null)
+            {
+                return existing;
+            }
+        }
+
         LastSequence++;
-        var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, now);
+        var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, now);
         _messages.Add(message);
         _domainEvents.Add(new MessageAdded(messageId, Id, SiteId, LastSequence, authorKind, now));
         return message;

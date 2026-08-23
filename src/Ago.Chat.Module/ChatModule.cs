@@ -5,8 +5,10 @@ using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
@@ -116,6 +118,10 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ConfirmAttachmentHandler>();
         services.AddScoped<GetAttachmentDownloadUrlHandler>();
         services.AddScoped<ResolveOperatorIdentityHandler>();
+        // `5-07`: both minimal additions found missing while building the console - see each
+        // handler's own remarks for what gap it closes.
+        services.AddScoped<GetOperatorQueueHandler>();
+        services.AddScoped<GetVisitorPresenceHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

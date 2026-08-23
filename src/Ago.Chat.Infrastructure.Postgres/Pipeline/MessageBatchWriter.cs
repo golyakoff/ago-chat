@@ -103,9 +103,23 @@ public sealed class MessageBatchWriter(
                 {
                     var message = item.Message.AuthorKind == MessageAuthorKind.Visitor
                         ? conversation.AddVisitorMessage(
-                            new VisitorId(item.Message.AuthorId), messageId, item.Message.Body, now, item.Message.AttachmentId)
+                            new VisitorId(item.Message.AuthorId), messageId, item.Message.Body, now,
+                            item.Message.AttachmentId, item.Message.ClientMessageId)
                         : conversation.AddOperatorMessage(
-                            new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now, item.Message.AttachmentId);
+                            new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now,
+                            item.Message.AttachmentId, item.Message.ClientMessageId);
+
+                    // `5-07`: a returned Message.Id that does not match the id just generated above
+                    // means Conversation.AddMessage found an existing message with the same
+                    // ClientMessageId and handed that back instead of appending - a retry, not a new
+                    // send. Ack with its real sequence and stop here: no new domain event was raised
+                    // (nothing to enqueue to the outbox), and linking an attachment a second time to
+                    // an already-linked message would itself be a real state error, not a no-op.
+                    if (message.Id != messageId)
+                    {
+                        pendingSuccesses.Add((item, message.Sequence));
+                        continue;
+                    }
 
                     // Only after the message itself landed in the aggregate - see the read-only
                     // validation above for why Attachment is never mutated on a path that might still

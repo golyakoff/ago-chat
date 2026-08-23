@@ -7,6 +7,7 @@ using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
@@ -146,11 +147,13 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
             new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
+        var getVisitorPresence = new GetVisitorPresenceHandler(new ConversationRepository(db), new PermissionChecker(db), registry);
         var registration = new HubConnectionRegistration(registry, tracker, node);
         var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
         var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
 
-        return new OperatorHub(assignConversation, sendMessage, getHistory, registration, originValidator, presencePublisher, new DrainState())
+        return new OperatorHub(
+            assignConversation, sendMessage, getHistory, getVisitorPresence, registration, originValidator, presencePublisher, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),

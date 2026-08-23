@@ -23,6 +23,13 @@ public sealed class ConversationRepository(AgoChatDbContext db) : IConversationR
             .Where(c => c.OperatorId == operatorId && c.State == ConversationState.Assigned)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Conversation>> GetWaitingForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        await db.Conversations
+            .Include("_messages")
+            .Where(c => c.SiteId == siteId && c.State == ConversationState.Waiting)
+            .OrderBy(c => c.CreatedAt)
+            .ToListAsync(cancellationToken);
+
     public async Task SaveAsync(Conversation conversation, CancellationToken cancellationToken)
     {
         // A freshly-Start()'d conversation was never loaded through this context, so it is not

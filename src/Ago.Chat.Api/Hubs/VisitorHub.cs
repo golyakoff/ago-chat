@@ -92,23 +92,26 @@ public sealed class VisitorHub(
         {
             var delta = await getHistory.HandleDeltaAsVisitorAsync(
                 new GetConversationDeltaAsVisitor(conversationId, visitorId, afterSequence), Context.ConnectionAborted);
-            return new VisitorJoinResult(conversationId.Value, IsNew: false, ToDtos(delta.Value));
+            return new VisitorJoinResult(conversationId.Value, IsNew: false, ToDtos(delta.Value, conversationId));
         }
 
         var history = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, BeforeSequence: null, DefaultPageSize),
             Context.ConnectionAborted);
 
-        return new VisitorJoinResult(conversationId.Value, started.Value.IsNew, ToDtos(history.Value.Messages));
+        return new VisitorJoinResult(conversationId.Value, started.Value.IsNew, ToDtos(history.Value.Messages, conversationId));
     }
 
-    public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null)
+    // `5-07`: clientMessageId appended last, after attachmentId - see OperatorHub.SendMessageAsync's
+    // matching comment for why the position (not just optionality) matters for every caller built
+    // before this shipped.
+    public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
     {
         var visitorId = Context.User!.GetVisitorId();
         var id = new ConversationId(conversationId);
 
         var sent = await sendMessage.HandleAsync(
-            new SendVisitorMessage(id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null),
+            new SendVisitorMessage(id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId),
             Context.ConnectionAborted);
         if (sent.IsFailure)
         {
@@ -122,15 +125,16 @@ public sealed class VisitorHub(
     public async Task<HistoryPage> GetHistoryAsync(Guid conversationId, int? beforeSequence, int pageSize)
     {
         var visitorId = Context.User!.GetVisitorId();
+        var id = new ConversationId(conversationId);
         var page = await getHistory.HandleAsVisitorAsync(
-            new GetConversationHistoryAsVisitor(new ConversationId(conversationId), visitorId, beforeSequence, pageSize),
+            new GetConversationHistoryAsVisitor(id, visitorId, beforeSequence, pageSize),
             Context.ConnectionAborted);
         if (page.IsFailure)
         {
             throw new HubException(page.Error!.Value.Message);
         }
 
-        return new HistoryPage(ToDtos(page.Value.Messages), page.Value.NextBeforeSequence);
+        return new HistoryPage(ToDtos(page.Value.Messages, id), page.Value.NextBeforeSequence);
     }
 
     /// <summary>
@@ -150,13 +154,14 @@ public sealed class VisitorHub(
         var page = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, sequence + 1, 1), Context.ConnectionAborted);
         var sentMessage = page.Value.Messages.Single();
-        var dto = ToDto(sentMessage);
+        var dto = ToDto(sentMessage, conversationId);
         await Clients.Caller.SendAsync("MessageReceived", dto, Context.ConnectionAborted);
     }
 
-    private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item) =>
-        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt, item.AttachmentId?.Value);
+    private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item, ConversationId conversationId) =>
+        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt,
+            item.AttachmentId?.Value, item.ClientMessageId, conversationId.Value);
 
-    private static IReadOnlyList<MessageDto> ToDtos(IReadOnlyList<Application.Abstractions.MessageHistoryItem> items) =>
-        [.. items.Select(ToDto)];
+    private static IReadOnlyList<MessageDto> ToDtos(IReadOnlyList<Application.Abstractions.MessageHistoryItem> items, ConversationId conversationId) =>
+        [.. items.Select(item => ToDto(item, conversationId))];
 }
