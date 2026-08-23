@@ -11,4 +11,14 @@ public sealed class ConversationClosedWebhookDispatchConsumerOptions
     public int MaxAttempts { get; set; } = 5;
 
     public TimeSpan InitialBackoff { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>`6-07`: see <see cref="ConversationAssignmentWebhookDispatchConsumerOptions.MaxConcurrency"/>'s
+    /// own remarks - same default, same rationale, this consumer's own separate subscription/pump.</summary>
+    public int MaxConcurrency { get; set; } = 32;
+
+    /// <summary>`6-07`: see <see cref="ConversationAssignmentWebhookDispatchConsumerOptions.ChannelCapacity"/>.</summary>
+    public int ChannelCapacity { get; set; } = 128;
+
+    /// <summary>`6-07`: see <see cref="ConversationAssignmentWebhookDispatchConsumerOptions.ShutdownDrainTimeout"/>.</summary>
+    public TimeSpan ShutdownDrainTimeout { get; set; } = TimeSpan.FromSeconds(20);
 }
