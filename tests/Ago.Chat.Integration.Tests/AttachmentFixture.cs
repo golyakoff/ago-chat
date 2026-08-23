@@ -26,6 +26,7 @@ public sealed class AttachmentFixture : IAsyncLifetime
     private PostgreSqlContainer _postgres = null!;
     private MinioContainer _minio = null!;
     private IAmazonS3 _s3Client = null!;
+    private IDisposable _dockerLock = null!;
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
@@ -33,6 +34,8 @@ public sealed class AttachmentFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _dockerLock = await DockerResourceLock.AcquireAsync();
+
         _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
         // Pinned image tag, matching Ago.Platform.Integration.Tests' own MinioFixture (`5-02`) -
         // MinioBuilder's parameterless constructor is obsolete in the pinned Testcontainers.Minio
@@ -66,6 +69,7 @@ public sealed class AttachmentFixture : IAsyncLifetime
         _s3Client.Dispose();
         await DataSource.DisposeAsync();
         await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _minio.DisposeAsync().AsTask());
+        _dockerLock.Dispose();
     }
 
     public AgoChatDbContext CreateDbContext()

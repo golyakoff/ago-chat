@@ -11,11 +11,14 @@ namespace Ago.Chat.Integration.Tests;
 public sealed class PostgresFixture : IAsyncLifetime
 {
     private PostgreSqlContainer _container = null!;
+    private IDisposable _dockerLock = null!;
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
+        _dockerLock = await DockerResourceLock.AcquireAsync();
+
         _container = new PostgreSqlBuilder("postgres:17-alpine").Build();
         await _container.StartAsync();
 
@@ -29,6 +32,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await DataSource.DisposeAsync();
         await _container.DisposeAsync();
+        _dockerLock.Dispose();
     }
 
     public AgoChatDbContext CreateDbContext()
