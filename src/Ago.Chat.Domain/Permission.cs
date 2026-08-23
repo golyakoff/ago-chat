@@ -35,5 +35,15 @@ public readonly record struct Permission(string Value)
     // seeded "Admin" role, never "Operator".
     public static readonly Permission AttachmentDelete = new("attachment:delete");
 
+    // `6-03`: flagged ahead of time by authorization.md's own "Permissions and roles beyond Stage 1"
+    // list ("site:manage_webhooks - not designed yet, but Stage 6... will need exactly this kind of
+    // check") - named `webhook:manage` instead, matching this project's `resource:action` convention
+    // (`site:manage_webhooks` reads as an action on `site`, but the resource being managed is the
+    // webhook endpoint itself, the same reasoning `AttachmentDelete` uses over a hypothetical
+    // `conversation:delete_attachment`). Gates registration, listing, revocation, and delivery-history
+    // reads alike - this item's own scope: "reading delivery history is not more sensitive than
+    // managing the endpoint that produces it."
+    public static readonly Permission WebhookManage = new("webhook:manage");
+
     public override string ToString() => Value;
 }

@@ -17,10 +17,10 @@ public static class ErrorExtensions
     {
         var statusCode = error.Code switch
         {
-            "Conversation.NotFound" or "Attachment.NotFound" => StatusCodes.Status404NotFound,
+            "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
-            "Attachment.InvalidContentType" => StatusCodes.Status400BadRequest,
+            "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 => StatusCodes.Status409Conflict,
             "Message.RateLimited" => StatusCodes.Status429TooManyRequests,

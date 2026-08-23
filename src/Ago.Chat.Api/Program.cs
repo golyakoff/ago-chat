@@ -6,6 +6,7 @@ using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.Realtime;
+using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module;
@@ -180,6 +181,7 @@ app.MapAuthEndpoints();
 app.MapAttachmentEndpoints();
 app.MapConversationsEndpoints();
 app.MapOperatorsEndpoints();
+app.MapWebhookEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 

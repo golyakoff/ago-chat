@@ -65,4 +65,12 @@ public static class ConversationErrors
 
     public static Error AttachmentNotReady(string reason) =>
         new("Attachment.NotReady", reason);
+
+    // `6-03`: same shared vocabulary, same reason - one place a client branching on `type` looks,
+    // regardless of which use case raised it.
+    public static Error WebhookEndpointNotFound(Guid webhookEndpointId) =>
+        new("WebhookEndpoint.NotFound", $"Webhook endpoint {webhookEndpointId} was not found.");
+
+    public static Error WebhookInvalidUrl(string reason) =>
+        new("WebhookEndpoint.InvalidUrl", reason);
 }
