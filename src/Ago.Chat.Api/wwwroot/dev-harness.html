@@ -56,6 +56,14 @@
 </div>
 
 <script>
+  // `5-01`'s own manual cross-origin verification needs this page served from a *different* origin
+  // than Ago.Chat.Api - every call below was root-relative until then, which only ever resolves
+  // against whatever origin serves this file, never a separately-hosted Api (found live: serving
+  // this page from a second static server 404'd immediately, the fetch never reached the real Api
+  // at all, let alone its CORS policy). `?api=http://host:port` overrides it; same-origin usage
+  // (local-dev.md's own documented flow) is unaffected since the default stays empty (relative).
+  const API_BASE = new URLSearchParams(location.search).get('api') || '';
+
   function log(paneId, text, cls) {
     const el = document.getElementById(paneId);
     const line = document.createElement('div');
@@ -101,7 +109,7 @@
   async function startVisitor() {
     let token = localStorage.getItem('ago-visitor-token');
     if (!token) {
-      const res = await fetch('/api/v1/visitor-sessions', {
+      const res = await fetch(`${API_BASE}/api/v1/visitor-sessions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ publicKey: 'demo_site' })
       });
@@ -120,7 +128,7 @@
       // are two HTTP requests, and the Gateway has no sticky sessions (edge.md) to keep them on the
       // same pod otherwise (found live, running 3 replicas for real: a negotiate handled by one pod
       // 404'd when the upgrade landed on another).
-      .withUrl(`/hubs/visitor?access_token=${token}`, {
+      .withUrl(`${API_BASE}/hubs/visitor?access_token=${token}`, {
         skipNegotiation: true,
         transport: signalR.HttpTransportType.WebSockets,
       })
@@ -185,7 +193,7 @@
 
     operatorConnection = new signalR.HubConnectionBuilder()
       // 3-06: see the matching comment on visitorConnection above - same reason.
-      .withUrl(`/hubs/operator?access_token=${token}`, {
+      .withUrl(`${API_BASE}/hubs/operator?access_token=${token}`, {
         skipNegotiation: true,
         transport: signalR.HttpTransportType.WebSockets,
       })
