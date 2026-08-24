@@ -3,6 +3,9 @@
   "enabled": true,
   "sslRequired": "none",
   "accessTokenLifespan": 5,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "verifyEmail": true,
   "clients": [
     {
       "clientId": "ago-console",

@@ -6,6 +6,7 @@ using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.Realtime;
+using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
@@ -169,6 +170,19 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("RequireOperatorIdentity", policy => policy
         .AddAuthenticationSchemes(JwtSchemes.Operator)
         .RequireClaim(AgoClaimTypes.OperatorId));
+
+    // `10-01`/`adr/0027`: strictly weaker than RequireOperatorIdentity above - same scheme, same
+    // Keycloak JWKS validation, but no RequireClaim(OperatorId). Accepts any token that is
+    // signature/audience/lifetime-valid against Keycloak, including one whose `sub` resolves to no
+    // `operators` row at all - the exact state a freshly self-registered visitor is in before `10-02`'s
+    // bootstrap endpoint ever runs. Gates *only* that one endpoint (POST /api/v1/sites) - never wired
+    // onto any other route, because a token accepted here proves nothing about site membership or
+    // adr/0016 permissions, only "a real person completed Keycloak's login/registration flow." See
+    // adr/0027 for why this must stay a second, narrower policy rather than relaxing
+    // RequireOperatorIdentity itself.
+    options.AddPolicy("RequireKeycloakIdentity", policy => policy
+        .AddAuthenticationSchemes(JwtSchemes.Operator)
+        .RequireAuthenticatedUser());
 });
 
 var app = builder.Build();
@@ -193,6 +207,7 @@ app.MapAttachmentEndpoints();
 app.MapConversationsEndpoints();
 app.MapOperatorsEndpoints();
 app.MapWebhookEndpoints();
+app.MapSitesEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 
