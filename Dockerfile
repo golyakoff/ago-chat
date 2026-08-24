@@ -32,10 +32,23 @@ RUN --mount=type=bind,from=nugetfeed,target=/nuget-feed \
     dotnet publish "src/${PROJECT_NAME}/${PROJECT_NAME}.csproj" -c Release -o /app \
       --configfile nuget.docker.config
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
-ARG PROJECT_NAME
-ENV PROJECT_DLL="${PROJECT_NAME}.dll"
+# Bake the concrete DLL name into a fixed filename here, while the build stage still has a shell
+# (the SDK image does) - the final stage below is Chiseled, which ships with no shell at all, so
+# its ENTRYPOINT must be a literal exec-form array with no runtime `$VAR` expansion. `dotnet <dll>`
+# resolves its host config from same-named companions next to the dll (.deps.json/.runtimeconfig.json),
+# not just the dll itself - renaming only the dll leaves `dotnet` unable to find `app.deps.json`/
+# `app.runtimeconfig.json` and it falls back to (and fails) the self-contained-app code path.
+RUN cp "/app/${PROJECT_NAME}.dll" /app/app.dll \
+ && cp "/app/${PROJECT_NAME}.deps.json" /app/app.deps.json \
+ && cp "/app/${PROJECT_NAME}.runtimeconfig.json" /app/app.runtimeconfig.json
+
+# Ubuntu Chiseled: current .NET guidance's default recommendation for production with no special
+# requirements - smaller than Alpine in practice, no shell/package manager (smallest attack
+# surface), glibc-based so it sidesteps Alpine's musl-compatibility risk for native dependencies
+# (Npgsql, StackExchange.Redis, RabbitMQ.Client). See docs/backlog/8-00-minimal-production-base-
+# image.md for the fuller reasoning and the verification this switch was checked against.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS final
 WORKDIR /app
 COPY --from=build /app .
 EXPOSE 8080
-ENTRYPOINT ["sh", "-c", "exec dotnet \"$PROJECT_DLL\""]
+ENTRYPOINT ["dotnet", "app.dll"]
