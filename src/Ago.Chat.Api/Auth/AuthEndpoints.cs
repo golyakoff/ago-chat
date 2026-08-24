@@ -81,10 +81,22 @@ public static class AuthEndpoints
         var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
         return Results.Created(
             $"/api/v1/visitor-sessions/{visitorId.Value}",
-            new VisitorSessionResponse(token, visitorId.Value));
+            new VisitorSessionResponse(
+                token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString()));
     }
 
     public sealed record VisitorSessionRequest(string PublicKey);
 
-    public sealed record VisitorSessionResponse(string Token, Guid VisitorId);
+    /// <summary>
+    /// `11-01`: <see cref="WidgetPrimaryColorHex"/>/<see cref="WidgetPosition"/> are additive fields,
+    /// never a second round trip - `SiteConfigDto` (the cached DTO `getSite` above already returns)
+    /// carries them since `11-01`'s Application-layer commit, so this handshake response is the one
+    /// piece that needed to actually surface them onto the wire. `embeddable-widget`'s own Bootstrap
+    /// section states the intended shape this finally makes true: "the handshake returns the site's
+    /// widget settings ... and the visitor's history cursor." `WidgetPosition` crosses the wire as its
+    /// PascalCase member name (`"BottomRight"`/`"BottomLeft"`), matching `WidgetConfigEndpoints`'s own
+    /// convention for the same value.
+    /// </summary>
+    public sealed record VisitorSessionResponse(
+        string Token, Guid VisitorId, string? WidgetPrimaryColorHex, string WidgetPosition);
 }

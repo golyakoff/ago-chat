@@ -70,5 +70,15 @@ public sealed class SiteConfigCachingStampedeTests(SiteCachingConcurrencyFixture
             await using var db = fixture.CreateDbContext();
             return await new SiteRepository(db).AnyAllowsOriginAsync(origin, cancellationToken);
         }
+
+        // `11-01`: this fixture's own test never writes, only reads - added purely so this counting
+        // decorator still satisfies `ISiteRepository` after `SaveAsync` joined it; unused here the
+        // same way `AnyAllowsOriginAsync` was unused by `SiteConfigCachingTests` before this item.
+        public async Task SaveAsync(Site site, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            await using var db = fixture.CreateDbContext();
+            await new SiteRepository(db).SaveAsync(site, cancellationToken);
+        }
     }
 }

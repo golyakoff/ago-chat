@@ -35,6 +35,8 @@ public sealed class GetSiteConfigByIdHandler(ISiteRepository sites, ICache cache
             return SiteLookupResult.NotFound;
         }
 
-        return SiteLookupResult.Of(new SiteConfigDto(site.Id.Value, site.PublicKey, site.AllowedOrigins));
+        return SiteLookupResult.Of(new SiteConfigDto(
+            site.Id.Value, site.PublicKey, site.AllowedOrigins,
+            site.WidgetConfig.PrimaryColorHex, site.WidgetConfig.Position));
     }
 }

@@ -48,8 +48,10 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         }
 
         await using var verify = fixture.CreateDbContext();
-        var message = await verify.Set<Message>().SingleAsync(CancellationToken.None);
-        var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(CancellationToken.None);
+        var message = await verify.Set<Message>()
+            .SingleAsync(m => m.ConversationId == conversationId, CancellationToken.None);
+        var outboxRow = await verify.Set<OutboxMessage>()
+            .SingleAsync(o => o.PartitionKey == conversationId.Value.ToString(), CancellationToken.None);
 
         Assert.Equal(message.Id.Value, outboxRow.Id);
         Assert.Equal("MessageAccepted", outboxRow.Type);
@@ -85,7 +87,8 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         }
 
         await using var verify = fixture.CreateDbContext();
-        Assert.False(await verify.Set<Message>().AnyAsync(CancellationToken.None));
-        Assert.False(await verify.Set<OutboxMessage>().AnyAsync(CancellationToken.None));
+        Assert.False(await verify.Set<Message>().AnyAsync(m => m.ConversationId == conversationId, CancellationToken.None));
+        Assert.False(await verify.Set<OutboxMessage>()
+            .AnyAsync(o => o.PartitionKey == conversationId.Value.ToString(), CancellationToken.None));
     }
 }

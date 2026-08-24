@@ -86,5 +86,13 @@ public sealed class SiteConfigCachingTests(SiteCachingFixture fixture)
             Calls++;
             return inner.AnyAllowsOriginAsync(origin, cancellationToken);
         }
+
+        // `11-01`: unused by this file's own two tests (neither writes) - added purely so this
+        // counting decorator still satisfies `ISiteRepository` after `SaveAsync` joined it.
+        public Task SaveAsync(Site site, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return inner.SaveAsync(site, cancellationToken);
+        }
     }
 }
