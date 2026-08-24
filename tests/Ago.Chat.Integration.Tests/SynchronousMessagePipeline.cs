@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Diagnostics;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
@@ -27,7 +28,7 @@ public sealed class SynchronousMessagePipeline(NpgsqlDataSource dataSource) : IM
     public async Task<Result<int>> EnqueueAsync(PendingMessage message, CancellationToken cancellationToken)
     {
         var ack = new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var item = new InboundMessage(message, ack);
+        var item = new InboundMessage(message, ack, Stopwatch.GetTimestamp());
         await _writer.FlushAsync([item], cancellationToken);
         return await ack.Task;
     }

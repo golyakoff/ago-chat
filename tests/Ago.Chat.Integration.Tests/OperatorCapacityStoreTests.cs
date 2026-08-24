@@ -1,6 +1,9 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Npgsql;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -22,6 +25,12 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
         const int attempts = 20;
         var (siteId, operatorId) = await SeedOperatorAsync(capacity);
 
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
         // A fresh AgoChatDbContext per attempt, not one store shared across all of them - DbContext
         // is not thread-safe, and a Scoped-per-unit-of-work DbContext is exactly how this port is
         // actually used in production (4-02's per-conversation transaction), so the test should not
@@ -36,6 +45,40 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
         Assert.Equal(capacity, results.Count(claimed => claimed));
         Assert.Equal(attempts - capacity, results.Count(claimed => !claimed));
         Assert.Equal(capacity, await ReadActiveChatsAsync(operatorId));
+
+        // `7-02`'s Done-when: the same real concurrent-load run this test already proves capacity
+        // correctness under also proves the attempts-vs-conflicts counters move with it - real
+        // contention, not a hand-fed value.
+        meterProvider.ForceFlush();
+        var attemptsMetric = exportedMetrics.Single(m => m.Name == ChatMetrics.AssignmentCapacityClaimAttemptsInstrumentName);
+        Assert.Equal(capacity, SumByOutcome(attemptsMetric, "claimed"));
+        Assert.Equal(attempts - capacity, SumByOutcome(attemptsMetric, "conflict"));
+
+        var conflictsMetric = exportedMetrics.Single(m => m.Name == ChatMetrics.AssignmentCapacityClaimConflictsInstrumentName);
+        long conflictsTotal = 0;
+        foreach (ref readonly var point in conflictsMetric.GetMetricPoints())
+        {
+            conflictsTotal += point.GetSumLong();
+        }
+
+        Assert.Equal(attempts - capacity, conflictsTotal);
+    }
+
+    private static long SumByOutcome(Metric metric, string outcome)
+    {
+        long total = 0;
+        foreach (ref readonly var point in metric.GetMetricPoints())
+        {
+            foreach (var tag in point.Tags)
+            {
+                if (tag.Key == "outcome" && (string?)tag.Value == outcome)
+                {
+                    total += point.GetSumLong();
+                }
+            }
+        }
+
+        return total;
     }
 
     [Fact]

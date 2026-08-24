@@ -107,6 +107,21 @@ public sealed class OutboxDispatcher(
 
         var rows = await ClaimBatchAsync(connection, transaction, options.Value.BatchSize, cancellationToken);
 
+        // `7-02`: nfr.md's "outbox lag" - now minus the oldest unpublished row's own occurred_at, as
+        // of this cycle. Reused from the batch just claimed (ORDER BY occurred_at ASC, so rows[0] is
+        // the oldest of whatever this cycle actually saw) rather than a second, separate query every
+        // cycle - an unlocked MIN(occurred_at) would be marginally more precise on a cycle where every
+        // truly-oldest row happens to be locked by another replica's own in-flight transaction, but
+        // that is a rare, self-correcting edge case (the next cycle picks it up), not worth doubling
+        // this loop's own query count for. An empty claim means no lag to report (0), not "unknown" -
+        // the same "the gauge is only as fresh as the last dispatch cycle" trade-off ChatMetrics's own
+        // remarks document, made explicit here rather than left stale from whatever the last non-empty
+        // cycle reported.
+        var lagSeconds = rows.Count > 0
+            ? (clock.UtcNow - new DateTimeOffset(DateTime.SpecifyKind(rows[0].OccurredAt, DateTimeKind.Utc))).TotalSeconds
+            : 0;
+        ChatMetrics.SetOutboxLagSeconds(Math.Max(0, lagSeconds));
+
         foreach (var row in rows)
         {
             using var publishCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -136,6 +151,7 @@ public sealed class OutboxDispatcher(
                 logger.LogWarning("Publishing outbox row {OutboxId} timed out after {Timeout} (attempt {Attempt})",
                     row.Id, options.Value.PublishTimeout, row.Attempts + 1);
                 await IncrementAttemptsAsync(connection, transaction, row.Id, cancellationToken);
+                ChatMetrics.RecordOutboxPublishFailure();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -144,6 +160,7 @@ public sealed class OutboxDispatcher(
                 // down") - Warning, not Error, since the row is not lost, only delayed.
                 logger.LogWarning(ex, "Failed to publish outbox row {OutboxId} (attempt {Attempt})", row.Id, row.Attempts + 1);
                 await IncrementAttemptsAsync(connection, transaction, row.Id, cancellationToken);
+                ChatMetrics.RecordOutboxPublishFailure();
             }
         }
 

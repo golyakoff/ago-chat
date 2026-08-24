@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module.Pipeline;
@@ -9,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
 
 namespace Ago.Chat.Concurrency.Tests;
 
@@ -200,6 +203,139 @@ public sealed class MessagePipelineTests(ConcurrencyTestFixture fixture)
         var conversationIds = conversations.Select(c => c.ConversationId).ToList();
         var persistedCount = await verify.Set<Message>().CountAsync(m => conversationIds.Contains(m.ConversationId));
         Assert.Equal(MessageCount, persistedCount);
+    }
+
+    /// <summary>
+    /// `7-02`'s Done-when for the channel-occupancy gauge: nothing drains the channel (no
+    /// worker/flusher started, the same deliberate setup <c>Backpressure_...</c> above uses), so every
+    /// enqueued item sits in the channel until this test reads the gauge - a real value change, not
+    /// merely a registered instrument.
+    /// </summary>
+    [Fact]
+    public async Task ChannelOccupancy_ReflectsMessagesQueuedButNotYetDequeued()
+    {
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var (visitorId, conversationId) = await SeedConversationAsync();
+        var options = new MessagePipelineOptions { ChannelCapacity = 10 };
+        var lifetime = new FakeHostApplicationLifetime();
+        var pipeline = new ChannelMessagePipeline(Options.Create(options), lifetime);
+
+        const int queuedCount = 5;
+        var pending = Enumerable.Range(0, queuedCount)
+            .Select(i => pipeline.EnqueueAsync(
+                new PendingMessage(conversationId, MessageAuthorKind.Visitor, visitorId.Value, new MessageBody($"m{i}")),
+                CancellationToken.None))
+            .ToArray();
+
+        // A moment for the writes to actually land in the channel before reading the gauge.
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        meterProvider.ForceFlush();
+        var occupancy = exportedMetrics.Single(m => m.Name == ChatMetrics.PipelineChannelOccupancyInstrumentName);
+        long? observed = null;
+        foreach (ref readonly var point in occupancy.GetMetricPoints())
+        {
+            observed = point.GetGaugeLastValueLong();
+        }
+
+        Assert.Equal(queuedCount, observed);
+
+        // Drain so the pending EnqueueAsync calls complete and the test exits cleanly.
+        var sequencer = new ConversationSequencer();
+        var accumulator = new BatchAccumulator();
+        var writer = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), NullLogger<MessageBatchWriter>.Instance);
+        var workerHost = new MessagePipelineWorkerHost(pipeline, sequencer, accumulator, Options.Create(options), NullLogger<MessagePipelineWorkerHost>.Instance);
+        var flusher = new BatchFlusherService(accumulator, writer, new SystemClock(), Options.Create(options));
+        await workerHost.StartAsync(CancellationToken.None);
+        await flusher.StartAsync(CancellationToken.None);
+        try
+        {
+            var results = await Task.WhenAll(pending);
+            Assert.All(results, r => Assert.True(r.IsSuccess, r.IsFailure ? r.Error!.Value.Message : ""));
+        }
+        finally
+        {
+            await StopPipelineAsync(lifetime, workerHost, flusher);
+        }
+    }
+
+    /// <summary>
+    /// `7-02`'s Done-when for the batch-size and enqueue-wait histograms: real values from a real
+    /// flush, read back from OpenTelemetry's own in-memory reader - the histogram's own recorded sum
+    /// (batch size) and count (enqueue-wait) are asserted directly rather than merely checking the
+    /// instrument exists.
+    /// </summary>
+    [Fact]
+    public async Task BatchSizeAndEnqueueWaitHistograms_RecordRealValues_ForAConcurrentBurst()
+    {
+        const int MessageCount = 10;
+        var siteId = new SiteId(Guid.NewGuid());
+        var conversations = new List<(VisitorId VisitorId, ConversationId ConversationId)>();
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            for (var i = 0; i < MessageCount; i++)
+            {
+                var visitorId = new VisitorId(Guid.NewGuid());
+                var conversationId = new ConversationId(Guid.NewGuid());
+                db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+                db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+                conversations.Add((visitorId, conversationId));
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        var options = new MessagePipelineOptions { WorkerCount = 8, BatchMaxRows = MessageCount, BatchMaxDelay = TimeSpan.FromMilliseconds(500) };
+        var (pipeline, workerHost, flusher, lifetime) = CreatePipeline(options);
+        await workerHost.StartAsync(CancellationToken.None);
+        await flusher.StartAsync(CancellationToken.None);
+        try
+        {
+            var sends = conversations.Select(c => Task.Run(async () =>
+            {
+                var pending = new PendingMessage(c.ConversationId, MessageAuthorKind.Visitor, c.VisitorId.Value, new MessageBody("hello"));
+                return await pipeline.EnqueueAsync(pending, CancellationToken.None);
+            }));
+            var results = await Task.WhenAll(sends);
+            Assert.All(results, r => Assert.True(r.IsSuccess, r.IsFailure ? r.Error!.Value.Message : ""));
+        }
+        finally
+        {
+            await StopPipelineAsync(lifetime, workerHost, flusher);
+        }
+
+        meterProvider.ForceFlush();
+
+        var batchSize = exportedMetrics.Single(m => m.Name == ChatMetrics.PipelineBatchSizeInstrumentName);
+        long batchSizeSum = 0;
+        foreach (ref readonly var point in batchSize.GetMetricPoints())
+        {
+            batchSizeSum += (long)point.GetHistogramSum();
+        }
+
+        Assert.Equal(MessageCount, batchSizeSum);
+
+        var enqueueWait = exportedMetrics.Single(m => m.Name == ChatMetrics.PipelineEnqueueWaitInstrumentName);
+        long enqueueWaitCount = 0;
+        foreach (ref readonly var point in enqueueWait.GetMetricPoints())
+        {
+            enqueueWaitCount += point.GetHistogramCount();
+        }
+
+        Assert.Equal(MessageCount, enqueueWaitCount);
     }
 
     private async Task<(VisitorId VisitorId, ConversationId ConversationId)> SeedConversationAsync()

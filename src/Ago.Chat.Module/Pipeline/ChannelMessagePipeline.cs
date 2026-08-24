@@ -1,6 +1,8 @@
-﻿using System.Threading.Channels;
+﻿using System.Diagnostics;
+using System.Threading.Channels;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Hosting;
@@ -50,6 +52,11 @@ public sealed class ChannelMessagePipeline : IMessagePipeline, IDisposable
         // Completing the channel here is what lets MessagePipelineWorkerHost's own drain loop
         // terminate once genuinely empty, instead of needing a second shutdown signal.
         _stoppingRegistration = lifetime.ApplicationStopping.Register(() => _channel.Writer.TryComplete());
+
+        // `7-02`: nfr.md's "channel occupancy" - registers this instance's own live reader count
+        // against its configured capacity with ChatMetrics's shared gauge (that class's own remarks
+        // on why the gauge itself lives there, created once, rather than here per instance).
+        ChatMetrics.RegisterChannelOccupancyProvider(() => _channel.Reader.Count, _options.ChannelCapacity);
     }
 
     internal ChannelReader<InboundMessage> Reader => _channel.Reader;
@@ -57,7 +64,10 @@ public sealed class ChannelMessagePipeline : IMessagePipeline, IDisposable
     public async Task<Result<int>> EnqueueAsync(PendingMessage message, CancellationToken cancellationToken)
     {
         var ack = new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var inbound = new InboundMessage(message, ack);
+        // `7-02`: nfr.md's "enqueue-wait histogram" - captured here, at the moment this item first
+        // becomes queueable, and consumed by MessagePipelineWorkerHost once a worker actually
+        // dequeues it (that class's own remarks).
+        var inbound = new InboundMessage(message, ack, Stopwatch.GetTimestamp());
 
         using var timeoutCts = new CancellationTokenSource(_options.EnqueueTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);

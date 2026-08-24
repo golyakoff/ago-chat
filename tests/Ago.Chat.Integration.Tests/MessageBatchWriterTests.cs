@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Diagnostics;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Platform.Hosting;
@@ -98,7 +99,8 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         var items = Enumerable.Range(1, 5)
             .Select(i => new InboundMessage(
                 new PendingMessage(conversationId, MessageAuthorKind.Visitor, visitorId, new MessageBody($"message {i}")),
-                new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously)))
+                new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously),
+                Stopwatch.GetTimestamp()))
             .ToList();
 
         await writer.FlushAsync(items, CancellationToken.None);
@@ -131,8 +133,8 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         var badAck = new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var items = new List<InboundMessage>
         {
-            new(new PendingMessage(goodConversationId, MessageAuthorKind.Visitor, goodVisitorId, new MessageBody("hello")), goodAck),
-            new(new PendingMessage(closedConversationId, MessageAuthorKind.Visitor, closedVisitorId, new MessageBody("too late")), badAck),
+            new(new PendingMessage(goodConversationId, MessageAuthorKind.Visitor, goodVisitorId, new MessageBody("hello")), goodAck, Stopwatch.GetTimestamp()),
+            new(new PendingMessage(closedConversationId, MessageAuthorKind.Visitor, closedVisitorId, new MessageBody("too late")), badAck, Stopwatch.GetTimestamp()),
         };
 
         await writer.FlushAsync(items, CancellationToken.None);
@@ -234,7 +236,7 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         var writer = CreateWriter();
         var ack = new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var item = new InboundMessage(
-            new PendingMessage(conversationId, authorKind, authorId, new MessageBody(body), attachmentId), ack);
+            new PendingMessage(conversationId, authorKind, authorId, new MessageBody(body), attachmentId), ack, Stopwatch.GetTimestamp());
         await writer.FlushAsync([item], CancellationToken.None);
         return await ack.Task;
     }

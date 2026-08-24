@@ -71,7 +71,7 @@ public sealed class WebhookResiliencePipelines(ResiliencePipelineOptions options
     /// "an expected outcome should not trip a breaker built for unexpected ones" reasoning
     /// `S3FileStorage`'s own comment gives for excluding a 404.</summary>
     public ResiliencePipeline GetEndpointPipeline(WebhookEndpointId endpointId) =>
-        _endpointPipelines.GetOrAdd(endpointId, _ => new ResiliencePolicyBuilder()
+        _endpointPipelines.GetOrAdd(endpointId, _ => new ResiliencePolicyBuilder(PipelineName)
             .WithCircuitBreaker(options.CircuitBreaker!, IsBreakerWorthy)
             .WithTimeout(options.Timeout!)
             .Build());
@@ -82,7 +82,7 @@ public sealed class WebhookResiliencePipelines(ResiliencePipelineOptions options
     /// slots for as long as this dispatcher is still working it, not release the slot between
     /// attempts only to reacquire it a moment later.</summary>
     public ResiliencePipeline GetSiteBulkheadPipeline(SiteId siteId) =>
-        _siteBulkheadPipelines.GetOrAdd(siteId, _ => new ResiliencePolicyBuilder().WithBulkhead(options.Bulkhead!).Build());
+        _siteBulkheadPipelines.GetOrAdd(siteId, _ => new ResiliencePolicyBuilder(PipelineName).WithBulkhead(options.Bulkhead!).Build());
 
     private static bool IsBreakerWorthy(Exception ex) =>
         ex is not OperationCanceledException
