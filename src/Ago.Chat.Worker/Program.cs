@@ -8,6 +8,7 @@ using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OpenTelemetry.Exporter;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -118,5 +119,8 @@ var app = builder.Build();
 
 app.MapHealthChecks("/healthz/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+
+// `7-02` fix: see Ago.Chat.Api's own remarks on this line.
+app.MapPrometheusScrapingEndpoint();
 
 app.Run();

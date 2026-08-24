@@ -18,6 +18,7 @@ using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication;
+using OpenTelemetry.Exporter;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -181,6 +182,11 @@ app.UseAuthorization();
 // check Ago.Chat.Worker already uses (Predicate: _ => false runs no registered check at all).
 app.MapHealthChecks("/healthz/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+
+// `7-02` fix: AddPlatformObservability wires the Prometheus exporter into the MeterProvider, but
+// mapping the actual scrape endpoint needs the built app (endpoint routing), not just the service
+// collection - so this one line lives per host, same as the health-check maps above.
+app.MapPrometheusScrapingEndpoint();
 
 app.MapAuthEndpoints();
 app.MapAttachmentEndpoints();
