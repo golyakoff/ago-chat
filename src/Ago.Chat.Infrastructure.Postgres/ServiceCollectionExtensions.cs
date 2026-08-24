@@ -28,6 +28,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
+        // `10-02`
+        services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();

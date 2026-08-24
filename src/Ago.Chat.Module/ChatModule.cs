@@ -16,6 +16,7 @@ using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
@@ -98,6 +99,14 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AttachmentRateLimitOptions>>().Value);
 
+        // `10-02`: bound here, not Ago.Chat.Api's Program.cs - RegisterSiteHandler is registered for
+        // every host below, the same MessageSendRateLimitOptions/AttachmentRateLimitOptions shape.
+        services
+            .AddOptions<RegisterSiteRateLimitOptions>()
+            .Bind(configuration.GetSection(RegisterSiteRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<RegisterSiteRateLimitOptions>>().Value);
+
         // `6-03`: bound here, not a host's own Program.cs - RegisterWebhookEndpointHandler is
         // registered for every host below, the same MessageSendRateLimitOptions/AttachmentOptions
         // shape. Deliberately no random-per-process fallback (WebhookSecretCipherOptions' own remarks)
@@ -150,6 +159,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetMyPermissionsHandler>();
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
         services.AddScoped<CloseConversationHandler>();
+        // `10-02`
+        services.AddScoped<RegisterSiteHandler>();
 
         // `6-03`: the registration and delivery-history backend for a future self-service console
         // screen - see each handler's own remarks. Registered for every host (the same shape as

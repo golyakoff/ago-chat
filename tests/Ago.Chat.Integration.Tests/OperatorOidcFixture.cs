@@ -102,14 +102,58 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     /// without racing the shared demo operator seeded in <see cref="InitializeAsync"/>.</summary>
     public Task<string> GetOrphanOperatorAccessTokenAsync() => GetAccessTokenAsync(KeycloakAuthority, OrphanOperatorUsername);
 
-    private static async Task<string> GetAccessTokenAsync(string realmAuthority, string username)
+    /// <summary>`10-02`: a brand-new Keycloak user, created via the admin API on demand rather than
+    /// realm-import - unlike <see cref="GetOrphanOperatorAccessTokenAsync"/> (which is deliberately
+    /// shared and must stay permanently unlinked for every other test in this collection), site
+    /// registration tests need a genuinely fresh identity *per call* - the whole point of the test is
+    /// that this identity starts unlinked and ends linked, so reusing a shared fixed user across
+    /// multiple `[Fact]`s (or even multiple calls within one) would have the second call observe the
+    /// first call's own write. Mirrors <see cref="GetWrongIssuerAccessTokenAsync"/>'s own
+    /// create-via-admin-API shape, against this realm instead of a throwaway second one.
+    ///
+    /// Returns the username alongside the token (not just the token) so a caller that needs a
+    /// *second*, later token for the identical identity - proving `OperatorIdentityClaimsTransformation`
+    /// resolves it fresh at request time, not from something the first token happened to carry - can
+    /// do so via <see cref="RefreshAccessTokenAsync"/> without minting a second, unrelated Keycloak
+    /// user.</summary>
+    public async Task<(string AccessToken, string Username)> CreateFreshUserAccessTokenAsync()
+    {
+        var adminToken = await GetAdminTokenAsync();
+        var username = $"self-register-{Guid.NewGuid():N}";
+
+        await PostAdminApiAsync(adminToken, $"/admin/realms/{RealmName}/users", new
+        {
+            username,
+            email = $"{username}@example.test",
+            firstName = "Self",
+            lastName = "Register",
+            enabled = true,
+            emailVerified = true,
+            credentials = new[] { new { type = "password", value = FreshUserPassword, temporary = false } },
+        });
+
+        return (await GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword), username);
+    }
+
+    /// <summary>A fresh token for a username <see cref="CreateFreshUserAccessTokenAsync"/> already
+    /// created - the same Keycloak identity, a different (later) token, so a caller can prove claims
+    /// resolution happens per-request rather than being baked into whichever token was used first.</summary>
+    public Task<string> RefreshAccessTokenAsync(string username) =>
+        GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword);
+
+    private const string FreshUserPassword = "self-register-password";
+
+    private static Task<string> GetAccessTokenAsync(string realmAuthority, string username) =>
+        GetAccessTokenAsync(realmAuthority, username, DemoOperatorPassword);
+
+    private static async Task<string> GetAccessTokenAsync(string realmAuthority, string username, string password)
     {
         var form = new Dictionary<string, string>
         {
             ["grant_type"] = "password",
             ["client_id"] = ClientId,
             ["username"] = username,
-            ["password"] = DemoOperatorPassword,
+            ["password"] = password,
         };
 
         var response = await Http.PostAsync($"{realmAuthority}/protocol/openid-connect/token", new FormUrlEncodedContent(form));

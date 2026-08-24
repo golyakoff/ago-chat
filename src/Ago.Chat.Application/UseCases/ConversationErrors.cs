@@ -82,4 +82,25 @@ public static class ConversationErrors
 
     public static Error WebhookInvalidUrl(string reason) =>
         new("WebhookEndpoint.InvalidUrl", reason);
+
+    // `10-02`: same shared vocabulary, same reason - one place a client branching on `type` looks.
+    /// <summary>The caller's `sub` already resolves to an `operators` row - "one registration per
+    /// identity for Stage 10" (`10-02-site-and-operator-registration.md`'s own Scope). A real `409`,
+    /// not a validation error: the request is well-formed, the identity is real, it just already has
+    /// a site.</summary>
+    public static Error SiteAlreadyRegistered() =>
+        new("Site.AlreadyRegistered", "This identity has already registered a site.");
+
+    public static Error SiteInvalidName(string reason) =>
+        new("Site.InvalidName", reason);
+
+    public static Error SiteInvalidOrigin(string reason) =>
+        new("Site.InvalidOrigin", reason);
+
+    /// <summary>Distinct code from <see cref="RateLimited"/> even though the shape is identical -
+    /// `10-02`'s own per-`sub`/per-IP buckets are a different resource than `SendVisitorMessage`'s, and
+    /// a client branching on `type` should be able to tell "you are sending too fast" apart from "you
+    /// are registering too fast" without parsing the message text.</summary>
+    public static Error SiteRegistrationRateLimited(TimeSpan retryAfter) =>
+        new("Site.RateLimited", $"Too many registration attempts - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
 }
