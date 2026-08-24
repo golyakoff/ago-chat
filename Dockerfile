@@ -25,12 +25,19 @@ COPY src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.cspro
 COPY src/Ago.Chat.Domain/Ago.Chat.Domain.csproj src/Ago.Chat.Domain/
 
 RUN --mount=type=bind,from=nugetfeed,target=/nuget-feed \
-    dotnet restore "src/${PROJECT_NAME}/${PROJECT_NAME}.csproj" --configfile nuget.docker.config
+    dotnet restore "src/${PROJECT_NAME}/${PROJECT_NAME}.csproj" -r linux-x64 --configfile nuget.docker.config
 
 COPY src/ src/
+# -r linux-x64 --self-contained false: still framework-dependent (the base images below carry the
+# runtime), but RID-restricted - the build stage is always this SDK image, always linux, so there is
+# never a reason to publish for any other RID. Without this, a RID-agnostic publish ships every RID's
+# native assets for every native-asset NuGet package in the dependency closure (SkiaSharp, referenced by
+# Ago.Chat.Worker for attachment thumbnails - 5-04) under /app/runtimes - ~440MB of win-x64/win-arm64/
+# osx/linux-arm64/linux-musl-*/etc. binaries this container can never load. See docs/backlog/8-04-
+# container-publish-rid-trim.md.
 RUN --mount=type=bind,from=nugetfeed,target=/nuget-feed \
     dotnet publish "src/${PROJECT_NAME}/${PROJECT_NAME}.csproj" -c Release -o /app \
-      --configfile nuget.docker.config
+      -r linux-x64 --self-contained false --configfile nuget.docker.config
 
 # Bake the concrete DLL name into a fixed filename here, while the build stage still has a shell
 # (the SDK image does) - the final stage below is Chiseled, which ships with no shell at all, so
