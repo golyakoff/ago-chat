@@ -37,8 +37,23 @@ Console.WriteLine($"[driver] visitor api={apiVisitorBase} operator api={apiOpera
 
 using var http = new HttpClient();
 
-var operatorToken = await GetOperatorTokenAsync(http, keycloakBase);
-Console.WriteLine("[driver] operator token acquired");
+// `7-05`: a pre-minted token overrides the direct Keycloak call entirely. The k8s overlay's
+// `Ago.Chat.Api` validates tokens against the in-cluster issuer `http://keycloak:8080/realms/ago-chat`
+// (`Auth__Keycloak__Authority`) - Keycloak stamps a token's `iss` claim from however *it* was reached,
+// not from the audience that will later present it, so a token minted by calling Keycloak through a
+// `kubectl port-forward` (or any other host-reachable address) carries the wrong issuer and every
+// k8s-cluster hub connection rejects it with a real, reproducible 401 (confirmed live - `iss` came back
+// `http://127.0.0.1:<forwarded-port>/realms/ago-chat`, not the in-cluster name). Minting from *inside*
+// the cluster's own network (a throwaway `kubectl run` pod hitting the `keycloak` Service by name) gets
+// the matching issuer; this override lets that token be handed to a driver process that otherwise talks
+// to the cluster only through the public Gateway address, exactly as a real client would.
+var presetToken = Environment.GetEnvironmentVariable("LOADDRIVER_OPERATOR_TOKEN");
+var operatorToken = string.IsNullOrEmpty(presetToken)
+    ? await GetOperatorTokenAsync(http, keycloakBase)
+    : presetToken;
+Console.WriteLine(string.IsNullOrEmpty(presetToken)
+    ? "[driver] operator token acquired via Keycloak"
+    : "[driver] operator token supplied via LOADDRIVER_OPERATOR_TOKEN");
 
 await using var operatorConnection = BuildHub($"{apiOperatorBase}/hubs/operator", operatorToken);
 
