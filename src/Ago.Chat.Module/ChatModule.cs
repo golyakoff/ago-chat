@@ -14,6 +14,7 @@ using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
+using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.RegisterSite;
@@ -24,6 +25,7 @@ using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
+using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
@@ -171,6 +173,13 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ListWebhookEndpointsHandler>();
         services.AddScoped<RevokeWebhookEndpointHandler>();
         services.AddScoped<GetWebhookDeliveriesHandler>();
+
+        // `11-01`: Site's first real read/write handler pair since `1-04` - see each handler's own
+        // remarks (GetWidgetConfigHandler deliberately uncached, UpdateWidgetConfigHandler the first
+        // real SiteSettingsChanged producer). Registered for every host, the same shape as everything
+        // else on this page, even though only `Ago.Chat.Api` maps HTTP endpoints for them today.
+        services.AddScoped<GetWidgetConfigHandler>();
+        services.AddScoped<UpdateWidgetConfigHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

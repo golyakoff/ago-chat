@@ -1,0 +1,60 @@
+﻿using Ago.Chat.Application.Tests.Fakes;
+using Ago.Chat.Application.UseCases.GetWidgetConfig;
+using Ago.Chat.Domain;
+
+namespace Ago.Chat.Application.Tests.UseCases.GetWidgetConfig;
+
+public class GetWidgetConfigHandlerTests
+{
+    private static readonly SiteId SiteId = new(Guid.NewGuid());
+    private static readonly OperatorId OperatorId = new(Guid.NewGuid());
+
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_ReturnsTheSitesCurrentWidgetConfig()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        var site = new Site(SiteId, "shop_7f3a", []);
+        site.UpdateWidgetConfig(new WidgetConfig("#112233", Position.BottomLeft), DateTimeOffset.UtcNow);
+        site.ClearDomainEvents();
+        sites.Seed(site);
+        var handler = new GetWidgetConfigHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("#112233", result.Value.PrimaryColorHex);
+        Assert.Equal(Position.BottomLeft, result.Value.Position);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheOperatorLacksSiteConfigure_ReturnsForbidden()
+    {
+        var sites = new FakeSiteRepository();
+        sites.Seed(new Site(SiteId, "shop_7f3a", []));
+        var handler = new GetWidgetConfigHandler(sites, new FakePermissionChecker());
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteDoesNotExist_ReturnsSiteNotFound()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        var handler = new GetWidgetConfigHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Site.NotFound", result.Error!.Value.Code);
+    }
+}

@@ -30,4 +30,15 @@ public sealed class FakeSiteRepository : ISiteRepository
         OriginLookupCalls++;
         return Task.FromResult(_byPublicKey.Values.Any(s => s.AllowedOrigins.Contains(origin)));
     }
+
+    // `11-01`: no real persistence semantics to fake here (no EF change tracker, no Detached-state
+    // branch) - Seed already indexes by PublicKey, so a site mutated in place by
+    // UpdateWidgetConfigHandler (loaded via GetByIdAsync, the same in-memory instance) is already
+    // "saved" from this fake's point of view; this just re-indexes it defensively in case a future
+    // test builds a Site and calls SaveAsync without ever seeding it first.
+    public Task SaveAsync(Site site, CancellationToken cancellationToken)
+    {
+        _byPublicKey[site.PublicKey] = site;
+        return Task.CompletedTask;
+    }
 }

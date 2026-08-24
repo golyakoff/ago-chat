@@ -20,4 +20,16 @@ public interface ISiteRepository
     /// resolves the site through its own normal path (public key, JWT claim) once the real request
     /// arrives, and checks that specific site's `AllowedOrigins` itself.</summary>
     Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `11-01`: `Site`'s first real write path since `1-04` (create-only until now) -
+    /// `UpdateWidgetConfigHandler` loads via `GetByIdAsync`, mutates in memory, and saves back through
+    /// here in the same transaction as the `SiteSettingsChanged` outbox row it also stages (adr/0005).
+    /// An ordinary single-aggregate write - unlike `IConversationRepository.SaveAsync`, this has no
+    /// concurrency-conflict translation, because nothing in this item's own scope needs a retry-once
+    /// story for a low-frequency, operator-authenticated admin write (contrast `6-08`'s conversation
+    /// row, which a message send bumps far more often than an operator will ever race a widget-config
+    /// edit against another operator doing the same).
+    /// </summary>
+    Task SaveAsync(Site site, CancellationToken cancellationToken);
 }

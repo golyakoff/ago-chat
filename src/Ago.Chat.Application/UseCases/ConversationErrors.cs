@@ -103,4 +103,19 @@ public static class ConversationErrors
     /// are registering too fast" without parsing the message text.</summary>
     public static Error SiteRegistrationRateLimited(TimeSpan retryAfter) =>
         new("Site.RateLimited", $"Too many registration attempts - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
+    // `11-01`: same shared vocabulary, same reason - GetWidgetConfigHandler/UpdateWidgetConfigHandler
+    // add their own codes here rather than a separate error class, matching every use case since 4-05.
+    public static Error SiteNotFound(Guid siteId) =>
+        new("Site.NotFound", $"Site {siteId} was not found.");
+
+    /// <summary>The hex format `WidgetConfig`'s own constructor rejected, surfaced as a client error
+    /// rather than an unhandled exception - `UpdateWidgetConfigHandler` catches the `ArgumentException`
+    /// and translates it here, the same "validate the value object, translate the throw at the
+    /// Application boundary" split its own remarks describe.</summary>
+    public static Error WidgetConfigInvalidColor(string reason) =>
+        new("WidgetConfig.InvalidColor", reason);
+
+    public static Error WidgetConfigInvalidPosition(string reason) =>
+        new("WidgetConfig.InvalidPosition", reason);
 }

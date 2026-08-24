@@ -31,6 +31,21 @@ public sealed class Site
 
     public IReadOnlyList<string> AllowedOrigins => _allowedOrigins;
 
+    // `11-01`: two flat backing fields, not an EF-mapped WidgetConfig struct directly - the same
+    // "computed property over a private field EF is pointed at by name" shape AllowedOrigins/
+    // _allowedOrigins already established just above, extended to two fields instead of one so each
+    // gets its own column (Stage11AddSiteWidgetConfig) without introducing EF's owned-type/complex-type
+    // mapping machinery for a single caller (clean-architecture.md's qualifying rule - a second value
+    // object needing the same shape is what would justify that, not this one).
+    private string? _widgetPrimaryColorHex;
+    private Position _widgetPosition = Position.BottomRight;
+
+    public WidgetConfig WidgetConfig => new(_widgetPrimaryColorHex, _widgetPosition);
+
+    private readonly List<IDomainEvent> _domainEvents = [];
+
+    public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
+
     public Site(SiteId id, string publicKey, IReadOnlyList<string> allowedOrigins, string name = "")
     {
         if (string.IsNullOrWhiteSpace(publicKey))
@@ -42,6 +57,10 @@ public sealed class Site
         PublicKey = publicKey;
         Name = name;
         _allowedOrigins = [.. allowedOrigins];
+        // WidgetConfig.Default's own values (null color, BottomRight) - a freshly created Site never
+        // renders broken just because nobody has configured a widget appearance yet.
+        _widgetPrimaryColorHex = WidgetConfig.Default.PrimaryColorHex;
+        _widgetPosition = WidgetConfig.Default.Position;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -49,4 +68,23 @@ public sealed class Site
     private Site()
     {
     }
+
+    /// <summary>
+    /// `11-01`: the first update path <see cref="Site"/> has ever had - create-only since `1-04`.
+    /// <paramref name="config"/> arrives already-validated (<see cref="WidgetConfig"/>'s own
+    /// constructor threw if the hex color was malformed), so this method's only job is applying it and
+    /// recording that it happened - the same "validate once, at construction of the value object"
+    /// split <see cref="Conversation.Close"/> draws between its own state-machine guard and the values
+    /// it is handed. Raises <see cref="SiteWidgetConfigUpdated"/>, mapped to the
+    /// <c>SiteSettingsChanged</c> integration event every other write path already uses this same
+    /// domain-event -> integration-event shape for (`Ago.Chat.Application/Mapping`).
+    /// </summary>
+    public void UpdateWidgetConfig(WidgetConfig config, DateTimeOffset now)
+    {
+        _widgetPrimaryColorHex = config.PrimaryColorHex;
+        _widgetPosition = config.Position;
+        _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
+    }
+
+    public void ClearDomainEvents() => _domainEvents.Clear();
 }

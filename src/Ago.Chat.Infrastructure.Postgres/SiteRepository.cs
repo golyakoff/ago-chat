@@ -19,4 +19,19 @@ public sealed class SiteRepository(AgoChatDbContext db) : ISiteRepository
     // Postgres array column.
     public Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken) =>
         db.Sites.AnyAsync(s => EF.Property<List<string>>(s, "_allowedOrigins").Contains(origin), cancellationToken);
+
+    // `11-01`: Site's first real write path (ISiteRepository's own remarks on why this has no
+    // concurrency-conflict translation, unlike ConversationRepository.SaveAsync above). A site loaded
+    // via GetByIdAsync is already tracked - the Detached branch only matters for a hypothetical caller
+    // that built a Site in memory and saved it without ever loading it first, the same defensive
+    // symmetry ConversationRepository.SaveAsync keeps for the same reason.
+    public async Task SaveAsync(Site site, CancellationToken cancellationToken)
+    {
+        if (db.Entry(site).State == EntityState.Detached)
+        {
+            db.Sites.Add(site);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
 }
