@@ -20,6 +20,7 @@ using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using OpenTelemetry.Exporter;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -184,7 +185,23 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("RequireKeycloakIdentity", policy => policy
         .AddAuthenticationSchemes(JwtSchemes.Operator)
         .RequireAuthenticatedUser());
+
+    // `12-01`/`adr/0032`: the platform owner - not an operator with a lot of permissions, a
+    // structurally different caller. Same scheme and the same Keycloak JWKS validation as the two
+    // policies above (adr/0028's "which claims are required afterward is exactly what the policy
+    // layer exists to express"), but the claim it requires is one Keycloak signs and this codebase
+    // can never write: a `platform-owner` entry in `realm_access.roles`. No OperatorId, no SiteId, no
+    // IPermissionChecker - so no grant in the `roles`/`operator_roles` tables, however broadly
+    // seeded, can satisfy it. RequireAuthenticatedUser is strictly redundant next to the requirement
+    // below (an anonymous principal carries no claims, and the handler checks IsAuthenticated
+    // itself) - kept as an explicit statement of intent, matching RequireKeycloakIdentity's own
+    // shape, not as load-bearing logic.
+    options.AddPolicy("RequirePlatformOwner", policy => policy
+        .AddAuthenticationSchemes(JwtSchemes.Operator)
+        .RequireAuthenticatedUser()
+        .AddRequirements(new PlatformOwnerRequirement()));
 });
+builder.Services.AddSingleton<IAuthorizationHandler, PlatformOwnerAuthorizationHandler>();
 
 var app = builder.Build();
 
