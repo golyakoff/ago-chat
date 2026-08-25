@@ -46,6 +46,26 @@ public sealed class Conversation
     /// </summary>
     public int OperatorLastReadSequence { get; private set; }
 
+    /// <summary>
+    /// `6-09`: whether this conversation's current assignment is backed by a real
+    /// <c>operators.active_chats</c> slot, taken by the automatic assignment engine's atomic
+    /// compare-and-set (<c>IOperatorCapacity.TryClaimAsync</c>). It is the receipt for that claim,
+    /// and it exists because the two ways a conversation becomes `Assigned` are genuinely not
+    /// symmetric: the engine claims a slot first and assigns second, while an operator picking a
+    /// conversation up by hand (<c>AssignConversationHandler</c>, behind
+    /// <c>OperatorHub.JoinConversationAsync</c>) never touches capacity at all. Without a receipt,
+    /// "release the claim when this conversation stops being assigned" has no way to tell a slot that
+    /// was taken from one that never was, and would decrement someone else's slot for every
+    /// hand-picked conversation ever closed - an under-count that lets the engine over-subscribe an
+    /// operator, which is a worse bug than the leak this flag exists to fix.
+    ///
+    /// <para>Unlike <c>operators.active_chats</c> - a shadow property precisely so no EF
+    /// load-mutate-save can ever race the raw <c>UPDATE</c> that owns it - this is an ordinary mapped
+    /// property, because it has exactly one writer: this aggregate, saved under the row's own `xmin`.
+    /// That single-writer fact is also what makes the release idempotent, see <see cref="Close"/>.</para>
+    /// </summary>
+    public bool HoldsCapacityClaim { get; private set; }
+
     public IReadOnlyList<Message> Messages => _messages;
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -81,8 +101,19 @@ public sealed class Conversation
     /// reconnect after a dropped connection, and a reconnect is not a new claim. Assigning to a
     /// *different* operator while already assigned is still rejected below - that invariant (one
     /// operator at a time) is exactly what this no-op must not weaken.
+    ///
+    /// <para>`6-09`: <paramref name="holdsCapacityClaim"/> defaults to <see langword="false"/>, and
+    /// the default is the safe direction rather than the common one - "this assignment is not backed
+    /// by a capacity slot" can only ever under-release, never decrement a slot somebody else holds.
+    /// Only a caller that has just watched <c>IOperatorCapacity.TryClaimAsync</c> return
+    /// <see langword="true"/>, in the same transaction as this save, may pass <see langword="true"/>
+    /// (`4-02`/`4-03`'s two <c>IAssignmentClaimer</c> implementations - nothing else).</para>
+    ///
+    /// <para>The reconnect no-op above returns *before* touching the flag, deliberately: an
+    /// engine-assigned conversation whose operator then re-joins it through the hub must keep its
+    /// receipt, or the join would silently convert a real claim into an unaccounted one.</para>
     /// </summary>
-    public void AssignTo(OperatorId operatorId, DateTimeOffset now)
+    public void AssignTo(OperatorId operatorId, DateTimeOffset now, bool holdsCapacityClaim = false)
     {
         if (State == ConversationState.Assigned && OperatorId == operatorId)
         {
@@ -97,6 +128,7 @@ public sealed class Conversation
 
         OperatorId = operatorId;
         State = ConversationState.Assigned;
+        HoldsCapacityClaim = holdsCapacityClaim;
         _domainEvents.Add(new ConversationAssigned(Id, operatorId, now));
     }
 
@@ -109,7 +141,8 @@ public sealed class Conversation
     /// the same reason without an assignment in between, so any call while already `Waiting` is a
     /// genuine caller bug, not a redundant retry to tolerate.
     /// </summary>
-    public void ReleaseToQueue(DateTimeOffset now)
+    /// <returns>`6-09`: whether this transition consumed a capacity claim - see <see cref="Close"/>.</returns>
+    public bool ReleaseToQueue(DateTimeOffset now)
     {
         if (State != ConversationState.Assigned)
         {
@@ -118,12 +151,38 @@ public sealed class Conversation
         }
 
         var previousOperatorId = OperatorId!.Value;
+        var claimConsumed = HoldsCapacityClaim;
+        HoldsCapacityClaim = false;
         OperatorId = null;
         State = ConversationState.Waiting;
         _domainEvents.Add(new ConversationReleased(Id, previousOperatorId, now));
+        return claimConsumed;
     }
 
-    public void Close(DateTimeOffset now)
+    /// <summary>
+    /// `6-09`: closing is one of the two ways an assignment ends (<see cref="ReleaseToQueue"/> is the
+    /// other), so it is also one of the two places a capacity claim has to be handed back.
+    ///
+    /// <para><b>Why the answer is returned rather than left for the caller to look up.</b> The caller
+    /// must release exactly when this call is the one that consumed the claim. Reading
+    /// <see cref="HoldsCapacityClaim"/> before calling would be a check-then-act on a value this
+    /// method is about to change, and it would still be true on an aggregate whose close then threw.
+    /// Returning it makes "a claim was consumed here" and "the claim is now gone from the aggregate"
+    /// the same indivisible step.</para>
+    ///
+    /// <para><b>Why that makes the release idempotent without a dedup flag of its own.</b> Clearing
+    /// the receipt is part of the very same <c>SaveChangesAsync</c> as the state transition, under the
+    /// conversation row's own `xmin` (adr/0004, `6-08`). Two closes racing means one wins and the
+    /// other's save is rejected outright; a close retried after a conflict (`6-08`'s retry-once)
+    /// re-reads the row, and a row that is already `Closed` throws below and never reaches a release
+    /// at all. There is no interleaving in which one close's claim is released twice, and none in
+    /// which a release happens without a claim having existed - which is precisely why this is a
+    /// state transition and not a "have I released yet?" boolean the caller checks.</para>
+    /// </summary>
+    /// <returns><see langword="true"/> if this close consumed a capacity claim the caller must now
+    /// release through <c>IOperatorCapacity.ReleaseAsync</c>, for
+    /// <see cref="OperatorId"/>.</returns>
+    public bool Close(DateTimeOffset now)
     {
         if (State == ConversationState.Closed)
         {
@@ -131,8 +190,11 @@ public sealed class Conversation
                 $"Conversation {Id.Value} is already {ConversationState.Closed}.");
         }
 
+        var claimConsumed = HoldsCapacityClaim;
+        HoldsCapacityClaim = false;
         State = ConversationState.Closed;
         _domainEvents.Add(new ConversationClosed(Id, now));
+        return claimConsumed;
     }
 
     /// <summary>

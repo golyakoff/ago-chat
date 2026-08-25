@@ -25,10 +25,27 @@ namespace Ago.Chat.Application.UseCases.CloseConversation;
 /// <c>Infrastructure.Postgres.Pipeline</c> - the same "plain, unbatched per-request handler, no shared
 /// multi-conversation transaction to coordinate" shape <see cref="Application.UseCases.ConfirmAttachment.ConfirmAttachmentHandler"/>
 /// uses (adr/0005: state change and integration event, one transaction, one `SaveChangesAsync`).
+///
+/// <para>`6-09`: also the place an operator's capacity claim is handed back, because closing is the
+/// ordinary, ubiquitous way an assignment ends and until this item existed nothing released it -
+/// <c>active_chats</c> only ever came down when the operator's last connection anywhere dropped
+/// (`4-04`'s <c>OperatorConversationReleaser</c>), so an operator working through conversations one
+/// at a time ratcheted down to zero usable capacity and the site's waiting queue silently stopped
+/// being served (found live by `7-04`'s <c>assignment-contention</c> run, not by inspection).
+/// <b>Here rather than in a <c>ConversationEnded</c> consumer in <c>Ago.Chat.Worker</c></b>, which was
+/// the real alternative: the outbox would have made the release survive a crash between commit and
+/// decrement, at the cost of a whole new consumer, queue binding and redelivery-idempotency argument
+/// for a single <c>UPDATE</c> - and of freeing the slot only after the dispatcher and broker hop, when
+/// the entire user-visible point is that an operator who just finished a chat can be given the next
+/// one now. The residual is stated plainly rather than designed away: a process death in the window
+/// between the commit below and <c>ReleaseAsync</c> leaks exactly one slot, which is the pre-`6-09`
+/// behaviour for that one conversation, bounded, and still recovered by the disconnect sweep when that
+/// operator eventually goes offline.</para>
 /// </summary>
 public sealed class CloseConversationHandler(
     IConversationRepository conversations,
     IPermissionChecker permissions,
+    IOperatorCapacity capacity,
     IOutboxWriter outbox,
     IIdGenerator idGenerator,
     IClock clock)
@@ -91,9 +108,10 @@ public sealed class CloseConversationHandler(
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
         }
 
+        bool consumedCapacityClaim;
         try
         {
-            conversation.Close(clock.UtcNow);
+            consumedCapacityClaim = conversation.Close(clock.UtcNow);
         }
         catch (InvalidConversationStateException ex)
         {
@@ -109,6 +127,22 @@ public sealed class CloseConversationHandler(
         // method stays "the one attempt" and HandleAsync stays the one place that owns the
         // retry-once policy.
         await conversations.SaveAsync(conversation, cancellationToken);
+
+        // `6-09`: strictly after the save, never before. A release ahead of the save would be undone
+        // by nothing when SaveAsync loses on `xmin` - the conversation would still be Assigned with
+        // its slot already given back, and the operator over-subscribable by one for the rest of that
+        // slot's life. After the save, the only failure left is a leak in the crash window, which is
+        // the strictly safer direction and the one this handler documents rather than hides. The
+        // retry path above cannot double-release: it reloads the row this save just closed, and
+        // Conversation.Close() throws on an already-closed row before any release is reached.
+        if (consumedCapacityClaim)
+        {
+            // command.OperatorId, not conversation.OperatorId - the guard at the top of this method
+            // has already established they are the same, and this avoids a null-forgiving operator on
+            // a property whose non-nullness is only implied by the state machine.
+            await capacity.ReleaseAsync(command.OperatorId, cancellationToken);
+        }
+
         return Result.Success();
     }
 }

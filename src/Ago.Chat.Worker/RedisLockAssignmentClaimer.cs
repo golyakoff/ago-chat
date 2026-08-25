@@ -104,7 +104,9 @@ public sealed class RedisLockAssignmentClaimer(
 
         try
         {
-            conversation.AssignTo(operatorId, clock.UtcNow);
+            // `6-09`: holdsCapacityClaim: true - same reasoning as SkipLockedAssignmentClaimer's own
+            // call, and the same transaction rolls both back together if this save loses on `xmin`.
+            conversation.AssignTo(operatorId, clock.UtcNow, holdsCapacityClaim: true);
             var domainEvent = conversation.DomainEvents.OfType<ConversationAssigned>().Last();
             var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
             outbox.Enqueue(ConversationAssignedToOperatorMapper.ToEnvelope(domainEvent, conversation.SiteId, conversation.VisitorId, idGenerator));

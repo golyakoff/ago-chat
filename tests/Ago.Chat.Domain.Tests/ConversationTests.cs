@@ -63,6 +63,79 @@ public class ConversationTests
         Assert.Empty(conversation.DomainEvents);
     }
 
+    /// <summary>`6-09`: the receipt for an engine-taken capacity slot - see
+    /// <see cref="Conversation.HoldsCapacityClaim"/>. Default is no claim, which is the hand-picked
+    /// path (<c>AssignConversationHandler</c>) and the safe direction.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AssignTo_RecordsWhetherTheAssignmentHoldsACapacityClaim(bool holdsCapacityClaim)
+    {
+        var conversation = StartConversation();
+
+        conversation.AssignTo(OperatorId, Now, holdsCapacityClaim);
+
+        Assert.Equal(holdsCapacityClaim, conversation.HoldsCapacityClaim);
+    }
+
+    [Fact]
+    public void AssignTo_Default_TakesNoCapacityClaim()
+    {
+        var conversation = StartConversation();
+
+        conversation.AssignTo(OperatorId, Now);
+
+        Assert.False(conversation.HoldsCapacityClaim);
+    }
+
+    /// <summary>The reconnect no-op must not spend an engine claim: `3-03`'s repeat-join calls
+    /// AssignTo again on every join, with the manual path's default of "no claim".</summary>
+    [Fact]
+    public void AssignTo_RepeatedBySameOperator_KeepsAnExistingCapacityClaim()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
+
+        conversation.AssignTo(OperatorId, Now.AddMinutes(5));
+
+        Assert.True(conversation.HoldsCapacityClaim);
+    }
+
+    [Fact]
+    public void Close_WhenTheAssignmentHoldsACapacityClaim_ConsumesItExactlyOnce()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
+
+        Assert.True(conversation.Close(Now));
+        Assert.False(conversation.HoldsCapacityClaim);
+        // The second close is rejected outright, so there is no interleaving in which the caller is
+        // told to release twice for one conversation.
+        Assert.Throws<InvalidConversationStateException>(() => conversation.Close(Now));
+    }
+
+    [Fact]
+    public void Close_WhenTheAssignmentHoldsNoCapacityClaim_ConsumesNothing()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+
+        Assert.False(conversation.Close(Now));
+    }
+
+    [Fact]
+    public void ReleaseToQueue_ConsumesTheCapacityClaimIfThereWasOne()
+    {
+        var claiming = StartConversation();
+        claiming.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
+        Assert.True(claiming.ReleaseToQueue(Now));
+        Assert.False(claiming.HoldsCapacityClaim);
+
+        var handPicked = StartConversation();
+        handPicked.AssignTo(OperatorId, Now);
+        Assert.False(handPicked.ReleaseToQueue(Now));
+    }
+
     [Fact]
     public void AssignTo_WhenClosed_ThrowsInvalidConversationStateException()
     {

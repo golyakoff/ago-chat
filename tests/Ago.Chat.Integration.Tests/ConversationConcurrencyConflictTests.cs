@@ -37,7 +37,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var racingRepository = new RacingConversationRepository(
             new ConversationRepository(db), maxInjections: 1, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new CloseConversationHandler(
-            racingRepository, new PermissionChecker(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
+            racingRepository, new PermissionChecker(db), new OperatorCapacityStore(db),
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
 
         var result = await handler.HandleAsync(new CloseConversation(conversationId, operatorId, siteId), CancellationToken.None);
 
@@ -73,7 +74,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var racingRepository = new RacingConversationRepository(
             new ConversationRepository(db), maxInjections: 2, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new CloseConversationHandler(
-            racingRepository, new PermissionChecker(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
+            racingRepository, new PermissionChecker(db), new OperatorCapacityStore(db),
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
 
         var result = await handler.HandleAsync(new CloseConversation(conversationId, operatorId, siteId), CancellationToken.None);
 
