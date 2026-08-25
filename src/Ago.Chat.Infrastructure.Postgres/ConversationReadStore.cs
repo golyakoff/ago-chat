@@ -7,7 +7,20 @@ namespace Ago.Chat.Infrastructure.Postgres;
 
 /// <summary>Hand-written SQL over the write model, never through the aggregate (adr/0004) - reads
 /// the same <c>messages</c> table <see cref="ConversationRepository"/> writes to, but never via
-/// EF's change tracker.</summary>
+/// EF's change tracker.
+///
+/// <para>`17-01`, <b>tenant scope of every query in this file</b>. Two of the three do not mention
+/// <c>site_id</c>, on purpose and not by omission: <c>messages</c> carries no <c>site_id</c> column
+/// at all (<c>data-model.md</c> - the tenant is reachable only through <c>conversations</c>), so
+/// <see cref="GetHistoryAsync"/> and <see cref="GetDeltaAsync"/> are keyed by <c>conversation_id</c>,
+/// which is strictly narrower than a site. The caller that guarantees the scope is
+/// <c>GetConversationHistoryHandler</c>, and it is the same guarantee for both: the visitor entry
+/// points compare <c>conversation.VisitorId</c> against the signed visitor token's own id, and the
+/// operator entry points check <c>conversation:read</c> for the caller's site and then require the
+/// caller to be the conversation's assigned operator. Neither query is ever reached with a
+/// conversation id the caller has not already been proven a party to.
+/// <see cref="GetAllForSiteAsync"/> is the one that does filter on <c>site_id</c>, because it is the
+/// one whose input is a site rather than a conversation.</para></summary>
 public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConversationReadStore
 {
     // Aliased to the record's parameter names - Dapper's constructor-binding matches by name, not

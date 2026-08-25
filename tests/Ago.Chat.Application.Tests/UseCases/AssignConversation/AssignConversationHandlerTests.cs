@@ -72,6 +72,46 @@ public class AssignConversationHandlerTests
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
     }
 
+    /// <summary>
+    /// `17-01`: the cross-tenant case, and the one this handler failed before that item. The operator
+    /// genuinely holds `conversation:assign` - for <b>their own</b> site - and names a conversation
+    /// belonging to a different one. The permission check passes (it is scoped to the caller's site,
+    /// which is not the conversation's), so the belongs-to-site comparison is the only thing standing
+    /// between this call and a cross-tenant assignment.
+    ///
+    /// <para>Why an assignment is the case that matters rather than one refusal among many: every
+    /// other operator-facing conversation path gates on <c>conversation.OperatorId == RequestedBy</c>,
+    /// so a successful cross-tenant assign converts all of them into "yes" for the caller - reading
+    /// the thread, sending into it, closing it, downloading its attachments.</para>
+    ///
+    /// <para>NotFound rather than Forbidden, matching `DeleteAttachmentHandler`/
+    /// `RevokeWebhookEndpointHandler`: another tenant's row must be indistinguishable from a
+    /// nonexistent one.</para>
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheConversationBelongsToAnotherSite_ReturnsNotFound_AndLeavesItWaiting()
+    {
+        var conversations = new FakeConversationRepository();
+        var victimSiteId = new SiteId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), victimSiteId, VisitorId, Now);
+        conversations.Seed(conversation);
+
+        // A real grant, on the caller's own site - the point is that a legitimately-permitted
+        // operator is still refused, not that an unpermitted one is.
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationAssign);
+        var handler = new AssignConversationHandler(conversations, permissions, new FakeClock(Now));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.AssignConversation.AssignConversation(conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Null(conversation.OperatorId);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenAlreadyAssigned_ReturnsInvalidState()
     {
