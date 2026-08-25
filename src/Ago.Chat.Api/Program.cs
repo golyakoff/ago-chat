@@ -19,6 +19,7 @@ using Microsoft.AspNetCore.Cors.Infrastructure;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
+using Ago.Platform.Observability;
 using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authentication;

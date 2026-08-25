@@ -5,6 +5,7 @@ using Ago.Chat.Module;
 using Ago.Chat.Worker;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
+using Ago.Platform.Observability;
 using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
