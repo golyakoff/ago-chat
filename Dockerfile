@@ -10,9 +10,15 @@
 # (`docker build --build-context nugetfeed=../.nuget-feed ...`).
 
 ARG PROJECT_NAME
+# `15-06`: the commit this image is built from. It is not decoration - it is baked into the compiled
+# binary (below) and read back by GET /healthz/version, so a running pod can name its own source.
+# Defaults to "unknown" rather than failing the build: a local `docker build` for a quick check is a
+# legitimate thing to do, and it should say "unknown" out loud rather than lie or refuse.
+ARG GIT_COMMIT=unknown
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG PROJECT_NAME
+ARG GIT_COMMIT
 WORKDIR /src
 
 COPY Directory.Build.props Directory.Packages.props nuget.docker.config ./
@@ -35,9 +41,14 @@ COPY src/ src/
 # Ago.Chat.Worker for attachment thumbnails - 5-04) under /app/runtimes - ~440MB of win-x64/win-arm64/
 # osx/linux-arm64/linux-musl-*/etc. binaries this container can never load. See docs/backlog/8-04-
 # container-publish-rid-trim.md.
+# -p:SourceRevisionId=<sha>: the SDK appends "+<sha>" to AssemblyInformationalVersion, so the commit
+# travels inside the assembly rather than beside it. That is the point (15-06) - an image tag can be
+# re-pushed and a Deployment env var can be edited, but the compiled binary cannot disagree with
+# itself. BuildInfoResponse reads it back out.
 RUN --mount=type=bind,from=nugetfeed,target=/nuget-feed \
     dotnet publish "src/${PROJECT_NAME}/${PROJECT_NAME}.csproj" -c Release -o /app \
-      -r linux-x64 --self-contained false --configfile nuget.docker.config
+      -r linux-x64 --self-contained false --configfile nuget.docker.config \
+      -p:SourceRevisionId="${GIT_COMMIT}"
 
 # Bake the concrete DLL name into a fixed filename here, while the build stage still has a shell
 # (the SDK image does) - the final stage below is Chiseled, which ships with no shell at all, so
@@ -55,6 +66,17 @@ RUN cp "/app/${PROJECT_NAME}.dll" /app/app.dll \
 # (Npgsql, StackExchange.Redis, RabbitMQ.Client). See docs/backlog/8-00-minimal-production-base-
 # image.md for the fuller reasoning and the verification this switch was checked against.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS final
+ARG PROJECT_NAME
+ARG GIT_COMMIT
+# `15-06`: the OCI annotations a registry and `docker inspect`/`crane config` read. `.source` is not
+# only documentation - GHCR uses it to link the published package back to this repository, which is
+# what makes the package inherit the repository's own visibility instead of arriving orphaned.
+# `.revision` is the same commit baked into the binary above, repeated where tooling that cannot run
+# the container can still see it.
+LABEL org.opencontainers.image.source="https://github.com/golyakoff/ago-chat" \
+      org.opencontainers.image.description="AGO Chat host: ${PROJECT_NAME}" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="${GIT_COMMIT}"
 WORKDIR /app
 COPY --from=build /app .
 EXPOSE 8080

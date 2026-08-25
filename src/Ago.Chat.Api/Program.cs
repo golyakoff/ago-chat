@@ -10,6 +10,7 @@ using Ago.Chat.Api.Realtime;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.WidgetConfig;
+using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module;
@@ -215,6 +216,13 @@ app.UseAuthorization();
 // check Ago.Chat.Worker already uses (Predicate: _ => false runs no registered check at all).
 app.MapHealthChecks("/healthz/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+
+// `15-06`: which commit this process was built from, readable without cluster access. The image tag
+// (a commit SHA since 15-06) says which artifact was asked for; this says what is actually running,
+// because it comes from the compiled binary rather than from a manifest anyone can edit. Sits next
+// to the health checks and outside authentication on purpose - the commit of a public repository is
+// not a secret, and a version check that needs a token is a version check nobody runs.
+app.MapGet("/healthz/version", () => BuildInfoResponse.For(typeof(Program).Assembly));
 
 // `7-02` fix: AddPlatformObservability wires the Prometheus exporter into the MeterProvider, but
 // mapping the actual scrape endpoint needs the built app (endpoint routing), not just the service
