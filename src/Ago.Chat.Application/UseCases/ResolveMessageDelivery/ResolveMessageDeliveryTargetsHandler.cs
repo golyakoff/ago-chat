@@ -46,7 +46,15 @@ public sealed class ResolveMessageDeliveryTargetsHandler(
             item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt,
             item.AttachmentId?.Value, item.ClientMessageId, command.ConversationId.Value);
 
-        await fanout.PublishAsync(recipients, "MessageReceived", JsonSerializer.Serialize(dto, WireJsonOptions.Options), command.CorrelationId, cancellationToken);
+        const string Method = "MessageReceived";
+        var fanoutResult = await fanout.PublishAsync(
+            recipients, Method, JsonSerializer.Serialize(dto, WireJsonOptions.Options), command.CorrelationId, cancellationToken);
+
+        // `7-08`: the recipient list this handler just decided, paired with what the registry knew
+        // about each of them. Recorded here rather than inside the platform's publisher because
+        // "visitor" and "operator" - the dimension that makes a zero worth looking at - are concepts
+        // the platform is not allowed to learn (clean-architecture.md's qualifying rule).
+        FanoutObservability.RecordFanout(fanoutResult, Method);
 
         return Result.Success();
     }

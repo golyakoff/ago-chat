@@ -184,8 +184,8 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
 
     private sealed class NoOpLocalConnectionDispatcher : ILocalConnectionDispatcher
     {
-        public Task DispatchAsync(ConnectionId connectionId, string method, string payloadJson, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task<DispatchOutcome> DispatchAsync(ConnectionId connectionId, string method, string payloadJson, CancellationToken cancellationToken) =>
+            Task.FromResult(DispatchOutcome.Delivered);
     }
 
     private sealed class FakeHostApplicationLifetime : Microsoft.Extensions.Hosting.IHostApplicationLifetime

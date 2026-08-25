@@ -4,6 +4,8 @@ using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
 
 namespace Ago.Chat.Application.Tests.UseCases.ResolveMessageDelivery;
 
@@ -109,6 +111,135 @@ public class ResolveMessageDeliveryTargetsHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
         Assert.Empty(fanout.Calls);
+    }
+
+    /// <summary>
+    /// `7-08`'s whole point, and the reason this instrument is not a raw "delivered to zero" count.
+    /// The visitor is reading; the operator's console is closed. Both are recipients of the same
+    /// fan-out and both are perfectly ordinary events on their own - it is only the *pairing* of
+    /// recipient kind with presence that makes one of them worth looking at.
+    ///
+    /// An implementation that tagged presence from the recipient list rather than from what the
+    /// registry answered - the easiest mistake here, and one that looks identical on a dashboard -
+    /// would report the operator as `connected`.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_TagsEachRecipientByKindAndByWhetherTheRegistryHadAConnection()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversation.AssignTo(OperatorId, Now);
+        var message = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var (handler, fanout) = CreateHandler(conversation);
+        fanout.ConnectionsByPrincipal[PrincipalKeys.ForVisitor(VisitorId)] = 2; // two tabs
+        fanout.ConnectionsByPrincipal[PrincipalKeys.ForOperator(OperatorId)] = 0; // console closed
+
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        await handler.HandleAsync(
+            new ResolveMessageDeliveryTargets(conversation.Id, message.Sequence, Guid.NewGuid()),
+            CancellationToken.None);
+        meterProvider.ForceFlush();
+
+        var recipients = exportedMetrics.Single(m => m.Name == ChatMetrics.DeliveryRecipientsInstrumentName);
+        Assert.Equal(1, SumRecipients(recipients, PrincipalKeys.OperatorKind, ChatMetrics.AbsentPresence));
+        Assert.Equal(0, SumRecipients(recipients, PrincipalKeys.OperatorKind, ChatMetrics.ConnectedPresence));
+        // One point per recipient, never one per connection: the visitor's two tabs are one
+        // recipient who was reachable, and the connection count lives on the fan-out's span.
+        Assert.Equal(1, SumRecipients(recipients, PrincipalKeys.VisitorKind, ChatMetrics.ConnectedPresence));
+        Assert.Equal(0, SumRecipients(recipients, PrincipalKeys.VisitorKind, ChatMetrics.AbsentPresence));
+    }
+
+    /// <summary>
+    /// The ordinary zero, and the reason `15-03` gets to decide about alerting later with data
+    /// rather than now with a guess: an unassigned conversation has exactly one recipient, and a
+    /// visitor with no connection is a normal Tuesday. It must be counted, and counted as a visitor.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_AnUnassignedConversationWithNobodyConnected_CountsOneAbsentVisitorAndNoOperator()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var message = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var (handler, _) = CreateHandler(conversation);
+
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        await handler.HandleAsync(
+            new ResolveMessageDeliveryTargets(conversation.Id, message.Sequence, Guid.NewGuid()),
+            CancellationToken.None);
+        meterProvider.ForceFlush();
+
+        var recipients = exportedMetrics.Single(m => m.Name == ChatMetrics.DeliveryRecipientsInstrumentName);
+        Assert.Equal(1, SumRecipients(recipients, PrincipalKeys.VisitorKind, ChatMetrics.AbsentPresence));
+        Assert.Equal(0, SumRecipients(recipients, PrincipalKeys.OperatorKind, ChatMetrics.AbsentPresence));
+        Assert.Equal(0, SumRecipients(recipients, PrincipalKeys.OperatorKind, ChatMetrics.ConnectedPresence));
+    }
+
+    /// <summary>
+    /// The `7-07` check applied to this instrument: a conversation with no operator must not
+    /// produce an operator point at all. A counter fed from "the participants a conversation could
+    /// have" rather than from "the recipients this fan-out actually resolved" would emit one, and
+    /// every unassigned conversation on the platform would look like an offline operator.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_NeverCountsARecipientTheFanoutWasNotGiven()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var message = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var (handler, fanout) = CreateHandler(conversation);
+
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        await handler.HandleAsync(
+            new ResolveMessageDeliveryTargets(conversation.Id, message.Sequence, Guid.NewGuid()),
+            CancellationToken.None);
+        meterProvider.ForceFlush();
+
+        var call = Assert.Single(fanout.Calls);
+        var recipients = exportedMetrics.Single(m => m.Name == ChatMetrics.DeliveryRecipientsInstrumentName);
+        var counted = SumRecipients(recipients, PrincipalKeys.VisitorKind, ChatMetrics.AbsentPresence)
+            + SumRecipients(recipients, PrincipalKeys.VisitorKind, ChatMetrics.ConnectedPresence)
+            + SumRecipients(recipients, PrincipalKeys.OperatorKind, ChatMetrics.AbsentPresence)
+            + SumRecipients(recipients, PrincipalKeys.OperatorKind, ChatMetrics.ConnectedPresence);
+        Assert.Equal(call.Recipients.Count, counted);
+    }
+
+    /// <summary>Points on <see cref="ChatMetrics.DeliveryRecipientsInstrumentName"/> matching this
+    /// handler's own method tag and the given kind/presence pair.</summary>
+    private static long SumRecipients(Metric metric, string recipientKind, string presence)
+    {
+        var total = 0L;
+        foreach (ref readonly var point in metric.GetMetricPoints())
+        {
+            var matches = 0;
+            foreach (var tag in point.Tags)
+            {
+                if ((tag.Key == "method" && (string?)tag.Value == "MessageReceived")
+                    || (tag.Key == "recipient_kind" && (string?)tag.Value == recipientKind)
+                    || (tag.Key == "presence" && (string?)tag.Value == presence))
+                {
+                    matches++;
+                }
+            }
+
+            if (matches == 3)
+            {
+                total += point.GetSumLong();
+            }
+        }
+
+        return total;
     }
 
     private static (ResolveMessageDeliveryTargetsHandler Handler, FakeNodeFanoutPublisher Fanout) CreateHandler(Conversation conversation)

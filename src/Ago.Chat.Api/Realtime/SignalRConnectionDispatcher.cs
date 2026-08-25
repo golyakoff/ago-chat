@@ -25,12 +25,16 @@ public sealed class SignalRConnectionDispatcher(
 {
     private const string VisitorPrefix = "visitor:";
 
-    public Task DispatchAsync(ConnectionId connectionId, string method, string payloadJson, CancellationToken cancellationToken)
+    public async Task<DispatchOutcome> DispatchAsync(ConnectionId connectionId, string method, string payloadJson, CancellationToken cancellationToken)
     {
         var principal = tracker.TryGet(connectionId);
         if (principal is null)
         {
-            return Task.CompletedTask;
+            // `7-08`: the same no-op as before, now reported. This is the one place in the whole
+            // fan-out path that *knows* the registry entry was stale, and until this returned
+            // something it was also the one place that threw that knowledge away - which is why
+            // "did the server even try to deliver to that connection" could not be answered.
+            return DispatchOutcome.ConnectionNotLocal;
         }
 
         var payload = JsonSerializer.Deserialize<JsonElement>(payloadJson);
@@ -39,6 +43,9 @@ public sealed class SignalRConnectionDispatcher(
             ? visitorHub.Clients.Client(connectionId.Value)
             : operatorHub.Clients.Client(connectionId.Value);
 
-        return client.SendAsync(method, payload, cancellationToken);
+        await client.SendAsync(method, payload, cancellationToken);
+        // "Handed to SignalR for a connection this process holds" - deliberately not a claim that
+        // the client received it, which no transport here can promise synchronously.
+        return DispatchOutcome.Delivered;
     }
 }
