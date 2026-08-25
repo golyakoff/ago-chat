@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.DispatchWebhooksForEvent;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
+using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module;
 using Ago.Chat.Webhooks;
@@ -91,6 +92,11 @@ var app = builder.Build();
 
 app.MapHealthChecks("/healthz/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+
+// `15-06`: see Ago.Chat.Api's own remarks on this line - the commit this binary was built from,
+// readable from the running pod. All three hosts deploy from one commit, so a disagreement between
+// them is a half-finished deploy that no single-host check can see.
+app.MapGet("/healthz/version", () => BuildInfoResponse.For(typeof(Program).Assembly));
 
 // `7-02` fix: see Ago.Chat.Api's own remarks on this line.
 app.MapPrometheusScrapingEndpoint();

@@ -45,3 +45,87 @@ jobs:
         with:
           name: test-results
           path: TestResults
+
+  # `15-06`/`adr/0047`: images are published to GHCR from here, not built on the deployment node.
+  # Only on `main`, and only after build-test passed - a pull request never publishes, so a fork or a
+  # draft branch cannot put an image into the registry a deploy might later reach for.
+  publish-images:
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # A repository's own GITHUB_TOKEN can write to that repository's own package feed - the same
+      # property adr/0018 already relies on for the NuGet feed, so publishing needs no new secret.
+      # Only *reading* a private package would, which is exactly why adr/0047 wants these public.
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      # The Dockerfile restores Ago.Platform.* from a *folder* mounted in as a Buildx build context
+      # (nuget.docker.config), because the local developer loop's feed lives outside the build
+      # context. CI has no such folder - it restores from GitHub Packages - so materialise one:
+      # restore into a scratch global-packages directory and copy the .nupkg files out of it. The
+      # alternative, teaching the Dockerfile to authenticate against GitHub Packages itself, would
+      # push AGO_PLATFORM_PACKAGES_TOKEN into the image build, and a token that never enters a build
+      # cannot leak from a layer.
+      - name: Materialise the Ago.Platform.* feed for the image build
+        env:
+          AGO_PLATFORM_PACKAGES_TOKEN: ${{ secrets.AGO_PLATFORM_PACKAGES_TOKEN }}
+        run: |
+          mkdir -p /tmp/nuget-feed
+          dotnet restore Ago.Chat.slnx --configfile nuget.ci.config --packages /tmp/global-packages
+          find /tmp/global-packages -name 'ago.platform.*.nupkg' -exec cp {} /tmp/nuget-feed/ \;
+          ls -1 /tmp/nuget-feed
+
+      # No docker/login-action: `docker login` with the workflow token does the same thing with one
+      # fewer third-party action in the supply chain, and Buildx is already installed on the runner.
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Tagging (adr/0047): the canonical tag is the full 40-character commit SHA, because that is
+      # exactly what `git rev-parse HEAD` prints - "which commit is this" becomes a string comparison
+      # with nothing to decode. `main` moves and exists only for convenience; a deploy must never
+      # reference it, and there is deliberately no `latest` at all, since a tag that cannot name a
+      # commit cannot be rolled back to, which is the whole reason this job exists.
+      # Plain `docker build` with BuildKit and a separate `docker push`, rather than
+      # `buildx build --push`: this is byte-for-byte the invocation ago-deploy/k8s/build-images.sh
+      # already uses on a developer machine and on the node, so an image built by CI and one built by
+      # hand come out of the same command. --build-context is the reason BuildKit is required at all
+      # (the Ago.Platform.* feed is a folder outside the build context, per the Dockerfile's header).
+      - name: Build and push the three host images
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          for project in Ago.Chat.Api Ago.Chat.Worker Ago.Chat.Webhooks; do
+            name="ago-chat-$(echo "${project#Ago.Chat.}" | tr '[:upper:]' '[:lower:]')"
+            repo="ghcr.io/${{ github.repository_owner }}/${name}"
+            echo "::group::${repo}"
+            docker build \
+              --build-context "nugetfeed=/tmp/nuget-feed" \
+              --build-arg "PROJECT_NAME=${project}" \
+              --build-arg "GIT_COMMIT=${{ github.sha }}" \
+              -t "${repo}:${{ github.sha }}" \
+              -t "${repo}:main" \
+              .
+            docker push "${repo}:${{ github.sha }}"
+            docker push "${repo}:main"
+            echo "::endgroup::"
+          done
+
+      - name: Summarise what was published
+        run: |
+          {
+            echo "### Images published"
+            echo
+            echo "Deploy with: \`./deploy.sh ${{ github.sha }}\` (ago-deploy/k8s, on the node)"
+            echo
+            for n in api worker webhooks; do
+              echo "- \`ghcr.io/${{ github.repository_owner }}/ago-chat-${n}:${{ github.sha }}\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
