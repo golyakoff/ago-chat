@@ -17,4 +17,16 @@ internal static class AgoClaimTypes
     /// one won without re-deriving it from claim shape. Every other endpoint/hub stays single-scheme
     /// and never needed this.</summary>
     public const string Kind = "kind";
+
+    /// <summary>`17-06`: the two values <see cref="Kind"/> is ever allowed to hold, named rather than
+    /// spelled out at each of the four sites that used to repeat the literal (the two that *write* the
+    /// claim - <c>JwtTokenService.IssueVisitorToken</c> and
+    /// <c>OperatorIdentityClaimsTransformation</c> - and the two that *read* it -
+    /// <c>ClaimsPrincipalExtensions.IsOperator</c> and <c>AttachmentEndpoints</c>'s own policy). A
+    /// principal on the shared attachment route now has to carry one of exactly these two; see that
+    /// policy's own remarks for the third state that made the closed set worth stating.</summary>
+    public const string VisitorKind = "visitor";
+
+    /// <inheritdoc cref="VisitorKind"/>
+    public const string OperatorKind = "operator";
 }

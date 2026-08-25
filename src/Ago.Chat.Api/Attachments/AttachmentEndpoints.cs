@@ -15,22 +15,28 @@ namespace Ago.Chat.Api.Attachments;
 /// confirm/download.
 ///
 /// Every route here accepts *either* a visitor or an operator token
-/// (<c>RequireAuthorization</c> below lists both <see cref="JwtSchemes"/>) - the first endpoints in
-/// this codebase that do, since every hub before this was single-role by construction (`VisitorHub`
-/// vs `OperatorHub`). ASP.NET Core tries each listed scheme and keeps whichever one actually
-/// validates; because the two schemes' `aud` requirements are mutually exclusive, exactly one ever
-/// succeeds for a real token, and <see cref="ClaimsPrincipalExtensions.IsOperator"/> (backed by the
-/// `kind` claim <see cref="JwtTokenService"/> now issues) is how the handler below tells which one
-/// without re-deriving it from claim shape.
+/// (<see cref="AuthorizationPolicies.EitherTokenKind"/> lists both <see cref="JwtSchemes"/>) - the
+/// first endpoints in this codebase that do, since every hub before this was single-role by
+/// construction (`VisitorHub` vs `OperatorHub`). ASP.NET Core tries each listed scheme and keeps
+/// whichever one actually validates; because the two schemes' issuer/`aud`/signing requirements are
+/// mutually exclusive, at most one ever succeeds for a real token, and
+/// <see cref="ClaimsPrincipalExtensions.IsOperator"/> (backed by the `kind` claim) is how the handler
+/// below tells which one without re-deriving it from claim shape.
+///
+/// `17-06`: "at most one", not "exactly one", is the correction that item's review produced - the
+/// Operator scheme can validate a token that resolves to no operator at all, which is neither kind.
+/// The policy now rejects that case up front; see <see cref="AuthorizationPolicies.EitherTokenKind"/>
+/// for why it belongs there rather than in each handler's own branch.
 /// </summary>
 public static class AttachmentEndpoints
 {
     public static void MapAttachmentEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/v1")
-            .RequireAuthorization(policy => policy
-                .AddAuthenticationSchemes(JwtSchemes.Visitor, JwtSchemes.Operator)
-                .RequireAuthenticatedUser());
+        // `17-06`: a method group, not the inline lambda this used to be - `TokenSchemeSeparationTests`
+        // configures the identical policy from the identical method, so the test proves *this* rule
+        // rather than a transcription of it that is free to drift (`AuthEndpoints`'s own
+        // "a named method, not an inline lambda" precedent, for the same reason).
+        var group = app.MapGroup("/api/v1").RequireAuthorization(AuthorizationPolicies.EitherTokenKind);
 
         group.MapPost("/conversations/{conversationId:guid}/attachments", HandleCreateAsync);
         group.MapPost("/attachments/{attachmentId:guid}/confirm", HandleConfirmAsync);

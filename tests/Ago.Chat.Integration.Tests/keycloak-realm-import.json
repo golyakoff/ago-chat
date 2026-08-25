@@ -6,6 +6,20 @@
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
   "verifyEmail": true,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "passwordPolicy": "length(12) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3)",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
   "roles": {
     "realm": [
       {
@@ -84,6 +98,23 @@
         {
           "type": "password",
           "value": "demo-operator-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000f4",
+      "username": "lockout-target",
+      "email": "lockout-target@example.test",
+      "firstName": "Lockout",
+      "lastName": "Target",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "lockout-target-password",
           "temporary": false
         }
       ]
