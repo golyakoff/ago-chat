@@ -152,8 +152,56 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
     /// BackgroundService loop, so timing is deterministic), and asserts ChatMetrics' gauge reports a
     /// lag at least as large as the age seeded, not merely that the instrument exists.
     /// </summary>
+    /// <remarks>
+    /// <para><b>Why this observes more than once.</b> The gauge reads a <i>process-global</i> static
+    /// slot (<c>ChatMetrics.SetOutboxLagSeconds</c>, and that class's own remarks explain why it is a
+    /// slot rather than a per-instance <c>ObservableGauge</c>). In production that is unambiguous:
+    /// one host process runs exactly one <c>OutboxDispatcher</c>, so the only writer is the only
+    /// dispatcher. This test assembly deliberately breaks that assumption - at least five other
+    /// classes (<c>ConnectionFanoutEndToEndTests</c>, <c>ConversationAssignmentFanoutEndToEndTests</c>,
+    /// <c>TracingEndToEndTests</c>, <c>AttachmentThumbnailEndToEndTests</c>,
+    /// <c>UnreadCounterEndToEndTests</c>) start a real dispatcher and leave it polling on a 2s
+    /// interval while they wait for an end-to-end path to complete, and several of them declare no
+    /// <c>[Collection]</c> at all, so xUnit runs them in parallel with this collection.</para>
+    /// <para>Every one of those poll cycles that claims nothing writes <c>0</c> into the same slot -
+    /// correctly, per <c>OutboxDispatcher</c>'s own reasoning that an empty claim means no lag rather
+    /// than unknown. So a foreign <c>0</c> can land between this test's <c>DispatchBatchAsync</c> and
+    /// its <c>ForceFlush</c>, and the assertion sees <c>0s</c> for a row it definitely seeded. That is
+    /// exactly how this test failed on `main` on 2026-08-25, and twice intermittently before that; it
+    /// passes in isolation every time, which is the signature of the interference rather than of a
+    /// defect in the dispatcher.</para>
+    /// <para>Re-observing is the proportionate fix. The alternative considered was putting all six
+    /// dispatcher-running classes into one xUnit collection, which would restore the production
+    /// "one dispatcher at a time" invariant honestly - but it serialises six container-backed
+    /// end-to-end classes that currently run in parallel, turning the suite's wall clock from a max
+    /// into a sum, to make one metrics assertion deterministic. Each attempt here re-seeds its own
+    /// row and re-dispatches, so a genuinely broken gauge still fails every attempt and the test
+    /// fails loudly; only foreign interference is retried past.</para>
+    /// </remarks>
     [Fact]
     public async Task DispatchBatchAsync_WithAnOldUnpublishedRow_MovesTheOutboxLagGauge()
+    {
+        const int attempts = 3;
+        double lagSeconds = 0;
+
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            lagSeconds = await ObserveOutboxLagGaugeAfterOneDispatchAsync();
+            if (lagSeconds >= 25)
+            {
+                return;
+            }
+        }
+
+        Assert.Fail(
+            $"Expected the lag gauge to reflect the ~30s-old seeded row; observed {lagSeconds}s on each of " +
+            $"{attempts} attempts. A single 0 is usually a parallel dispatcher overwriting the shared slot " +
+            $"(see this test's remarks); {attempts} in a row means the dispatcher is not reporting lag at all.");
+    }
+
+    /// <summary>Seeds one ~30s-old outbox row, runs exactly one dispatch cycle, and returns whatever
+    /// the outbox-lag gauge reports immediately afterwards. The row is always deleted again.</summary>
+    private async Task<double> ObserveOutboxLagGaugeAfterOneDispatchAsync()
     {
         var exportedMetrics = new List<Metric>();
         using var meterProvider = Sdk.CreateMeterProviderBuilder()
@@ -167,7 +215,9 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
         // it permanently pollutes sibling tests that assume an otherwise-empty outbox table
         // (RowWrittenByTheRealHandlerPath_IsPublishedAndMarked's own SingleAsync() over the whole
         // table) and a real dispatcher elsewhere in the suite could pick it up and publish it a
-        // second time (TwoDispatchers_RacingForTheSameBatch's own exact-count assertion).
+        // second time (TwoDispatchers_RacingForTheSameBatch's own exact-count assertion). That
+        // applies per attempt, which is why the delete is in this helper's own finally rather than
+        // around the retry loop.
         var occurredAt = DateTimeOffset.UtcNow.AddSeconds(-30);
         var rowId = Guid.NewGuid();
         await using (var db = fixture.CreateDbContext())
@@ -191,7 +241,7 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
                 lagSeconds = point.GetGaugeLastValueDouble();
             }
 
-            Assert.True(lagSeconds >= 25, $"Expected the lag gauge to reflect the ~30s-old seeded row; observed {lagSeconds}s.");
+            return lagSeconds;
         }
         finally
         {
