@@ -16,7 +16,8 @@ public class GetWebhookDeliveriesHandlerTests
         FakeWebhookDeliveryReadStore Deliveries,
         WebhookEndpoint Endpoint);
 
-    private static Fixture CreateFixture(bool grantPermission = true, bool endpointRevoked = false)
+    private static Fixture CreateFixture(
+        bool grantPermission = true, bool endpointRevoked = false, SiteId? endpointSiteId = null)
     {
         var endpoints = new FakeWebhookEndpointRepository();
         var deliveries = new FakeWebhookDeliveryReadStore();
@@ -27,7 +28,7 @@ public class GetWebhookDeliveriesHandlerTests
         }
 
         var endpoint = WebhookEndpoint.Register(
-            new WebhookEndpointId(Guid.NewGuid()), SiteId, new Uri("https://shop.example.com/hooks"), [1], Now);
+            new WebhookEndpointId(Guid.NewGuid()), endpointSiteId ?? SiteId, new Uri("https://shop.example.com/hooks"), [1], Now);
         if (endpointRevoked)
         {
             endpoint.Revoke();
@@ -83,6 +84,36 @@ public class GetWebhookDeliveriesHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    /// <summary>
+    /// `17-01`: the second half of this handler's `endpoint is null || endpoint.SiteId != query.SiteId`
+    /// condition, which had no test at all - the branch was correct and nothing would have failed if a
+    /// refactor dropped it.
+    ///
+    /// <para>It is load-bearing because <see cref="Application.Abstractions.IWebhookDeliveryReadStore"/>'s
+    /// query filters on `endpoint_id` alone and never mentions `site_id` - this comparison is the only
+    /// thing that establishes the endpoint whose history is about to be read belongs to the site the
+    /// permission was just checked against. The endpoint id is client-supplied (a route segment), so
+    /// without it a `webhook:manage` holder on their own site could page another tenant's delivery
+    /// history - which carries that tenant's endpoint URLs, response codes and body snippets.</para>
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheEndpointBelongsToAnotherSite_ReturnsNotFound_AndReadsNoHistory()
+    {
+        var otherSite = new SiteId(Guid.NewGuid());
+        var fixture = CreateFixture(endpointSiteId: otherSite);
+        fixture.Deliveries.Seed(fixture.Endpoint.Id, new WebhookDeliverySummaryItem(
+            new WebhookDeliveryId(Guid.NewGuid()), "conversation.assigned", 1, WebhookDeliveryStatus.Delivered,
+            200, "OK", Now, Now));
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.GetWebhookDeliveries.GetWebhookDeliveries(fixture.Endpoint.Id, OperatorId, SiteId, null, 50),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        // Indistinguishable from an endpoint that does not exist - never "it exists, just not yours".
+        Assert.Equal("WebhookEndpoint.NotFound", result.Error!.Value.Code);
     }
 
     [Fact]
