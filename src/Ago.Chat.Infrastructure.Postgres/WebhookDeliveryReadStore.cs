@@ -6,7 +6,17 @@ using Npgsql;
 namespace Ago.Chat.Infrastructure.Postgres;
 
 /// <summary>Hand-written SQL over the write model, never through the aggregate (adr/0004) - the same
-/// split `ConversationReadStore` already draws for message history.</summary>
+/// split `ConversationReadStore` already draws for message history.
+///
+/// <para>`17-01`, <b>tenant scope</b>: the query below filters on <c>endpoint_id</c> and never
+/// mentions <c>site_id</c>, which is sufficient only because of one specific caller-side check.
+/// <c>webhook_deliveries</c> has no <c>site_id</c> column - the tenant is reached through
+/// <c>webhook_endpoints</c> - and the endpoint id here is client-supplied (a route segment on
+/// <c>GET /api/v1/sites/{siteId}/webhooks/{webhookId}/deliveries</c>). What makes the narrower key
+/// safe is <c>GetWebhookDeliveriesHandler</c>'s <c>endpoint.SiteId != query.SiteId</c> comparison,
+/// made after its <c>webhook:manage</c> check and before this store is called at all. That branch is
+/// the whole of the isolation for this read, and since `17-01` it has a test that fails if it is
+/// removed (<c>GetWebhookDeliveriesHandlerTests</c>).</para></summary>
 public sealed class WebhookDeliveryReadStore(NpgsqlDataSource dataSource) : IWebhookDeliveryReadStore
 {
     // Keyset on `id` alone - delivery ids are uuid v7 (IIdGenerator), so id order already is creation
