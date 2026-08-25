@@ -20,6 +20,11 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property(c => c.VisitorUnreadCount).HasColumnName("visitor_unread_count");
         builder.Property(c => c.OperatorUnreadCount).HasColumnName("operator_unread_count");
 
+        // `5-15`: no index. This column is only ever read as part of the aggregate the write path has
+        // already located by primary key, never filtered or ordered on - data-model.md's rule is that
+        // an index arrives with its first real reader, and this one has none.
+        builder.Property(c => c.OperatorLastReadSequence).HasColumnName("operator_last_read_sequence");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
         builder.HasOne<Visitor>().WithMany().HasForeignKey(c => c.VisitorId);
         builder.HasOne<Operator>().WithMany().HasForeignKey(c => c.OperatorId);

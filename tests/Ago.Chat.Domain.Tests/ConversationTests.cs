@@ -323,7 +323,7 @@ public class ConversationTests
     {
         var conversation = StartConversation();
 
-        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, sequence: 1);
 
         Assert.Equal(1, conversation.OperatorUnreadCount);
         Assert.Equal(0, conversation.VisitorUnreadCount);
@@ -334,7 +334,7 @@ public class ConversationTests
     {
         var conversation = StartConversation();
 
-        conversation.IncrementUnreadCount(MessageAuthorKind.Operator);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Operator, sequence: 1);
 
         Assert.Equal(1, conversation.VisitorUnreadCount);
         Assert.Equal(0, conversation.OperatorUnreadCount);
@@ -345,11 +345,203 @@ public class ConversationTests
     {
         var conversation = StartConversation();
 
-        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
-        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
-        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, sequence: 1);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, sequence: 2);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, sequence: 3);
 
         Assert.Equal(3, conversation.OperatorUnreadCount);
+    }
+
+    // `5-15` -------------------------------------------------------------------------------------
+
+    /// <summary>An assigned conversation with <paramref name="visitorMessages"/> visitor messages,
+    /// each already counted by `2-05`'s consumer - the ordinary state an operator finds one in.</summary>
+    private static Conversation AssignedConversationWithUnread(int visitorMessages)
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        for (var i = 0; i < visitorMessages; i++)
+        {
+            var message = conversation.AddVisitorMessage(
+                VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("incoming"), Now);
+            conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, message.Sequence);
+        }
+
+        conversation.ClearDomainEvents();
+        return conversation;
+    }
+
+    [Fact]
+    public void MarkReadByOperator_UpToTheNewestMessage_ClearsTheCountAndSetsTheWatermark()
+    {
+        var conversation = AssignedConversationWithUnread(3);
+
+        var changed = conversation.MarkReadByOperator(OperatorId, upToSequence: 3);
+
+        Assert.True(changed);
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+        Assert.Equal(3, conversation.OperatorLastReadSequence);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_UpToAnOlderMessage_ClearsOnlyWhatWasSeen()
+    {
+        // The reason the operation takes a sequence at all: clearing is not "make it zero".
+        var conversation = AssignedConversationWithUnread(3);
+
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
+
+        Assert.Equal(1, conversation.OperatorUnreadCount);
+        Assert.Equal(2, conversation.OperatorLastReadSequence);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_AlreadyReadToThere_IsANoOpAndReportsNoChange()
+    {
+        // `5-15`'s idempotency requirement, at the level that can prove it means "no write at all"
+        // rather than "a write that happens to be harmless" - the caller skips SaveAsync on false.
+        var conversation = AssignedConversationWithUnread(2);
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
+
+        var changedAgain = conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
+        var changedBackwards = conversation.MarkReadByOperator(OperatorId, upToSequence: 1);
+
+        Assert.False(changedAgain);
+        Assert.False(changedBackwards);
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+        Assert.Equal(2, conversation.OperatorLastReadSequence);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_ThenAMessageArrives_CountsItAgain()
+    {
+        // The whole point of the watermark: reading is not a permanent mute.
+        var conversation = AssignedConversationWithUnread(2);
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
+
+        var arriving = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, arriving.Sequence);
+
+        Assert.Equal(1, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_ThenTheIncrementForAnAlreadyReadMessageArrives_IsIgnored()
+    {
+        // The in-flight case: the message row commits, the operator reads it, and `2-05`'s consumer
+        // only gets to it afterwards. Without the guard this would re-raise a count the operator has
+        // already cleared, and the badge would light up for a message they are looking at.
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        var message = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+
+        conversation.MarkReadByOperator(OperatorId, upToSequence: message.Sequence);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, message.Sequence);
+
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_ASequenceBeyondWhatExists_IsClampedToTheLastMessage()
+    {
+        // A client must not be able to mute messages that have not been written yet.
+        var conversation = AssignedConversationWithUnread(2);
+
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 9999);
+
+        Assert.Equal(2, conversation.OperatorLastReadSequence);
+
+        var arriving = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("later"), Now);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, arriving.Sequence);
+        Assert.Equal(1, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_OperatorMessagesInTheRange_DoNotSubtractFromTheOperatorsOwnCount()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        var incoming = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, incoming.Sequence);
+        conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi back"), Now);
+        var second = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("thanks"), Now);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, second.Sequence);
+
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 3);
+
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_WhenTheConsumerHasNotCaughtUp_NeverGoesNegative()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("a"), Now);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("b"), Now);
+
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
+
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+
+        // And the increments that were in flight for those two land as no-ops, so the count stays put.
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, sequence: 1);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, sequence: 2);
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_ByAnOperatorWhoIsNotAssigned_Throws()
+    {
+        var conversation = AssignedConversationWithUnread(1);
+
+        Assert.Throws<ConversationParticipantMismatchException>(
+            () => conversation.MarkReadByOperator(new OperatorId(Guid.NewGuid()), upToSequence: 1));
+        Assert.Equal(1, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_OnAWaitingConversationWithNoOperator_Throws()
+    {
+        var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("anyone?"), Now);
+
+        Assert.Throws<ConversationParticipantMismatchException>(
+            () => conversation.MarkReadByOperator(OperatorId, upToSequence: 1));
+    }
+
+    [Fact]
+    public void MarkReadByOperator_OnAClosedConversation_StillWorks()
+    {
+        // Closing is not a reason to keep nagging: the thread is still readable in the console, so
+        // its badge must still be clearable. Deliberately no state check in the domain method.
+        var conversation = AssignedConversationWithUnread(2);
+        conversation.Close(Now);
+
+        var changed = conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
+
+        Assert.True(changed);
+        Assert.Equal(0, conversation.OperatorUnreadCount);
+    }
+
+    [Fact]
+    public void MarkReadByOperator_DoesNotTouchTheVisitorsCount()
+    {
+        // `5-15`'s stated asymmetry, pinned by a test so it cannot drift silently: the visitor side
+        // is deliberately unchanged, because nothing reads it yet.
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Operator, sequence: 1);
+
+        conversation.MarkReadByOperator(OperatorId, upToSequence: 1);
+
+        Assert.Equal(1, conversation.VisitorUnreadCount);
     }
 
     [Fact]

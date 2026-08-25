@@ -35,6 +35,17 @@ public sealed class Conversation
     /// <summary>Messages the operator has not yet seen - i.e. authored by the visitor.</summary>
     public int OperatorUnreadCount { get; private set; }
 
+    /// <summary>
+    /// `5-15`: the highest <see cref="Message.Sequence"/> the assigned operator has actually seen -
+    /// the watermark that makes <see cref="OperatorUnreadCount"/> clearable without losing a message
+    /// that arrives in the same instant. Zero means "nothing read yet", which is also what every row
+    /// that predates this column says (the migration's default), so an operator's first open after
+    /// the upgrade clears the whole accumulated backlog rather than inheriting a wrong watermark.
+    ///
+    /// There is deliberately no visitor-side twin: see <see cref="MarkReadByOperator"/>'s remarks.
+    /// </summary>
+    public int OperatorLastReadSequence { get; private set; }
+
     public IReadOnlyList<Message> Messages => _messages;
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -177,17 +188,104 @@ public sealed class Conversation
     /// state and participant checks when it was first added, so there is no new invariant to enforce
     /// here, only which side's count moves. No domain event: nothing downstream reacts to an unread
     /// count changing (2-05's backlog item is explicit that exposing it is a separate, later concern).
+    ///
+    /// `5-15`: <paramref name="sequence"/> is what lets this increment and
+    /// <see cref="MarkReadByOperator"/> compose instead of fight. The consumer runs in
+    /// <c>Ago.Chat.Worker</c> and the mark-read runs in <c>Ago.Chat.Api</c>, so "message accepted"
+    /// and "operator read up to here" genuinely race; the row's `xmin` makes one of the two saves
+    /// lose and reload, but reloading is only useful if the losing operation can re-decide correctly
+    /// against fresh data. Guarding on the watermark is that re-decision: a message at or below what
+    /// the operator has already seen was seen, whichever order the two writes land in, and a message
+    /// above it is counted whenever its increment arrives - including after the mark-read already
+    /// committed, which is exactly the "arrived and was never seen must still be counted" case.
+    ///
+    /// The visitor side has no watermark to consult, so it always increments, exactly as before -
+    /// see <see cref="MarkReadByOperator"/> for why that half is deliberately left alone.
     /// </summary>
-    public void IncrementUnreadCount(MessageAuthorKind authorKind)
+    public void IncrementUnreadCount(MessageAuthorKind authorKind, int sequence)
     {
         if (authorKind == MessageAuthorKind.Visitor)
         {
+            if (sequence <= OperatorLastReadSequence)
+            {
+                return;
+            }
+
             OperatorUnreadCount++;
         }
         else
         {
             VisitorUnreadCount++;
         }
+    }
+
+    /// <summary>
+    /// `5-15`: the counter's missing other half - until this existed, <see cref="OperatorUnreadCount"/>
+    /// only ever went up, so an operator's badge meant "visitor messages this conversation has ever
+    /// contained", not "messages you have not read".
+    ///
+    /// <para><b>Up to a sequence, never an unconditional zero.</b> <paramref name="upToSequence"/> is
+    /// the newest message the operator actually has in front of them, so this clears exactly what they
+    /// saw. Zeroing instead would silently swallow a visitor message that lands in the same instant:
+    /// load-reset-save re-runs "set it to zero" on reload after an `xmin` conflict and throws away the
+    /// concurrent increment. Clearing to a watermark is idempotent under any interleaving with
+    /// <see cref="IncrementUnreadCount"/>, which is what makes the retry in
+    /// <c>MarkConversationReadHandler</c> safe rather than lossy.</para>
+    ///
+    /// <para>Clamped to <see cref="LastSequence"/>: a client claiming to have read into the future
+    /// must not be able to suppress messages that do not exist yet.</para>
+    ///
+    /// <para>The count is decremented by the visitor messages inside the newly-read range rather than
+    /// recomputed from <see cref="_messages"/>, because the two writers disagree about *when* a
+    /// message counts: the message row commits first and its increment lands later, asynchronously
+    /// (adr/0005's outbox, then `2-05`'s consumer), so a recompute would double-count every message
+    /// whose increment is still in flight. <c>Math.Max(0, ...)</c> is the price of that split: when
+    /// the consumer is lagging, the range holds messages that were never counted, and the subtraction
+    /// would otherwise go negative. The residual is a bounded, self-healing under-count in one exotic
+    /// interleaving - increments for the same conversation arriving out of order across the *read
+    /// boundary* (a higher sequence counted while a lower one is still in flight) - and it clears on
+    /// the operator's next read. It is never an over-count, and never drops a message the operator has
+    /// not seen: everything above the watermark is still counted when its increment lands.</para>
+    ///
+    /// <para>Returns whether anything changed, so the caller can skip the save entirely for the
+    /// no-op case. That matters more than it looks: the console calls mark-read on every open,
+    /// including re-opens of a conversation that is already read, and a save that writes nothing
+    /// would still bump `xmin` and make a genuinely concurrent writer lose for no reason.</para>
+    ///
+    /// <para><b>Operator side only, deliberately.</b> <see cref="VisitorUnreadCount"/> has the
+    /// identical never-cleared shape and is left exactly as it was: nothing reads it. The widget
+    /// renders no unread badge, so a `MarkReadByVisitor` would be a write path with no caller, no
+    /// transport, and no way to prove it works end to end - the same reason `messages.read_at` has
+    /// stayed a column with no writer. When the widget grows a badge, the shape here transfers
+    /// unchanged: a `VisitorLastReadSequence` twin plus the mirrored guard in
+    /// <see cref="IncrementUnreadCount"/>.</para>
+    /// </summary>
+    public bool MarkReadByOperator(OperatorId operatorId, int upToSequence)
+    {
+        // Checked here rather than in the handler (unlike Close, which takes no OperatorId to check
+        // against) - the same shape AddOperatorMessage already uses. "Whose read position is this"
+        // is a fact about the conversation, not a permission (adr/0016), and the aggregate is the
+        // only place that can answer it.
+        if (OperatorId is null || operatorId != OperatorId.Value)
+        {
+            throw new ConversationParticipantMismatchException(
+                $"Operator {operatorId.Value} is not the assigned operator of conversation {Id.Value}.");
+        }
+
+        var readUpTo = Math.Min(upToSequence, LastSequence);
+        if (readUpTo <= OperatorLastReadSequence)
+        {
+            return false;
+        }
+
+        var newlyRead = _messages.Count(m =>
+            m.AuthorKind == MessageAuthorKind.Visitor &&
+            m.Sequence > OperatorLastReadSequence &&
+            m.Sequence <= readUpTo);
+
+        OperatorLastReadSequence = readUpTo;
+        OperatorUnreadCount = Math.Max(0, OperatorUnreadCount - newlyRead);
+        return true;
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();

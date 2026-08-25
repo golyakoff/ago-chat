@@ -17,6 +17,7 @@ using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
+using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
@@ -162,6 +163,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetMyPermissionsHandler>();
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
         services.AddScoped<CloseConversationHandler>();
+        // `5-15`: the unread counter's first-ever downward writer - see the handler's own remarks.
+        services.AddScoped<MarkConversationReadHandler>();
         // `10-02`
         services.AddScoped<RegisterSiteHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by

@@ -24,6 +24,15 @@ namespace Ago.Chat.Application.UseCases.RecordUnread;
 /// subtype `EfInboxChecker` does not treat as a duplicate) rather than silently overwriting the
 /// other side's increment - it propagates, the broker retries, and a later attempt reloads the
 /// fresh count.
+///
+/// `5-15`: that same reload-on-conflict is now also what makes this consumer compose with the
+/// *other* writer this counter has gained - <c>MarkConversationReadHandler</c>, running in
+/// <c>Ago.Chat.Api</c>. The increment is no longer unconditional: <see cref="Domain.Conversation.IncrementUnreadCount"/>
+/// skips a message at or below the operator's read watermark, so a mark-read that commits first
+/// correctly swallows this increment, and a mark-read that commits second correctly leaves it
+/// standing. Note that the inbox row is still written either way - "the operator had already read
+/// it" is not "this delivery did not happen", and letting a skipped increment go unrecorded would
+/// hand a later redelivery a second chance to apply it against a moved watermark.
 /// </summary>
 public sealed class RecordUnreadMessageHandler(IConversationRepository conversations, IInboxChecker inbox)
 {
@@ -39,7 +48,7 @@ public sealed class RecordUnreadMessageHandler(IConversationRepository conversat
             return ConversationErrors.NotFound(command.ConversationId.Value);
         }
 
-        conversation.IncrementUnreadCount(command.AuthorKind);
+        conversation.IncrementUnreadCount(command.AuthorKind, command.Sequence);
 
         var isFirstDelivery = await inbox.TryRecordAndSaveAsync(command.MessageId, ConsumerName, cancellationToken);
         return isFirstDelivery;

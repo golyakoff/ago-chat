@@ -3,6 +3,7 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Conversations;
@@ -42,7 +43,19 @@ public static class ConversationsEndpoints
         // one; see CloseConversationHandler's own remarks).
         app.MapPost("/api/v1/conversations/{conversationId:guid}/close", HandleCloseAsync)
             .RequireAuthorization("RequireOperatorIdentity");
+
+        // `5-15`: the same sub-resource shape as `/close` right above it. REST rather than a method on
+        // `OperatorHub` - see this file's `HandleMarkReadAsync` for the argument, which is not the
+        // obvious one.
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/read", HandleMarkReadAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
     }
+
+    /// <summary>The body carries a sequence rather than the route saying "clear it" - see
+    /// <c>MarkConversationRead</c>. Kept as a body, not a query parameter, because it is the state
+    /// being asserted ("my read position is N"), not a modifier on which resource is addressed
+    /// (api-design.md).</summary>
+    public sealed record MarkConversationReadRequest(int UpToSequence);
 
     private static async Task<IResult> HandleGetQueueAsync(
         GetOperatorQueueHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
@@ -78,5 +91,40 @@ public static class ConversationsEndpoints
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+    }
+
+    /// <summary>
+    /// `5-15`. <b>Why REST and not a hub method</b>, which was the likelier-looking option: the
+    /// deciding argument is that this write's failure modes have to be *visible*. A non-assigned
+    /// operator trying to clear someone else's count is a real `403` with an RFC 7807 body here
+    /// (api-design.md's own error convention, `ErrorExtensions`); over SignalR it would be a
+    /// `HubException` carrying a string, indistinguishable at the client from a transport fault. The
+    /// same goes for the `409` a doubly-raced write returns. The usual argument for the hub - "the
+    /// console already holds the connection, and this is a high-frequency low-value write" - turns out
+    /// not to hold under `5-15`'s chosen semantics: mark-read fires once per conversation *open* plus
+    /// a debounced call while one is on screen, which is a handful of requests a minute per operator,
+    /// not per-message traffic. And unlike a hub invocation, an HTTP call does not silently vanish
+    /// while the hub is mid-reconnect, which is exactly when an operator is most likely to be catching
+    /// up on a backlog. If this ever does become hot, moving it to the hub is a transport change with
+    /// no handler change - the use case does not know which one called it.
+    /// </summary>
+    private static async Task<IResult> HandleMarkReadAsync(
+        Guid conversationId,
+        MarkConversationReadRequest request,
+        MarkConversationReadHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new MarkConversationRead(
+                new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId(), request.UpToSequence),
+            cancellationToken);
+
+        // 200 with the resulting count, not 204 like `/close` - the console's badge is the whole point
+        // of the call, and the server's own answer saves it a queue refetch to find out what the number
+        // became. It also makes the no-op case honest: an already-read conversation returns the count
+        // as it actually stands rather than an assumed zero.
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 }
