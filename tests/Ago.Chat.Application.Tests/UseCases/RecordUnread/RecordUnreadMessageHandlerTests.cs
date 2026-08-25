@@ -26,7 +26,7 @@ public class RecordUnreadMessageHandlerTests
         var (handler, _, conversation) = CreateHandlerWithConversation();
 
         var result = await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor),
+            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor, Sequence: 1),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -40,7 +40,7 @@ public class RecordUnreadMessageHandlerTests
         var (handler, _, conversation) = CreateHandlerWithConversation();
 
         await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Operator),
+            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Operator, Sequence: 1),
             CancellationToken.None);
 
         Assert.Equal(1, conversation.VisitorUnreadCount);
@@ -54,7 +54,7 @@ public class RecordUnreadMessageHandlerTests
         var handler = new RecordUnreadMessageHandler(conversations, new FakeInboxChecker());
 
         var result = await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), new ConversationId(Guid.NewGuid()), MessageAuthorKind.Visitor),
+            new RecordUnreadMessage(Guid.NewGuid(), new ConversationId(Guid.NewGuid()), MessageAuthorKind.Visitor, Sequence: 1),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
@@ -67,7 +67,7 @@ public class RecordUnreadMessageHandlerTests
         var (handler, _, conversation) = CreateHandlerWithConversation();
 
         var result = await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor),
+            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor, Sequence: 1),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -83,7 +83,7 @@ public class RecordUnreadMessageHandlerTests
         // this handler already staged, unlike EfInboxChecker against real Postgres (adr/0017). That
         // guarantee is Ago.Chat.Concurrency.Tests' and Ago.Chat.Integration.Tests' job.
         var (handler, _, conversation) = CreateHandlerWithConversation();
-        var command = new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor);
+        var command = new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor, Sequence: 1);
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
         var second = await handler.HandleAsync(command, CancellationToken.None);

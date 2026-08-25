@@ -52,7 +52,8 @@ public sealed class UnreadCounterConsumer(
             var command = new RecordUnreadMessage(
                 contract.MessageId,
                 new ConversationId(contract.ConversationId),
-                Enum.Parse<MessageAuthorKind>(contract.AuthorKind));
+                Enum.Parse<MessageAuthorKind>(contract.AuthorKind),
+                contract.Sequence);
 
             var result = await handler.HandleAsync(command, cancellationToken);
             if (result.IsFailure)
