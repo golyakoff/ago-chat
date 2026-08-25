@@ -25,6 +25,18 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         // an index arrives with its first real reader, and this one has none.
         builder.Property(c => c.OperatorLastReadSequence).HasColumnName("operator_last_read_sequence");
 
+        // `6-09`: no index either, for the same reason - it is read as part of an aggregate already
+        // located by primary key (CloseConversationHandler) or already materialised by
+        // GetAssignedToOperatorAsync (OperatorConversationReleaser), never filtered on. The one query
+        // that *does* filter on it is this item's own migration backfill, which runs once.
+        //
+        // An ordinary mapped property rather than a shadow property, unlike operators.active_chats
+        // right next door: that column has a raw-SQL writer (IOperatorCapacity's atomic
+        // compare-and-set) an EF load-mutate-save could race, and this one does not - the Conversation
+        // aggregate is its only writer, saved under this row's own `xmin`. See
+        // Conversation.HoldsCapacityClaim's own remarks.
+        builder.Property(c => c.HoldsCapacityClaim).HasColumnName("holds_capacity_claim");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
         builder.HasOne<Visitor>().WithMany().HasForeignKey(c => c.VisitorId);
         builder.HasOne<Operator>().WithMany().HasForeignKey(c => c.OperatorId);

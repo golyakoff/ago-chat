@@ -59,6 +59,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             var handler = new CloseConversationHandler(
                 new ConversationRepository(db),
                 new PermissionChecker(db),
+                new OperatorCapacityStore(db),
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
                 new SystemClock());
@@ -124,6 +125,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             var handler = new CloseConversationHandler(
                 new ConversationRepository(db),
                 new PermissionChecker(db),
+                new OperatorCapacityStore(db),
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
                 new SystemClock());
@@ -182,6 +184,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
         var handler = new CloseConversationHandler(
             new ConversationRepository(db),
             new PermissionChecker(db),
+            new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db),
             new UuidV7Generator(),
             new SystemClock());

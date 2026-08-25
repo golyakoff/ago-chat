@@ -145,7 +145,10 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
-            conversation.AssignTo(operatorId, Now);
+            // `6-09`: holdsCapacityClaim: true - this seed stands in for an engine-made assignment,
+            // which is what the `active_chats = 1` written right below actually represents, and the
+            // sweep now hands a slot back only for a conversation that holds the receipt for one.
+            conversation.AssignTo(operatorId, Now, holdsCapacityClaim: true);
             db.Conversations.Add(conversation);
             await db.SaveChangesAsync();
         }

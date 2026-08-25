@@ -35,7 +35,11 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
                 var conversationId = new ConversationId(Guid.NewGuid());
                 db.Visitors.Add(new Visitor(visitorId, siteId, Now));
                 var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
-                conversation.AssignTo(operatorId, Now);
+                // `6-09`: holdsCapacityClaim: true - these three stand in for engine-made assignments,
+                // which is what the active_chats = 3 seeded below actually represents. The sweep now
+                // releases a slot only for a conversation that holds the receipt for one; the
+                // hand-picked case has its own test right underneath.
+                conversation.AssignTo(operatorId, Now, holdsCapacityClaim: true);
                 db.Conversations.Add(conversation);
                 conversationIds.Add(conversationId);
             }
@@ -74,6 +78,63 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
             Assert.Equal(ConversationState.Waiting, conversation!.State);
             Assert.Null(conversation.OperatorId);
         }
+
+        await using var readConnection = await fixture.DataSource.OpenConnectionAsync();
+        await using var readCommand = new NpgsqlCommand("SELECT active_chats FROM operators WHERE id = @id", readConnection);
+        readCommand.Parameters.AddWithValue("id", operatorId.Value);
+        Assert.Equal(0, (int)(await readCommand.ExecuteScalarAsync())!);
+    }
+
+    /// <summary>
+    /// `6-09`: the sweep releases a slot per conversation that actually holds one, not per assigned
+    /// conversation. An operator who picked conversations up by hand
+    /// (<c>AssignConversationHandler</c>, behind <c>OperatorHub.JoinConversationAsync</c>) never took
+    /// a slot for them, so decrementing once per assigned conversation - what this did before - asks
+    /// for more decrements than there were claims.
+    ///
+    /// <para><b>Stated honestly: the end state here is the same either way</b>, because
+    /// <c>OperatorCapacityStore.ReleaseAsync</c> floors at zero and the sweep releases <em>every</em>
+    /// one of this operator's assignments, so both the old count-assignments arithmetic and the new
+    /// count-claims arithmetic land on zero. The conditional is what stops the sweep depending on that
+    /// floor to be correct - it makes the sweep obey the same "one release per claim" rule
+    /// <c>CloseConversationHandler</c> now obeys, so the two paths cannot drift apart when one of them
+    /// changes. This test pins the invariant, not a number that used to be wrong.</para>
+    /// </summary>
+    [Fact]
+    public async Task ReleaseAllAsync_ReleasesCapacityOnlyForConversationsThatHoldAClaim()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+
+            foreach (var holdsCapacityClaim in new[] { true, false, false })
+            {
+                var visitorId = new VisitorId(Guid.NewGuid());
+                db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+                var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+                conversation.AssignTo(operatorId, Now, holdsCapacityClaim);
+                db.Conversations.Add(conversation);
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        // One claim taken, matching the single engine-made assignment above.
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        {
+            await using var command = new NpgsqlCommand(
+                "UPDATE operators SET active_chats = 1 WHERE id = @id", connection);
+            command.Parameters.AddWithValue("id", operatorId.Value);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var releaser = new OperatorConversationReleaser(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+
+        Assert.Equal(3, await releaser.ReleaseAllAsync(operatorId, CancellationToken.None));
 
         await using var readConnection = await fixture.DataSource.OpenConnectionAsync();
         await using var readCommand = new NpgsqlCommand("SELECT active_chats FROM operators WHERE id = @id", readConnection);

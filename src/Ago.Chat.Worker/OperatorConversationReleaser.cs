@@ -37,14 +37,33 @@ public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IC
         {
             var siteId = conversation.SiteId;
             var visitorId = conversation.VisitorId;
-            conversation.ReleaseToQueue(now);
+            var consumedCapacityClaim = conversation.ReleaseToQueue(now);
 
             var domainEvent = conversation.DomainEvents.OfType<ConversationReleased>().Last();
             outbox.Enqueue(ConversationReleasedToQueueMapper.ToEnvelope(domainEvent, siteId, visitorId, idGenerator));
             conversation.ClearDomainEvents();
 
             await conversations.SaveAsync(conversation, cancellationToken);
-            await capacity.ReleaseAsync(operatorId, cancellationToken);
+
+            // `6-09`: conditional, where this used to decrement once per assigned conversation
+            // unconditionally - which asks for more decrements than there were claims whenever the
+            // operator picked a conversation up by hand (AssignConversationHandler takes no capacity
+            // claim at all). This sweep happened to survive that because it releases *every* one of
+            // the operator's assignments and ReleaseAsync floors at zero, so the extra decrements had
+            // nothing left to eat. Changed anyway, and deliberately: "one release per claim" is now a
+            // rule CloseConversationHandler depends on, and a second path quietly obeying a different
+            // rule that only agrees by accident is how the two drift apart later. The receipt is the
+            // rule; the floor is a backstop, not the mechanism.
+            //
+            // Not replaced by a flat `SET active_chats = 0` for this operator, which looks like the
+            // stronger repair and is actually unsafe: the assigned-conversation list above was read
+            // before this transaction touched the operators row, so a claim another Worker replica
+            // committed in between belongs to a conversation this sweep will not release, and zeroing
+            // the counter would strand it.
+            if (consumedCapacityClaim)
+            {
+                await capacity.ReleaseAsync(operatorId, cancellationToken);
+            }
         }
 
         await transaction.CommitAsync(cancellationToken);

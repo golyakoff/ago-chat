@@ -17,13 +17,17 @@ public class CloseConversationHandlerTests
         FakeConversationRepository Conversations,
         FakePermissionChecker Permissions,
         FakeOutboxWriter Outbox,
+        FakeOperatorCapacity Capacity,
         Conversation Conversation);
 
-    private static Fixture CreateHandlerWithAssignedConversation(bool grantPermission = true)
+    private static Fixture CreateHandlerWithAssignedConversation(
+        bool grantPermission = true, bool holdsCapacityClaim = true)
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
-        conversation.AssignTo(OperatorId, Now);
+        // `6-09`: defaults to the engine-assigned case, which is the one that has a claim to release.
+        // The hand-picked case (holdsCapacityClaim: false) has its own test below.
+        conversation.AssignTo(OperatorId, Now, holdsCapacityClaim);
         // Simulates a fresh load from Postgres (EF's materialization ctor never raises domain events) -
         // without this, the leftover ConversationAssigned from AssignTo above would still be sitting in
         // the aggregate's in-memory list, which a real GetByIdAsync would never hand back.
@@ -37,9 +41,10 @@ public class CloseConversationHandlerTests
         }
 
         var outbox = new FakeOutboxWriter();
+        var capacity = new FakeOperatorCapacity();
         var handler = new CloseConversationHandler(
-            conversations, permissions, outbox, new FakeIdGenerator(), new FakeClock(Now));
-        return new Fixture(handler, conversations, permissions, outbox, conversation);
+            conversations, permissions, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now));
+        return new Fixture(handler, conversations, permissions, outbox, capacity, conversation);
     }
 
     [Fact]
@@ -115,13 +120,78 @@ public class CloseConversationHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WhenTheConversationHoldsACapacityClaim_ReleasesItForTheAssignedOperator()
+    {
+        // `6-09`: the whole point of the item, at the level that shows the *decision* - the engine
+        // took a slot for this conversation, so closing it gives that slot back. Before this item the
+        // handler had no IOperatorCapacity at all and active_chats only ever came down when the
+        // operator's last connection dropped.
+        var fixture = CreateHandlerWithAssignedConversation();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(OperatorId, Assert.Single(fixture.Capacity.Releases));
+        // The receipt is spent, which is what makes a second release structurally impossible.
+        Assert.False(fixture.Conversation.HoldsCapacityClaim);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheConversationWasHandPicked_ReleasesNothing()
+    {
+        // The asymmetry this item had to resolve rather than assume away: AssignConversationHandler
+        // (behind OperatorHub.JoinConversationAsync) never calls TryClaimAsync, so there is no slot
+        // behind a hand-picked conversation. Releasing one anyway would decrement a slot some *other*
+        // conversation is holding, letting the engine over-subscribe this operator - a worse bug than
+        // the leak, and one the floor-at-zero in OperatorCapacityStore.ReleaseAsync would not catch.
+        var fixture = CreateHandlerWithAssignedConversation(holdsCapacityClaim: false);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ConversationState.Closed, fixture.Conversation.State);
+        Assert.Empty(fixture.Capacity.Releases);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenAlreadyClosed_ReleasesNothingASecondTime()
+    {
+        var fixture = CreateHandlerWithAssignedConversation();
+        var command = new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId);
+        Assert.True((await fixture.Handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
+
+        var result = await fixture.Handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Single(fixture.Capacity.Releases);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenNotPermitted_ReleasesNothing()
+    {
+        var fixture = CreateHandlerWithAssignedConversation(grantPermission: false);
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.Empty(fixture.Capacity.Releases);
+        Assert.True(fixture.Conversation.HoldsCapacityClaim);
+    }
+
+    [Fact]
     public async Task HandleAsync_WhenConversationDoesNotExist_ReturnsNotFound()
     {
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationClose);
         var handler = new CloseConversationHandler(
-            conversations, permissions, new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now));
+            conversations, permissions, new FakeOperatorCapacity(), new FakeOutboxWriter(),
+            new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(new ConversationId(Guid.NewGuid()), OperatorId, SiteId),

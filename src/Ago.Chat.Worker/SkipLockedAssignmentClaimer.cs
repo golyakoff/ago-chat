@@ -78,7 +78,11 @@ public sealed class SkipLockedAssignmentClaimer(NpgsqlDataSource dataSource, ICl
             // Loaded, not just referenced by id: SKIP LOCKED claimed this row in this same
             // transaction, so it exists and is still Waiting by construction - never null here.
             var conversation = (await conversations.GetByIdAsync(conversationId, cancellationToken))!;
-            conversation.AssignTo(operatorId, now);
+            // `6-09`: holdsCapacityClaim: true - the slot was actually taken, one statement ago, in
+            // this same transaction. The receipt commits with the assignment, so a conversation is
+            // never `Assigned` with a claim behind it and no record of one (nor the reverse), and
+            // CloseConversationHandler has something exact to hand back on close.
+            conversation.AssignTo(operatorId, now, holdsCapacityClaim: true);
 
             var domainEvent = conversation.DomainEvents.OfType<ConversationAssigned>().Last();
             outbox.Enqueue(ConversationAssignedToOperatorMapper.ToEnvelope(domainEvent, siteId, conversation.VisitorId, idGenerator));
