@@ -15,6 +15,7 @@ using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
+using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.RegisterSite;
@@ -163,6 +164,11 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<CloseConversationHandler>();
         // `10-02`
         services.AddScoped<RegisterSiteHandler>();
+        // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
+        // `12-01`'s owner policy), registered here for the same reason as everything else on this
+        // page - ChatModule is where handler registration lives, and a host that never maps the route
+        // simply never resolves it.
+        services.AddScoped<ListSitesForOwnerHandler>();
 
         // `6-03`: the registration and delivery-history backend for a future self-service console
         // screen - see each handler's own remarks. Registered for every host (the same shape as

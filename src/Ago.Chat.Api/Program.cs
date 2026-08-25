@@ -5,6 +5,7 @@ using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Operators;
+using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
@@ -227,6 +228,9 @@ app.MapOperatorsEndpoints();
 app.MapWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
 app.MapSitesEndpoints();
+// `12-02`: the platform owner's cross-tenant read - the only route here not scoped to one site,
+// and the only one carrying `12-01`'s RequirePlatformOwner policy (OwnerSitesEndpoints' remarks).
+app.MapOwnerEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 
