@@ -22,6 +22,11 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // no existing row (the demo site included, seeded outside this codebase's own migrations by
         // `ago-deploy/seed/create-demo-tenant.sh`) had a name before this column existed.
         builder.Property(s => s.Name).HasColumnName("name").IsRequired().HasDefaultValue(string.Empty);
+        // `12-02`: nullable with no database default - deliberately *not* `HasDefaultValueSql("now()")`.
+        // A default would both stamp every pre-existing row at migration time (see Site.CreatedAt on
+        // why that is a fabricated value, not a convenience) and put the row's creation time on the
+        // database's clock instead of `IClock`'s (`CLAUDE.md` rule 11).
+        builder.Property(s => s.CreatedAt).HasColumnName("created_at");
 
         // AllowedOrigins is a computed property (IReadOnlyList<string>) over a private List<string>
         // field - Site never exposes a settable collection, so EF is pointed at the field directly.

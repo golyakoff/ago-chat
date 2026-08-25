@@ -27,6 +27,26 @@ public sealed class Site
     /// the unscoped blast radius that precedent exists to avoid.</summary>
     public string Name { get; } = string.Empty;
 
+    /// <summary>`12-02`: when this tenant was created. A second real gap of the same kind
+    /// <see cref="Name"/> records above - `12-02`'s own Scope requires a per-site `created_at` in the
+    /// platform-owner overview, and `data-model.md`'s `sites` shape had no such column (`conversations`,
+    /// `messages` and `attachments` all carry one; the tenant row itself never did). Added as one
+    /// additive, reversible column (`Stage12AddSiteCreatedAt`), stated here rather than added quietly.
+    ///
+    /// <para><b>Nullable on purpose, and never backfilled.</b> Rows that predate the column - the
+    /// `1-05`/`create-demo-tenant.sh` demo site, every site registered before this migration - have no
+    /// recorded creation time, and this system does not know one. Giving them a `DEFAULT now()` at
+    /// migration time would stamp every one of them with the moment the migration ran and present that
+    /// as fact, which is exactly the invented figure `CLAUDE.md` forbids. `null` says "not recorded",
+    /// which is true; the overview response carries it through as `null` rather than substituting
+    /// anything (`OwnerSiteSummaryDto`).</para>
+    ///
+    /// <para>Optional at construction for the same reason <see cref="Name"/> is: ~60 existing
+    /// `new Site(...)` call sites keep compiling. Set from <c>IClock</c> by the one real writer
+    /// (`RegisterSiteHandler`), never from <c>DateTimeOffset.UtcNow</c> and never from the database's
+    /// own clock (`CLAUDE.md` rule 11).</para></summary>
+    public DateTimeOffset? CreatedAt { get; }
+
     private readonly List<string> _allowedOrigins = [];
 
     public IReadOnlyList<string> AllowedOrigins => _allowedOrigins;
@@ -46,7 +66,12 @@ public sealed class Site
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
 
-    public Site(SiteId id, string publicKey, IReadOnlyList<string> allowedOrigins, string name = "")
+    public Site(
+        SiteId id,
+        string publicKey,
+        IReadOnlyList<string> allowedOrigins,
+        string name = "",
+        DateTimeOffset? createdAt = null)
     {
         if (string.IsNullOrWhiteSpace(publicKey))
         {
@@ -56,6 +81,7 @@ public sealed class Site
         Id = id;
         PublicKey = publicKey;
         Name = name;
+        CreatedAt = createdAt;
         _allowedOrigins = [.. allowedOrigins];
         // WidgetConfig.Default's own values (null color, BottomRight) - a freshly created Site never
         // renders broken just because nobody has configured a widget appearance yet.

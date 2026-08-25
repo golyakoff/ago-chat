@@ -31,6 +31,9 @@ public static class ServiceCollectionExtensions
         // `10-02`
         services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
+        // `12-02`: the cross-tenant operations read (IPlatformOverviewReadStore's own remarks on why
+        // it is the only one and why it is safe).
+        services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // `6-03`

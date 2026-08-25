@@ -95,7 +95,9 @@ public sealed class RegisterSiteHandler(
         // key never doubles as a guessable pointer to the row's primary key.
         var publicKey = $"site_{idGenerator.NewId(now):N}";
         var siteId = new SiteId(idGenerator.NewId(now));
-        var site = new Site(siteId, publicKey, [command.InitialAllowedOrigin], command.SiteName);
+        // `12-02`: `createdAt` from the same `IClock` reading everything else in this handler uses -
+        // the first and only writer of `sites.created_at`, which `12-02`'s owner overview reads.
+        var site = new Site(siteId, publicKey, [command.InitialAllowedOrigin], command.SiteName, now);
 
         var operatorId = new OperatorId(idGenerator.NewId(now));
         // Offline, not Online - this operator has not connected yet (presence, Stage 3, is what
