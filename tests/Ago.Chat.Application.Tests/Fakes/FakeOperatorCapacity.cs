@@ -19,12 +19,19 @@ public sealed class FakeOperatorCapacity : IOperatorCapacity
 
     public bool NextClaimSucceeds { get; set; } = true;
 
+    /// <summary>`6-10`: makes <see cref="ReleaseAsync"/> behave the way the real store does when it has
+    /// exhausted its bounded retry against a deadlocking <c>operators</c> row - the port's declared
+    /// failure, never a raw <c>PostgresException</c>, which Application could not name anyway.</summary>
+    public bool ReleaseAlwaysLosesToContention { get; set; }
+
     public Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
         Task.FromResult(NextClaimSucceeds);
 
     public Task ReleaseAsync(OperatorId operatorId, CancellationToken cancellationToken)
     {
         _releases.Add(operatorId);
-        return Task.CompletedTask;
+        return ReleaseAlwaysLosesToContention
+            ? Task.FromException(new OperatorCapacityContentionException(operatorId, attempts: 5, new InvalidOperationException("40P01")))
+            : Task.CompletedTask;
     }
 }

@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Contracts;
+using Microsoft.Extensions.Logging.Abstractions;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.CloseConversation;
@@ -43,7 +44,8 @@ public class CloseConversationHandlerTests
         var outbox = new FakeOutboxWriter();
         var capacity = new FakeOperatorCapacity();
         var handler = new CloseConversationHandler(
-            conversations, permissions, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now));
+            conversations, permissions, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now),
+            NullLogger<CloseConversationHandler>.Instance);
         return new Fixture(handler, conversations, permissions, outbox, capacity, conversation);
     }
 
@@ -66,6 +68,36 @@ public class CloseConversationHandlerTests
         Assert.Equal(nameof(ConversationEnded), envelope.Type);
         Assert.Equal(fixture.Conversation.Id.Value, envelope.MessageId);
         Assert.Equal(fixture.Conversation.Id.Value.ToString(), envelope.PartitionKey);
+    }
+
+    /// <summary>
+    /// `6-10`: the close has already committed by the time the release is attempted, so a release that
+    /// loses to `operators`-row contention must not turn a successful close into a failed request. The
+    /// operator is told the conversation closed - because it did - and the cost is one leaked capacity
+    /// slot, the same residual `6-09` already accepts for a process death in this window, recovered by
+    /// `4-04`'s disconnect sweep. Failing instead would be worse in both directions: it would report a
+    /// state change that actually happened as not having happened, and the retry it invites would be
+    /// rejected as already-closed without recovering the slot either.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheCapacityReleaseLosesToContention_StillReportsTheCloseAsSuccessful()
+    {
+        var fixture = CreateHandlerWithAssignedConversation();
+        fixture.Capacity.ReleaseAlwaysLosesToContention = true;
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ConversationState.Closed, fixture.Conversation.State);
+        // The release was genuinely attempted, once - not skipped, and not retried here (the bounded
+        // retry belongs to the adapter, which owns the transaction the retry re-issues into).
+        Assert.Equal([OperatorId], fixture.Capacity.Releases);
+        // The conversation's receipt is spent either way: it was consumed inside the committed save,
+        // so nothing here may hand it out a second time.
+        Assert.False(fixture.Conversation.HoldsCapacityClaim);
+        Assert.Single(fixture.Outbox.Enqueued);
     }
 
     [Fact]
@@ -191,7 +223,7 @@ public class CloseConversationHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.ConversationClose);
         var handler = new CloseConversationHandler(
             conversations, permissions, new FakeOperatorCapacity(), new FakeOutboxWriter(),
-            new FakeIdGenerator(), new FakeClock(Now));
+            new FakeIdGenerator(), new FakeClock(Now), NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(new ConversationId(Guid.NewGuid()), OperatorId, SiteId),
