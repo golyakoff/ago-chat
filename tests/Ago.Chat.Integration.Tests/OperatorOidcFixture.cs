@@ -1,4 +1,6 @@
-﻿using System.Net.Http.Json;
+﻿using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -39,6 +41,16 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     /// `Operator`, so a test that passed only because this user also happened to be an operator
     /// would prove nothing about the boundary.</summary>
     public const string PlatformOwnerUsername = "platform-owner-test";
+
+    /// <summary>`17-06`: the user <see cref="RealmLoginSecurityTests"/> deliberately locks out, and
+    /// the only test user in this realm that no other test ever authenticates as. Brute-force
+    /// protection disables an account for real, so a shared user would leave every later test in this
+    /// collection failing on a 400 from the token endpoint - the same "give the destructive case its
+    /// own fixed identity" reasoning <see cref="OrphanOperatorUsername"/> already applies to the
+    /// never-linked case.</summary>
+    public const string LockoutTargetUsername = "lockout-target";
+
+    public const string LockoutTargetPassword = "lockout-target-password";
 
     public const string DemoOperatorPassword = "demo-operator-password";
     public static readonly Guid DemoOperatorExternalSubjectId = Guid.Parse("00000000-0000-0000-0000-0000000000f0");
@@ -191,6 +203,75 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
         GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword);
 
     private const string FreshUserPassword = "self-register-password";
+
+    /// <summary>`17-06`: a raw password-grant attempt whose *failure* is the point, so unlike every
+    /// other token helper here this one never throws on a non-success status - the caller asserts on
+    /// it. Returns the token endpoint's status code and body together, because Keycloak deliberately
+    /// answers a locked-out account and a wrong password with the same `invalid_grant` code (no user
+    /// enumeration), which is exactly why the behavioural proof of a lockout has to be "the *correct*
+    /// password stops working", not "the error text changed".</summary>
+    public async Task<(HttpStatusCode Status, string Body)> TryPasswordGrantAsync(string username, string password)
+    {
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "password",
+            ["client_id"] = ClientId,
+            ["username"] = username,
+            ["password"] = password,
+        };
+
+        var response = await Http.PostAsync(
+            $"{KeycloakAuthority}/protocol/openid-connect/token", new FormUrlEncodedContent(form));
+        return (response.StatusCode, await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>`17-06`: the realm as Keycloak actually holds it, not as the import file spells it.
+    /// The distinction matters here specifically - `--import-realm` is skip-if-exists, so a settings
+    /// change that never reached a running realm is a real and previously-hit failure mode
+    /// (`kustomization.yaml`'s own note in `ago-deploy`); reading it back over the admin API is the
+    /// only way a test can tell "the file says so" from "the realm does so".</summary>
+    public Task<JsonElement> GetRealmRepresentationAsync() =>
+        GetAdminApiAsync($"/admin/realms/{RealmName}");
+
+    /// <summary>`17-06`: Keycloak's own brute-force view of one user - `numFailures`, and `disabled`,
+    /// which is the unambiguous statement that the account is currently locked out.</summary>
+    public Task<JsonElement> GetBruteForceStatusAsync(string userId) =>
+        GetAdminApiAsync($"/admin/realms/{RealmName}/attack-detection/brute-force/users/{userId}");
+
+    /// <summary>Clears the brute-force counters for the whole realm, so a locked-out user is usable
+    /// again - called by the lockout test itself, so a re-run against a container that some earlier
+    /// run already locked still starts from a known state.</summary>
+    public async Task ClearBruteForceAttemptsAsync()
+    {
+        var adminToken = await GetAdminTokenAsync();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete, $"{_keycloakBaseAddress}/admin/realms/{RealmName}/attack-detection/brute-force/users");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", adminToken);
+        var response = await Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>`17-06`: resolves a username to Keycloak's own user id, so a test never has to
+    /// hardcode one of the realm import's fixed UUIDs in a second place.</summary>
+    public async Task<string> GetUserIdAsync(string username)
+    {
+        var users = await GetAdminApiAsync($"/admin/realms/{RealmName}/users?username={username}&exact=true");
+        return users.EnumerateArray().Single().GetProperty("id").GetString()!;
+    }
+
+    private async Task<JsonElement> GetAdminApiAsync(string path)
+    {
+        var adminToken = await GetAdminTokenAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{_keycloakBaseAddress}{path}");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", adminToken);
+        var response = await Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        // Parsed into a JsonDocument that is deliberately not disposed: the JsonElement handed back
+        // borrows that document's own pooled buffer, so disposing here would hand the caller a
+        // use-after-free. Test-only, one small document per call - the GC reclaims it.
+        var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement;
+    }
 
     private static Task<string> GetAccessTokenAsync(string realmAuthority, string username) =>
         GetAccessTokenAsync(realmAuthority, username, DemoOperatorPassword);

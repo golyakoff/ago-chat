@@ -25,5 +25,5 @@ internal static class ClaimsPrincipalExtensions
     /// remarks); every single-scheme hub/endpoint already knows which kind it is from its own
     /// <c>[Authorize(AuthenticationSchemes = ...)]</c> and never needs this.</summary>
     public static bool IsOperator(this ClaimsPrincipal user) =>
-        user.FindFirstValue(AgoClaimTypes.Kind) == "operator";
+        user.FindFirstValue(AgoClaimTypes.Kind) == AgoClaimTypes.OperatorKind;
 }

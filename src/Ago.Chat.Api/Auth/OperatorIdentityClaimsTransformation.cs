@@ -55,7 +55,7 @@ public sealed class OperatorIdentityClaimsTransformation(IServiceScopeFactory sc
         // visitor one on a route that accepts either - a self-issued token carried it directly
         // (JwtTokenService.Issue); a Keycloak token never will on its own, so this is the one place
         // that adds it for the operator side now.
-        claimsIdentity.AddClaim(new Claim(AgoClaimTypes.Kind, "operator"));
+        claimsIdentity.AddClaim(new Claim(AgoClaimTypes.Kind, AgoClaimTypes.OperatorKind));
         principal.AddIdentity(claimsIdentity);
         return principal;
     }
