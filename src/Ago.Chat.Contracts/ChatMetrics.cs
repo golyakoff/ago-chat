@@ -39,6 +39,16 @@ public static class ChatMetrics
     public const string AssignmentCapacityClaimAttemptsInstrumentName = "ago.chat.assignment.capacity_claim_attempts";
     public const string AssignmentCapacityClaimConflictsInstrumentName = "ago.chat.assignment.capacity_claim_conflicts";
     public const string AssignmentCapacityReleaseDeadlocksInstrumentName = "ago.chat.assignment.capacity_release_deadlocks";
+    public const string DeliveryRecipientsInstrumentName = "ago.chat.delivery.recipients";
+
+    /// <summary>The connection registry had at least one live connection for this recipient when the
+    /// fan-out resolved them.</summary>
+    public const string ConnectedPresence = "connected";
+
+    /// <summary>It had none. Ordinary for a visitor who closed the tab; the reason this instrument
+    /// is tagged by recipient kind at all is that the same zero means something else for an
+    /// operator.</summary>
+    public const string AbsentPresence = "absent";
 
     public static readonly Meter Meter = new(MeterName);
 
@@ -65,6 +75,17 @@ public static class ChatMetrics
 
     private static readonly Counter<long> AssignmentCapacityReleaseDeadlocks = Meter.CreateCounter<long>(
         AssignmentCapacityReleaseDeadlocksInstrumentName, unit: "{deadlock}", description: "IOperatorCapacity.ReleaseAsync calls Postgres aborted with 40P01, tagged by outcome (retried/abandoned) - `6-10`. `abandoned` is the one that matters: it means a capacity slot leaked until that operator next goes offline.");
+
+    private static readonly Counter<long> DeliveryRecipients = Meter.CreateCounter<long>(
+        DeliveryRecipientsInstrumentName,
+        unit: "{recipient}",
+        description:
+            "Recipients a realtime fan-out resolved - one point per recipient per fan-out - tagged by the wire method "
+            + "being fanned out, by recipient kind (visitor/operator), and by whether the connection registry had any "
+            + "live connection for them at that moment (connected/absent). `7-08`: a raw \"delivered to zero\" count "
+            + "would be noise, because fanning out to a visitor who closed the tab is the expected outcome many times "
+            + "a day; what is worth looking at is an *operator* under `absent`, or a rise in `connected` recipients "
+            + "whose dispatches come back `connection_not_local` on ago.platform.realtime.dispatches.");
 
     private static Func<int>? _channelOccupancyProvider;
     private static int _channelCapacity;
@@ -114,6 +135,16 @@ public static class ChatMetrics
     /// case and is already implied by the close count. What an alert wants is the `abandoned` tag.</summary>
     public static void RecordCapacityReleaseDeadlock(bool retried) =>
         AssignmentCapacityReleaseDeadlocks.Add(1, new KeyValuePair<string, object?>("outcome", retried ? "retried" : "abandoned"));
+
+    /// <summary>`7-08`: one recipient of one fan-out. Called once per recipient per
+    /// <c>INodeFanoutPublisher.PublishAsync</c> - see <c>Ago.Chat.Application.Realtime.
+    /// FanoutObservability</c>, its only caller, for why these two tags and not a raw count.</summary>
+    public static void RecordDeliveryRecipient(string method, string recipientKind, bool hadLiveConnection) =>
+        DeliveryRecipients.Add(
+            1,
+            new KeyValuePair<string, object?>("method", method),
+            new KeyValuePair<string, object?>("recipient_kind", recipientKind),
+            new KeyValuePair<string, object?>("presence", hadLiveConnection ? ConnectedPresence : AbsentPresence));
 
     /// <summary>Registers (overwriting any prior registration) the callback the channel-occupancy
     /// gauge reads at collection time, and the capacity it is measured against. Called from

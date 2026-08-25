@@ -14,7 +14,32 @@ namespace Ago.Chat.Application.Realtime;
 /// </summary>
 public static class PrincipalKeys
 {
-    public static PrincipalKey ForVisitor(VisitorId visitorId) => new($"visitor:{visitorId.Value}");
+    public const string VisitorKind = "visitor";
 
-    public static PrincipalKey ForOperator(OperatorId operatorId) => new($"operator:{operatorId.Value}");
+    public const string OperatorKind = "operator";
+
+    /// <summary>A key this class did not build. Never expected in practice - the constant exists so
+    /// the metric tag stays bounded (three values, forever) instead of growing a time series per
+    /// unrecognised key.</summary>
+    public const string UnknownKind = "unknown";
+
+    private const string VisitorPrefix = $"{VisitorKind}:";
+
+    private const string OperatorPrefix = $"{OperatorKind}:";
+
+    public static PrincipalKey ForVisitor(VisitorId visitorId) => new($"{VisitorPrefix}{visitorId.Value}");
+
+    public static PrincipalKey ForOperator(OperatorId operatorId) => new($"{OperatorPrefix}{operatorId.Value}");
+
+    /// <summary>`7-08`: reads back what the two methods above wrote - which kind of principal a key
+    /// names, without the id. The one dimension that makes a fan-out's "reached nobody" worth
+    /// looking at: a visitor who closed the tab is ordinary, an operator with no connection is not.
+    /// It lives here, next to the code that builds the keys, for exactly the reason this class
+    /// exists at all - a second hand-written copy of the prefix is what drifts.</summary>
+    public static string KindOf(PrincipalKey key) => key.Value switch
+    {
+        var value when value.StartsWith(VisitorPrefix, StringComparison.Ordinal) => VisitorKind,
+        var value when value.StartsWith(OperatorPrefix, StringComparison.Ordinal) => OperatorKind,
+        _ => UnknownKind,
+    };
 }

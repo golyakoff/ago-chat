@@ -138,12 +138,15 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
     {
         public ConcurrentBag<string> Calls { get; } = [];
 
-        public Task PublishAsync(
+        public Task<FanoutResult> PublishAsync(
             IReadOnlyCollection<PrincipalKey> recipients, string method, string payloadJson, Guid correlationId,
             CancellationToken cancellationToken)
         {
             Calls.Add(payloadJson);
-            return Task.CompletedTask;
+            // Nobody connected - this test is about which queue the webhook consumer binds to, not
+            // about who a fan-out reached.
+            return Task.FromResult(new FanoutResult(
+                [.. recipients.Select(recipient => new ResolvedRecipient(recipient, 0))]));
         }
     }
 }

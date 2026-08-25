@@ -64,15 +64,15 @@
          restoring the new package, because the wiring lives in `AddConnectionRegistry`, which they
          already call. This bump is the entire delivery mechanism: without it the fix sits in
          ago-platform's `main` and never reaches anything that runs. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.15.0" />
-    <PackageVersion Include="Ago.Platform.Resilience" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.17.0" />
+    <PackageVersion Include="Ago.Platform.Resilience" Version="0.17.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">

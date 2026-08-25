@@ -27,7 +27,15 @@ public sealed class ResolveConversationAssignmentTargetsHandler(INodeFanoutPubli
         // `5-11`: must match SignalR's own camelCase hub-protocol default - see WireJsonOptions's own
         // doc comment for why a plain JsonSerializer.Serialize(dto) here would silently ship every
         // field as `undefined` to the client once it survives the JsonElement round-trip.
-        await fanout.PublishAsync(recipients, "ConversationAssigned", JsonSerializer.Serialize(dto, WireJsonOptions.Options), command.CorrelationId, cancellationToken);
+        const string Method = "ConversationAssigned";
+        var fanoutResult = await fanout.PublishAsync(
+            recipients, Method, JsonSerializer.Serialize(dto, WireJsonOptions.Options), command.CorrelationId, cancellationToken);
+
+        // `7-08`: instrumented for the same reason the message path is, and tagged with the same
+        // `method` dimension so the two fan-outs stay distinguishable. An operator who was just
+        // assigned a conversation and has no live connection is a different, and more interesting,
+        // fact than a visitor who has none.
+        FanoutObservability.RecordFanout(fanoutResult, Method);
 
         return Result.Success();
     }

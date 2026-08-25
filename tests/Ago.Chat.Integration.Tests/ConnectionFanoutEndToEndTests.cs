@@ -143,10 +143,10 @@ public sealed class ConnectionFanoutEndToEndTests(ConnectionFanoutFixture fixtur
     {
         public ConcurrentBag<(ConnectionId ConnectionId, string Method, string PayloadJson)> Dispatches { get; } = [];
 
-        public Task DispatchAsync(ConnectionId connectionId, string method, string payloadJson, CancellationToken cancellationToken)
+        public Task<DispatchOutcome> DispatchAsync(ConnectionId connectionId, string method, string payloadJson, CancellationToken cancellationToken)
         {
             Dispatches.Add((connectionId, method, payloadJson));
-            return Task.CompletedTask;
+            return Task.FromResult(DispatchOutcome.Delivered);
         }
     }
 }
