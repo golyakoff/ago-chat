@@ -26,8 +26,23 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     public const string ClientId = "ago-console";
     public const string DemoOperatorUsername = "demo-operator";
     public const string OrphanOperatorUsername = "orphan-operator";
+
+    /// <summary>`12-01`: an operator that really does hold `5-08`'s site-wide `"Admin"` role
+    /// (`site:configure`), seeded in <see cref="InitializeAsync"/> exactly the way
+    /// `create-demo-tenant.sh` seeds the real `demo-admin`. Exists so `PlatformOwnerPolicyTests` can
+    /// reject a genuinely privileged operator rather than a conveniently powerless one - the
+    /// negative case is the whole point of that file.</summary>
+    public const string DemoAdminUsername = "demo-admin";
+
+    /// <summary>`12-01`/`adr/0032`: the fixed local identity holding the `platform-owner` *realm*
+    /// role. Deliberately has no `operators` row and never gets one - a platform owner is not an
+    /// `Operator`, so a test that passed only because this user also happened to be an operator
+    /// would prove nothing about the boundary.</summary>
+    public const string PlatformOwnerUsername = "platform-owner-test";
+
     public const string DemoOperatorPassword = "demo-operator-password";
     public static readonly Guid DemoOperatorExternalSubjectId = Guid.Parse("00000000-0000-0000-0000-0000000000f0");
+    public static readonly Guid DemoAdminExternalSubjectId = Guid.Parse("00000000-0000-0000-0000-0000000000f2");
 
     private PostgreSqlContainer _postgres = null!;
     private KeycloakContainer _keycloak = null!;
@@ -41,6 +56,9 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     public SiteId SeededSiteId { get; private set; }
 
     public OperatorId SeededOperatorId { get; private set; }
+
+    /// <summary>`12-01`: the `demo-admin` operator row, holding the seeded `"Admin"` role.</summary>
+    public OperatorId SeededAdminOperatorId { get; private set; }
 
     private string _keycloakBaseAddress = null!;
 
@@ -68,12 +86,34 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
 
         SeededSiteId = new SiteId(Guid.NewGuid());
         SeededOperatorId = new OperatorId(Guid.NewGuid());
+        SeededAdminOperatorId = new OperatorId(Guid.NewGuid());
+        var adminRoleId = Guid.NewGuid();
         await using (var db = CreateDbContext())
         {
             db.Sites.Add(new Site(SeededSiteId, $"site_{SeededSiteId.Value:N}", []));
             db.Operators.Add(new Operator(
                 SeededOperatorId, SeededSiteId, OperatorStatus.Online, capacity: 5,
                 externalSubjectId: DemoOperatorExternalSubjectId.ToString()));
+            // `12-01`: the same `"Admin"` role `5-08` seeds for real (`create-demo-tenant.sh`) -
+            // every permission that role holds, not a reduced stand-in, so the "a site:configure
+            // holder is still not the platform owner" test rejects the strongest operator this
+            // codebase can currently produce.
+            db.Operators.Add(new Operator(
+                SeededAdminOperatorId, SeededSiteId, OperatorStatus.Online, capacity: 5,
+                externalSubjectId: DemoAdminExternalSubjectId.ToString()));
+            db.Roles.Add(new RoleRecord
+            {
+                Id = adminRoleId,
+                SiteId = SeededSiteId,
+                Name = "Admin",
+                Permissions =
+                [
+                    Permission.SiteConfigure.Value,
+                    Permission.SiteManageOperators.Value,
+                    Permission.AttachmentDelete.Value,
+                ],
+            });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = SeededAdminOperatorId, RoleId = adminRoleId });
             await db.SaveChangesAsync();
         }
     }
@@ -101,6 +141,15 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     /// its subject, so a token for it always exercises the "no matching operator" rejection path
     /// without racing the shared demo operator seeded in <see cref="InitializeAsync"/>.</summary>
     public Task<string> GetOrphanOperatorAccessTokenAsync() => GetAccessTokenAsync(KeycloakAuthority, OrphanOperatorUsername);
+
+    /// <summary>`12-01`: a real token for the operator holding `5-08`'s `"Admin"` role - a genuine
+    /// `operators` row with `site:configure`, so `RequireOperatorIdentity` accepts it and
+    /// `RequirePlatformOwner` must still not.</summary>
+    public Task<string> GetDemoAdminAccessTokenAsync() => GetAccessTokenAsync(KeycloakAuthority, DemoAdminUsername);
+
+    /// <summary>`12-01`/`adr/0032`: a real token carrying the `platform-owner` realm role in
+    /// `realm_access.roles`, for an identity with no `operators` row at all.</summary>
+    public Task<string> GetPlatformOwnerAccessTokenAsync() => GetAccessTokenAsync(KeycloakAuthority, PlatformOwnerUsername);
 
     /// <summary>`10-02`: a brand-new Keycloak user, created via the admin API on demand rather than
     /// realm-import - unlike <see cref="GetOrphanOperatorAccessTokenAsync"/> (which is deliberately

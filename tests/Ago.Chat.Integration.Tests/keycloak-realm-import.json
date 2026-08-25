@@ -6,6 +6,14 @@
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
   "verifyEmail": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-owner",
+        "description": "12-01/adr/0032: the platform owner - the operator of the service itself, not of any one tenant. Deliberately a Keycloak realm role, so no row this project writes can grant it."
+      }
+    ]
+  },
   "clients": [
     {
       "clientId": "ago-console",
@@ -55,6 +63,41 @@
       "enabled": true,
       "emailVerified": true,
       "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-operator-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000f2",
+      "username": "demo-admin",
+      "email": "demo-admin@example.test",
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-operator-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000f3",
+      "username": "platform-owner-test",
+      "email": "platform-owner-test@example.test",
+      "firstName": "Platform",
+      "lastName": "Owner",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [],
+      "realmRoles": ["platform-owner"],
       "credentials": [
         {
           "type": "password",
