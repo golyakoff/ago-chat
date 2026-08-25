@@ -7,6 +7,7 @@ using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -62,7 +63,8 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
                 new OperatorCapacityStore(db),
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
-                new SystemClock());
+                new SystemClock(),
+                NullLogger<CloseConversationHandler>.Instance);
 
             var result = await handler.HandleAsync(
                 new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, siteId),
@@ -128,7 +130,8 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
                 new OperatorCapacityStore(db),
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
-                new SystemClock());
+                new SystemClock(),
+                NullLogger<CloseConversationHandler>.Instance);
 
             var result = await handler.HandleAsync(
                 new Application.UseCases.CloseConversation.CloseConversation(conversationId, otherOperatorId, siteId),
@@ -187,7 +190,8 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db),
             new UuidV7Generator(),
-            new SystemClock());
+            new SystemClock(),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, siteId),

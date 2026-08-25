@@ -28,7 +28,16 @@ public sealed class ConcurrencyTestFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
+        // `6-10`: a deliberately hostile server, not the defaults. `deadlock_timeout=10ms` (against
+        // the 1 s default) does not create deadlocks - it only makes Postgres go looking for a cycle
+        // sooner, so a real one this suite's contention produces is found and reported on this run
+        // instead of on a loaded CI runner three merges later. `log_lock_waits=on` puts the wait
+        // queues and the full deadlock graph in the container's own log, which
+        // CloseConversationCapacityConcurrencyTests reads back through GetPostgresLogsAsync to prove
+        // its storm was hostile enough to mean anything.
+        _postgres = new PostgreSqlBuilder("postgres:17-alpine")
+            .WithCommand("-c", "deadlock_timeout=10ms", "-c", "log_lock_waits=on")
+            .Build();
         RabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithUsername(Username).WithPassword(Password).Build();
         await Task.WhenAll(_postgres.StartAsync(), RabbitMq.StartAsync());
 
@@ -58,6 +67,15 @@ public sealed class ConcurrencyTestFixture : IAsyncLifetime
         await DataSource.DisposeAsync();
         await _postgres.DisposeAsync();
         await RabbitMq.DisposeAsync();
+    }
+
+    /// <summary>`6-10`: the Postgres server's own stderr, deadlock reports and lock waits included.
+    /// A test that produces a deadlock and then discards the server's explanation of it costs another
+    /// full cycle to learn nothing - which is exactly what the two CI failures on 2026-08-25 cost.</summary>
+    public async Task<string> GetPostgresLogsAsync()
+    {
+        var (stdout, stderr) = await _postgres.GetLogsAsync();
+        return stdout + Environment.NewLine + stderr;
     }
 
     public AgoChatDbContext CreateDbContext() =>

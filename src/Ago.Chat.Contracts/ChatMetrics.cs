@@ -38,6 +38,7 @@ public static class ChatMetrics
     public const string OutboxPublishFailuresInstrumentName = "ago.chat.outbox.publish_failures";
     public const string AssignmentCapacityClaimAttemptsInstrumentName = "ago.chat.assignment.capacity_claim_attempts";
     public const string AssignmentCapacityClaimConflictsInstrumentName = "ago.chat.assignment.capacity_claim_conflicts";
+    public const string AssignmentCapacityReleaseDeadlocksInstrumentName = "ago.chat.assignment.capacity_release_deadlocks";
 
     public static readonly Meter Meter = new(MeterName);
 
@@ -61,6 +62,9 @@ public static class ChatMetrics
 
     private static readonly Counter<long> AssignmentCapacityClaimConflicts = Meter.CreateCounter<long>(
         AssignmentCapacityClaimConflictsInstrumentName, unit: "{conflict}", description: "IOperatorCapacity.TryClaimAsync calls that lost the race or found no capacity (a rows-affected count of 0) - concurrency.md's own 'normal outcome to retry, not an error.'");
+
+    private static readonly Counter<long> AssignmentCapacityReleaseDeadlocks = Meter.CreateCounter<long>(
+        AssignmentCapacityReleaseDeadlocksInstrumentName, unit: "{deadlock}", description: "IOperatorCapacity.ReleaseAsync calls Postgres aborted with 40P01, tagged by outcome (retried/abandoned) - `6-10`. `abandoned` is the one that matters: it means a capacity slot leaked until that operator next goes offline.");
 
     private static Func<int>? _channelOccupancyProvider;
     private static int _channelCapacity;
@@ -104,6 +108,12 @@ public static class ChatMetrics
             AssignmentCapacityClaimConflicts.Add(1);
         }
     }
+
+    /// <summary>`6-10`: one counter, not two, unlike the claim pair above - there is no "attempts"
+    /// denominator worth carrying here, because a release that succeeds first time is the overwhelming
+    /// case and is already implied by the close count. What an alert wants is the `abandoned` tag.</summary>
+    public static void RecordCapacityReleaseDeadlock(bool retried) =>
+        AssignmentCapacityReleaseDeadlocks.Add(1, new KeyValuePair<string, object?>("outcome", retried ? "retried" : "abandoned"));
 
     /// <summary>Registers (overwriting any prior registration) the callback the channel-occupancy
     /// gauge reads at collection time, and the capacity it is measured against. Called from

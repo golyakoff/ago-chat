@@ -24,6 +24,12 @@ public interface IOperatorCapacity
     Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken);
 
     /// <summary>Releases one previously-claimed slot. A no-op floor at zero - never goes negative,
-    /// so a caller that races a duplicate release cannot corrupt the count.</summary>
+    /// so a caller that races a duplicate release cannot corrupt the count.
+    ///
+    /// <para>`6-10`: throws <see cref="OperatorCapacityContentionException"/>, never a raw
+    /// <c>PostgresException</c>, when the store could not apply the decrement because it kept losing
+    /// to concurrent writers on the same row. An implementation that owns its own transaction is
+    /// expected to retry a bounded number of times before saying so; one running inside a
+    /// caller-owned transaction cannot retry at all and says so on the first failure.</para></summary>
     Task ReleaseAsync(OperatorId operatorId, CancellationToken cancellationToken);
 }
