@@ -54,7 +54,7 @@ public sealed class TracingEndToEndTests(ConnectionFanoutFixture fixture)
             // The same "Ago.*" wildcard AddPlatformObservability itself subscribes with
             // (Ago.Platform.Hosting's own remarks) - proves the actual subscription shape works,
             // not a hand-picked list of the exact sources this test happens to know about.
-            .AddSource(Ago.Platform.Hosting.ServiceCollectionExtensions.ActivitySourceWildcard)
+            .AddSource(Ago.Platform.Observability.ObservabilityServiceCollectionExtensions.ActivitySourceWildcard)
             .AddSource("Npgsql")
             .AddInMemoryExporter(exportedActivities)
             .Build();

@@ -8,6 +8,7 @@ using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Module;
 using Ago.Chat.Webhooks;
 using Ago.Platform.Hosting;
+using Ago.Platform.Observability;
 using Ago.Platform.Resilience;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;

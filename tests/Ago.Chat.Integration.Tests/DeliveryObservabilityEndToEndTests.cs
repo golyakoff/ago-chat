@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using Ago.Platform.Observability;
 using System.Diagnostics;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Realtime;
@@ -73,7 +74,7 @@ public sealed class DeliveryObservabilityEndToEndTests(ConnectionFanoutFixture f
 
         var exportedActivities = new List<Activity>();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-            .AddSource(Ago.Platform.Hosting.ServiceCollectionExtensions.ActivitySourceWildcard)
+            .AddSource(Ago.Platform.Observability.ObservabilityServiceCollectionExtensions.ActivitySourceWildcard)
             .AddInMemoryExporter(exportedActivities)
             .Build();
         var exportedMetrics = new List<Metric>();

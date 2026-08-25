@@ -19,4 +19,16 @@
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" />
   </ItemGroup>
 
+
+  <!-- `7-09`: telemetry moved out of Ago.Platform.Hosting into its own package, so the hosts that
+       actually wire it declare it themselves. Ago.Chat.Module deliberately does not - it is
+       host-agnostic, and a package that needs an IEndpointRouteBuilder does not belong there. -->
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Observability" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Observability\Ago.Platform.Observability.csproj" />
+  </ItemGroup>
+
 </Project>
