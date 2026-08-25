@@ -52,15 +52,27 @@
          `Ago.Platform.Caching.Redis`/`Ago.Platform.Realtime`/`Ago.Platform.Messaging.RabbitMq` each
          gained a new manual `Meter` too (see ago-platform's own CHANGELOG.md `[0.14.0]` entry for the
          full list). -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.14.0" />
-    <PackageVersion Include="Ago.Platform.Resilience" Version="0.14.0" />
+    <!-- `7-07`: bumped from 0.14.0 to 0.15.0, every package here again, for one fix in one of them.
+         `Ago.Platform.Realtime`'s connections gauge counted calls to `IConnectionRegistry.RegisterAsync`
+         rather than connections - and that method is also the heartbeat's TTL refresh, so the number
+         climbed forever on a node with nobody connected. The gauge now reads
+         `LocalConnectionTracker.Count` at collection time, with `AddConnectionRegistry` naming the
+         tracker for its node through the new `RealtimeMetrics.TrackNode`.
+         Additive public API only (`TrackNode`, `LocalConnectionTracker.Count`); the three `internal`
+         increment/decrement methods that carried the bug are gone, which no consumer could call.
+         **No change was needed in this repository** - `Ago.Chat.Api`/`Worker` reach the fix purely by
+         restoring the new package, because the wiring lives in `AddConnectionRegistry`, which they
+         already call. This bump is the entire delivery mechanism: without it the fix sits in
+         ago-platform's `main` and never reaches anything that runs. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.15.0" />
+    <PackageVersion Include="Ago.Platform.Resilience" Version="0.15.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">
