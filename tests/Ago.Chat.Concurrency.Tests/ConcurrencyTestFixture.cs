@@ -35,7 +35,18 @@ public sealed class ConcurrencyTestFixture : IAsyncLifetime
         // Kept separately from DataSource: NpgsqlDataSource.ConnectionString redacts the password
         // (it is meant for logging/display), so building a second DataSource - or a DbContext -
         // from that redacted string fails SASL auth. CreateServiceProvider() needs the real one.
-        _connectionString = _postgres.GetConnectionString();
+        // `Include Error Detail` so a Postgres error that carries a DETAIL line actually prints it.
+        // Without it, Npgsql replaces the detail with "Detail redacted as it may contain sensitive
+        // data", which is the right default for a production connection string and precisely the
+        // wrong one here: a `40P01 deadlock detected` puts the entire deadlock graph - which two
+        // transactions, which relations, which statements - in that DETAIL line and nowhere else.
+        // A deadlock this suite caught on CI (2026-08-25, twice, never reproducible locally) was
+        // unactionable for exactly that reason. This is a throwaway container seeded only by these
+        // tests, so there is no sensitive data for the flag to expose.
+        _connectionString = new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString())
+        {
+            IncludeErrorDetail = true,
+        }.ConnectionString;
         DataSource = new NpgsqlDataSourceBuilder(_connectionString).Build();
 
         await using var db = CreateDbContext();
