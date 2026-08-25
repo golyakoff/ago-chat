@@ -1,6 +1,9 @@
-﻿using Ago.Chat.Contracts;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
@@ -103,6 +106,97 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
             await new OperatorCapacityStore(db).ReleaseAsync(operatorId, CancellationToken.None);
         }
         Assert.Equal(0, await ReadActiveChatsAsync(operatorId));
+    }
+
+    /// <summary>
+    /// `6-10`: a real `40P01`, arranged rather than waited for, and the one shape of it that is fully
+    /// deterministic - <c>ReleaseAsync</c> called inside a caller-owned transaction
+    /// (<c>OperatorConversationReleaser</c>'s shape, `4-04`). Two transactions take the same two
+    /// <c>operators</c> rows in opposite order, which is exactly what the assignment engine's batches
+    /// do to each other; the victim is pinned by giving the releasing session a 10 ms
+    /// <c>deadlock_timeout</c> and the other one 30 s, so the process that runs the deadlock check
+    /// first - and therefore aborts - is always the release.
+    ///
+    /// <para>Two things are asserted, and the second is the one that matters to an operator: the
+    /// caller gets the port's own <see cref="OperatorCapacityContentionException"/> rather than a raw
+    /// <c>PostgresException</c>, and <c>Attempts</c> is <c>1</c> - no retry was attempted, because
+    /// there is none to attempt. The deadlock aborted the caller's whole transaction; re-issuing the
+    /// statement on it could only produce `25P02 in_failed_sql_transaction`. Re-running the sweep is
+    /// the consumer's redelivery's job. The close path, which owns no transaction, is the one that
+    /// retries - proven under real contention in <c>CloseConversationCapacityConcurrencyTests</c>.</para>
+    /// </summary>
+    [Fact]
+    public async Task ReleaseAsync_WhenADeadlockAbortsACallerOwnedTransaction_SurfacesTheContentionType_NeverANpgsqlError()
+    {
+        var (_, first) = await SeedOperatorAsync(capacity: 5);
+        var (_, second) = await SeedOperatorAsync(capacity: 5);
+
+        // Both operators must actually hold a slot, or `ReleaseAsync`'s own `AND active_chats > 0`
+        // floor makes its `UPDATE` match no row on the visible snapshot - and a row an `UPDATE` never
+        // intends to touch is a row it never waits for, so there would be nothing to deadlock over.
+        await using (var seeding = fixture.CreateDbContext())
+        {
+            Assert.True(await new OperatorCapacityStore(seeding).TryClaimAsync(first, CancellationToken.None));
+            Assert.True(await new OperatorCapacityStore(seeding).TryClaimAsync(second, CancellationToken.None));
+        }
+
+        // The other side of the cycle: one transaction holding `first`, about to want `second`.
+        await using var other = await fixture.DataSource.OpenConnectionAsync();
+        var otherTransaction = await other.BeginTransactionAsync();
+        await ExecuteAsync(other, otherTransaction, "SET LOCAL deadlock_timeout = '30s'");
+        await ExecuteAsync(other, otherTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{first.Value}'");
+
+        // The releasing side: its own transaction, holding `second`, about to want `first`.
+        await using var releasing = await fixture.DataSource.OpenConnectionAsync();
+        var releasingTransaction = await releasing.BeginTransactionAsync();
+        await ExecuteAsync(releasing, releasingTransaction, "SET LOCAL deadlock_timeout = '10ms'");
+        await ExecuteAsync(releasing, releasingTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{second.Value}'");
+
+        var otherBlocks = ExecuteAsync(other, otherTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{second.Value}'");
+        await WaitUntilWaitingAsync(other.ProcessID);
+
+        await using var db = new AgoChatDbContext(
+            new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(releasing).Options);
+        await db.Database.UseTransactionAsync(releasingTransaction);
+
+        var exception = await Assert.ThrowsAsync<OperatorCapacityContentionException>(
+            () => new OperatorCapacityStore(db).ReleaseAsync(first, CancellationToken.None));
+
+        Assert.Equal(first, exception.OperatorId);
+        Assert.Equal(1, exception.Attempts);
+        Assert.Equal(PostgresErrorCodes.DeadlockDetected, Assert.IsType<PostgresException>(exception.InnerException).SqlState);
+
+        await releasingTransaction.RollbackAsync();
+        await otherBlocks;
+        await otherTransaction.RollbackAsync();
+    }
+
+    private static async Task ExecuteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Polls <c>pg_stat_activity</c> instead of sleeping a guessed interval: the cycle only
+    /// closes once the other side is genuinely parked on a lock, and a fixed delay would either be
+    /// slower than it needs to be or occasionally too short.</summary>
+    private async Task WaitUntilWaitingAsync(int processId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            await using var command = new NpgsqlCommand(
+                "SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = @pid", connection);
+            command.Parameters.AddWithValue("pid", processId);
+            if (await command.ExecuteScalarAsync() is true)
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.Fail($"Process {processId} never parked on a lock.");
     }
 
     [Fact]

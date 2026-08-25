@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Collections.Concurrent;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -182,7 +183,8 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
             () => SendConcurrentVisitorMessageAsync(seed, target));
         var handler = new CloseConversationHandler(
             racing, new PermissionChecker(db), new OperatorCapacityStore(db),
-            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(target, operatorId, seed.SiteId),
@@ -234,6 +236,171 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         Assert.Equal(1, await ActiveChatsAsync(operatorId));
         Assert.True(await CloseAsync(seed, handPicked));
         Assert.Equal(1, await ActiveChatsAsync(operatorId));
+    }
+
+    /// <summary>
+    /// `6-10`'s regression test, and the shape of contention that produced the CI failure this item
+    /// exists for. <see cref="ClosesRacingAssignments_NeverCorruptTheCount"/> above runs in rounds -
+    /// everyone starts together, everyone finishes, repeat - which proves the accounting but leaves
+    /// gaps where nothing overlaps. This one is a sustained storm instead: assignment batches and
+    /// closes run continuously against the same handful of <c>operators</c> rows, which is what a
+    /// loaded CI runner produced by accident and a round-based test does not.
+    ///
+    /// <para><b>What broke.</b> A batch holds several <c>operators</c> row locks at once (one per
+    /// operator it assigned to) for the rest of its batch, and two batches taking the same rows in a
+    /// different order deadlock - known since `4-02`, caught per-tick, deliberately accepted. What
+    /// `6-09` changed is who else is standing there: the close's <c>ReleaseAsync</c>, a *single-row*
+    /// <c>UPDATE</c> in its own implicit transaction, which looks structurally incapable of
+    /// deadlocking. It is not. Before it waits for the row's current updater it takes a heavyweight
+    /// tuple lock on that row as its place in the queue, and a batch already holding a different
+    /// operators row can then queue behind it - so Postgres's cycle runs *through* a statement that
+    /// holds no row lock of its own, and it can pick that statement as the victim. The captured graph
+    /// is in `6-10`'s backlog item.</para>
+    ///
+    /// <para><b>What this asserts.</b> Three things, and the third is what stops it passing vacuously:
+    /// no close ever escapes with an exception (an operator must never see `40P01` for pressing
+    /// "close"); the exact claim/assignment invariant still holds afterwards, which is also how an
+    /// abandoned release would show up - the adapter's retry bound being too small reads here as
+    /// <c>active_chats</c> exceeding the claims actually held; and Postgres really did detect
+    /// deadlocks during the run, read back from the container's own log. A run with zero deadlock
+    /// reports proved nothing and says so.</para>
+    /// </summary>
+    [Fact]
+    public async Task ClosesStormingAssignmentBatches_NeverSurfaceADeadlockAndNeverCorruptTheCount()
+    {
+        const int capacity = 5;
+        const int operatorCount = 3;
+        const int conversationCount = 1500;
+        const int claimerCount = 6;
+        const int closerCount = 16;
+        const int batchSize = 80;
+
+        var seed = await SeedAsync(operatorCount, capacity, conversationCount);
+        var escaped = new List<Exception>();
+        // No two closers may target the same conversation at once. That is not the contention under
+        // test - it is close-versus-close on one *conversation* row, whose losing side has its own
+        // pre-existing behaviour - and letting it in here would drown the signal this test is for,
+        // which is close-versus-assignment on one *operators* row.
+        var taken = new ConcurrentDictionary<ConversationId, byte>();
+        var closed = 0;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        void Record(Exception ex)
+        {
+            lock (escaped)
+            {
+                escaped.Add(ex);
+            }
+        }
+
+        // The claimer directly, not through ConversationAssignmentJob: the job catches its own
+        // batch-level deadlock and moves on (`4-02`), which is correct in production and would hide
+        // from this test whether the storm produced any contention at all.
+        var claiming = Enumerable.Range(0, claimerCount).Select(_ => Task.Run(async () =>
+        {
+            var claimer = new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+            while (!stop.IsCancellationRequested)
+            {
+                try
+                {
+                    await claimer.AssignWaitingConversationsAsync(seed.SiteId, batchSize, CancellationToken.None);
+                }
+                catch (Exception)
+                {
+                    // A batch losing - to a deadlock or to an `xmin` conflict - is this path's normal
+                    // outcome and its own caller's business, not this test's subject.
+                }
+            }
+        }));
+
+        var closing = Enumerable.Range(0, closerCount).Select(_ => Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var mine = (await AssignedIdsAsync(seed))
+                    .OrderBy(_ => Random.Shared.Next())
+                    .FirstOrDefault(id => taken.TryAdd(id, 0));
+                if (mine == default)
+                {
+                    await Task.Delay(1, CancellationToken.None);
+                    continue;
+                }
+
+                try
+                {
+                    if (await CloseAsync(seed, mine))
+                    {
+                        Interlocked.Increment(ref closed);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Record(ex);
+                }
+            }
+        }));
+
+        await Task.WhenAll(claiming.Concat(closing));
+
+        await using var verify = fixture.CreateDbContext();
+        var conversations = await verify.Conversations.AsNoTracking()
+            .Where(c => c.SiteId == seed.SiteId)
+            .ToListAsync();
+        var operators = await verify.Operators.AsNoTracking()
+            .Where(o => o.SiteId == seed.SiteId)
+            .Select(o => new { o.Id, ActiveChats = EF.Property<int>(o, "active_chats") })
+            .ToListAsync();
+
+        var (deadlockReports, releaseVictims) = await CountDeadlockReportsAsync();
+        output.WriteLine(
+            $"closed={closed}; escaped={escaped.Count}; postgres deadlock reports={deadlockReports}, " +
+            $"of which the close's release was the victim={releaseVictims}; " +
+            $"active_chats=[{string.Join(", ", operators.Select(o => o.ActiveChats))}]");
+
+        Assert.Empty(escaped);
+        Assert.True(closed > capacity * operatorCount, $"only {closed} conversations closed");
+
+        foreach (var op in operators)
+        {
+            var held = conversations.Count(c =>
+                c.State == ConversationState.Assigned && c.OperatorId == op.Id && c.HoldsCapacityClaim);
+            Assert.Equal(held, op.ActiveChats);
+        }
+
+        // Not an assertion about the fix - an assertion that the run was hostile enough to be
+        // evidence of anything. The fixture's own 10 ms `deadlock_timeout` is what makes this
+        // dependable rather than lucky.
+        Assert.True(deadlockReports > 0, "the storm produced no Postgres deadlock at all, so it proved nothing");
+    }
+
+    /// <summary>Reads the deadlock graphs back out of the container's own log - `6-10`'s own scope
+    /// note, that a run which fails and discards the server's explanation costs another full cycle to
+    /// learn nothing. The second number is the one the item is about: how often the victim Postgres
+    /// picked was the close's single-statement release rather than an assignment batch.</summary>
+    private async Task<(int Reports, int ReleaseVictims)> CountDeadlockReportsAsync()
+    {
+        var lines = (await fixture.GetPostgresLogsAsync()).Split('\n');
+        var reports = 0;
+        var releaseVictims = 0;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!lines[i].Contains("ERROR:  deadlock detected", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            reports++;
+            // The victim's own statement is the `STATEMENT:` line Postgres appends to its report.
+            var statement = Array.FindIndex(
+                lines, i, Math.Min(30, lines.Length - i), l => l.Contains("STATEMENT:", StringComparison.Ordinal));
+            if (statement >= 0 && lines.Skip(statement).Take(3).Any(l => l.Contains("active_chats - 1", StringComparison.Ordinal)))
+            {
+                releaseVictims++;
+            }
+        }
+
+        return (reports, releaseVictims);
     }
 
     private sealed record Seed(SiteId SiteId, IReadOnlyList<OperatorId> OperatorIds, VisitorId VisitorId);
@@ -322,7 +489,8 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
 
         var handler = new CloseConversationHandler(
             new ConversationRepository(db), new PermissionChecker(db), new OperatorCapacityStore(db),
-            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, seed.SiteId),

@@ -3,6 +3,7 @@ using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Microsoft.Extensions.Logging;
 
 namespace Ago.Chat.Application.UseCases.CloseConversation;
 
@@ -41,6 +42,13 @@ namespace Ago.Chat.Application.UseCases.CloseConversation;
 /// between the commit below and <c>ReleaseAsync</c> leaks exactly one slot, which is the pre-`6-09`
 /// behaviour for that one conversation, bounded, and still recovered by the disconnect sweep when that
 /// operator eventually goes offline.</para>
+///
+/// <para>`6-10`: that release is the one statement in this handler that can lose a Postgres deadlock,
+/// because the assignment engine writes the same <c>operators</c> row from a transaction that holds
+/// several of them (`adr/0037`, and the captured graph in `6-10`'s backlog item). The adapter retries
+/// it; if it still cannot land, the close stays successful and the leak above is the outcome - see
+/// <see cref="Application.Abstractions.OperatorCapacityContentionException"/> and the catch below.
+/// What must never happen is an operator seeing `40P01` for pressing "close".</para>
 /// </summary>
 public sealed class CloseConversationHandler(
     IConversationRepository conversations,
@@ -48,7 +56,8 @@ public sealed class CloseConversationHandler(
     IOperatorCapacity capacity,
     IOutboxWriter outbox,
     IIdGenerator idGenerator,
-    IClock clock)
+    IClock clock,
+    ILogger<CloseConversationHandler> logger)
 {
     public async Task<Result> HandleAsync(CloseConversation command, CancellationToken cancellationToken)
     {
@@ -137,10 +146,32 @@ public sealed class CloseConversationHandler(
         // Conversation.Close() throws on an already-closed row before any release is reached.
         if (consumedCapacityClaim)
         {
-            // command.OperatorId, not conversation.OperatorId - the guard at the top of this method
-            // has already established they are the same, and this avoids a null-forgiving operator on
-            // a property whose non-nullness is only implied by the state machine.
-            await capacity.ReleaseAsync(command.OperatorId, cancellationToken);
+            try
+            {
+                // command.OperatorId, not conversation.OperatorId - the guard at the top of this method
+                // has already established they are the same, and this avoids a null-forgiving operator on
+                // a property whose non-nullness is only implied by the state machine.
+                await capacity.ReleaseAsync(command.OperatorId, cancellationToken);
+            }
+            catch (OperatorCapacityContentionException ex)
+            {
+                // `6-10`: the close is already committed. Turning this into a failed request would be
+                // a lie about what happened and would make things worse, not better - the operator
+                // would retry, the retry would be rejected as already-closed (`Conversation.InvalidState`),
+                // and the slot still would not come back. So the request stays successful and the
+                // residual is exactly the one the paragraph above already names for a process death in
+                // this same window: one leaked slot, inert, recovered when that operator next goes
+                // offline (`4-04`'s sweep). Logged at Warning rather than swallowed silently, and
+                // counted (`ago.chat.assignment.capacity_release_deadlocks{outcome="abandoned"}`),
+                // because a leak nobody can see is how `6-09`'s original bug went unnoticed for a
+                // stage and a half. `adr/0037` argues the bound this arrives after.
+                logger.LogWarning(
+                    ex,
+                    "Conversation {ConversationId} closed, but operator {OperatorId}'s capacity slot could not be released after {Attempts} attempt(s); one slot leaks until that operator next disconnects.",
+                    command.ConversationId.Value,
+                    command.OperatorId.Value,
+                    ex.Attempts);
+            }
         }
 
         return Result.Success();

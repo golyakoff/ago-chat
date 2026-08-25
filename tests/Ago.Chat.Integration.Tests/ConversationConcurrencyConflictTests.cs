@@ -9,6 +9,7 @@ using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -38,7 +39,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
             new ConversationRepository(db), maxInjections: 1, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new CloseConversationHandler(
             racingRepository, new PermissionChecker(db), new OperatorCapacityStore(db),
-            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(new CloseConversation(conversationId, operatorId, siteId), CancellationToken.None);
 
@@ -75,7 +77,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
             new ConversationRepository(db), maxInjections: 2, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new CloseConversationHandler(
             racingRepository, new PermissionChecker(db), new OperatorCapacityStore(db),
-            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(new CloseConversation(conversationId, operatorId, siteId), CancellationToken.None);
 
