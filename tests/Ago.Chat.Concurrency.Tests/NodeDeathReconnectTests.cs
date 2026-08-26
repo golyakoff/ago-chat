@@ -150,10 +150,14 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var getVisitorPresence = new GetVisitorPresenceHandler(new ConversationRepository(db), new PermissionChecker(db), registry);
         var registration = new HubConnectionRegistration(registry, tracker, node);
         var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
-        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
+        // `5-18`: the operator hub validates the *console's* origin, not the tenant's widget origins.
+        // FakeHubCallerContext carries no HttpContext, so no Origin header is present and the check
+        // short-circuits to allowed - exactly as it does for the dev harness and any non-browser client.
+        var consoleOrigin = new ConsoleOriginValidator(
+            new ConsoleOriginOptions { AllowedOrigins = ["https://console.test"] });
 
         return new OperatorHub(
-            assignConversation, sendMessage, getHistory, getVisitorPresence, registration, originValidator, presencePublisher, new DrainState())
+            assignConversation, sendMessage, getHistory, getVisitorPresence, registration, consoleOrigin, presencePublisher, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),
