@@ -27,6 +27,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAttachmentRepository, AttachmentRepository>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
+        // `14-01`
+        services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         // `10-02`
         services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();

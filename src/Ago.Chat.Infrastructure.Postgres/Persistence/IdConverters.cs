@@ -18,6 +18,7 @@ internal static class IdConverters
     public static readonly ValueConverter<AttachmentId, Guid> Attachment = new(id => id.Value, value => new AttachmentId(value));
     public static readonly ValueConverter<WebhookEndpointId, Guid> WebhookEndpoint = new(id => id.Value, value => new WebhookEndpointId(value));
     public static readonly ValueConverter<WebhookDeliveryId, Guid> WebhookDelivery = new(id => id.Value, value => new WebhookDeliveryId(value));
+    public static readonly ValueConverter<ChannelIdentityId, Guid> ChannelIdentity = new(id => id.Value, value => new ChannelIdentityId(value));
 
     public static readonly ValueConverter<OperatorId?, Guid?> NullableOperator = new(
         id => id.HasValue ? id.Value.Value : (Guid?)null,

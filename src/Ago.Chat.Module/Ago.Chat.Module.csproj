@@ -8,6 +8,12 @@
     <!-- `5-03`: AddS3FileStorage is registered here, alongside AddRedisCaching/AddRabbitMqMessaging -
          ChatModule.ConfigureServices is where every host-agnostic port gets wired up. -->
     <PackageReference Include="Ago.Platform.Storage.S3" />
+    <!-- `14-01`: unlike `6-05`'s webhook dispatcher, whose pipelines are private to Ago.Chat.Webhooks
+         because only that host dispatches, a channel adapter's outbound call can be made from whichever
+         host runs that adapter (a webhook receiver, a long-polling worker - `14-02`/`14-03` decide).
+         ChannelResiliencePipelines/ResilientInboundChannelAdapter therefore live here, host-agnostic,
+         the same place ChannelMessagePipeline sits for the same reason. -->
+    <PackageReference Include="Ago.Platform.Resilience" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
@@ -16,6 +22,7 @@
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Realtime\Ago.Platform.Realtime.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Caching.Redis\Ago.Platform.Caching.Redis.csproj" />
     <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Storage.S3\Ago.Platform.Storage.S3.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Resilience\Ago.Platform.Resilience.csproj" />
   </ItemGroup>
 
   <ItemGroup>

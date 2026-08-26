@@ -18,6 +18,7 @@ using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
+using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
@@ -29,15 +30,18 @@ using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Messaging.RabbitMq;
 using Ago.Platform.Realtime;
+using Ago.Platform.Resilience;
 using Ago.Platform.Storage.S3;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Polly;
 
 namespace Ago.Chat.Module;
 
@@ -136,6 +140,24 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<ChannelMessagePipeline>();
         services.AddSingleton<IMessagePipeline>(sp => sp.GetRequiredService<ChannelMessagePipeline>());
 
+        // `14-01`: AGO Inbox's channel seam. Registered for every host, the same shape as everything
+        // else on this page - which host actually runs a channel adapter is `14-02`/`14-03`'s decision
+        // (a webhook receiver and a long-polling worker are both plausible), and a host that registers
+        // no IInboundChannelAdapter simply gets an empty registry rather than a startup failure.
+        services.AddResiliencePipelineOptions(
+            ChannelResiliencePipelines.PipelineName, configuration, ConfigureChannelResilienceDefaults);
+        // Constructed through a factory that resolves the *named* options group itself, rather than
+        // registering a bare ResiliencePipelineOptions singleton the way Ago.Chat.Webhooks' Program.cs
+        // does for its own group. That matters here and not there: ChatModule runs inside every host,
+        // including Ago.Chat.Webhooks, so a second unnamed ResiliencePipelineOptions registration would
+        // put two registrations of one type in that host's container and leave which pipeline gets
+        // which thresholds decided by registration order.
+        services.AddSingleton(sp => new ChannelResiliencePipelines(
+            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>()
+                .Get(ChannelResiliencePipelines.PipelineName)));
+        services.AddSingleton<IInboundChannelAdapterRegistry, InboundChannelAdapterRegistry>();
+        services.AddScoped<ReceiveChannelMessageHandler>();
+
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
         services.AddScoped<SendOperatorMessageHandler>();
@@ -193,6 +215,40 @@ public sealed class ChatModule : IProductModule
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
         services.AddSingleton<OperatorPresencePublisher>();
+    }
+
+    /// <summary>
+    /// `14-01`: starting points, not measured numbers - the same caveat
+    /// <c>MessageSendRateLimitOptions</c> and `6-05`'s own <c>ConfigureResilienceDefaults</c> carry
+    /// (CLAUDE.md: "do not invent numbers... measure or stay silent"). They are deliberately close to
+    /// the webhook dispatcher's, because the boundary is the same kind of thing - an HTTP call to a
+    /// third party we cannot fix - and copying a shape that has at least been exercised against a real
+    /// hanging endpoint beats inventing a second set. `14-02` is the first item with a real provider to
+    /// measure against, and is where these should stop being guesses.
+    ///
+    /// <para>Defaults exist at all, rather than leaving every group null, because a null group builds a
+    /// pipeline with no strategies: an adapter author who forgot to add a
+    /// <c>Resilience:Channels</c> section would get an unprotected call to a third party and no
+    /// signal. Configuration still overrides any key actually present
+    /// (<c>AddResiliencePipelineOptions</c>' own remarks).</para>
+    /// </summary>
+    private static void ConfigureChannelResilienceDefaults(ResiliencePipelineOptions options)
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromSeconds(5) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromMilliseconds(200),
+        };
+        options.CircuitBreaker = new ResilienceCircuitBreakerOptions
+        {
+            FailureRatio = 0.5,
+            MinimumThroughput = 4,
+            SamplingDuration = TimeSpan.FromSeconds(30),
+            BreakDuration = TimeSpan.FromSeconds(10),
+        };
+        options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 8, MaxQueuedActions = 32 };
     }
 
     // `6-03`: a plain boolean predicate rather than throwing inside the lambda - `.Validate()` expects
