@@ -15,6 +15,13 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
+    /// <summary>`16-05`: the container's connection string *with its password*, for the one test that
+    /// exercises the production <c>AddPostgresPersistence(connectionString)</c> entry point rather
+    /// than being handed a ready-made <see cref="NpgsqlDataSource"/>. Not simply
+    /// <c>DataSource.ConnectionString</c>: Npgsql strips the password out of that property, so
+    /// feeding it back in produces "No password has been provided but the backend requires one".</summary>
+    public string ConnectionString { get; private set; } = null!;
+
     public async Task InitializeAsync()
     {
         _dockerLock = await DockerResourceLock.AcquireAsync();
@@ -22,7 +29,8 @@ public sealed class PostgresFixture : IAsyncLifetime
         _container = new PostgreSqlBuilder("postgres:17-alpine").Build();
         await _container.StartAsync();
 
-        DataSource = new NpgsqlDataSourceBuilder(_container.GetConnectionString()).Build();
+        ConnectionString = _container.GetConnectionString();
+        DataSource = new NpgsqlDataSourceBuilder(ConnectionString).Build();
 
         await using var db = CreateDbContext();
         await db.Database.MigrateAsync();
