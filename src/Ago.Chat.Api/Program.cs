@@ -107,6 +107,13 @@ builder.Services
     .Bind(builder.Configuration.GetSection(VisitorSessionRateLimitOptions.SectionName))
     .ValidateOnStart();
 
+// `17-08`/`adr/0048`: renewal's own bucket, keyed per visitor rather than per site - a separate
+// options type for the same reason it is a separate endpoint (that type's own remarks).
+builder.Services
+    .AddOptions<VisitorSessionRenewalRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(VisitorSessionRenewalRateLimitOptions.SectionName))
+    .ValidateOnStart();
+
 // 3-06: a per-process random key (this project's original Stage 1 choice) only tolerates a single
 // Ago.Chat.Api instance - found live, against the 3-replica overlay, when a token issued by one pod
 // 401'd on a negotiate request the Gateway's least_conn balancer routed to a different pod (no

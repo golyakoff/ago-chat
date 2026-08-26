@@ -14,23 +14,29 @@ namespace Ago.Chat.Api.Auth;
 public sealed class JwtTokenService(SigningCredentials signingCredentials, string issuer, IClock clock)
 {
     /// <summary>
-    /// `17-06`/`adr/0034`: thirty days, and now for a stated reason rather than because nobody
-    /// revisited the first number written here. Three things fix it. It is the product promise - the
-    /// widget's own <c>getOrCreateVisitorSession</c> reuses a stored token rather than minting a new
-    /// identity per page view, so this constant *is* "how long a returning visitor still sees their
-    /// own conversation" and nothing else expresses that. Nothing shorter buys security while that
-    /// same function has no renewal path: it neither inspects `exp` nor re-mints, so a shorter number
-    /// does not narrow an attacker's window so much as break returning visitors sooner. And the
-    /// exposure this bounds is narrow by construction - the minting endpoint
-    /// (<c>POST /api/v1/visitor-sessions</c>) is public and unauthenticated, so anyone who can read
-    /// this token from a page can also mint their own; what the lifetime actually protects is one
-    /// visitor's own transcript on a shared or lost device.
+    /// `17-08`/`adr/0048`: **seven days, sliding, with no absolute cap.** It was thirty until this
+    /// item, and the reason it could not simply be lowered is worth keeping rather than deleting,
+    /// because it is the reason this number was allowed to move at all.
     ///
-    /// The number drops to seven days the moment silent renewal exists - which is a widget change,
-    /// not a change here, and is why `adr/0034` records the dependency instead of shortening this
-    /// constant on its own. `17-03` inherits the same number as its key-rotation drain window.
+    /// `adr/0034` found that this constant was not really a security parameter: the widget stored the
+    /// first token it was ever given and reused it forever - it inspected no `exp` and never
+    /// re-minted - so the value *was* "how long a returning visitor still sees their own
+    /// conversation" and nothing else expressed that. Lowering it then would have moved the day the
+    /// widget silently stops working from day 31 to day 8 while buying nothing, because the minting
+    /// endpoint (<c>POST /api/v1/visitor-sessions</c>) is public and unauthenticated: anyone
+    /// positioned to read this token off a page can mint their own for the same site. What the
+    /// lifetime genuinely bounds is one visitor's own transcript staying reachable from a shared or
+    /// lost device, and how long a token outlives the key that signed it (`17-03`).
+    ///
+    /// `17-07` (the widget) and `17-08` (this endpoint's other half,
+    /// <c>POST /api/v1/visitor-sessions/renew</c>) are what separated those two facts. Renewal
+    /// issues a full fresh lifetime each time, so an active visitor never expires and the number
+    /// stops being the product promise. **No absolute cap**, and `adr/0048` records the trigger that
+    /// would add one: the first time a visitor can re-identify themselves without holding the
+    /// original token. `17-03`'s key-rotation drain window is derived from this value - seven days
+    /// now, not thirty.
     /// </summary>
-    public static readonly TimeSpan VisitorTokenLifetime = TimeSpan.FromDays(30);
+    public static readonly TimeSpan VisitorTokenLifetime = TimeSpan.FromDays(7);
 
     /// <summary>The Operator scheme's own counterpart, `IssueOperatorToken`, was deleted in `5-05` -
     /// `adr/0022` replaces it outright with real OIDC (Keycloak issues operator tokens now), never
