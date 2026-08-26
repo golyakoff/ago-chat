@@ -40,8 +40,29 @@ public static class MigratorRunner
     public const int Failure = 1;
 
     public static async Task<int> RunAsync(
-        string connectionString, MigratorMode mode, TextWriter output, CancellationToken cancellationToken)
+        string connectionString,
+        MigratorMode mode,
+        TextWriter output,
+        CancellationToken cancellationToken,
+        DatabaseAvailabilityOptions? wait = null)
     {
+        // `8-10`: the wait is here, in front of everything, and it is the *only* thing it wraps. The
+        // migration below is reached with a connection already proven to authenticate and answer, so a
+        // failure past this point is a migration failure and is reported and exited on immediately -
+        // never retried, never waited on. `adr/0056`'s no-retry property survives precisely because
+        // this returns before the DbContext is built.
+        var availability = await DatabaseAvailabilityWait.UntilReadyAsync(
+            token => DatabaseAvailabilityWait.ProbeAsync(connectionString, token),
+            wait ?? new DatabaseAvailabilityOptions(),
+            output,
+            cancellationToken);
+
+        if (availability.Outcome != DatabaseAvailability.Available)
+        {
+            await ReportUnavailableAsync(availability, connectionString, output);
+            return Failure;
+        }
+
         var options = new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(connectionString).Options;
         await using var db = new AgoChatDbContext(options);
 
@@ -68,6 +89,48 @@ public static class MigratorRunner
 
             return Failure;
         }
+    }
+
+    /// <summary>
+    /// `8-10`: the two failures that are <b>not</b> migration failures, and they are worded so that the
+    /// first token of the first line tells them apart in <c>kubectl logs</c>.
+    ///
+    /// <para>The item's whole premise is that "gave up waiting for Postgres" and "the migration threw"
+    /// need different reactions - one is an infrastructure problem, the other is a code problem - and
+    /// that before this change both read as <c>MIGRATION FAILED</c>. Every line below therefore says
+    /// explicitly that no migration was attempted, because the operator's first question on a
+    /// <c>Failed</c> Job is whether the database was left half-changed.</para>
+    /// </summary>
+    private static async Task ReportUnavailableAsync(
+        DatabaseAvailabilityResult availability, string connectionString, TextWriter output)
+    {
+        var target = DatabaseAvailabilityWait.DescribeTarget(connectionString);
+        var last = availability.LastFailure is null
+            ? "(no error recorded)"
+            : DatabaseAvailabilityWait.Describe(availability.LastFailure);
+
+        if (availability.Outcome == DatabaseAvailability.GaveUpWaiting)
+        {
+            await output.WriteLineAsync(
+                $"WAITING FOR DATABASE FAILED: gave up after {availability.Elapsed.TotalSeconds:F1}s and "
+                + $"{availability.Attempts} attempt(s) waiting for Postgres at {target} to accept "
+                + "connections.");
+            await output.WriteLineAsync($"  last attempt: {last}");
+            await output.WriteLineAsync(
+                "  No migration was attempted and the schema is unchanged. This is an infrastructure "
+                + "problem, not a migration problem: check that Postgres is running and reachable, then "
+                + "re-run this Job.");
+            return;
+        }
+
+        await output.WriteLineAsync(
+            $"CANNOT CONNECT TO DATABASE: Postgres at {target} rejected the connection with something "
+            + "waiting will not fix.");
+        await output.WriteLineAsync($"  {last}");
+        await output.WriteLineAsync(
+            "  No migration was attempted and the schema is unchanged. Reported immediately rather than "
+            + "waited on, because a wrong credential, a missing database or a missing grant does not "
+            + "become correct with time.");
     }
 
     private static async Task<int> ApplyAsync(

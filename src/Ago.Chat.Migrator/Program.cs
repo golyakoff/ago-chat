@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Migrator;
+﻿using Ago.Chat.Infrastructure.Postgres.Schema;
+using Ago.Chat.Migrator;
 
 // `8-08`/`adr/0056`: the deployable that applies migrations, and the only thing that does.
 //
@@ -32,6 +33,18 @@ if (unknown.Count > 0)
     return MigratorRunner.Failure;
 }
 
+// `8-10`: the one *optional* variable. adr/0056 records "reads exactly one environment variable" as a
+// property worth keeping, and this does not spend it: unset means the chosen 90s default, so the set
+// of variables the migrator *requires* is still exactly one. An unparseable value is refused rather
+// than silently defaulted - a manifest typo that quietly restored the default would be the same class
+// of drift `8-08` exists to prevent.
+if (!DatabaseAvailabilityOptions.TryReadFromEnvironment(
+        Environment.GetEnvironmentVariable, out var waitOptions, out var waitError))
+{
+    await Console.Error.WriteLineAsync(waitError);
+    return MigratorRunner.Failure;
+}
+
 // Ctrl-C / SIGTERM cancels the wait for a connection, not a migration already in flight - Postgres
 // runs the DDL transactionally, so an interrupted apply rolls its current migration back and the
 // history table stays truthful about what completed.
@@ -42,4 +55,4 @@ Console.CancelKeyPress += (_, e) =>
     lifetime.Cancel();
 };
 
-return await MigratorRunner.RunAsync(connectionString, mode, Console.Out, lifetime.Token);
+return await MigratorRunner.RunAsync(connectionString, mode, Console.Out, lifetime.Token, waitOptions);
