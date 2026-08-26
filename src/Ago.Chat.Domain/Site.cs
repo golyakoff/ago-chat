@@ -47,6 +47,35 @@ public sealed class Site
     /// own clock (`CLAUDE.md` rule 11).</para></summary>
     public DateTimeOffset? CreatedAt { get; }
 
+    /// <summary>
+    /// `8-07`: when this tenant self-destructs, or <see langword="null"/> for an ordinary tenant.
+    /// Non-null is the single fact that makes a site a demo tenant - there is deliberately no separate
+    /// `is_demo` boolean, because two columns that must agree are two columns that can disagree, and
+    /// the expiry is the one the sweeper actually reads.
+    ///
+    /// <para><b>Why this is on `Site` rather than an `Account` above it.</b> `10-02` rejected an
+    /// `Account` aggregate above `Site` deliberately, and nothing here re-opens that: a demo tenant is
+    /// an ordinary tenant with a death date, produced by the same bootstrap transaction as a real one
+    /// (`RegisterSiteHandler`/`ISiteRegistrationRepository`). Everything downstream - conversations,
+    /// operators, RBAC, the widget - treats it as the tenant it is, which is exactly what makes the
+    /// demo a real demonstration rather than a special case that proves nothing.</para>
+    ///
+    /// <para>Optional at construction, the same precedent <see cref="Name"/> and
+    /// <see cref="CreatedAt"/> already set for a column added to a type with many existing call
+    /// sites.</para>
+    /// </summary>
+    public DateTimeOffset? DemoExpiresAt { get; }
+
+    /// <summary>A tenant that will be deleted, with everything under it, when its window passes
+    /// (`8-07`, `adr/0058`). Never a real customer - `12-03`'s owner view and
+    /// `create-demo-tenant.sh`'s seeded `8-05` tenants are both expected to distinguish the two.</summary>
+    public bool IsDemo => DemoExpiresAt is not null;
+
+    /// <summary>Whether this demo tenant's window has passed - the predicate the expiry sweeper acts
+    /// on, expressed here rather than as a `WHERE` clause alone so a test can state it without a
+    /// database. An ordinary tenant is never expired, whatever the time is.</summary>
+    public bool HasExpired(DateTimeOffset now) => DemoExpiresAt is { } expiry && now >= expiry;
+
     private readonly List<string> _allowedOrigins = [];
 
     public IReadOnlyList<string> AllowedOrigins => _allowedOrigins;
@@ -71,7 +100,8 @@ public sealed class Site
         string publicKey,
         IReadOnlyList<string> allowedOrigins,
         string name = "",
-        DateTimeOffset? createdAt = null)
+        DateTimeOffset? createdAt = null,
+        DateTimeOffset? demoExpiresAt = null)
     {
         if (string.IsNullOrWhiteSpace(publicKey))
         {
@@ -82,6 +112,7 @@ public sealed class Site
         PublicKey = publicKey;
         Name = name;
         CreatedAt = createdAt;
+        DemoExpiresAt = demoExpiresAt;
         _allowedOrigins = [.. allowedOrigins];
         // WidgetConfig.Default's own values (null color, BottomRight) - a freshly created Site never
         // renders broken just because nobody has configured a widget appearance yet.

@@ -43,6 +43,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISiteRepository, SiteRepository>();
         // `10-02`
         services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
+        // `8-07`: the demo tenant lifecycle. Scoped like every other repository here; the credential
+        // generator is a singleton because it holds no state and its only dependency is the platform's
+        // own CSPRNG (the same shape WebhookSecretGenerator is registered with).
+        services.AddScoped<IDemoTenantRepository, DemoTenantRepository>();
+        services.AddSingleton<IDemoCredentialGenerator, DemoCredentialGenerator>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         // `12-02`: the cross-tenant operations read (IPlatformOverviewReadStore's own remarks on why
         // it is the only one and why it is safe).

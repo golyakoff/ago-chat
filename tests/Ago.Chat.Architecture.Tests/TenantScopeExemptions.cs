@@ -67,6 +67,17 @@ internal static class TenantScopeExemptions
             "Takes a SiteId but is never reachable with a caller-supplied one: its only callers "
             + "(HubOriginValidator, on both hubs) pass the site from the connection's own validated token claim, "
             + "and no route maps it. Returns the identical public config its by-public-key twin serves.",
+        ["Ago.Chat.Application.UseCases.MintDemoTenant.MintDemoTenantHandler.HandleAsync"] =
+            "`8-07`/`adr/0058`. Creates the tenant, so there is no site to be scoped to yet - the same category "
+            + "as RegisterSiteHandler below, and reusing that handler's own bootstrap transaction. The "
+            + "difference is that this one is reachable with no principal at all, deliberately: Done-when #1 is "
+            + "that a stranger gets credentials without anybody intervening, and any gate defeats it. What "
+            + "replaces authentication is two guards authentication would not have provided anyway - a per-IP "
+            + "rate limit and a total cap on live demo tenants, both enforced in the handler and both with "
+            + "tests. Nothing it creates can reach another tenant's data: it only ever writes a brand-new "
+            + "Site/Operator/roles package, never reads or touches an existing site, and the whole package is "
+            + "deleted within a day. Off unless DemoTenant:Enabled says otherwise, so a deployment that has "
+            + "not opted in has no such endpoint at all.",
         ["Ago.Chat.Application.UseCases.RegisterSite.RegisterSiteHandler.HandleAsync"] =
             "Creates the tenant, so there is no site to be scoped to yet. Gated instead by `10-01`'s "
             + "RequireKeycloakIdentity policy plus one-registration-per-Keycloak-subject, enforced by a unique "

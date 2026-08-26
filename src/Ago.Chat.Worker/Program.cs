@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
+using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Module;
@@ -105,6 +106,18 @@ builder.Services
     .Bind(builder.Configuration.GetSection(AttachmentThumbnailConsumerOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddHostedService<AttachmentThumbnailConsumer>();
+
+// `8-07`/`adr/0058`: the demo tenant expiry sweep - the narrow erasure this item builds because
+// `16-02` is scoped and unbuilt. Needs the same Keycloak admin credential Ago.Chat.Api holds, because
+// removing a demo tenant means removing its identity-provider user too; see that host's own remarks on
+// why neither registration lives in ChatModule.
+builder.Services.AddKeycloakDemoIdentities(builder.Configuration);
+builder.Services
+    .AddOptions<DemoTenantExpiryJobOptions>()
+    .Bind(builder.Configuration.GetSection(DemoTenantExpiryJobOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddHostedService<DemoTenantExpiryJob>();
 
 builder.Services
     .AddOptions<AttachmentOrphanSweepJobOptions>()

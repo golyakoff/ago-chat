@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <UserSecretsId>dotnet-Ago.Chat.Worker-9c664a27-772e-421d-b7d6-e083b912978b</UserSecretsId>
@@ -6,6 +6,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+    <!-- `8-07`: this host mints (Api) or expires (Worker) demo tenants, so it talks to Keycloak.
+         Ago.Chat.Webhooks deliberately does not reference this and is never handed the credential. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Keycloak\Ago.Chat.Infrastructure.Keycloak.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -28,6 +28,15 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // database's clock instead of `IClock`'s (`CLAUDE.md` rule 11).
         builder.Property(s => s.CreatedAt).HasColumnName("created_at");
 
+        // `8-07`: null for every ordinary tenant and for the seeded `8-05` demo sites, which are not
+        // created on demand and must not expire. The partial index lives in the migration rather than
+        // here - EF can express `HasFilter`, but the filter string would then be duplicated between the
+        // model and the SQL, and only one of the two is what Postgres actually runs.
+        builder.Property(s => s.DemoExpiresAt).HasColumnName("demo_expires_at");
+        builder.HasIndex(s => s.DemoExpiresAt)
+            .HasDatabaseName("ix_sites_demo_expiry")
+            .HasFilter("demo_expires_at is not null");
+
         // AllowedOrigins is a computed property (IReadOnlyList<string>) over a private List<string>
         // field - Site never exposes a settable collection, so EF is pointed at the field directly.
         builder.Property<List<string>>("_allowedOrigins").HasColumnName("allowed_origins");

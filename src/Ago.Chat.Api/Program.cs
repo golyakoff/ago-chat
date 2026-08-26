@@ -3,6 +3,10 @@ using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
+using Ago.Chat.Api.Demo;
+using Ago.Chat.Application.UseCases.MintDemoTenant;
+using Ago.Chat.Infrastructure.Keycloak;
+using Microsoft.Extensions.Options;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.Owner;
@@ -55,6 +59,25 @@ builder.Services.AddSignalR(options =>
 });
 
 new ChatModule().ConfigureServices(builder.Services, builder.Configuration);
+
+// `8-07`/`adr/0058`: the demo-credential minting path, wired here rather than in ChatModule -
+// deliberately, and the reason is the credential. ChatModule runs in every host, so registering the
+// Keycloak admin client there would make its client secret a required setting for Ago.Chat.Webhooks
+// too, which has no business holding one. Ago.Chat.Api mints and Ago.Chat.Worker expires; nothing else
+// is handed the secret at all.
+builder.Services
+    .AddOptions<DemoTenantOptions>()
+    .Bind(builder.Configuration.GetSection(DemoTenantOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<DemoTenantOptions>>().Value);
+builder.Services
+    .AddOptions<DemoTenantRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(DemoTenantRateLimitOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<DemoTenantRateLimitOptions>>().Value);
+builder.Services.AddKeycloakDemoIdentities(builder.Configuration);
+builder.Services.AddScoped<MintDemoTenantHandler>();
 
 // 5-01: edge.md/api-design.md - CORS is per-site, driven by Site.AllowedOrigins from the database,
 // never a wildcard, never an ingress annotation. AddCors() wires the framework's CORS services;
@@ -255,6 +278,10 @@ app.MapOperatorsEndpoints();
 app.MapWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
 app.MapSitesEndpoints();
+// `8-07`: the anonymous demo-credential route. Registered unconditionally; the handler refuses when
+// DemoTenant:Enabled is false, so a deployment that has not opted in answers a clear
+// "not enabled here" rather than a 404 that reads like a bug (MintDemoTenantHandler's own remarks).
+app.MapDemoEndpoints();
 // `12-02`: the platform owner's cross-tenant read - the only route here not scoped to one site,
 // and the only one carrying `12-01`'s RequirePlatformOwner policy (OwnerSitesEndpoints' remarks).
 app.MapOwnerEndpoints();
