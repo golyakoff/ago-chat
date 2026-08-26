@@ -120,16 +120,48 @@ public sealed class VisitorHub(
     // measurement to; JoinAsync/GetHistoryAsync are plain request/response calls ASP.NET Core-style
     // RED does not reach either (no HTTP request of their own), but adding a boundary to them purely
     // for this item was judged out of this item's own literal scope - see the handback report.
-    // `14-06`: three optional parameters appended last, after clientMessageId. Position matters for a
-    // hub method in a way it does not for a DTO (this file's own `5-07` note): a client built before
-    // this shipped calls SendMessageAsync with four arguments or fewer and keeps working, because
-    // SignalR binds hub arguments positionally and fills the rest with their defaults. `content` is a
-    // string here rather than a JsonElement - it is what the caller typed, unvalidated, and turning
-    // it into a validated value object is the handler's job (StructuredContentBinder), so that a
-    // malformed one is a rejection and not a 500.
-    public async Task<int> SendMessageAsync(
-        Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null,
-        string? contentKind = null, string? content = null, IReadOnlyList<MessageActionInput>? actions = null)
+    // `14-06`, corrected by `5-19`: structured content does NOT ride on this method. It was appended
+    // here as three optional parameters, on the claim that "SignalR binds hub arguments positionally
+    // and fills the rest with their defaults" - it does not, and every deployed client's send failed
+    // at once. See SendStructuredMessageAsync below, and HubMethodArityTests for the rule and its
+    // proof.
+    public Task<int> SendMessageAsync(
+        Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null) =>
+        SendAsync(conversationId, body, attachmentId, clientMessageId, null, null, null);
+
+    /// <summary>
+    /// `5-19`: `14-06`'s structured content, on a method of its own.
+    ///
+    /// <para><b>A second method, not three more parameters.</b> A hub method's parameter list is part
+    /// of a contract with clients that are already embedded on other people's sites and cannot be
+    /// forced to upgrade - SignalR refuses an invocation that supplies fewer arguments than the target
+    /// declares, so growing the list breaks every one of them at once, silently, with no server-side
+    /// log at all. That is the same reasoning `adr/0048` used for token renewal ("a second endpoint,
+    /// not a flag on the mint") and the same one `8-11` used to keep `data-public-demo` working as an
+    /// alias. `api-design.md` states it about routes; a hub method is the same promise in a different
+    /// shape.</para>
+    ///
+    /// <para>Nothing calls this yet - `14-06` shipped the envelope and `20-06`/`21-01` fill it. A new
+    /// method with no caller is the honest cost of not breaking the old one; the alternative was a
+    /// working new capability and a dead product.</para>
+    ///
+    /// <para><c>content</c> is a string rather than a <c>JsonElement</c> - it is what the caller
+    /// typed, unvalidated, and turning it into a validated value object is the handler's job
+    /// (<c>StructuredContentBinder</c>), so that a malformed one is a rejection and not a 500.</para>
+    /// </summary>
+    public Task<int> SendStructuredMessageAsync(
+        Guid conversationId, string body, Guid? attachmentId, Guid? clientMessageId,
+        string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions) =>
+        SendAsync(conversationId, body, attachmentId, clientMessageId, contentKind, content, actions);
+
+    /// <summary>
+    /// The one implementation both hub methods above delegate to. Private, so it is not itself a hub
+    /// method and its parameter list is nobody's contract - which is the point: the arity rule binds
+    /// what SignalR can invoke, and this is free to grow when `21-01` needs it to.
+    /// </summary>
+    private async Task<int> SendAsync(
+        Guid conversationId, string body, Guid? attachmentId, Guid? clientMessageId,
+        string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions)
     {
         using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
         var stopwatch = Stopwatch.StartNew();
@@ -156,6 +188,9 @@ public sealed class VisitorHub(
         }
         finally
         {
+            // Both hub methods report under one name: they are one operation reached two ways, and
+            // splitting the RED series would make a dashboard that already exists lose half its
+            // traffic the day a client starts using the new method.
             ChatMetrics.RecordHubMethod("VisitorHub", "SendMessage", stopwatch.Elapsed, success);
         }
     }

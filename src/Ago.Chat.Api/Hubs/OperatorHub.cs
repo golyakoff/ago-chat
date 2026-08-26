@@ -136,16 +136,42 @@ public sealed class OperatorHub(
     // have silently reinterpreted an existing 3-argument call's attachmentId as a clientMessageId.
     // `7-01`: same trace-root shape as VisitorHub.SendMessageAsync - see its own remarks.
     // `7-02`: same placement decision as VisitorHub.SendMessageAsync - see its own remarks.
-    // `14-06`: three optional parameters appended last, after clientMessageId. Position matters for a
-    // hub method in a way it does not for a DTO (this file's own `5-07` note): a client built before
-    // this shipped calls SendMessageAsync with four arguments or fewer and keeps working, because
-    // SignalR binds hub arguments positionally and fills the rest with their defaults. `content` is a
-    // string here rather than a JsonElement - it is what the caller typed, unvalidated, and turning
-    // it into a validated value object is the handler's job (StructuredContentBinder), so that a
-    // malformed one is a rejection and not a 500.
-    public async Task<int> SendMessageAsync(
-        Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null,
-        string? contentKind = null, string? content = null, IReadOnlyList<MessageActionInput>? actions = null)
+    // `14-06`, corrected by `5-19`: structured content does NOT ride on this method. It was appended
+    // here as three optional parameters, on the claim that "SignalR binds hub arguments positionally
+    // and fills the rest with their defaults" - it does not, and every deployed client's send failed
+    // at once. See SendStructuredMessageAsync below, and HubMethodArityTests for the rule and its
+    // proof.
+    //
+    // Note what the `5-07` comment above already says, and what `14-06` read past: this method's
+    // parameter order is matched "by argument count against this exact parameter order". `5-07`
+    // reasoned correctly about *inserting* a parameter and did not have to reason about *appending*
+    // one, because appending was safe for the caller it had in mind - a caller that passes MORE
+    // arguments than it used to. The case that breaks is the opposite one, and it is the only case
+    // that matters for a client somebody else is hosting.
+    public Task<int> SendMessageAsync(
+        Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null) =>
+        SendAsync(conversationId, body, attachmentId, clientMessageId, null, null, null);
+
+    /// <summary>
+    /// `5-19`: `14-06`'s structured content, on a method of its own - see
+    /// <c>VisitorHub.SendStructuredMessageAsync</c> for the reasoning, which is identical and is not
+    /// restated here.
+    ///
+    /// <para>The operator side gets it too even though `20-06`'s console is the likelier first
+    /// caller: the two hubs have been kept as mirror images since `5-07`, and a capability present on
+    /// one and absent on the other is the sort of asymmetry that gets discovered by somebody trying
+    /// to use it.</para>
+    /// </summary>
+    public Task<int> SendStructuredMessageAsync(
+        Guid conversationId, string body, Guid? attachmentId, Guid? clientMessageId,
+        string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions) =>
+        SendAsync(conversationId, body, attachmentId, clientMessageId, contentKind, content, actions);
+
+    /// <summary>Private, so it is not a hub method and its parameter list is nobody's contract - the
+    /// arity rule binds what SignalR can invoke, and this is free to grow.</summary>
+    private async Task<int> SendAsync(
+        Guid conversationId, string body, Guid? attachmentId, Guid? clientMessageId,
+        string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions)
     {
         using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
         var stopwatch = Stopwatch.StartNew();
