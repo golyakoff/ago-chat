@@ -107,18 +107,40 @@ public sealed class FakeCrmPersonalityTests(FakeCrmProcessFixture fixture)
     {
         // Same personality, proven again through a real HttpClient rather than a raw TcpClient - the
         // point the backlog itself makes: this must surface as a transport failure on the caller's
-        // side, not a fast HTTP error with a status code. HttpClient wraps the reset one layer deeper
-        // than the raw-socket test sees (HttpRequestException -> IOException -> SocketException) -
-        // walk the chain rather than assert on InnerException directly, the same "found live, not
-        // assumed from docs" reasoning DisappearedConnectionListener's own remarks explain.
+        // side, not a fast HTTP error with a status code. That claim is what is asserted here, and
+        // deliberately nothing narrower.
+        //
+        // It used to pin `HttpRequestException` and `SocketError.ConnectionReset` exactly, and that
+        // was wrong in a way only CI eventually showed (2026-08-26, run 32951412968, on a PR that
+        // touched nothing near this code). When the reset lands fast enough, `HttpClient` throws a
+        // *bare* `SocketException` with `NotConnected` instead:
+        //
+        //     HttpConnectionPool.ConnectAsync -> GetRemoteEndPoint(stream) -> Socket.RemoteEndPoint
+        //
+        // the TCP connect succeeds, the listener resets immediately, and the pool's own call to
+        // `RemoteEndPoint` finds a torn-down socket - outside the frame that would have wrapped it as
+        // `HttpRequestException`. So both the exception type and the error code depend on how many
+        // microseconds the reset took, which is not a fact about the harness's behaviour and is not
+        // what this test is for. The raw-socket test above already made the same allowance for the
+        // same reason; this one had not caught up.
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         var uri = new Uri($"http://127.0.0.1:{fixture.DisappearPort}/webhooks/deliver");
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => client.PostAsync(uri, new ByteArrayContent(Body)));
+        var exception = await Record.ExceptionAsync(() => client.PostAsync(uri, new ByteArrayContent(Body)));
 
+        // It failed at all, rather than returning any HttpResponseMessage - the half that matters.
+        Assert.NotNull(exception);
+
+        // And it failed at the transport, not with HTTP semantics: a SocketException is somewhere in
+        // the chain, whether HttpClient wrapped it or let it through.
         var socketException = FindInChain<SocketException>(exception);
         Assert.NotNull(socketException);
-        Assert.Equal(SocketError.ConnectionReset, socketException!.SocketErrorCode);
+        Assert.Contains(socketException!.SocketErrorCode, new[]
+        {
+            SocketError.ConnectionReset,   // the usual observation, and what Windows reports
+            SocketError.ConnectionAborted,
+            SocketError.NotConnected,      // the CI failure above: torn down before the pool looked
+        });
     }
 
     private static T? FindInChain<T>(Exception? exception) where T : Exception
