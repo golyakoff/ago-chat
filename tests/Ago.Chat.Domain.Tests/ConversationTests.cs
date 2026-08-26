@@ -617,6 +617,29 @@ public class ConversationTests
         Assert.Equal(1, conversation.VisitorUnreadCount);
     }
 
+    /// <summary>
+    /// `14-01`: CLAUDE.md rules 6 and 11 - "ordering never depends on a clock" - stated as a test
+    /// rather than as a comment, because Stage 14 is the first time an *externally supplied* time
+    /// gets anywhere near this system. Every channel provider stamps its deliveries, and a plausible
+    /// mistake in `14-02`/`14-03` is to sort or backdate by that stamp. Here the second message is
+    /// added with a timestamp an hour *earlier* than the first: the sequence still increments in call
+    /// order, because <c>LastSequence</c> is what orders a conversation and <c>now</c> only ever
+    /// records when a row was written.
+    /// </summary>
+    [Fact]
+    public void Sequence_IncrementsInCallOrder_EvenWhenTheSuppliedTimeGoesBackwards()
+    {
+        var conversation = StartConversation();
+
+        var first = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("first"), Now);
+        var second = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("second"), Now.AddHours(-1));
+
+        Assert.Equal([1, 2], new[] { first.Sequence, second.Sequence });
+        Assert.True(second.CreatedAt < first.CreatedAt);
+    }
+
     [Fact]
     public void ClearDomainEvents_RemovesEverythingRaisedSoFar()
     {

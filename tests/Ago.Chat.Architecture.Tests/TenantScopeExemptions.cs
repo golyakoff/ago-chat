@@ -90,6 +90,16 @@ internal static class TenantScopeExemptions
             "Consumer side. Fan-out to the conversation's own participants, resolved from the conversation row; "
             + "it acts on behalf of nobody, so routing it through an authorized read path would be a layering "
             + "fiction rather than a check (this handler's own remarks say so).",
+        ["Ago.Chat.Application.UseCases.ReceiveChannelMessage.ReceiveChannelMessageHandler.HandleAsync"] =
+            "`14-01`, adapter side (AGO Inbox). Carries a SiteId that no external caller can influence: a channel "
+            + "provider's payload has no way to name a site, so the concrete adapter resolves it from the "
+            + "credentials the message arrived on - the site that owns the MAX bot token, or rents the SMS long "
+            + "number - before constructing the command. That makes it the same category as the consumer-side "
+            + "entries above: the tenant is a fact established by our own configuration, not a claim to verify. "
+            + "There is also no principal to check a permission for - an SMS sender is outside the RBAC model "
+            + "exactly as a visitor is (adr/0016) - and what replaces it is stronger than a site check: every "
+            + "write goes to the Visitor that this site's own ChannelIdentity row resolves to, so a message can "
+            + "only ever land in a conversation belonging to the site whose credentials received it.",
         ["Ago.Chat.Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler.HandleAsync"] =
             "The claims transformation's own lookup - it is what *produces* the OperatorId/SiteId claims every "
             + "gated handler then trusts, so it cannot itself depend on them. Keyed by the `sub` of an "

@@ -13,6 +13,7 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<WebhookEndpoint> WebhookEndpoints => Set<WebhookEndpoint>();
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
+    public DbSet<ChannelIdentity> ChannelIdentities => Set<ChannelIdentity>();
     internal DbSet<RoleRecord> Roles => Set<RoleRecord>();
     internal DbSet<OperatorRoleRecord> OperatorRoles => Set<OperatorRoleRecord>();
 
