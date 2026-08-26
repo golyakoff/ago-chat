@@ -36,6 +36,15 @@ public static class ConversationErrors
     public static Error InvalidBody(string reason) =>
         new("Message.InvalidBody", reason);
 
+    /// <summary>`14-06`: a structured payload that is malformed, oversized, or offers more actions
+    /// than a text channel could present. Its own code rather than <see cref="InvalidBody"/>'s
+    /// because a client that can retry with shorter prose cannot retry with shorter prose here - the
+    /// two failures have different remedies, which is the only reason a second code earns its
+    /// place. <b>Never a failure about what the payload means</b>: AGO Chat owns no schema for
+    /// it.</summary>
+    public static Error InvalidContent(string reason) =>
+        new("Message.InvalidContent", reason);
+
     // The retry-after rides in the message text, not a structured field - Error only ever carries
     // Code+Message (Ago.Platform.Kernel), and every caller of this handler already just forwards
     // Error.Message verbatim (VisitorHub's HubException, matching every other failure here).

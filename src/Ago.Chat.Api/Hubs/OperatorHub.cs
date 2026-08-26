@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Module;
@@ -126,7 +127,16 @@ public sealed class OperatorHub(
     // have silently reinterpreted an existing 3-argument call's attachmentId as a clientMessageId.
     // `7-01`: same trace-root shape as VisitorHub.SendMessageAsync - see its own remarks.
     // `7-02`: same placement decision as VisitorHub.SendMessageAsync - see its own remarks.
-    public async Task<int> SendMessageAsync(Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null)
+    // `14-06`: three optional parameters appended last, after clientMessageId. Position matters for a
+    // hub method in a way it does not for a DTO (this file's own `5-07` note): a client built before
+    // this shipped calls SendMessageAsync with four arguments or fewer and keeps working, because
+    // SignalR binds hub arguments positionally and fills the rest with their defaults. `content` is a
+    // string here rather than a JsonElement - it is what the caller typed, unvalidated, and turning
+    // it into a validated value object is the handler's job (StructuredContentBinder), so that a
+    // malformed one is a rejection and not a 500.
+    public async Task<int> SendMessageAsync(
+        Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null,
+        string? contentKind = null, string? content = null, IReadOnlyList<MessageActionInput>? actions = null)
     {
         using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
         var stopwatch = Stopwatch.StartNew();
@@ -140,7 +150,8 @@ public sealed class OperatorHub(
 
             var sent = await sendMessage.HandleAsync(
                 new SendOperatorMessage(
-                    id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId, activity?.Id),
+                    id, operatorId, siteId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId,
+                    activity?.Id, contentKind, content, actions),
                 Context.ConnectionAborted);
             if (sent.IsFailure)
             {
@@ -200,10 +211,12 @@ public sealed class OperatorHub(
         return presence.Value;
     }
 
+    // `14-06`: the mapping moved to Ago.Chat.Application.Mapping.MessageDtoMapper - it existed
+    // identically here, in OperatorHub and in ResolveMessageDeliveryTargetsHandler, and a message a
+    // client sees must not depend on which of the three delivered it (`5-11`'s own failure mode).
     private static MessageDto ToDto(Application.Abstractions.MessageHistoryItem item, ConversationId conversationId) =>
-        new(item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt,
-            item.AttachmentId?.Value, item.ClientMessageId, conversationId.Value);
+        MessageDtoMapper.ToDto(item, conversationId);
 
     private static IReadOnlyList<MessageDto> ToDtos(IReadOnlyList<Application.Abstractions.MessageHistoryItem> items, ConversationId conversationId) =>
-        [.. items.Select(item => ToDto(item, conversationId))];
+        MessageDtoMapper.ToDtos(items, conversationId);
 }

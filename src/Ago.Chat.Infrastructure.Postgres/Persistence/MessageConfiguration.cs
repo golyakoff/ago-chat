@@ -35,6 +35,23 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.ClientMessageId).HasColumnName("client_message_id");
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
 
+        // `14-06`: the structured half, three nullable columns over Message's three private backing
+        // fields - the same "computed property, EF pointed at the fields by name" shape
+        // SiteConfiguration already uses for Site.WidgetConfig. The storage reasoning (text over
+        // jsonb; three columns over one; why the actions column is the only one AGO Chat reads) is
+        // in MessageContentConverters.
+        builder.Property<MessageContentKind?>("_contentKind")
+            .HasColumnName("content_kind")
+            .HasMaxLength(MessageContentKind.MaxLength)
+            .HasConversion(MessageContentConverters.Kind);
+        builder.Property<MessagePayload?>("_payload")
+            .HasColumnName("content")
+            .HasConversion(MessageContentConverters.Payload);
+        builder.Property<List<MessageAction>?>("_actions")
+            .HasColumnName("actions")
+            .HasConversion(MessageContentConverters.Actions, MessageContentConverters.ActionsComparer);
+        builder.Ignore(m => m.Content);
+
         // data-model.md: turns duplicate delivery into a no-op insert at the storage level. Widened
         // to include created_at in 2-06 for the same partitioning reason as the PK above - a real,
         // documented weakening (adr/0019): two racing inserts for the same (conversation_id,
