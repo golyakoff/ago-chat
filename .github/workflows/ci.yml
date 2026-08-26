@@ -97,12 +97,12 @@ jobs:
       # already uses on a developer machine and on the node, so an image built by CI and one built by
       # hand come out of the same command. --build-context is the reason BuildKit is required at all
       # (the Ago.Platform.* feed is a folder outside the build context, per the Dockerfile's header).
-      - name: Build and push the three host images
+      - name: Build and push the four host images
         env:
           DOCKER_BUILDKIT: "1"
         run: |
           set -euo pipefail
-          for project in Ago.Chat.Api Ago.Chat.Worker Ago.Chat.Webhooks; do
+          for project in Ago.Chat.Api Ago.Chat.Worker Ago.Chat.Webhooks Ago.Chat.Migrator; do
             name="ago-chat-$(echo "${project#Ago.Chat.}" | tr '[:upper:]' '[:lower:]')"
             repo="ghcr.io/${{ github.repository_owner }}/${name}"
             echo "::group::${repo}"

@@ -30,6 +30,7 @@ using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
@@ -63,6 +64,15 @@ public sealed class ChatModule : IProductModule
             ?? throw new InvalidOperationException(
                 "Set AGO_CHAT_CONNECTION_STRING - e.g. the docker-compose Postgres from local-dev.md.");
         services.AddPostgresPersistence(connectionString);
+        // `8-08`: bound here, with every other options group in this product - AddPostgresPersistence
+        // takes a connection string rather than an IConfiguration. Registered for every host because
+        // every serving host runs the guard (adr/0056); Ago.Chat.Migrator does not use ChatModule at
+        // all, and does not need this - it is the thing the guard waits for.
+        services
+            .AddOptions<SchemaGuardOptions>()
+            .Bind(configuration.GetSection(SchemaGuardOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         services.AddPlatformKernel();
         services.AddRabbitMqMessaging(configuration);
         // Registered for every host (matching AddRabbitMqMessaging's own shape). Ago.Chat.Api

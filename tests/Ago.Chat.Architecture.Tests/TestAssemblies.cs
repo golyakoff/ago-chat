@@ -22,6 +22,18 @@ internal static class TestAssemblies
     public static ProductAssembly InfrastructurePostgres { get; } = Load("Ago.Chat.Infrastructure.Postgres");
     public static ProductAssembly Module { get; } = Load("Ago.Chat.Module");
     public static ProductAssembly PlatformKernel { get; } = Load("Ago.Platform.Kernel");
+
+    // `8-08`: the deployables. Loaded lazily like everything else here, by simple name from this
+    // project's own output directory.
+    public static ProductAssembly Api { get; } = Load("Ago.Chat.Api");
+    public static ProductAssembly Worker { get; } = Load("Ago.Chat.Worker");
+    public static ProductAssembly Webhooks { get; } = Load("Ago.Chat.Webhooks");
+    public static ProductAssembly Migrator { get; } = Load("Ago.Chat.Migrator");
+
+    /// <summary>The three hosts that serve traffic - `adr/0013`'s split. `8-08`'s rule is precisely
+    /// that none of them may apply a schema migration; <see cref="Migrator"/> is deliberately not in
+    /// this list, because it is the one that may.</summary>
+    public static IReadOnlyList<ProductAssembly> ServingHosts { get; } = [Api, Worker, Webhooks];
     public static ProductAssembly PlatformHosting { get; } = Load("Ago.Platform.Hosting");
 
     /// <summary>Every product assembly the "time and identity only in Infrastructure" rule

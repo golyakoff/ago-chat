@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1
+﻿# syntax=docker/dockerfile:1
 #
-# One Dockerfile for all three hosts (Api, Worker, Webhooks) - they share the same dependency
+# One Dockerfile for all four hosts (Api, Worker, Webhooks, Migrator) - they share the same dependency
 # closure (Module -> Application, Infrastructure.Postgres -> Domain), so three near-identical
 # files would only be able to drift apart, not stay honestly in sync. Select the host with
 # --build-arg PROJECT_NAME=Ago.Chat.Api (see runbooks/local-dev.md for the exact commands).
@@ -25,6 +25,7 @@ COPY Directory.Build.props Directory.Packages.props nuget.docker.config ./
 COPY src/Ago.Chat.Api/Ago.Chat.Api.csproj src/Ago.Chat.Api/
 COPY src/Ago.Chat.Worker/Ago.Chat.Worker.csproj src/Ago.Chat.Worker/
 COPY src/Ago.Chat.Webhooks/Ago.Chat.Webhooks.csproj src/Ago.Chat.Webhooks/
+COPY src/Ago.Chat.Migrator/Ago.Chat.Migrator.csproj src/Ago.Chat.Migrator/
 COPY src/Ago.Chat.Module/Ago.Chat.Module.csproj src/Ago.Chat.Module/
 COPY src/Ago.Chat.Application/Ago.Chat.Application.csproj src/Ago.Chat.Application/
 COPY src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.csproj src/Ago.Chat.Infrastructure.Postgres/
@@ -65,6 +66,10 @@ RUN cp "/app/${PROJECT_NAME}.dll" /app/app.dll \
 # surface), glibc-based so it sidesteps Alpine's musl-compatibility risk for native dependencies
 # (Npgsql, StackExchange.Redis, RabbitMQ.Client). See docs/backlog/8-00-minimal-production-base-
 # image.md for the fuller reasoning and the verification this switch was checked against.
+# `8-08`: Ago.Chat.Migrator is a console app and would run on the smaller `runtime` base, saving a
+# few MB. It uses this one anyway: a second base behind a build-arg would fork the one property this
+# file's header argues for - that four images that share a dependency closure are built by one
+# command that cannot drift. EXPOSE below is inert for it, and harmless.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS final
 ARG PROJECT_NAME
 ARG GIT_COMMIT
