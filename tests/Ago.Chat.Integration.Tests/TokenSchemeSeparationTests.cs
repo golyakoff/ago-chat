@@ -46,8 +46,9 @@ public sealed class TokenSchemeSeparationTests(OperatorOidcFixture fixture)
 {
     private const string VisitorTokenIssuer = "ago-chat-api";
 
-    private readonly SigningCredentials _visitorSigningCredentials = new(
-        new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32)), SecurityAlgorithms.HmacSha256);
+    // `17-03`: JwtTokenService takes the key ring now. One active key, nothing retired - this file
+    // is about the two *schemes* being unsubstitutable, not about rotation.
+    private readonly VisitorSigningKeyRing _visitorSigningKeys = TestSigningKeys.Ring();
 
     [Fact]
     public async Task VisitorToken_IsRejectedWhereAnOperatorTokenIsRequired()
@@ -165,7 +166,7 @@ public sealed class TokenSchemeSeparationTests(OperatorOidcFixture fixture)
         // `IClaimsTransformation`) exposes its own obsolete `SystemClock`, so an unqualified name here
         // is ambiguous rather than wrong-and-obvious.
         var tokens = new JwtTokenService(
-            _visitorSigningCredentials, VisitorTokenIssuer, new Ago.Platform.Hosting.SystemClock());
+            _visitorSigningKeys, VisitorTokenIssuer, new Ago.Platform.Hosting.SystemClock());
         return (tokens.IssueVisitorToken(visitorId, fixture.SeededSiteId), visitorId);
     }
 
@@ -196,7 +197,7 @@ public sealed class TokenSchemeSeparationTests(OperatorOidcFixture fixture)
                                 ValidateAudience = true,
                                 ValidAudience = JwtSchemes.Visitor,
                                 ValidateIssuerSigningKey = true,
-                                IssuerSigningKey = _visitorSigningCredentials.Key,
+                                IssuerSigningKeyResolver = (_, _, _, _) => _visitorSigningKeys.ValidationKeys(),
                                 ValidateLifetime = true,
                             };
                         })

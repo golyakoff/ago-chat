@@ -117,11 +117,7 @@ public sealed class OriginAuthorizationTests(SiteCachingFixture fixture)
     private async Task<int> InvokeVisitorSessionAsync(string publicKey, string? origin)
     {
         var getSite = new GetSiteConfigByPublicKeyHandler(new SiteRepository(fixture.CreateDbContext()), CreateCache());
-        var tokens = new JwtTokenService(
-            new Microsoft.IdentityModel.Tokens.SigningCredentials(
-                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
-                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256),
-            "test-issuer", new SystemClock());
+        var tokens = new JwtTokenService(TestSigningKeys.Ring(), "test-issuer", new SystemClock());
         var rateLimiter = new AlwaysAllowRateLimiter();
         var rateLimitOptions = Options.Create(new VisitorSessionRateLimitOptions());
 
