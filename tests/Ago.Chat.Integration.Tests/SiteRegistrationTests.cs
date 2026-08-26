@@ -145,44 +145,12 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         Assert.Equal(1, operatorCount);
     }
 
-    /// <summary>
-    /// `12-04`: the half of that item that a client-side gate cannot cover. The console hides the
-    /// onboarding form from a platform-owner identity, but a bookmark, a back button or a second tab
-    /// all reach this endpoint directly - and what it commits (a `Site`, both roles, an `Operator`
-    /// row for the owner's `sub`, its role assignments) is a state change nothing in this product can
-    /// undo. `adr/0032` gives the platform owner no `operators` row deliberately; a successful call
-    /// here would give it one permanently.
-    ///
-    /// <para>This is the test the item asks to fail if the check is removed: it goes through the real
-    /// <c>SitesEndpoints.MapSitesEndpoints</c> mapping, so deleting
-    /// <c>.RequireAuthorization(AuthorizationPolicies.NotThePlatformOwner)</c> from that route (or
-    /// inverting <c>PlatformOwnerRealmRole.IsHeldBy</c>) turns the `403` into a `201` and the empty
-    /// row count into one. The `403` alone would not be enough evidence - a policy that refused for
-    /// some *other* reason would produce the same status - so the row count is asserted too, and
-    /// <see cref="RegisterSite_WithARealKeycloakToken_CreatesOneSiteBothRolesOneOperatorAndBothOperatorRoles"/>
-    /// above is what proves the same route still says `201` to the identity it is actually for.</para>
-    /// </summary>
-    [Fact]
-    public async Task RegisterSite_WithThePlatformOwnersToken_Is403AndWritesNothing()
-    {
-        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
-        var externalSubjectId = ReadSubjectClaim(token);
-
-        await using var host = await BuildTestHostAsync();
-        using var client = host.GetTestClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("The Platform Itself", "https://shop.example.com"));
-
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-
-        // Refused *before* the transaction, not rolled back after it - the platform owner's `sub`
-        // resolves to no operator, which is exactly the state `adr/0032` requires it to stay in.
-        await using var db = fixture.CreateDbContext();
-        Assert.Equal(0, await db.Operators.CountAsync(o => o.ExternalSubjectId == externalSubjectId));
-        Assert.Equal(0, await db.Sites.CountAsync(s => s.Name == "The Platform Itself"));
-    }
+    // `12-04` added a test here asserting this endpoint answered `403` to a platform-owner token, and
+    // `12-05` removed both the refusal and the test (`adr/0063`, "Reversed in 12-05"). The identity
+    // that holds both the `platform-owner` realm role and an `operators` row is not a variation on
+    // this file's subject - it is its own claim, about two endpoints at once - so it lives in
+    // `PlatformOwnerAsTenantTests` rather than as a fifth case here. This file keeps what it always
+    // was about: what `POST /api/v1/sites` does for an ordinary self-registering identity.
 
     private static string ReadSubjectClaim(string jwt) =>
         new JwtSecurityTokenHandler().ReadJwtToken(jwt).Subject;

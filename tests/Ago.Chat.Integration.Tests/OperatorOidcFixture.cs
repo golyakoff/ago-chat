@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Ago.Chat.Api.Auth;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -193,6 +194,42 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
             credentials = new[] { new { type = "password", value = FreshUserPassword, temporary = false } },
         });
 
+        return (await GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword), username);
+    }
+
+    /// <summary>`12-05`: a brand-new Keycloak user that *also* holds the `platform-owner` realm role -
+    /// the identity nobody on this deployment had ever been until now, and the only kind of identity
+    /// that can prove the two axes `adr/0063` calls orthogonal really are.
+    ///
+    /// <para><b>Why not <see cref="PlatformOwnerUsername"/>.</b> That user is fixed, shared by every
+    /// test in this collection, and documented above as one that never gets an `operators` row -
+    /// several tests assert exactly that (`SiteRegistrationTests`, `PlatformOwnerPolicyTests`,
+    /// <see cref="OwnerSitesEndpointTests"/>). `12-05`'s subject is an owner who *does* register a
+    /// tenant, which is a one-way state transition; doing it to the shared user would make the rest of
+    /// the collection order-dependent. Same reasoning, and the same shape, as
+    /// <see cref="CreateFreshUserAccessTokenAsync"/> - which this deliberately reuses rather than
+    /// re-implements, adding only the realm-role assignment.</para>
+    ///
+    /// <para>The role is granted over Keycloak's admin API rather than declared in the realm import,
+    /// because the user does not exist until this method runs. The realm role itself does come from
+    /// the import (`keycloak-realm-import.json`), so this grants the same role
+    /// <see cref="PlatformOwnerUsername"/> holds - not a second one that happens to share a name.</para>
+    /// </summary>
+    public async Task<(string AccessToken, string Username)> CreateFreshPlatformOwnerAccessTokenAsync()
+    {
+        var (_, username) = await CreateFreshUserAccessTokenAsync();
+
+        var adminToken = await GetAdminTokenAsync();
+        var role = await GetAdminApiAsync($"/admin/realms/{RealmName}/roles/{PlatformOwnerRequirement.RealmRoleName}");
+        var userId = await GetUserIdAsync(username);
+        await PostAdminApiAsync(
+            adminToken,
+            $"/admin/realms/{RealmName}/users/{userId}/role-mappings/realm",
+            new[] { new { id = role.GetProperty("id").GetString(), name = PlatformOwnerRequirement.RealmRoleName } });
+
+        // Minted *after* the grant, never before: `realm_access.roles` is written into the token at
+        // issue time, so a token taken from CreateFreshUserAccessTokenAsync above would not carry the
+        // role even though the user now holds it.
         return (await GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword), username);
     }
 
