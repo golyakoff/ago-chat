@@ -89,6 +89,16 @@ builder.Services.AddSingleton<ICorsPolicyProvider, SiteOriginCorsPolicyProvider>
 // 5-01, layer 2: scoped, like the GetSiteConfigByIdHandler it wraps - a hub connection's own DI
 // scope (one per connection) is what SignalR gives a Hub's constructor dependencies.
 builder.Services.AddScoped<HubOriginValidator>();
+// `5-18`: the operator hub's own origin check. Bound and validated at startup - an unset list means
+// no operator can connect, so a host without one refuses to boot rather than refusing every operator
+// silently (ConsoleOriginOptions' own remarks).
+builder.Services
+    .AddOptions<ConsoleOriginOptions>()
+    .Bind(builder.Configuration.GetSection(ConsoleOriginOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ConsoleOriginOptions>>().Value);
+builder.Services.AddSingleton<ConsoleOriginValidator>();
 
 // 3-01: Ago.Chat.Api is the only host holding SignalR connections, so it is the only one that
 // actually needs the heartbeat running - ChatModule registers the registry's DI surface for every

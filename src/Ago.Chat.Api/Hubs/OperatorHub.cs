@@ -32,7 +32,7 @@ public sealed class OperatorHub(
     GetConversationHistoryHandler getHistory,
     GetVisitorPresenceHandler getVisitorPresence,
     HubConnectionRegistration connectionRegistration,
-    HubOriginValidator originValidator,
+    ConsoleOriginValidator consoleOrigin,
     OperatorPresencePublisher presencePublisher,
     DrainState drainState) : Hub
 {
@@ -46,8 +46,17 @@ public sealed class OperatorHub(
             return;
         }
 
-        var siteId = Context.User!.GetSiteId();
-        if (!await originValidator.IsAllowedAsync(Context, siteId))
+        // `5-18`: the **console's** origin, not this tenant's widget origins.
+        //
+        // This used to call HubOriginValidator with the operator's own SiteId, which asks
+        // "may a page at this origin embed this tenant's widget" - a question about visitors that an
+        // operator's connection has no reason to satisfy. The live consequence was total: a tenant
+        // whose AllowedOrigins did not happen to contain the console (every tenant `8-07` mints, whose
+        // list is exactly the demo shop page) had every operator connection aborted here, immediately
+        // after a successful SignalR handshake. That produces a clean close, so nothing logged, nothing
+        // fell back to another transport, and nothing was ever registered in Redis - the connection
+        // simply ended and the console said "Offline".
+        if (!consoleOrigin.IsAllowed(Context))
         {
             Context.Abort();
             return;
