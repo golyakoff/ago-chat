@@ -36,6 +36,28 @@ public sealed class Message
 
     public DateTimeOffset CreatedAt { get; }
 
+    // `14-06`: three backing fields rather than one owned entity, mapped by name in
+    // MessageConfiguration (the shape Site.WidgetConfig already uses) - an EF owned type would bring
+    // nullable-owned-entity ceremony for a value that is absent on almost every row. Kept private so
+    // the only way to read them is Content below, which cannot hand back a half-populated value.
+    private MessageContentKind? _contentKind;
+    private MessagePayload? _payload;
+    private List<MessageAction>? _actions;
+
+    /// <summary>`14-06`: the structured half of this message - a kind, an opaque payload and a list
+    /// of actions - or <see langword="null"/> for the prose message that is still the overwhelming
+    /// majority. AGO Chat validates the payload's *shape* and never its meaning: it holds no schema
+    /// for it, which is what keeps another product's vocabulary out of this assembly (`adr/0061`).
+    ///
+    /// <para><see cref="Body"/> stays mandatory even when this is present, and that single rule is
+    /// the whole rendering contract - a channel with no UI renders the body and numbers the actions,
+    /// and never has to parse a payload it may not understand.</para>
+    ///
+    /// <para>Computed rather than stored, and <c>Ignore</c>d by EF, so the three columns are the one
+    /// source of truth and cannot disagree with a fourth copy.</para></summary>
+    public MessageContent? Content =>
+        _contentKind is null ? null : MessageContent.Materialize(_contentKind.Value, _payload, _actions ?? []);
+
     internal Message(
         MessageId id,
         ConversationId conversationId,
@@ -45,6 +67,7 @@ public sealed class Message
         MessageBody body,
         AttachmentId? attachmentId,
         Guid? clientMessageId,
+        MessageContent? content,
         DateTimeOffset now)
     {
         Id = id;
@@ -56,6 +79,13 @@ public sealed class Message
         AttachmentId = attachmentId;
         ClientMessageId = clientMessageId;
         CreatedAt = now;
+
+        if (content is not null)
+        {
+            _contentKind = content.Kind;
+            _payload = content.Payload;
+            _actions = [.. content.Actions];
+        }
     }
 
     // EF Core materialization only (1-04) - never called by domain code, not even by Conversation.
