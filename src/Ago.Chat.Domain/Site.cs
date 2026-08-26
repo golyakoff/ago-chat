@@ -91,6 +91,21 @@ public sealed class Site
 
     public WidgetConfig WidgetConfig => new(_widgetPrimaryColorHex, _widgetPosition);
 
+    // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
+    // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
+    // owned-type machinery. The rules list is the one that could have argued for it, and does not: it
+    // is a small, opaque-to-SQL list nothing ever queries into, so it maps through a converter to one
+    // column exactly like `14-06`'s messages.actions already does (MessageContentConverters' own
+    // remarks on why that is text and not jsonb apply verbatim).
+    private bool _offlineAutoReplyEnabled;
+    private string _offlineAutoReplyFallback = string.Empty;
+    private List<OfflineAutoReplyRule>? _offlineAutoReplyRules;
+
+    /// <summary>`14-04`: this site's offline auto-reply script. Off, with nothing to say, for every
+    /// row that predates the feature - see <see cref="OfflineAutoReplySettings.Disabled"/>.</summary>
+    public OfflineAutoReplySettings OfflineAutoReply =>
+        new(_offlineAutoReplyEnabled, _offlineAutoReplyFallback, _offlineAutoReplyRules ?? []);
+
     private readonly List<IDomainEvent> _domainEvents = [];
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -141,6 +156,29 @@ public sealed class Site
         _widgetPrimaryColorHex = config.PrimaryColorHex;
         _widgetPosition = config.Position;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
+    }
+
+    /// <summary>
+    /// `14-04`: the second update path <see cref="Site"/> has, and the one a visitor can feel.
+    /// <paramref name="settings"/> arrives already-validated (<see cref="OfflineAutoReplySettings"/>'s
+    /// own constructor threw if an enabled configuration had nothing to say, or if a rule was empty or
+    /// oversized), so this method's only job is applying it and recording that it happened - the same
+    /// split <see cref="UpdateWidgetConfig"/> already draws.
+    ///
+    /// <para>Raises <see cref="SiteOfflineAutoReplyUpdated"/>, which maps to the same
+    /// <c>SiteSettingsChanged</c> integration event the widget-config write uses. That is what makes
+    /// the console toggle live config rather than a redeploy: the event evicts this site's cached
+    /// config on every node, so the very next visitor message reads the new value instead of waiting
+    /// out a five-minute TTL (`caching.md`).</para>
+    /// </summary>
+    public void UpdateOfflineAutoReply(OfflineAutoReplySettings settings, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        _offlineAutoReplyEnabled = settings.Enabled;
+        _offlineAutoReplyFallback = settings.FallbackReply;
+        _offlineAutoReplyRules = [.. settings.Rules];
+        _domainEvents.Add(new SiteOfflineAutoReplyUpdated(Id, PublicKey, now));
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();

@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using Ago.Chat.Application.Caching;
 using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Microsoft.Extensions.Options;
@@ -46,7 +47,18 @@ public sealed class SiteCacheInvalidationConsumer(
                 ?? throw new InvalidOperationException(
                     $"Could not deserialize {nameof(SiteSettingsChanged)} payload for {envelope.MessageId}.");
 
+            // `14-04`: **both** keys, not just the public-key one. `SiteCacheKeys` has mapped this one
+            // row under two keys since `5-01` (`ForPublicKey` for the widget handshake, `ForSiteId` for
+            // anything holding a JWT's `site_id` claim), and this consumer only ever evicted the first
+            // of them - so a settings write left the id-keyed copy standing until its own five-minute
+            // TTL expired. Invisible until `14-04`, because until now nothing read the id-keyed entry
+            // for a value an operator had just changed and expected to take effect; `caching.md`'s
+            // claim that a config write is "evicted on every node well before the TTL would otherwise
+            // expire it" was only half true. Two publishes rather than one key that covers both: the
+            // platform's invalidation contract is one key per broadcast, and re-broadcasting is
+            // idempotent and cheap (`adr/0020`).
             await publisher.PublishAsync(SiteCacheKeys.ForPublicKey(changed.PublicKey), envelope.CorrelationId, cancellationToken);
+            await publisher.PublishAsync(SiteCacheKeys.ForSiteId(new SiteId(changed.SiteId)), envelope.CorrelationId, cancellationToken);
             await context.AckAsync(cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -3,14 +3,17 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.WidgetConfig;
+using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
+using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -29,9 +32,11 @@ using Microsoft.IdentityModel.Tokens;
 namespace Ago.Chat.Integration.Tests;
 
 /// <summary>
-/// `17-01`: the two route groups in this codebase that take a <b>client-supplied</b> <c>site_id</c> -
-/// <c>/api/v1/sites/{siteId}/widget-config</c> and <c>/api/v1/sites/{siteId}/webhooks/...</c> - proven
-/// to refuse an operator of one tenant naming another, at the level where the composition is real.
+/// `17-01`: every route group in this codebase that takes a <b>client-supplied</b> <c>site_id</c> -
+/// <c>/api/v1/sites/{siteId}/widget-config</c>, <c>/api/v1/sites/{siteId}/webhooks/...</c> and, since
+/// `14-04`, <c>/api/v1/sites/{siteId}/offline-auto-reply</c> - proven to refuse an operator of one
+/// tenant naming another, at the level where the composition is real. `tenant-isolation.md` states
+/// that every such group is covered here, so a new one that is not added below makes that claim false.
 ///
 /// <para><b>Why full HTTP with a real Keycloak and a real Postgres, rather than a handler test with a
 /// fake checker.</b> A handler test proves "when the checker says no, the handler refuses" - a
@@ -117,6 +122,33 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         var victimSite = await new SiteRepository(db).GetByIdAsync(scenario.VictimSiteId, CancellationToken.None);
         Assert.Equal(VictimColorHex, victimSite!.WidgetConfig.PrimaryColorHex);
         Assert.Equal(Position.BottomRight, victimSite.WidgetConfig.Position);
+    }
+
+    /// <summary>`14-04`: the third client-supplied-`siteId` route group, on the same terms as the two
+    /// beside it. Same caller, who really does hold `site:configure` - on their own site.</summary>
+    [Fact]
+    public async Task OfflineAutoReplyRoutes_RefuseAnotherTenantsSite_AndChangeNothing()
+    {
+        var scenario = await SetUpAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, scenario.AccessToken);
+
+        var own = $"/api/v1/sites/{scenario.CallerSiteId.Value}/offline-auto-reply";
+        var victim = $"/api/v1/sites/{scenario.VictimSiteId.Value}/offline-auto-reply";
+
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(own)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(victim)).StatusCode);
+        var write = await client.PutAsJsonAsync(
+            victim, new { enabled = true, fallbackReply = "we are closed", rules = Array.Empty<object>() });
+        Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
+
+        // The refused write really did not land - the same reasoning the widget-config case above
+        // gives for checking the row rather than trusting the status code.
+        await using var db = fixture.CreateDbContext();
+        var victimSite = await new SiteRepository(db).GetByIdAsync(scenario.VictimSiteId, CancellationToken.None);
+        Assert.False(victimSite!.OfflineAutoReply.Enabled);
+        Assert.Empty(victimSite.OfflineAutoReply.Rules);
     }
 
     [Fact]
@@ -285,6 +317,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<GetWidgetConfigHandler>();
         builder.Services.AddScoped<UpdateWidgetConfigHandler>();
+        builder.Services.AddScoped<GetOfflineAutoReplyHandler>();
+        builder.Services.AddScoped<UpdateOfflineAutoReplyHandler>();
         builder.Services.AddScoped<RegisterWebhookEndpointHandler>();
         builder.Services.AddScoped<ListWebhookEndpointsHandler>();
         builder.Services.AddScoped<RevokeWebhookEndpointHandler>();
@@ -314,6 +348,7 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapWidgetConfigEndpoints();
+        app.MapOfflineAutoReplyEndpoints();
         app.MapWebhookEndpoints();
 
         await app.StartAsync();

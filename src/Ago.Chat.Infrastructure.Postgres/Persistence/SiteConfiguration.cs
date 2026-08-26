@@ -50,5 +50,22 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasConversion(PositionConverter.Instance)
             .HasDefaultValue(Position.BottomRight);
         builder.Ignore(s => s.WidgetConfig);
+
+        // `14-04`: same shape again - three private backing fields, three columns, the computed
+        // OfflineAutoReply value object ignored so the columns stay the one source of truth. Both
+        // scalar columns get a database default matching OfflineAutoReplySettings.Disabled, so every
+        // row written before this migration (the seeded demo tenants included) reads back as "off,
+        // nothing to say" rather than needing a backfill.
+        builder.Property<bool>("_offlineAutoReplyEnabled")
+            .HasColumnName("offline_auto_reply_enabled")
+            .HasDefaultValue(false);
+        builder.Property<string>("_offlineAutoReplyFallback")
+            .HasColumnName("offline_auto_reply_fallback")
+            .IsRequired()
+            .HasDefaultValue(string.Empty);
+        builder.Property<List<OfflineAutoReplyRule>?>("_offlineAutoReplyRules")
+            .HasColumnName("offline_auto_reply_rules")
+            .HasConversion(OfflineAutoReplyConverters.Rules, OfflineAutoReplyConverters.RulesComparer);
+        builder.Ignore(s => s.OfflineAutoReply);
     }
 }

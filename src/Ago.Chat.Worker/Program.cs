@@ -33,6 +33,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<UnreadCounterConsumer>();
 
+// `14-04`: a third Competing consumer of MessageAccepted, next to the two above - see
+// OfflineAutoReplyConsumer's own remarks on why it is a consumer rather than part of the send path.
+builder.Services
+    .AddOptions<OfflineAutoReplyConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(OfflineAutoReplyConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OfflineAutoReplyConsumer>();
+
 builder.Services
     .AddOptions<PartitionMaintenanceJobOptions>()
     .Bind(builder.Configuration.GetSection(PartitionMaintenanceJobOptions.SectionName))

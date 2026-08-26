@@ -2,9 +2,10 @@
 
 /// <summary>
 /// A single message within a <see cref="Conversation"/>. Constructed only through
-/// <see cref="Conversation.AddVisitorMessage"/>/<see cref="Conversation.AddOperatorMessage"/> - the
-/// internal constructor keeps every other assembly, including <c>Ago.Chat.Application</c>, from
-/// creating one directly and bypassing the conversation's own invariants.
+/// <see cref="Conversation.AddVisitorMessage"/>/<see cref="Conversation.AddOperatorMessage"/>/<see
+/// cref="Conversation.AddSystemMessage"/> - the internal constructor keeps every other assembly,
+/// including <c>Ago.Chat.Application</c>, from creating one directly and bypassing the conversation's
+/// own invariants.
 /// </summary>
 public sealed class Message
 {

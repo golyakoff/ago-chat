@@ -247,6 +247,43 @@ public sealed class Conversation
     }
 
     /// <summary>
+    /// `14-04`: a message AGO Chat itself authored on the tenant's behalf - today the offline
+    /// auto-reply and nothing else. There is no participant to check, because there is no principal:
+    /// <see cref="SystemAuthorId"/> is the author, and the only state that can refuse one is
+    /// <see cref="ConversationState.Closed"/>, exactly as for <see cref="AddVisitorMessage"/>.
+    ///
+    /// <para><b>This method is where the auto-reply's loop guard is actually enforced.</b> It hardcodes
+    /// <see cref="MessageAuthorKind.System"/> and takes no author kind from the caller, so no
+    /// auto-reply can ever be recorded as a visitor message - and the consumer that produces
+    /// auto-replies acts only on visitor messages. Whether the reply can trigger another reply is
+    /// therefore a property of these two facts together, not of any runtime check that could be
+    /// skipped, mis-ordered or retried around. See <see cref="MessageAuthorKind.System"/>'s own
+    /// remarks.</para>
+    ///
+    /// <para>Deliberately no <c>attachmentId</c> and no <c>content</c> parameter: a scripted reply is
+    /// prose, and a parameter with no caller is a guess about the second one.</para>
+    /// </summary>
+    public Message AddSystemMessage(
+        MessageId messageId, MessageBody body, DateTimeOffset now, Guid? clientMessageId = null)
+    {
+        if (State == ConversationState.Closed)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot add a message to closed conversation {Id.Value}.");
+        }
+
+        return AddMessage(
+            MessageAuthorKind.System, SystemAuthorId, messageId, body, null, clientMessageId, null, now);
+    }
+
+    /// <summary>`14-04`: the <see cref="Message.AuthorId"/> every
+    /// <see cref="MessageAuthorKind.System"/> message carries. <see cref="Guid.Empty"/> because it is
+    /// the honest value - there is no principal behind a scripted reply, and inventing a synthetic
+    /// operator id would put a row-shaped lie in the one column a reviewer would use to find out who
+    /// said something.</summary>
+    public static readonly Guid SystemAuthorId = Guid.Empty;
+
+    /// <summary>
     /// 2-05: the unread-counter consumer's write, applied against an already-accepted message - the
     /// message itself already passed <see cref="AddVisitorMessage"/>/<see cref="AddOperatorMessage"/>'s
     /// state and participant checks when it was first added, so there is no new invariant to enforce
@@ -265,6 +302,10 @@ public sealed class Conversation
     ///
     /// The visitor side has no watermark to consult, so it always increments, exactly as before -
     /// see <see cref="MarkReadByOperator"/> for why that half is deliberately left alone.
+    ///
+    /// `14-04`: <see cref="MessageAuthorKind.System"/> lands in that same visitor-side branch, and
+    /// that is correct rather than incidental - an auto-reply is something the visitor has not read
+    /// yet, and it is emphatically not something the operator needs a badge for.
     /// </summary>
     public void IncrementUnreadCount(MessageAuthorKind authorKind, int sequence)
     {
