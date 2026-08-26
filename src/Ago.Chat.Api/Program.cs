@@ -12,6 +12,7 @@ using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module;
 using Ago.Chat.Module.Pipeline;
@@ -214,6 +215,16 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddSingleton<IAuthorizationHandler, PlatformOwnerAuthorizationHandler>();
 
 var app = builder.Build();
+
+// `8-08`/`adr/0056`: run before anything can listen, and deliberately not as an IHostedService -
+// GenericWebHostService opens the socket before any service registered after it, so a hosted service
+// that threw would do so with requests already arriving. A host whose database is behind the
+// migrations its own build carries refuses to start rather than serving 200s for pages whose queries
+// fail; that is the 2026-08-25 incident, closed. It is also the whole of this system's deploy
+// ordering: nothing orchestrates "migrator Job first", the hosts simply do not come up until it has
+// run. See SchemaVersionGuard for why this beats an init container and where the expected version
+// comes from.
+await app.Services.EnsureSchemaIsCurrentAsync();
 
 app.UseCors();
 app.UseAuthentication();

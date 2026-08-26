@@ -28,6 +28,17 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+    <!--
+      `8-08`: the four deployables. Until this item, no arch rule had anything to say about a host, so
+      none was referenced here - the layering rules all concern the projects underneath. The rule this
+      item adds is specifically about hosts ("only Ago.Chat.Migrator may apply a migration"), so their
+      assemblies have to be loadable. Ago.Chat.Integration.Tests already references all four the same
+      way, so this is an established shape rather than a new one.
+    -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Api\Ago.Chat.Api.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Worker\Ago.Chat.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Webhooks\Ago.Chat.Webhooks.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Migrator\Ago.Chat.Migrator.csproj" />
   </ItemGroup>
 
 </Project>

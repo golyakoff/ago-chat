@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <!-- `adr/0056`: "It references Ago.Chat.Infrastructure.Postgres and nothing above it." Not
+       Ago.Chat.Module - that wires RabbitMQ, Redis, S3 and Keycloak options and validates every one of
+       them at startup, so a migrator built on it could not run in an environment where the broker is
+       down, which is exactly an environment somebody might be migrating. SchemaMigrationTests asserts
+       this reference list rather than trusting this comment. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+  </ItemGroup>
+
+  <!-- Microsoft.NET.Sdk, not Microsoft.NET.Sdk.Web like the other three hosts: this one serves
+       nothing and has no port. It exits, which is the entire contract (adr/0056: "the exit code is the
+       deliverable"). -->
+
+</Project>
