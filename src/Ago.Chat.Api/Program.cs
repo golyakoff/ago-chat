@@ -12,6 +12,7 @@ using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
+using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres;
@@ -318,6 +319,8 @@ app.MapConversationsEndpoints();
 app.MapOperatorsEndpoints();
 app.MapWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
+// `14-04`
+app.MapOfflineAutoReplyEndpoints();
 app.MapSitesEndpoints();
 // `8-07`: the anonymous demo-credential route. Registered unconditionally; the handler refuses when
 // DemoTenant:Enabled is false, so a deployment that has not opted in answers a clear

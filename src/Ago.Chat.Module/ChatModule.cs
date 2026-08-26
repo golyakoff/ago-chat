@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
+using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
@@ -27,7 +28,9 @@ using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.StartConversation;
+using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
@@ -221,6 +224,15 @@ public sealed class ChatModule : IProductModule
         // else on this page, even though only `Ago.Chat.Api` maps HTTP endpoints for them today.
         services.AddScoped<GetWidgetConfigHandler>();
         services.AddScoped<UpdateWidgetConfigHandler>();
+
+        // `14-04`: the offline auto-reply's three handlers. The read/write pair backs `Ago.Chat.Api`'s
+        // own settings endpoints (the same `site:configure` gate `11-01`'s pair uses); the third is
+        // resolved per message by `Ago.Chat.Worker`'s OfflineAutoReplyConsumer. Registered here for
+        // every host, the same shape as everything else on this page - a host that maps no route and
+        // runs no consumer simply never resolves them.
+        services.AddScoped<GetOfflineAutoReplyHandler>();
+        services.AddScoped<UpdateOfflineAutoReplyHandler>();
+        services.AddScoped<SendOfflineAutoReplyHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

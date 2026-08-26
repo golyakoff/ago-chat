@@ -127,4 +127,12 @@ public static class ConversationErrors
 
     public static Error WidgetConfigInvalidPosition(string reason) =>
         new("WidgetConfig.InvalidPosition", reason);
+
+    /// <summary>`14-04`: an offline auto-reply configuration `OfflineAutoReplyRule`/
+    /// `OfflineAutoReplySettings` refused - an empty or oversized keyword or reply, too many rules, or
+    /// an enabled configuration with no fallback text. One code rather than five, because every one of
+    /// them has the same remedy (fix the field the message names) and the message carries the
+    /// detail.</summary>
+    public static Error OfflineAutoReplyInvalid(string reason) =>
+        new("OfflineAutoReply.Invalid", reason);
 }
