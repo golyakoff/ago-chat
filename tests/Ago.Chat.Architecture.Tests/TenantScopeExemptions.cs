@@ -95,6 +95,15 @@ internal static class TenantScopeExemptions
         ["Ago.Chat.Application.UseCases.RecordUnread.RecordUnreadMessageHandler.HandleAsync"] =
             "Consumer side (Ago.Chat.Worker), keyed by conversation id from a MessageAccepted envelope. Increments a "
             + "counter on that same conversation and reads nothing back to any caller.",
+        ["Ago.Chat.Application.UseCases.SendOfflineAutoReply.SendOfflineAutoReplyHandler.HandleAsync"] =
+            "`14-04`, consumer side (Ago.Chat.Worker). SiteId comes off a MessageAccepted envelope this system "
+            + "itself published, so it is a fact the triggering write already established, not a claim - the same "
+            + "category as RecordUnreadMessageHandler right above. There is also no principal to check a permission "
+            + "for: nobody asked for this, a broker delivery did, and the message it writes is authored by the "
+            + "system itself (adr/0016 has no representation for that caller, exactly as it has none for a "
+            + "visitor). What the site id is actually used for is narrow and self-consistent: reading that same "
+            + "site's own configuration, and asking whether that same site has an operator online. Nothing is read "
+            + "back to any caller.",
         ["Ago.Chat.Application.UseCases.ResolveConversationAssignment.ResolveConversationAssignmentTargetsHandler.HandleAsync"] =
             "Consumer side. Fan-out to the two principals the assignment event itself names; no lookup, no caller.",
         ["Ago.Chat.Application.UseCases.ResolveMessageDelivery.ResolveMessageDeliveryTargetsHandler.HandleAsync"] =
