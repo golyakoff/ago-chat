@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `8-07`/`adr/0058`: a project of its own because Keycloak is a distinct external technology, and
+       `clean-architecture.md` says one project per external technology - so that the arch test can
+       assert "only this project talks HTTP to the identity provider" and so that swapping the identity
+       provider is a project swap rather than a search. Until this item nothing in `ago-chat` ever
+       *called* Keycloak: the Api host validates tokens Keycloak signed, which needs no client at all. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+</Project>

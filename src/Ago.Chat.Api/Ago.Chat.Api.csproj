@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
@@ -7,6 +7,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+    <!-- `8-07`: this host mints (Api) or expires (Worker) demo tenants, so it talks to Keycloak.
+         Ago.Chat.Webhooks deliberately does not reference this and is never handed the credential. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Keycloak\Ago.Chat.Infrastructure.Keycloak.csproj" />
     <ProjectReference Include="..\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
   </ItemGroup>
 
