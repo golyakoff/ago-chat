@@ -21,6 +21,18 @@
 /// several open at once (their own capacity), which is exactly the case this closes. JSON property
 /// order is irrelevant to a caller matching by name, so this being appended last costs nothing -
 /// unlike a hub *method* parameter, a DTO's wire shape is not positional.</summary>
+/// `14-06`: <see cref="ContentKind"/>, <see cref="Content"/> and <see cref="Actions"/> are additive
+/// in exactly the sense api-design.md requires - appended last, all optional, `null` on every message
+/// sent before this shipped and on every prose message after it. A client built before this ignores
+/// three fields it has never heard of and keeps rendering <see cref="Body"/>, which is the whole
+/// reason <see cref="Body"/> stays mandatory for structured messages too.
+///
+/// <see cref="Content"/> is a <see cref="System.Text.Json.JsonElement"/>, not a string: it is
+/// already JSON, and sending it as a string would make every client parse a string out of a document
+/// it had just parsed. It is also the one field on this DTO that AGO Chat has no schema for - a
+/// client is free to have one; this product is not.
 public sealed record MessageDto(
     Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTimeOffset CreatedAt,
-    Guid? AttachmentId = null, Guid? ClientMessageId = null, Guid? ConversationId = null);
+    Guid? AttachmentId = null, Guid? ClientMessageId = null, Guid? ConversationId = null,
+    string? ContentKind = null, System.Text.Json.JsonElement? Content = null,
+    IReadOnlyList<MessageActionDto>? Actions = null);

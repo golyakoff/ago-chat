@@ -126,13 +126,15 @@ public sealed class MessageBatchWriter(
                 var messageId = new MessageId(idGenerator.NewId(now));
                 try
                 {
+                    // `14-06`: Content is forwarded verbatim and never inspected - it was validated
+                    // for shape by the send handler and is meaningless to everything from here down.
                     var message = item.Message.AuthorKind == MessageAuthorKind.Visitor
                         ? conversation.AddVisitorMessage(
                             new VisitorId(item.Message.AuthorId), messageId, item.Message.Body, now,
-                            item.Message.AttachmentId, item.Message.ClientMessageId)
+                            item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content)
                         : conversation.AddOperatorMessage(
                             new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now,
-                            item.Message.AttachmentId, item.Message.ClientMessageId);
+                            item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content);
 
                     // `5-07`: a returned Message.Id that does not match the id just generated above
                     // means Conversation.AddMessage found an existing message with the same

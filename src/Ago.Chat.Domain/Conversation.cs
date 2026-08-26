@@ -203,7 +203,7 @@ public sealed class Conversation
     /// </summary>
     public Message AddVisitorMessage(
         VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
-        AttachmentId? attachmentId = null, Guid? clientMessageId = null)
+        AttachmentId? attachmentId = null, Guid? clientMessageId = null, MessageContent? content = null)
     {
         if (authorId != VisitorId)
         {
@@ -217,13 +217,14 @@ public sealed class Conversation
                 $"Cannot add a message to closed conversation {Id.Value}.");
         }
 
-        return AddMessage(MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, clientMessageId, now);
+        return AddMessage(
+            MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, clientMessageId, content, now);
     }
 
     /// <summary>An operator may write only once assigned, and only to their own conversation.</summary>
     public Message AddOperatorMessage(
         OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
-        AttachmentId? attachmentId = null, Guid? clientMessageId = null)
+        AttachmentId? attachmentId = null, Guid? clientMessageId = null, MessageContent? content = null)
     {
         // State first: with no operator assigned yet, "wrong state" is the true cause - checking
         // participant identity first would misreport it as "wrong operator" when there is no
@@ -241,7 +242,8 @@ public sealed class Conversation
                 $"Operator {authorId.Value} is not the assigned operator of conversation {Id.Value}.");
         }
 
-        return AddMessage(MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, clientMessageId, now);
+        return AddMessage(
+            MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, clientMessageId, content, now);
     }
 
     /// <summary>
@@ -373,7 +375,7 @@ public sealed class Conversation
     /// </summary>
     private Message AddMessage(
         MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body,
-        AttachmentId? attachmentId, Guid? clientMessageId, DateTimeOffset now)
+        AttachmentId? attachmentId, Guid? clientMessageId, MessageContent? content, DateTimeOffset now)
     {
         if (clientMessageId is { } id)
         {
@@ -385,8 +387,15 @@ public sealed class Conversation
         }
 
         LastSequence++;
-        var message = new Message(messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, now);
+        var message = new Message(
+            messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, content, now);
         _messages.Add(message);
+
+        // `14-06`: MessageAdded gains nothing. The integration event it maps to (MessageAccepted)
+        // deliberately carries no body already - "a consumer that needs it reads
+        // GetConversationHistory instead" - and a payload AGO Chat cannot interpret is the last thing
+        // that should travel on a topic other products' consumers read. Structured content reaches a
+        // client the same way prose does: through the delivery path, from the row.
         _domainEvents.Add(new MessageAdded(messageId, Id, SiteId, LastSequence, authorKind, now));
         return message;
     }

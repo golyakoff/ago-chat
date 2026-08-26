@@ -14,4 +14,10 @@
 /// </summary>
 internal sealed record MessageRow(
     Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTime CreatedAt, Guid? AttachmentId,
-    Guid? ClientMessageId);
+    Guid? ClientMessageId,
+    // `14-06`: the three structured columns, as the strings the row holds. Raw all the way through -
+    // the read model never parses ContentKind or Payload, because parsing the payload here would be
+    // AGO Chat looking inside a document it is forbidden to understand, on the hottest read in the
+    // product. Deserialising happens once, at the wire boundary (MessageDtoMapper), and only for
+    // Actions, whose schema AGO Chat does own.
+    string? ContentKind = null, string? Payload = null, string? Actions = null);

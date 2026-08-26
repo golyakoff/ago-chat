@@ -41,9 +41,18 @@ public sealed class SendOperatorMessageHandler(
         // (1-01) still separately checks "is this operator the one assigned to *this* conversation" -
         // a fact about the conversation, not a permission (adr/0016 draws that line) - now enforced
         // inside the pipeline worker once it loads the conversation fresh.
+        // `14-06`: see SendVisitorMessageHandler's matching comment. An operator's client can send
+        // structured content too - a console offering a canned reply with choices is the obvious
+        // case - and nothing about the validation differs by author.
+        var content = StructuredContentBinder.Bind(command.ContentKind, command.Payload, command.Actions);
+        if (content.IsFailure)
+        {
+            return content.Error!.Value;
+        }
+
         var pending = new PendingMessage(
             command.ConversationId, MessageAuthorKind.Operator, command.AuthorId.Value, body,
-            command.AttachmentId, command.ClientMessageId, command.TraceParent);
+            command.AttachmentId, command.ClientMessageId, command.TraceParent, content.Value);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

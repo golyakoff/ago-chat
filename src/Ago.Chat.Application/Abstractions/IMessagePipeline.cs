@@ -44,6 +44,11 @@ public interface IMessagePipeline
 /// through a channel to a different async context, where the hub's own ambient
 /// <c>Activity.Current</c> would not otherwise flow - this field is what survives that hop).
 /// </summary>
+/// `14-06`: <see cref="Content"/> is optional and already validated - the handler turned the
+/// caller's raw strings into a <see cref="MessageContent"/> and returned a <c>Result</c> failure if
+/// they were malformed, exactly as it already does for <see cref="MessageBody"/>. Nothing downstream
+/// of here re-validates it, and nothing anywhere reads inside its payload.
 public sealed record PendingMessage(
     ConversationId ConversationId, MessageAuthorKind AuthorKind, Guid AuthorId, MessageBody Body,
-    AttachmentId? AttachmentId = null, Guid? ClientMessageId = null, string? TraceParent = null);
+    AttachmentId? AttachmentId = null, Guid? ClientMessageId = null, string? TraceParent = null,
+    MessageContent? Content = null);

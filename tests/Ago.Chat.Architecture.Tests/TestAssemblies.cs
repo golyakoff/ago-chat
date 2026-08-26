@@ -45,6 +45,20 @@ internal static class TestAssemblies
     public static IReadOnlyList<ProductAssembly> AllProduct { get; } =
         [Domain, Application, Contracts, InfrastructurePostgres, Module];
 
+    /// <summary>
+    /// `14-06`: <b>every</b> <c>Ago.Chat.*</c> assembly, hosts included - the subject of
+    /// <see cref="MessageOpacityTests"/>, whose rule has no layer exception at all and specifically
+    /// must reach the hosts, since a branch on another product's vocabulary would most naturally
+    /// appear in an endpoint or a hub rather than in Domain.
+    ///
+    /// <para>Wider than <see cref="AllProduct"/> on purpose, and kept as its own list rather than
+    /// widening that one: <see cref="AllProduct"/>'s rules were written against five assemblies and
+    /// silently extending them to nine is the sort of change that turns an unrelated test red for a
+    /// reason nobody can attribute.</para>
+    /// </summary>
+    public static IReadOnlyList<ProductAssembly> EveryChatAssembly { get; } =
+        [Domain, Application, Contracts, InfrastructurePostgres, Module, Api, Worker, Webhooks, Migrator];
+
     private static ProductAssembly Load(string simpleName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, $"{simpleName}.dll");

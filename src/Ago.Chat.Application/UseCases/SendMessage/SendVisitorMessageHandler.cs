@@ -76,9 +76,17 @@ public sealed class SendVisitorMessageHandler(
         // invariants) still run - just inside the pipeline worker, once it reloads this same
         // conversation. Reaching them there and failing means the caller's own token/conversation
         // pairing was already stale or wrong, exactly as before.
+        // `14-06`: validated here, beside the body, and for the same reason - a malformed payload is
+        // a caller-fixable rejection, not a fault. Nothing below this line looks inside it.
+        var content = StructuredContentBinder.Bind(command.ContentKind, command.Payload, command.Actions);
+        if (content.IsFailure)
+        {
+            return content.Error!.Value;
+        }
+
         var pending = new PendingMessage(
             command.ConversationId, MessageAuthorKind.Visitor, command.AuthorId.Value, body,
-            command.AttachmentId, command.ClientMessageId, command.TraceParent);
+            command.AttachmentId, command.ClientMessageId, command.TraceParent, content.Value);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

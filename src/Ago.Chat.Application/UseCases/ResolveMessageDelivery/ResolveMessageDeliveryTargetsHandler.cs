@@ -2,6 +2,7 @@
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Contracts;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -42,9 +43,9 @@ public sealed class ResolveMessageDeliveryTargetsHandler(
 
         var page = await readStore.GetHistoryAsync(command.ConversationId, command.Sequence + 1, pageSize: 1, cancellationToken);
         var item = page.Messages.Single();
-        var dto = new MessageDto(
-            item.Id.Value, item.Sequence, item.AuthorKind.ToString(), item.AuthorId, item.Body, item.CreatedAt,
-            item.AttachmentId?.Value, item.ClientMessageId, command.ConversationId.Value);
+        // `14-06`: through the shared mapper, so the fan-out copy of a message is byte-identical to
+        // the local-echo copy the sender's own hub built.
+        var dto = MessageDtoMapper.ToDto(item, command.ConversationId);
 
         const string Method = "MessageReceived";
         var fanoutResult = await fanout.PublishAsync(
