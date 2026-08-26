@@ -1,6 +1,5 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.RegisterSite;
 
@@ -19,15 +18,17 @@ public static class SitesEndpoints
         // `adr/0027`: never RequireOperatorIdentity - the caller has no OperatorId claim yet by
         // definition (that is exactly what this endpoint is about to create).
         //
-        // `12-04`: and never the platform owner either. "No OperatorId claim" is not one state, it is
-        // several, and this endpoint is only for one of them - a person who registered through
-        // Keycloak and has no tenant yet. The platform owner has no OperatorId claim on purpose
-        // (`adr/0032`) and would be bootstrapped into a tenant nothing in this product can remove;
-        // AuthorizationPolicies.NotThePlatformOwner has the full reasoning, including why it is a
-        // second policy here rather than a check inside RegisterSiteHandler.
+        // `12-04` briefly added a second policy here, `AuthorizationPolicies.NotThePlatformOwner`,
+        // refusing the platform owner outright. `12-05` removed it (`adr/0063`, "Reversed in
+        // 12-05"): the trap that item found was the console *routing* an owner to a form they never
+        // asked for, and that is what the routing fix closed. Being the platform owner and running a
+        // tenant are orthogonal (`adr/0063`), so refusing here made the axes exclusive at exactly one
+        // endpoint, contradicting the ADR the same item wrote. Filling in a site name and an embed
+        // origin is not something anybody does by accident, and this identity gets exactly the
+        // ordinary caller's outcome - including `10-02`'s one-registration-per-identity `409` on a
+        // second attempt.
         app.MapPost("/api/v1/sites", HandleRegisterSiteAsync)
-            .RequireAuthorization("RequireKeycloakIdentity")
-            .RequireAuthorization(AuthorizationPolicies.NotThePlatformOwner);
+            .RequireAuthorization("RequireKeycloakIdentity");
     }
 
     private static async Task<IResult> HandleRegisterSiteAsync(

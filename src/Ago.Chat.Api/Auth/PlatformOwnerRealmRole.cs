@@ -6,8 +6,15 @@ namespace Ago.Chat.Api.Auth;
 /// <summary>
 /// `12-04`: the single implementation of "does this validated token carry the `platform-owner` realm
 /// role", extracted from <see cref="PlatformOwnerAuthorizationHandler"/> when a second surface needed
-/// the same answer (<see cref="AuthorizationPolicies.NotThePlatformOwner"/>, which refuses `10-02`'s
-/// registration bootstrap for that identity).
+/// the same answer - `AuthorizationPolicies.NotThePlatformOwner`, which refused `10-02`'s
+/// registration bootstrap for that identity.
+///
+/// <para><b>That second caller is gone again</b> (`12-05`, `adr/0063`'s "Reversed in 12-05"): an
+/// identity is allowed to be the platform owner *and* a tenant, so nothing refuses the bootstrap any
+/// more and <see cref="PlatformOwnerAuthorizationHandler"/> is once more the only caller. This stays
+/// its own class rather than collapsing back into that handler, for the reason below - the rule is
+/// worth having one named home for whether it currently has one reader or two, and re-inlining it
+/// would make the next second caller re-derive it.</para>
 ///
 /// <para><b>Why extracted rather than re-derived.</b> `12-04` exists because three surfaces each
 /// answered "what kind of principal is this token" for themselves and each answered differently
@@ -38,10 +45,9 @@ internal static class PlatformOwnerRealmRole
     /// answer depend on identity ordering. Only a claim Keycloak signed can contain the role name, so
     /// scanning all of them widens nothing.
     ///
-    /// <para>Returns <c>false</c> for an unauthenticated or absent principal. Both callers want that
-    /// reading, for opposite reasons that happen to agree: the owner policy must deny an anonymous
-    /// caller, and the registration policy's own <c>RequireAuthenticatedUser</c> has already rejected
-    /// one before this is consulted.</para></summary>
+    /// <para>Returns <c>false</c> for an unauthenticated or absent principal - the fail-closed
+    /// reading, and the one its caller wants: `RequirePlatformOwner` must deny an anonymous
+    /// caller.</para></summary>
     public static bool IsHeldBy(ClaimsPrincipal? user)
     {
         if (user?.Identity is not { IsAuthenticated: true })
