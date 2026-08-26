@@ -153,11 +153,7 @@ public sealed class SelfRegisteredSiteOriginTests(SiteCachingFixture fixture)
     private async Task<int> InvokeVisitorSessionAsync(string publicKey, string origin)
     {
         var getSite = new GetSiteConfigByPublicKeyHandler(new SiteRepository(fixture.CreateDbContext()), CreateCache());
-        var tokens = new JwtTokenService(
-            new Microsoft.IdentityModel.Tokens.SigningCredentials(
-                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
-                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256),
-            "test-issuer", new SystemClock());
+        var tokens = new JwtTokenService(TestSigningKeys.Ring(), "test-issuer", new SystemClock());
         var rateLimiter = new FakeRateLimiter();
         var rateLimitOptions = Options.Create(new VisitorSessionRateLimitOptions());
 

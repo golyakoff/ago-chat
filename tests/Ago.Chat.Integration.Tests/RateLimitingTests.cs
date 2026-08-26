@@ -71,11 +71,7 @@ public sealed class RateLimitingTests(SiteCachingFixture fixture)
         var rateLimitOptions = Options.Create(new VisitorSessionRateLimitOptions { PerSiteCapacity = 1, PerSiteRefillPerSecond = 0.001 });
         var getSite = new GetSiteConfigByPublicKeyHandler(new SiteRepository(fixture.CreateDbContext()), new RedisCache(
             fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(), NullLogger<RedisCache>.Instance));
-        var tokens = new JwtTokenService(
-            new Microsoft.IdentityModel.Tokens.SigningCredentials(
-                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
-                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256),
-            "test-issuer", new SystemClock());
+        var tokens = new JwtTokenService(TestSigningKeys.Ring(), "test-issuer", new SystemClock());
 
         var (firstStatus, firstHeader) = await Invoke();
         var (secondStatus, secondHeader) = await Invoke();

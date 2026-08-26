@@ -7,11 +7,16 @@ using Microsoft.IdentityModel.Tokens;
 namespace Ago.Chat.Api.Auth;
 
 /// <summary>
-/// Issues both token kinds from the one signing key `Program.cs` configures - auth is a host concern
+/// Issues visitor tokens from the one signing key the key ring nominates - auth is a host concern
 /// (clean-architecture.md: "the only place that knows concrete implementations"), so this lives here,
 /// not in Module or Application.
+///
+/// <para>`17-03`/`adr/0067`: this takes an <see cref="IVisitorSigningKeyRing"/> rather than a
+/// <see cref="SigningCredentials"/> so that "which key signs" has exactly one answer while "which
+/// keys are accepted" can be several. Note what it does <b>not</b> get: the validation set. Issuing
+/// has no business seeing a retired key, and a service that could reach one could sign with it.</para>
 /// </summary>
-public sealed class JwtTokenService(SigningCredentials signingCredentials, string issuer, IClock clock)
+public sealed class JwtTokenService(IVisitorSigningKeyRing signingKeys, string issuer, IClock clock)
 {
     /// <summary>
     /// `17-08`/`adr/0048`: **seven days, sliding, with no absolute cap.** It was thirty until this
@@ -59,7 +64,7 @@ public sealed class JwtTokenService(SigningCredentials signingCredentials, strin
             claims: claims,
             notBefore: now.UtcDateTime,
             expires: now.Add(VisitorTokenLifetime).UtcDateTime,
-            signingCredentials: signingCredentials);
+            signingCredentials: signingKeys.Signing);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }

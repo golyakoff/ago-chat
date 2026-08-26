@@ -47,8 +47,10 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
 {
     private const string Issuer = "ago-chat-api";
 
-    private readonly SigningCredentials _signingCredentials = new(
-        new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32)), SecurityAlgorithms.HmacSha256);
+    // `17-03`: a key *ring* rather than a bare SigningCredentials, since that is what
+    // JwtTokenService takes now. One active key and nothing retired - rotation is not this file's
+    // subject (VisitorKeyRotationTests is).
+    private readonly VisitorSigningKeyRing _signingKeys = TestSigningKeys.Ring();
 
     /// <summary>
     /// The point of the whole item: the visitor comes out the other side as the *same* visitor. A
@@ -284,7 +286,7 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
     }
 
     private string IssueToken(VisitorId visitorId, Guid siteId, DateTimeOffset mintedAt) =>
-        new JwtTokenService(_signingCredentials, Issuer, new FixedClock(mintedAt))
+        new JwtTokenService(_signingKeys, Issuer, new FixedClock(mintedAt))
             .IssueVisitorToken(visitorId, new SiteId(siteId));
 
     private static DateTimeOffset MintedDaysAgo(double days) => DateTimeOffset.UtcNow.AddDays(-days);
@@ -328,7 +330,7 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
         builder.Services.AddSingleton(sp => new JwtTokenService(
-            _signingCredentials, Issuer, sp.GetRequiredService<IClock>()));
+            _signingKeys, Issuer, sp.GetRequiredService<IClock>()));
         builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new VisitorSessionRateLimitOptions()));
         builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
             renewalLimits ?? new VisitorSessionRenewalRateLimitOptions()));
@@ -344,7 +346,7 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
                     ValidateAudience = true,
                     ValidAudience = JwtSchemes.Visitor,
                     ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = _signingCredentials.Key,
+                    IssuerSigningKeyResolver = (_, _, _, _) => _signingKeys.ValidationKeys(),
                     ValidateLifetime = true,
                 };
             });

@@ -1,5 +1,4 @@
-﻿using System.Security.Cryptography;
-using Ago.Chat.Api.Attachments;
+﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
@@ -155,19 +154,23 @@ builder.Services
 // lets every replica share one key (bound from infra-credentials the same way Postgres/RabbitMQ
 // passwords already are - docker/.env, gitignored, never committed); its absence falls back to the
 // original random-per-process key, which is still correct for the single-instance dotnet-run loop
-// local-dev.md describes. Still a throwaway dev value either way - Stage 5's OIDC direction replaces
-// this signing story outright, it does not evolve from it (authorization.md).
+// local-dev.md describes.
+//
+// `17-03`/`adr/0067`: all three of those forms still work, and there is now a fourth that is the
+// point of the item - `Auth:VisitorSigningKeys`, a *set*. One key issues; several validate; a
+// retired key drops out of the validation set on its own once its drain window closes. Before this,
+// the only key that validated was the only key that signed, so rotating it logged out every visitor
+// on every site at the same instant, which is why it had never been rotated. See
+// VisitorSigningKeyRing.FromConfiguration for the precedence between the forms and for why having
+// both of the first two set is a refusal to start rather than a precedence rule.
 const string issuer = "ago-chat-api";
-var configuredSigningKey = builder.Configuration["Auth:SigningKey"];
-var signingKeyBytes = configuredSigningKey is { Length: > 0 }
-    ? Convert.FromBase64String(configuredSigningKey)
-    : RandomNumberGenerator.GetBytes(32);
-var signingKey = new SymmetricSecurityKey(signingKeyBytes);
-var signingCredentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
-builder.Services.AddSingleton(sp => new JwtTokenService(signingCredentials, issuer, sp.GetRequiredService<IClock>()));
+builder.Services.AddSingleton<IVisitorSigningKeyRing>(sp =>
+    VisitorSigningKeyRing.FromConfiguration(builder.Configuration, sp.GetRequiredService<IClock>()));
+builder.Services.AddSingleton(sp => new JwtTokenService(
+    sp.GetRequiredService<IVisitorSigningKeyRing>(), issuer, sp.GetRequiredService<IClock>()));
 
 // `5-05`/`adr/0022`: the Operator scheme's issuer/signing key now comes from Keycloak, not the
-// local SigningCredentials below - Authority (required, fails fast like AGO_CHAT_CONNECTION_STRING)
+// visitor key ring above - Authority (required, fails fast like AGO_CHAT_CONNECTION_STRING)
 // drives ASP.NET Core's own JWKS discovery, so there is no local key to configure for this scheme at
 // all. RequireHttpsMetadata off by default: no host in this project terminates TLS internally
 // (edge.md - that is the Gateway's job), and local Keycloak runs over plain HTTP.
@@ -187,8 +190,9 @@ builder.Services.AddAuthentication()
         // (ClaimsPrincipalExtensions) finds nothing - found by running this against a real
         // token and seeing FindFirstValue return null even though the JWT payload clearly had it.
         options.MapInboundClaims = false;
-        options.TokenValidationParameters = TokenValidationParametersFor(JwtSchemes.Visitor);
         options.Events = HubTokenFromQueryString("/hubs/visitor");
+        // TokenValidationParameters is configured separately below - it needs the key ring, and this
+        // overload has no service provider to resolve one from.
     })
     .AddJwtBearer(JwtSchemes.Operator, options =>
     {
@@ -207,6 +211,26 @@ builder.Services.AddAuthentication()
         };
         options.Events = HubTokenFromQueryString("/hubs/operator");
     });
+
+// `17-03`/`adr/0067`: the Visitor scheme's validation parameters, configured with the service
+// provider so they can close over the key ring. The single line that makes rotation work is
+// IssuerSigningKeyResolver: a delegate the handler calls on *every* token, where the previous
+// IssuerSigningKey was one key captured while the host was starting. That is what lets a retired key
+// leave the accepted set the moment its drain window closes, with no restart and no deploy.
+builder.Services
+    .AddOptions<JwtBearerOptions>(JwtSchemes.Visitor)
+    .Configure<IVisitorSigningKeyRing>((options, signingKeys) =>
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = issuer,
+            ValidateAudience = true,
+            ValidAudience = JwtSchemes.Visitor,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKeyResolver = (_, _, _, _) => signingKeys.ValidationKeys(),
+            ValidateLifetime = true,
+        });
+
 builder.Services.AddAuthorization(options =>
 {
     // `5-05`: turns "no operator matched this Keycloak subject" into a clean rejection at the
@@ -259,6 +283,13 @@ var app = builder.Build();
 // comes from.
 await app.Services.EnsureSchemaIsCurrentAsync();
 
+// `17-03`: resolving the ring once here runs its whole validation - base64, key length, "exactly one
+// key with no RetiredAt", a drain window at least as long as the token lifetime. Deliberately eager:
+// a singleton is otherwise constructed on the first request that needs it, so a botched rotation
+// would first appear as a 500 on one visitor's request rather than as a host that would not start.
+// Same reasoning as EnsureSchemaIsCurrentAsync above, one line earlier in the same window.
+_ = app.Services.GetRequiredService<IVisitorSigningKeyRing>();
+
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -307,17 +338,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.Run();
-
-TokenValidationParameters TokenValidationParametersFor(string audience) => new()
-{
-    ValidateIssuer = true,
-    ValidIssuer = issuer,
-    ValidateAudience = true,
-    ValidAudience = audience,
-    ValidateIssuerSigningKey = true,
-    IssuerSigningKey = signingKey,
-    ValidateLifetime = true,
-};
 
 // SignalR's WebSocket upgrade cannot carry an Authorization header, so the client passes the token
 // as ?access_token=... instead - restricted to this hub's own path, never accepted on ordinary
