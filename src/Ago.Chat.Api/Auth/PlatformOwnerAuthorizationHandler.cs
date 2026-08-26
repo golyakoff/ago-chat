@@ -1,12 +1,12 @@
-﻿using System.Security.Claims;
-using System.Text.Json;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 
 namespace Ago.Chat.Api.Auth;
 
 /// <summary>
 /// `12-01`/`adr/0032`: decides <see cref="PlatformOwnerRequirement"/> by reading Keycloak's
-/// `realm_access.roles` claim off an already-validated token, and nothing else.
+/// `realm_access.roles` claim off an already-validated token, and nothing else. The reading itself
+/// lives in <see cref="PlatformOwnerRealmRole"/> since `12-04` gave it a second caller; this handler
+/// is the policy-layer adapter over that one rule.
 ///
 /// <para><b>What this handler deliberately does not touch.</b> It never resolves an
 /// <see cref="AgoClaimTypes.OperatorId"/> or <see cref="AgoClaimTypes.SiteId"/> claim, never queries
@@ -29,18 +29,10 @@ namespace Ago.Chat.Api.Auth;
 /// </summary>
 internal sealed class PlatformOwnerAuthorizationHandler : AuthorizationHandler<PlatformOwnerRequirement>
 {
-    /// <summary>Keycloak's own claim name. Its value is a JSON *object* (`{"roles":[...]}`), which
-    /// `JsonWebTokenHandler` surfaces as a single claim whose <see cref="Claim.Value"/> is the raw
-    /// JSON text - hence the parse below rather than a plain `RequireClaim`, which can only compare
-    /// whole claim values and would therefore have to match a serialized JSON blob exactly.</summary>
-    internal const string RealmAccessClaimType = "realm_access";
-
-    private const string RolesPropertyName = "roles";
-
     protected override Task HandleRequirementAsync(
         AuthorizationHandlerContext context, PlatformOwnerRequirement requirement)
     {
-        if (HoldsOwnerRealmRole(context.User))
+        if (PlatformOwnerRealmRole.IsHeldBy(context.User))
         {
             context.Succeed(requirement);
         }
@@ -51,67 +43,5 @@ internal sealed class PlatformOwnerAuthorizationHandler : AuthorizationHandler<P
         }
 
         return Task.CompletedTask;
-    }
-
-    /// <summary>Every `realm_access` claim on the principal is considered, not just the first: a
-    /// principal can carry more than one <see cref="ClaimsIdentity"/> (this project adds one in
-    /// `OperatorIdentityClaimsTransformation`), and picking "the first" would make the answer depend
-    /// on identity ordering. Only a claim Keycloak signed can contain the role name, so scanning all
-    /// of them widens nothing.</summary>
-    private static bool HoldsOwnerRealmRole(ClaimsPrincipal? user)
-    {
-        if (user?.Identity is not { IsAuthenticated: true })
-        {
-            return false;
-        }
-
-        foreach (var claim in user.FindAll(RealmAccessClaimType))
-        {
-            if (ContainsOwnerRole(claim.Value))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool ContainsOwnerRole(string realmAccessJson)
-    {
-        JsonDocument document;
-        try
-        {
-            document = JsonDocument.Parse(realmAccessJson);
-        }
-        catch (JsonException)
-        {
-            // A claim that is not JSON at all cannot be Keycloak's realm_access object. Denying is
-            // the only reading of it that is safe; throwing would turn a hostile token into a 500.
-            return false;
-        }
-
-        using (document)
-        {
-            if (document.RootElement.ValueKind is not JsonValueKind.Object
-                || !document.RootElement.TryGetProperty(RolesPropertyName, out var roles)
-                || roles.ValueKind is not JsonValueKind.Array)
-            {
-                return false;
-            }
-
-            foreach (var role in roles.EnumerateArray())
-            {
-                // Ordinal, case-sensitive: Keycloak role names are case-sensitive, and a
-                // culture-aware or case-insensitive comparison would accept a role this project's
-                // realm-import files never define.
-                if (role.ValueKind is JsonValueKind.String
-                    && string.Equals(role.GetString(), PlatformOwnerRequirement.RealmRoleName, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 }

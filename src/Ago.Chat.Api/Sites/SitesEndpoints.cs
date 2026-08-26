@@ -1,5 +1,6 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.RegisterSite;
 
@@ -17,8 +18,16 @@ public static class SitesEndpoints
     {
         // `adr/0027`: never RequireOperatorIdentity - the caller has no OperatorId claim yet by
         // definition (that is exactly what this endpoint is about to create).
+        //
+        // `12-04`: and never the platform owner either. "No OperatorId claim" is not one state, it is
+        // several, and this endpoint is only for one of them - a person who registered through
+        // Keycloak and has no tenant yet. The platform owner has no OperatorId claim on purpose
+        // (`adr/0032`) and would be bootstrapped into a tenant nothing in this product can remove;
+        // AuthorizationPolicies.NotThePlatformOwner has the full reasoning, including why it is a
+        // second policy here rather than a check inside RegisterSiteHandler.
         app.MapPost("/api/v1/sites", HandleRegisterSiteAsync)
-            .RequireAuthorization("RequireKeycloakIdentity");
+            .RequireAuthorization("RequireKeycloakIdentity")
+            .RequireAuthorization(AuthorizationPolicies.NotThePlatformOwner);
     }
 
     private static async Task<IResult> HandleRegisterSiteAsync(

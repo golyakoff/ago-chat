@@ -17,7 +17,10 @@ namespace Ago.Chat.Integration.Tests;
 /// </summary>
 public sealed class PlatformOwnerAuthorizationHandlerTests
 {
-    private const string RealmAccess = PlatformOwnerAuthorizationHandler.RealmAccessClaimType;
+    // `12-04` moved the claim name (and the reading of it) to `PlatformOwnerRealmRole`, where a
+    // second caller - the registration endpoint's own refusal - now shares the identical rule. These
+    // tests still go through the handler, which is the layer the decision is delivered at.
+    private const string RealmAccess = PlatformOwnerRealmRole.RealmAccessClaimType;
 
     [Fact]
     public async Task RealmAccessCarryingTheOwnerRole_Succeeds()
