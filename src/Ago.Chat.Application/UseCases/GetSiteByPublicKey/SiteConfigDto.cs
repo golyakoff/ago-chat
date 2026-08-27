@@ -24,6 +24,14 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// (`Ago.Chat.Api/Auth`) is built field by field from this DTO and lists what a visitor may see; a
 /// tenant's scripted answers are not on that list and must not be, since the public key that reaches
 /// this DTO is not a secret.</para>
+/// `11-10`: <see cref="WidgetLocale"/> joins on exactly the same terms `WidgetPrimaryColorHex`/
+/// `WidgetPosition` did in `11-01` - an additive field on the existing cached DTO, populated
+/// identically by both loaders, not a second cached object. Unlike <see cref="OfflineAutoReply"/>,
+/// this one <b>is</b> put on the wire by the handshake (<c>AuthEndpoints.VisitorSessionResponse</c>):
+/// it is a public setting a tenant chose for their own widget, not a scripted answer the public key
+/// (not a secret) should never expose - the same distinction `SiteConfigDto`'s own remarks already
+/// draw between the two.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
-    string? WidgetPrimaryColorHex, Position WidgetPosition, OfflineAutoReplySettings OfflineAutoReply);
+    string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
+    OfflineAutoReplySettings OfflineAutoReply);

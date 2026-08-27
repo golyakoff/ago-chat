@@ -29,6 +29,6 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             return ConversationErrors.SiteNotFound(query.SiteId.Value);
         }
 
-        return new WidgetConfigDto(site.WidgetConfig.PrimaryColorHex, site.WidgetConfig.Position);
+        return new WidgetConfigDto(site.WidgetConfig.PrimaryColorHex, site.WidgetConfig.Position, site.Locale);
     }
 }

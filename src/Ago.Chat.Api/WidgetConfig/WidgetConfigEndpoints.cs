@@ -17,6 +17,10 @@ namespace Ago.Chat.Api.WidgetConfig;
 /// same `.ToString()` convention `VisitorHub`/`OperatorHub` already use for `AuthorKind` - a
 /// data-model-level, kebab-case storage choice (`PositionConverter`'s own remarks) is free to differ
 /// from the wire shape, the same way `MessageBodyConverter` and a wire DTO already can.
+///
+/// `11-10`: `Locale` joins the request/response on the identical terms and crosses the wire the same
+/// way - its own PascalCase member name (`"En"`/`"Ru"`), independent of `LocaleConverter`'s lowercase
+/// storage choice.
 /// </summary>
 public static class WidgetConfigEndpoints
 {
@@ -48,16 +52,17 @@ public static class WidgetConfigEndpoints
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new UpdateWidgetConfig(new SiteId(siteId), user.GetOperatorId(), request.PrimaryColorHex, request.Position),
+            new UpdateWidgetConfig(
+                new SiteId(siteId), user.GetOperatorId(), request.PrimaryColorHex, request.Position, request.Locale),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
     }
 
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
-        new(dto.PrimaryColorHex, dto.Position.ToString());
+        new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString());
 
-    public sealed record UpdateWidgetConfigRequest(string? PrimaryColorHex, string Position);
+    public sealed record UpdateWidgetConfigRequest(string? PrimaryColorHex, string Position, string Locale);
 
-    public sealed record WidgetConfigResponse(string? PrimaryColorHex, string Position);
+    public sealed record WidgetConfigResponse(string? PrimaryColorHex, string Position, string Locale);
 }

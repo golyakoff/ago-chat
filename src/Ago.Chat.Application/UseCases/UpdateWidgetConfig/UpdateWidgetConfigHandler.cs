@@ -23,6 +23,16 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// coordinate" shape `CloseConversationHandler`/`ConfirmAttachmentHandler` use (adr/0005: state change
 /// and integration event, one transaction, one `SaveChangesAsync`) - an ordinary single-aggregate
 /// write, not the wider multi-row transaction `10-02`'s registration handler needed.
+///
+/// `11-10`: also the first real caller of `Site.UpdateLocale`. One HTTP call, one command, but two
+/// `Site` methods and therefore two domain events, both mapped to `SiteSettingsChanged` and both
+/// enqueued in this same transaction - `adr/0005`'s "one transaction" is about the state change and
+/// its own event committing together, not about a request producing exactly one event, and
+/// `SiteCacheInvalidationConsumer` already treats a repeat invalidation of the same key as free
+/// (`SiteOfflineAutoReplyUpdated`'s own precedent for two mappers converging on one contract).
+/// `Site.UpdateLocale` has nothing to validate the way `WidgetConfig`'s constructor does (`Locale`'s
+/// own remarks), so the only guard on this side is the `Enum.TryParse`/`Enum.IsDefined` check below,
+/// mirroring `Position`'s.
 /// </summary>
 public sealed class UpdateWidgetConfigHandler(
     ISiteRepository sites,
@@ -47,6 +57,12 @@ public sealed class UpdateWidgetConfigHandler(
                 $"'{command.Position}' is not a valid widget position - expected '{nameof(Position.BottomRight)}' or '{nameof(Position.BottomLeft)}'.");
         }
 
+        if (!Enum.TryParse<Locale>(command.Locale, ignoreCase: true, out var locale) || !Enum.IsDefined(locale))
+        {
+            return ConversationErrors.WidgetConfigInvalidLocale(
+                $"'{command.Locale}' is not a valid widget locale - expected '{nameof(Locale.En)}' or '{nameof(Locale.Ru)}'.");
+        }
+
         WidgetConfig config;
         try
         {
@@ -63,14 +79,18 @@ public sealed class UpdateWidgetConfigHandler(
             return ConversationErrors.SiteNotFound(command.SiteId.Value);
         }
 
-        site.UpdateWidgetConfig(config, clock.UtcNow);
+        var now = clock.UtcNow;
+        site.UpdateWidgetConfig(config, now);
+        site.UpdateLocale(locale, now);
 
-        var domainEvent = site.DomainEvents.OfType<SiteWidgetConfigUpdated>().Single();
-        outbox.Enqueue(SiteWidgetConfigUpdatedMapper.ToEnvelope(domainEvent, idGenerator));
+        var widgetConfigChanged = site.DomainEvents.OfType<SiteWidgetConfigUpdated>().Single();
+        var localeChanged = site.DomainEvents.OfType<SiteLocaleUpdated>().Single();
+        outbox.Enqueue(SiteWidgetConfigUpdatedMapper.ToEnvelope(widgetConfigChanged, idGenerator));
+        outbox.Enqueue(SiteLocaleUpdatedMapper.ToEnvelope(localeChanged, idGenerator));
         site.ClearDomainEvents();
 
         await sites.SaveAsync(site, cancellationToken);
 
-        return new WidgetConfigDto(config.PrimaryColorHex, config.Position);
+        return new WidgetConfigDto(config.PrimaryColorHex, config.Position, locale);
     }
 }

@@ -67,6 +67,7 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
             Assert.NotNull(first);
             Assert.Null(first.WidgetPrimaryColorHex);
             Assert.Equal(Position.BottomRight, first.WidgetPosition);
+            Assert.Equal(Locale.En, first.WidgetLocale);
         }
 
         // The real chain: OutboxDispatcher (Ago.Chat.Worker) -> RabbitMQ -> SiteCacheInvalidationConsumer
@@ -103,19 +104,22 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
                     new UuidV7Generator(), new SystemClock());
 
                 var updated = await updateHandler.HandleAsync(
-                    new UpdateWidgetConfig(siteId, operatorId, "#ff8800", nameof(Position.BottomLeft)), CancellationToken.None);
+                    new UpdateWidgetConfig(siteId, operatorId, "#ff8800", nameof(Position.BottomLeft), nameof(Locale.Ru)),
+                    CancellationToken.None);
                 Assert.True(updated.IsSuccess, updated.IsFailure ? updated.Error!.Value.Message : null);
             }
 
             // Polling the handshake read itself, not the Redis key directly - what `11-01`'s own
             // Done-when actually promises a caller sees, matching this suite's "assert observable
-            // behaviour" convention (testing.md).
+            // behaviour" convention (testing.md). `11-10`: the locale field rides the same cache
+            // entry and the same invalidation chain, so it is asserted here rather than in a second,
+            // near-duplicate end-to-end test.
             var sawNewValue = await OutboxTestHelpers.WaitUntilAsync(async () =>
             {
                 await using var readDb = fixture.CreateDbContext();
                 var getSite = new GetSiteConfigByPublicKeyHandler(new SiteRepository(readDb), cache);
                 var read = await getSite.HandleAsync(new GetSiteConfigByPublicKey(publicKey), CancellationToken.None);
-                return read is { WidgetPrimaryColorHex: "#ff8800", WidgetPosition: Position.BottomLeft };
+                return read is { WidgetPrimaryColorHex: "#ff8800", WidgetPosition: Position.BottomLeft, WidgetLocale: Locale.Ru };
             }, TimeSpan.FromSeconds(15));
 
             Assert.True(sawNewValue, "Timed out waiting for a fresh handshake read to see the updated widget config.");

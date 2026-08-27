@@ -255,6 +255,7 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         {
             var row = await db.Sites.SingleAsync(s => s.Id == new SiteId(site.SiteId));
             row.UpdateWidgetConfig(new WidgetConfig("#ff8800", Position.BottomLeft), DateTimeOffset.UtcNow);
+            row.UpdateLocale(Locale.Ru, DateTimeOffset.UtcNow);
             await db.SaveChangesAsync();
         }
 
@@ -266,6 +267,7 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
 
         Assert.Equal("#ff8800", body!.WidgetPrimaryColorHex);
         Assert.Equal(nameof(Position.BottomLeft), body.WidgetPosition);
+        Assert.Equal(nameof(Locale.Ru), body.WidgetLocale);
     }
 
     private static Task<HttpResponseMessage> RenewAsync(
