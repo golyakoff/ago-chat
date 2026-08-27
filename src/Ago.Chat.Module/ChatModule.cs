@@ -243,6 +243,11 @@ public sealed class ChatModule : IProductModule
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
         services.AddSingleton<OperatorPresencePublisher>();
+
+        // `15-04`: registered for every host, the same shape as everything else on this page, even
+        // though only Ago.Chat.Worker's MessagePartitionPruneJob resolves it today. AlwaysConfirmedMessageArchiveGate
+        // is the stand-in until `13-06` exists - see that class's and IMessageArchiveGate's own remarks.
+        services.AddSingleton<IMessageArchiveGate, AlwaysConfirmedMessageArchiveGate>();
     }
 
     /// <summary>
