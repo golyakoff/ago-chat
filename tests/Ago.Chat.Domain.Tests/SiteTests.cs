@@ -105,4 +105,55 @@ public class SiteTests
 
         Assert.Single(site.DomainEvents);
     }
+
+    // `11-10`: the regression this item's own Done-when names explicitly - every existing tenant, one
+    // that has never called UpdateLocale, must read back exactly Locale.En.
+    [Fact]
+    public void Constructor_WhenValid_DefaultsLocaleToEnglish()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Equal(Locale.En, site.Locale);
+    }
+
+    [Theory]
+    [InlineData(Locale.En)]
+    [InlineData(Locale.Ru)]
+    public void UpdateLocale_WhenCalled_SetsTheLocale(Locale locale)
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        site.UpdateLocale(locale, DateTimeOffset.UtcNow);
+
+        Assert.Equal(locale, site.Locale);
+    }
+
+    [Fact]
+    public void UpdateLocale_WhenCalled_RaisesDomainEventExactlyOnce()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateLocale(Locale.Ru, now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteLocaleUpdated>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Equal("shop_7f3a", raised.PublicKey);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void UpdateLocale_WhenCalledTwice_RaisesTwoDomainEventsUntilCleared()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateLocale(Locale.Ru, now);
+        site.ClearDomainEvents();
+        site.UpdateLocale(Locale.En, now);
+
+        Assert.Single(site.DomainEvents);
+    }
 }

@@ -97,7 +97,8 @@ public static class AuthEndpoints
         return Results.Created(
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
-                token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString()));
+                token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
+                site.WidgetLocale.ToString()));
     }
 
     /// <summary>
@@ -195,7 +196,8 @@ public static class AuthEndpoints
 
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
         return Results.Ok(new VisitorSessionResponse(
-            token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString()));
+            token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
+            site.WidgetLocale.ToString()));
     }
 
     public sealed record VisitorSessionRequest(string PublicKey);
@@ -209,7 +211,14 @@ public static class AuthEndpoints
     /// widget settings ... and the visitor's history cursor." `WidgetPosition` crosses the wire as its
     /// PascalCase member name (`"BottomRight"`/`"BottomLeft"`), matching `WidgetConfigEndpoints`'s own
     /// convention for the same value.
+    ///
+    /// `11-10`: <see cref="WidgetLocale"/> joins on the identical terms - a flat, additive sibling
+    /// field, not nested under the two above, crossing the wire as `Locale`'s own PascalCase member
+    /// name (`"En"`/`"Ru"`). `ago-widget`'s `ui/i18n/resolve.ts` is where an unrecognised or missing
+    /// value falls back to `"en"` silently, the same "courtesy re-check, never trust the wire value
+    /// blindly" posture `ui/appearance.ts`'s `parseWidgetPosition` already takes for the sibling field
+    /// beside it.
     /// </summary>
     public sealed record VisitorSessionResponse(
-        string Token, Guid VisitorId, string? WidgetPrimaryColorHex, string WidgetPosition);
+        string Token, Guid VisitorId, string? WidgetPrimaryColorHex, string WidgetPosition, string WidgetLocale);
 }

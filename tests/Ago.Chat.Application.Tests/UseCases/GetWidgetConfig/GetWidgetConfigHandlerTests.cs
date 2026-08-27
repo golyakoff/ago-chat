@@ -17,6 +17,7 @@ public class GetWidgetConfigHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
         var site = new Site(SiteId, "shop_7f3a", []);
         site.UpdateWidgetConfig(new WidgetConfig("#112233", Position.BottomLeft), DateTimeOffset.UtcNow);
+        site.UpdateLocale(Locale.Ru, DateTimeOffset.UtcNow);
         site.ClearDomainEvents();
         sites.Seed(site);
         var handler = new GetWidgetConfigHandler(sites, permissions);
@@ -27,6 +28,26 @@ public class GetWidgetConfigHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal("#112233", result.Value.PrimaryColorHex);
         Assert.Equal(Position.BottomLeft, result.Value.Position);
+        Assert.Equal(Locale.Ru, result.Value.Locale);
+    }
+
+    // `11-10`: a site that never called `Site.UpdateLocale` - every existing tenant today - reads
+    // back `Locale.En` from this handler, matching `Site`'s own default (`Locale`'s own remarks on
+    // why `En` is the safe default rather than an arbitrary one).
+    [Fact]
+    public async Task HandleAsync_WhenLocaleWasNeverSet_ReturnsEnglishDefault()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", []));
+        var handler = new GetWidgetConfigHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Locale.En, result.Value.Locale);
     }
 
     [Fact]

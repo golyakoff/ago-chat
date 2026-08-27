@@ -128,6 +128,12 @@ public static class ConversationErrors
     public static Error WidgetConfigInvalidPosition(string reason) =>
         new("WidgetConfig.InvalidPosition", reason);
 
+    /// <summary>`11-10`: the closed `Locale` set `UpdateWidgetConfigHandler`'s own `Enum.TryParse`/
+    /// `Enum.IsDefined` check rejected - the same "validate the enum, translate the miss at the
+    /// Application boundary" split `WidgetConfigInvalidPosition` already draws for `Position`.</summary>
+    public static Error WidgetConfigInvalidLocale(string reason) =>
+        new("WidgetConfig.InvalidLocale", reason);
+
     /// <summary>`14-04`: an offline auto-reply configuration `OfflineAutoReplyRule`/
     /// `OfflineAutoReplySettings` refused - an empty or oversized keyword or reply, too many rules, or
     /// an enabled configuration with no fallback text. One code rather than five, because every one of

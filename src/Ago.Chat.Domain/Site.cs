@@ -106,6 +106,20 @@ public sealed class Site
     public OfflineAutoReplySettings OfflineAutoReply =>
         new(_offlineAutoReplyEnabled, _offlineAutoReplyFallback, _offlineAutoReplyRules ?? []);
 
+    // `11-10`: one more flat backing field, the same shape `11-01`/`14-04` established just above and
+    // for the same reason - its own column (Stage11AddSiteWidgetLocale) rather than nesting under
+    // WidgetConfig, since the research behind this item found locale is not widget *appearance* and a
+    // future consumer that cares about one and not the other needs to tell them apart at the domain
+    // level (SiteLocaleUpdated's own remarks). The field initialiser is the default every row that
+    // predates this column reads back as - `Locale.En` is also `default(Locale)`, so this is belt and
+    // braces, not load-bearing on its own.
+    private Locale _locale = Locale.En;
+
+    /// <summary>`11-10`: the language the widget renders in for this tenant. <see cref="Locale.En"/>
+    /// for every row that predates this column - see <see cref="Locale"/>'s own remarks on why that is
+    /// the safe default rather than an arbitrary one.</summary>
+    public Locale Locale => _locale;
+
     private readonly List<IDomainEvent> _domainEvents = [];
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -179,6 +193,25 @@ public sealed class Site
         _offlineAutoReplyFallback = settings.FallbackReply;
         _offlineAutoReplyRules = [.. settings.Rules];
         _domainEvents.Add(new SiteOfflineAutoReplyUpdated(Id, PublicKey, now));
+    }
+
+    /// <summary>
+    /// `11-10`: <see cref="Site"/>'s third update path. A separate method from
+    /// <see cref="UpdateWidgetConfig"/> rather than folding <paramref name="locale"/> into
+    /// <see cref="WidgetConfig"/> itself - <see cref="SiteLocaleUpdated"/>'s own remarks explain why
+    /// the two stay distinguishable domain events even though both are written by the same console
+    /// screen and the same HTTP call (`UpdateWidgetConfigHandler` calls both methods in one request,
+    /// same transaction). No validation here: <see cref="Locale"/> is a plain CLR enum with no
+    /// invalid representable value the way a hex string or a rule list has, so there is nothing for
+    /// this method to guard the way <see cref="UpdateWidgetConfig"/> guards a malformed
+    /// <see cref="WidgetConfig"/> - an undefined enum value is exactly what
+    /// <c>UpdateWidgetConfigHandler</c>'s own <c>Enum.TryParse</c>/<c>Enum.IsDefined</c> check exists
+    /// to keep out before it ever reaches here.
+    /// </summary>
+    public void UpdateLocale(Locale locale, DateTimeOffset now)
+    {
+        _locale = locale;
+        _domainEvents.Add(new SiteLocaleUpdated(Id, PublicKey, now));
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();

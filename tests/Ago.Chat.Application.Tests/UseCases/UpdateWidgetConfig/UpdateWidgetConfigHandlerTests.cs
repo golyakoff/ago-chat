@@ -38,7 +38,7 @@ public class UpdateWidgetConfigHandlerTests
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
-                SiteId, OperatorId, "#abcdef", nameof(Position.BottomLeft)),
+                SiteId, OperatorId, "#abcdef", nameof(Position.BottomLeft), nameof(Locale.En)),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -50,19 +50,45 @@ public class UpdateWidgetConfigHandlerTests
         Assert.Equal(Position.BottomLeft, saved.WidgetConfig.Position);
     }
 
+    // `11-10`: the third domain field this same call writes - Site.UpdateLocale runs alongside
+    // Site.UpdateWidgetConfig inside this one handler invocation (its own remarks explain why one
+    // HTTP call still calls two Site methods).
     [Fact]
-    public async Task HandleAsync_WhenPermitted_EnqueuesExactlyOneSiteSettingsChangedEnvelope()
+    public async Task HandleAsync_WhenPermitted_UpdatesTheSitesLocale()
     {
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
-                SiteId, OperatorId, null, nameof(Position.BottomRight)),
+                SiteId, OperatorId, null, nameof(Position.BottomRight), nameof(Locale.Ru)),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        var envelope = Assert.Single(fixture.Outbox.Enqueued);
-        Assert.Equal(nameof(SiteSettingsChanged), envelope.Type);
+        Assert.Equal(Locale.Ru, result.Value.Locale);
+
+        var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
+        Assert.Equal(Locale.Ru, saved!.Locale);
+    }
+
+    // `11-10`: was "...EnqueuesExactlyOneSiteSettingsChangedEnvelope" before this item - the handler
+    // now calls two Site methods (UpdateWidgetConfig, UpdateLocale) per request, each raising its own
+    // domain event, each mapped to SiteSettingsChanged and enqueued - so a single successful call now
+    // enqueues two envelopes of that same type, not one. SiteCacheInvalidationConsumer treats a
+    // repeat invalidation of the same key as free (its own remarks), so two envelopes cost nothing
+    // beyond this.
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_EnqueuesTwoSiteSettingsChangedEnvelopes()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
+                SiteId, OperatorId, null, nameof(Position.BottomRight), nameof(Locale.En)),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, fixture.Outbox.Enqueued.Count);
+        Assert.All(fixture.Outbox.Enqueued, envelope => Assert.Equal(nameof(SiteSettingsChanged), envelope.Type));
     }
 
     [Fact]
@@ -72,7 +98,7 @@ public class UpdateWidgetConfigHandlerTests
 
         await fixture.Handler.HandleAsync(
             new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
-                SiteId, OperatorId, null, nameof(Position.BottomLeft)),
+                SiteId, OperatorId, null, nameof(Position.BottomLeft), nameof(Locale.En)),
             CancellationToken.None);
 
         var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
@@ -86,7 +112,7 @@ public class UpdateWidgetConfigHandlerTests
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
-                SiteId, OperatorId, "#abcdef", nameof(Position.BottomLeft)),
+                SiteId, OperatorId, "#abcdef", nameof(Position.BottomLeft), nameof(Locale.En)),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
@@ -105,7 +131,7 @@ public class UpdateWidgetConfigHandlerTests
 
         var result = await handler.HandleAsync(
             new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
-                SiteId, OperatorId, "#abcdef", nameof(Position.BottomLeft)),
+                SiteId, OperatorId, "#abcdef", nameof(Position.BottomLeft), nameof(Locale.En)),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
@@ -122,7 +148,7 @@ public class UpdateWidgetConfigHandlerTests
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
-                SiteId, OperatorId, malformedHex, nameof(Position.BottomLeft)),
+                SiteId, OperatorId, malformedHex, nameof(Position.BottomLeft), nameof(Locale.En)),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
@@ -135,10 +161,39 @@ public class UpdateWidgetConfigHandlerTests
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(SiteId, OperatorId, null, "diagonal"),
+            new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
+                SiteId, OperatorId, null, "diagonal", nameof(Locale.En)),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("WidgetConfig.InvalidPosition", result.Error!.Value.Code);
+    }
+
+    // `11-10`'s own guard, mirroring the Position test just above.
+    [Fact]
+    public async Task HandleAsync_WhenTheLocaleIsNotARecognizedValue_ReturnsInvalidLocale()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
+                SiteId, OperatorId, null, nameof(Position.BottomRight), "klingon"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidLocale", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheLocaleIsInvalid_EnqueuesNothing()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.UpdateWidgetConfig.UpdateWidgetConfig(
+                SiteId, OperatorId, null, nameof(Position.BottomRight), "klingon"),
+            CancellationToken.None);
+
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 }

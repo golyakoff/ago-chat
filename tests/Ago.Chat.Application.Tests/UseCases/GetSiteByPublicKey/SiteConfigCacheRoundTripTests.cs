@@ -20,8 +20,8 @@ namespace Ago.Chat.Application.Tests.UseCases.GetSiteByPublicKey;
 /// </summary>
 public class SiteConfigCacheRoundTripTests
 {
-    private static SiteConfigDto Dto(OfflineAutoReplySettings autoReply) =>
-        new(Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, autoReply);
+    private static SiteConfigDto Dto(OfflineAutoReplySettings autoReply, Locale locale = Locale.En) =>
+        new(Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply);
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;
@@ -68,5 +68,21 @@ public class SiteConfigCacheRoundTripTests
         Assert.Equal(dto.AllowedOrigins, read.AllowedOrigins);
         Assert.Equal(dto.WidgetPrimaryColorHex, read.WidgetPrimaryColorHex);
         Assert.Equal(dto.WidgetPosition, read.WidgetPosition);
+        Assert.Equal(dto.WidgetLocale, read.WidgetLocale);
+    }
+
+    // `11-10`: `Locale` is a plain CLR enum, not a value object with a validating constructor - so it
+    // cannot reproduce 14-04's own struct/class bug directly (there is no constructor for
+    // System.Text.Json to bypass). Asserted on a cache *hit* anyway, both non-default values, because
+    // this file's whole point is that "it compiles and the test I wrote passes" is not evidence for a
+    // cached shape - only a round trip through the same (de)serializer the cache actually uses is.
+    [Theory]
+    [InlineData(Locale.En)]
+    [InlineData(Locale.Ru)]
+    public void TheWidgetLocale_SurvivesTheCache(Locale locale)
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, locale));
+
+        Assert.Equal(locale, read.WidgetLocale);
     }
 }

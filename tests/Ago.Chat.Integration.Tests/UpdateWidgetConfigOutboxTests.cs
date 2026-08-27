@@ -36,23 +36,34 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
                 new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
-                new UpdateWidgetConfig(siteId, operatorId, "#336699", nameof(Position.BottomLeft)), CancellationToken.None);
+                new UpdateWidgetConfig(siteId, operatorId, "#336699", nameof(Position.BottomLeft), nameof(Locale.Ru)),
+                CancellationToken.None);
 
             Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
             Assert.Equal("#336699", result.Value.PrimaryColorHex);
             Assert.Equal(Position.BottomLeft, result.Value.Position);
+            Assert.Equal(Locale.Ru, result.Value.Locale);
         }
 
         await using var verify = fixture.CreateDbContext();
         var siteRow = await verify.Sites.SingleAsync(s => s.Id == siteId, CancellationToken.None);
         Assert.Equal("#336699", siteRow.WidgetConfig.PrimaryColorHex);
         Assert.Equal(Position.BottomLeft, siteRow.WidgetConfig.Position);
+        Assert.Equal(Locale.Ru, siteRow.Locale);
 
-        // Filtered by this site's own id, same "shared, untruncated fixture" reasoning
+        // `11-10`: two rows now, not one - UpdateWidgetConfigHandler enqueues one SiteSettingsChanged
+        // envelope per Site method it calls (UpdateWidgetConfig, UpdateLocale), same transaction, same
+        // partition key. Filtered by this site's own id, same "shared, untruncated fixture" reasoning
         // CloseConversationOutboxTests already states for its own outbox-row assertion.
-        var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(o => o.PartitionKey == siteId.Value.ToString(), CancellationToken.None);
-        Assert.Equal(nameof(SiteSettingsChanged), outboxRow.Type);
-        Assert.Null(outboxRow.PublishedAt);
+        var outboxRows = await verify.Set<OutboxMessage>()
+            .Where(o => o.PartitionKey == siteId.Value.ToString())
+            .ToListAsync(CancellationToken.None);
+        Assert.Equal(2, outboxRows.Count);
+        Assert.All(outboxRows, row =>
+        {
+            Assert.Equal(nameof(SiteSettingsChanged), row.Type);
+            Assert.Null(row.PublishedAt);
+        });
     }
 
     [Fact]
@@ -66,7 +77,8 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
                 new SiteRepository(db), new PermissionChecker(db), new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(), new SystemClock());
             var updated = await updateHandler.HandleAsync(
-                new UpdateWidgetConfig(siteId, operatorId, "#abcdef", nameof(Position.BottomRight)), CancellationToken.None);
+                new UpdateWidgetConfig(siteId, operatorId, "#abcdef", nameof(Position.BottomRight), nameof(Locale.Ru)),
+                CancellationToken.None);
             Assert.True(updated.IsSuccess);
         }
 
@@ -78,6 +90,7 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
         Assert.True(result.IsSuccess);
         Assert.Equal("#abcdef", result.Value.PrimaryColorHex);
         Assert.Equal(Position.BottomRight, result.Value.Position);
+        Assert.Equal(Locale.Ru, result.Value.Locale);
     }
 
     [Fact]
@@ -92,7 +105,8 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
                 new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
-                new UpdateWidgetConfig(siteId, operatorId, "#336699", nameof(Position.BottomLeft)), CancellationToken.None);
+                new UpdateWidgetConfig(siteId, operatorId, "#336699", nameof(Position.BottomLeft), nameof(Locale.Ru)),
+                CancellationToken.None);
 
             Assert.True(result.IsFailure);
             Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);

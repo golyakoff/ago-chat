@@ -13,8 +13,15 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // just application code") - EF generates the matching migrationBuilder.AddCheckConstraint call
         // from this declaration (Stage11AddSiteWidgetConfig), so the constraint's SQL lives in exactly
         // one place, not duplicated by hand in the migration too.
-        builder.ToTable("sites", t => t.HasCheckConstraint(
-            "ck_sites_widget_position", "widget_position IN ('bottom-right', 'bottom-left')"));
+        // `11-10`: a second check constraint on the same table, added as a second statement in this
+        // block rather than a second `ToTable` call - `TableBuilder.HasCheckConstraint` can be invoked
+        // any number of times against the same `t`, and EF folds every call into the one table's
+        // constraint list regardless of how many separate `HasCheckConstraint` calls produced them.
+        builder.ToTable("sites", t =>
+        {
+            t.HasCheckConstraint("ck_sites_widget_position", "widget_position IN ('bottom-right', 'bottom-left')");
+            t.HasCheckConstraint("ck_sites_widget_locale", "widget_locale IN ('en', 'ru')");
+        });
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id).HasColumnName("id").HasConversion(IdConverters.Site).ValueGeneratedNever();
         builder.Property(s => s.PublicKey).HasColumnName("public_key").IsRequired();
@@ -67,5 +74,12 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasColumnName("offline_auto_reply_rules")
             .HasConversion(OfflineAutoReplyConverters.Rules, OfflineAutoReplyConverters.RulesComparer);
         builder.Ignore(s => s.OfflineAutoReply);
+
+        // `11-10`: same "computed property over a private field EF is pointed at by name" shape again -
+        // one backing field, one column, the CHECK constraint declared above as this table's second one.
+        builder.Property<Locale>("_locale").HasColumnName("widget_locale")
+            .HasConversion(LocaleConverter.Instance)
+            .HasDefaultValue(Locale.En);
+        builder.Ignore(s => s.Locale);
     }
 }
