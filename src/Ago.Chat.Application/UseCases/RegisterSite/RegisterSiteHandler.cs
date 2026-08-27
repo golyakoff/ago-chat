@@ -101,11 +101,12 @@ public sealed class RegisterSiteHandler(
         var site = new Site(siteId, publicKey, [command.InitialAllowedOrigin], command.SiteName, now);
 
         var operatorId = new OperatorId(idGenerator.NewId(now));
-        // Offline, not Online - this operator has not connected yet (presence, Stage 3, is what
-        // actually flips this once their console session opens); unlike `1-05`'s seed script, which
-        // sets its demo operators Online purely for manual-verification convenience, a real
-        // registration should not lie about a connection that has not happened. Capacity 5 matches
-        // the same seed script's own value - a starting default, not a measured one (`CLAUDE.md`).
+        // Offline, not Online - this operator has not connected yet. `4-06` is what actually flips
+        // this once their console session opens (OperatorHub.OnConnectedAsync); unlike `1-05`'s seed
+        // script, which sets its demo operators Online purely for manual-verification convenience, a
+        // real registration should not lie about a connection that has not happened. Capacity 5
+        // matches the same seed script's own value - a starting default, not a measured one
+        // (`CLAUDE.md`).
         var operatorEntity = new Operator(
             operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: command.ExternalSubjectId);
 

@@ -138,6 +138,23 @@ internal static class TenantScopeExemptions
             + "way ListSitesForOwnerHandler below genuinely is.",
 
         // ---------------------------------------------------------------------------------------
+        // `4-06`. No SiteId at all, and deliberately so: the only input is the caller's own
+        // OperatorId, resolved by OperatorHub from the connection's own validated JWT before either
+        // method is ever invoked - there is no site-scoped *resource* being acted on to check
+        // ownership of, only "record this connection's own presence". A SiteId parameter here would
+        // invite exactly the kind of second, unverifiable claim RegisterSiteHandler's own SiteId
+        // never is: nothing downstream reads it back, and IOperatorRepository.GetByIdAsync resolves
+        // the row by that same id, never by a caller-supplied site.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.SetOperatorPresence.SetOperatorPresenceHandler.GoOnlineAsync"] =
+            "OperatorHub.OnConnectedAsync's own wiring. OperatorId is the caller's own identity from the "
+            + "connection's JWT, not a resource named by the caller - there is no \"whose presence\" question a "
+            + "site check could answer that GetByIdAsync's own key does not already settle.",
+        ["Ago.Chat.Application.UseCases.SetOperatorPresence.SetOperatorPresenceHandler.GoOfflineAsync"] =
+            "The mirror image of GoOnlineAsync right above - same reasoning, called from "
+            + "OperatorHub.OnDisconnectedAsync only when this was the operator's last live connection.",
+
+        // ---------------------------------------------------------------------------------------
         // The one deliberate cross-tenant read in the codebase.
         // ---------------------------------------------------------------------------------------
         ["Ago.Chat.Application.UseCases.ListSitesForOwner.ListSitesForOwnerHandler.HandleAsync"] =

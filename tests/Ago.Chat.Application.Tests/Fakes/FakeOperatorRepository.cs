@@ -23,5 +23,14 @@ public sealed class FakeOperatorRepository : IOperatorRepository
     public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
         Task.FromResult(_all.Exists(o => o.SiteId == siteId && o.Status == OperatorStatus.Online));
 
+    /// <summary>`4-06`: mirrors <c>OperatorRepository.GetByIdAsync</c> - returns the same seeded
+    /// reference, so a caller's <c>GoOnline</c>/<c>GoOffline</c> mutation is visible to every other
+    /// method here without <see cref="SaveAsync"/> needing to do anything, exactly as EF's change
+    /// tracking makes the real adapter's save implicit for an entity loaded the same way.</summary>
+    public Task<Operator?> GetByIdAsync(OperatorId id, CancellationToken cancellationToken) =>
+        Task.FromResult(_all.Find(o => o.Id == id));
+
+    public Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public void Seed(Operator @operator) => _all.Add(@operator);
 }

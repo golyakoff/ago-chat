@@ -30,6 +30,7 @@ using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
+using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
@@ -180,6 +181,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetSiteConfigByIdHandler>();
         services.AddScoped<CheckCorsOriginHandler>();
         services.AddScoped<AssignConversationHandler>();
+        // `4-06`: OperatorHub's own connect/disconnect wiring - see the handler's own remarks.
+        services.AddScoped<SetOperatorPresenceHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
