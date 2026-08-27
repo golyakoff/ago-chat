@@ -52,4 +52,17 @@ public interface IOperatorRepository
     /// cannot disagree about who is on duty.</para>
     /// </summary>
     Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>`4-06`: the by-id lookup `SetOperatorPresenceHandler` needs - the two existing
+    /// lookups are keyed by external identity or site, never by an operator's own id, because nothing
+    /// before this needed "the operator who owns this hub connection", only "the operator this
+    /// external principal resolves to".</summary>
+    Task<Operator?> GetByIdAsync(OperatorId id, CancellationToken cancellationToken);
+
+    /// <summary>Persists a <see cref="Operator"/> mutated via <see cref="Operator.GoOnline"/>/
+    /// <see cref="Operator.GoOffline"/>. Always called on an entity this same request already loaded
+    /// through <see cref="GetByIdAsync"/>, so EF's change tracking is what actually writes the row -
+    /// no concurrency token on this table (`OperatorConfiguration`), so unlike
+    /// `IConversationRepository.SaveAsync` there is nothing here to retry.</summary>
+    Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken);
 }

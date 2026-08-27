@@ -26,4 +26,18 @@ public sealed class OperatorRepository(AgoChatDbContext db) : IOperatorRepositor
     public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
         db.Operators.AsNoTracking()
             .AnyAsync(o => o.SiteId == siteId && o.Status == OperatorStatus.Online, cancellationToken);
+
+    /// <summary>`4-06`: tracked, deliberately - the caller loads this to mutate
+    /// <see cref="Operator.Status"/> via <see cref="Operator.GoOnline"/>/<see cref="Operator.GoOffline"/>
+    /// and then calls <see cref="SaveAsync"/>, so an <c>AsNoTracking</c> read here would silently make
+    /// that save a no-op.</summary>
+    public Task<Operator?> GetByIdAsync(OperatorId id, CancellationToken cancellationToken) =>
+        db.Operators.FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
+
+    /// <summary>No `EntityState.Detached` branch (contrast `ConversationRepository.SaveAsync`) - every
+    /// caller of this port loads the operator through `GetByIdAsync` first, so it is always already
+    /// tracked; SaveChangesAsync alone picks up the mutation. No concurrency-conflict translation
+    /// either - `OperatorConfiguration` gives this table no concurrency token, unlike `conversations`.</summary>
+    public Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken) =>
+        db.SaveChangesAsync(cancellationToken);
 }

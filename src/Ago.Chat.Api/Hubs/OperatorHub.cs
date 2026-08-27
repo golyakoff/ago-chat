@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -34,6 +35,7 @@ public sealed class OperatorHub(
     HubConnectionRegistration connectionRegistration,
     ConsoleOriginValidator consoleOrigin,
     OperatorPresencePublisher presencePublisher,
+    SetOperatorPresenceHandler operatorPresence,
     DrainState drainState) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
@@ -62,8 +64,18 @@ public sealed class OperatorHub(
             return;
         }
 
-        var principal = PrincipalKeys.ForOperator(Context.User!.GetOperatorId());
+        var operatorId = Context.User!.GetOperatorId();
+        var principal = PrincipalKeys.ForOperator(operatorId);
         await connectionRegistration.OnConnectedAsync(new ConnectionId(Context.ConnectionId), principal, Context.ConnectionAborted);
+
+        // `4-06`: every connection, not only the first for this operator (contrast
+        // OnDisconnectedAsync's lastConnectionGone guard below) - Operator.GoOnline is idempotent, and
+        // a second tab connecting while already Online must never accidentally look like a fresh
+        // connect that needs special handling. Deliberately not awaited-and-checked against a prior
+        // Offline read: unlike the disconnect grace period (4-04), there is no cost to this racing
+        // harmlessly against a concurrent OnDisconnectedAsync from another dropping connection.
+        await operatorPresence.GoOnlineAsync(new GoOnline(operatorId), Context.ConnectionAborted);
+
         await base.OnConnectedAsync();
     }
 
@@ -79,6 +91,10 @@ public sealed class OperatorHub(
         var lastConnectionGone = await connectionRegistration.OnDisconnectedAsync(new ConnectionId(Context.ConnectionId), principal);
         if (lastConnectionGone)
         {
+            // `4-06`: immediate, not deferred to 4-04's grace-period consumer - see
+            // Operator.GoOffline's own remarks for why this is a cheaper, different decision than
+            // releasing an already-assigned conversation, and does not touch that grace period at all.
+            await operatorPresence.GoOfflineAsync(new GoOffline(operatorId), CancellationToken.None);
             await presencePublisher.PublishLostAsync(operatorId, Context.User!.GetSiteId(), CancellationToken.None);
         }
 
