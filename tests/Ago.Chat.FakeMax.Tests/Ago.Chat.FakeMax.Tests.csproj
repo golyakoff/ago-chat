@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ProjectReference, not a package reference: FakeMaxProcessFixture launches this project's own
+         built .dll as a genuinely separate `dotnet` process (via typeof(Program).Assembly.Location) -
+         Ago.Chat.FakeCrm.Tests' own precedent. -->
+    <ProjectReference Include="..\Ago.Chat.FakeMax\Ago.Chat.FakeMax.csproj" />
+  </ItemGroup>
+
+</Project>

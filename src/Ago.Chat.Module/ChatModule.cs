@@ -5,6 +5,7 @@ using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
+using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
@@ -22,11 +23,13 @@ using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
+using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
@@ -34,6 +37,7 @@ using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
+using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Module.Channels;
@@ -172,6 +176,45 @@ public sealed class ChatModule : IProductModule
                 .Get(ChannelResiliencePipelines.PipelineName)));
         services.AddSingleton<IInboundChannelAdapterRegistry, InboundChannelAdapterRegistry>();
         services.AddScoped<ReceiveChannelMessageHandler>();
+        // `14-02`: the outbound half - relays an operator's already-committed reply through whichever
+        // channel the visitor was reached by. See DeliverChannelMessageHandler's own remarks for why it
+        // is driven off MessageAccepted rather than the send path.
+        services.AddScoped<DeliverChannelMessageHandler>();
+
+        // `14-02`/`adr/0069`: bound here, with WebhookSecretCipherOptions right above it - the same
+        // fail-fast-on-a-missing-key discipline, a different named section and a different key.
+        services
+            .AddOptions<ChannelCredentialCipherOptions>()
+            .Bind(configuration.GetSection(ChannelCredentialCipherOptions.SectionName))
+            .Validate(IsValidBase64Aes256Key, "Channels:CredentialEncryptionKey must be a base64-encoded 32-byte AES-256 key.")
+            .ValidateOnStart();
+        services.AddScoped<RegisterChannelCredentialHandler>();
+        services.AddScoped<RevokeChannelCredentialHandler>();
+
+        // `14-02`: MAX's own outbound client and adapter - registered here, for every host, the same
+        // "registered everywhere, resolved where it matters" shape as everything else on this page.
+        // MaxChannelAdapter is registered as itself first, then decorated into IInboundChannelAdapter -
+        // ResilientInboundChannelAdapter's own remarks explain why composition beats a base class here.
+        services
+            .AddOptions<MaxBotApiOptions>()
+            .Bind(configuration.GetSection(MaxBotApiOptions.SectionName))
+            .ValidateOnStart();
+        services
+            .AddOptions<MaxLongPollingServiceOptions>()
+            .Bind(configuration.GetSection(MaxLongPollingServiceOptions.SectionName))
+            .ValidateOnStart();
+        services.AddHttpClient<MaxApiClient>((sp, client) =>
+        {
+            var baseUrl = sp.GetRequiredService<IOptions<MaxBotApiOptions>>().Value.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
+        });
+        // Singleton, not scoped: InboundChannelAdapterRegistry (below) is itself a singleton built from
+        // IEnumerable<IInboundChannelAdapter>, so every adapter it can hold must be safe to keep for the
+        // process lifetime - MaxChannelAdapter's own remarks explain how it reaches its Scoped
+        // repositories anyway (IServiceScopeFactory, one scope per SendAsync call).
+        services.AddSingleton<MaxChannelAdapter>();
+        services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
+            sp.GetRequiredService<MaxChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
@@ -287,6 +330,21 @@ public sealed class ChatModule : IProductModule
         try
         {
             return Convert.FromBase64String(options.SecretEncryptionKey).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    // `14-02`/`adr/0069`: same check, ChannelCredentialCipherOptions' own key - kept as a second
+    // overload rather than widened to `string` because `.Validate()` binds by the options type it is
+    // chained onto, the same shape the overload above already has.
+    private static bool IsValidBase64Aes256Key(ChannelCredentialCipherOptions options)
+    {
+        try
+        {
+            return Convert.FromBase64String(options.CredentialEncryptionKey).Length == 32;
         }
         catch (FormatException)
         {

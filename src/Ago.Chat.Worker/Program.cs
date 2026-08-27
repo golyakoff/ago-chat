@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Keycloak;
+using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Module;
@@ -40,6 +41,19 @@ builder.Services
     .Bind(builder.Configuration.GetSection(OfflineAutoReplyConsumerOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddHostedService<OfflineAutoReplyConsumer>();
+
+// `14-02`: the outbound half of `14-01`'s port - see ChannelMessageDeliveryConsumer's own remarks.
+builder.Services
+    .AddOptions<ChannelMessageDeliveryConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(ChannelMessageDeliveryConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ChannelMessageDeliveryConsumer>();
+
+// `14-02`: the dev-only inbound mechanism (MaxLongPollingService's own remarks on why both this and
+// Ago.Chat.Api's webhook receiver exist). Ago.Chat.Worker, not Ago.Chat.Api, because this is
+// restart-tolerant background work with no request to answer - adr/0013's own failure-profile split,
+// applied the way this item's backlog note asks.
+builder.Services.AddHostedService<MaxLongPollingService>();
 
 builder.Services
     .AddOptions<PartitionMaintenanceJobOptions>()

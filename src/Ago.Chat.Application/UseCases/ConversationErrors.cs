@@ -149,4 +149,19 @@ public static class ConversationErrors
     /// detail.</summary>
     public static Error OfflineAutoReplyInvalid(string reason) =>
         new("OfflineAutoReply.Invalid", reason);
+
+    // `14-02`: same shared vocabulary, same reason - RegisterChannelCredentialHandler/
+    // RevokeChannelCredentialHandler add their own codes here rather than a separate error class.
+    public static Error ChannelCredentialNotFound(Guid channelCredentialId) =>
+        new("ChannelCredential.NotFound", $"Channel credential {channelCredentialId} was not found.");
+
+    /// <summary>`adr/0069`'s "one bot per tenant per channel" - raised when an active credential
+    /// already exists for the (site, kind) pair the caller is trying to register. The remedy is
+    /// `RevokeChannelCredential` first, matching `WebhookEndpoint`'s own revoke-and-recreate-only
+    /// shape - never a silent overwrite of a token that might still be in use.</summary>
+    public static Error ChannelAlreadyConnected(string reason) =>
+        new("ChannelCredential.AlreadyConnected", reason);
+
+    public static Error ChannelInvalidToken(string reason) =>
+        new("ChannelCredential.InvalidToken", reason);
 }

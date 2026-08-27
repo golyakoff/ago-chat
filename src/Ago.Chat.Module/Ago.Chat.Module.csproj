@@ -28,6 +28,10 @@
   <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <!-- `14-02`: MaxChannelAdapter/MaxApiClient are registered here, alongside every other host-agnostic
+         port - the same reasoning ChannelResiliencePipelines above already states for why this project,
+         not Ago.Chat.Api or Ago.Chat.Worker individually. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
   </ItemGroup>
 
 </Project>

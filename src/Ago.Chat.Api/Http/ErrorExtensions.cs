@@ -17,14 +17,16 @@ public static class ErrorExtensions
     {
         var statusCode = error.Code switch
         {
-            "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound" => StatusCodes.Status404NotFound,
+            "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound"
+                or "ChannelCredential.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
-                or "Site.InvalidName" or "Site.InvalidOrigin" => StatusCodes.Status400BadRequest,
+                or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
-                or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered" => StatusCodes.Status409Conflict,
+                or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
+                or "ChannelCredential.AlreadyConnected" => StatusCodes.Status409Conflict,
             "Message.RateLimited" or "Site.RateLimited" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status500InternalServerError,
         };

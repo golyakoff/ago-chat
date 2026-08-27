@@ -19,6 +19,14 @@ public sealed class FakeChannelIdentityRepository : IChannelIdentityRepository
         SiteId siteId, ChannelKind kind, ExternalChannelAddress address, CancellationToken cancellationToken) =>
         Task.FromResult(_byKey.GetValueOrDefault((siteId, kind, address)));
 
+    /// <summary>`14-02`: mirrors the real repository's "most recently seen" tie-break -
+    /// <c>ChannelIdentityRepository.FindMostRecentForVisitorAsync</c>'s own remarks.</summary>
+    public Task<ChannelIdentity?> FindMostRecentForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+        Task.FromResult(_byKey.Values
+            .Where(c => c.VisitorId == visitorId)
+            .OrderByDescending(c => c.LastSeenAt)
+            .FirstOrDefault());
+
     public Task SaveAsync(ChannelIdentity identity, CancellationToken cancellationToken)
     {
         _byKey[(identity.SiteId, identity.Kind, identity.Address)] = identity;
