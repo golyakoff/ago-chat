@@ -33,6 +33,7 @@ using Microsoft.AspNetCore.Authorization;
 using OpenTelemetry.Exporter;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -280,7 +281,35 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddSingleton<IAuthorizationHandler, PlatformOwnerAuthorizationHandler>();
 
+// `edge.md`'s own stated-but-never-enforced requirement: "the app must be configured to trust
+// [X-Forwarded-For], or every per-IP limit silently applies to the ingress itself." Found live, not
+// in review - every `demo-mint:ip:*`/`register-site:ip:*` Redis key was the Gateway pod's own
+// cluster-internal address (confirmed against `kubectl get pods -o wide`), meaning the "per-IP" rate
+// limiter was one shared bucket for every visitor on the internet, not one bucket per visitor. One
+// person's testing could - and did - lock every other visitor out of minting a demo tenant.
+//
+// `KnownNetworks` trusts the k3s pod network (`10.42.0.0/16`, this cluster's own CIDR, confirmed
+// against the Gateway's and every other pod's actual IP) rather than the default (loopback only,
+// which nothing here ever connects from) or leaving it wide open (which would let any caller forge
+// `X-Forwarded-For` and pick their own rate-limit bucket - the header is otherwise fully
+// caller-controlled). `KnownProxies` stays empty: this deployment's one hop is the Gateway, entirely
+// inside the trusted network already covered by `KnownNetworks`.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+    options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("10.42.0.0/16"));
+});
+
 var app = builder.Build();
+
+// Before everything else in the pipeline, deliberately: `UseCors`/`UseAuthentication` and every
+// handler after them (`RegisterSiteHandler`, `MintDemoTenantHandler`) reads
+// `HttpContext.Connection.RemoteIpAddress` assuming it is already the real client - this middleware
+// is what makes that assumption true, by rewriting it from `X-Forwarded-For` before anything else
+// runs.
+app.UseForwardedHeaders();
 
 // `8-08`/`adr/0056`: run before anything can listen, and deliberately not as an IHostedService -
 // GenericWebHostService opens the socket before any service registered after it, so a hosted service
