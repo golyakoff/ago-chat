@@ -147,6 +147,34 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<AttachmentOrphanSweepJob>();
 
+// `15-04`: the pruning mechanism - outbox/webhook_deliveries/inbox bounded-batch deletes past a
+// configurable window, and messages partitions dropped past a configurable, archive-gated horizon.
+// Same registration shape as every other job on this page.
+builder.Services
+    .AddOptions<OutboxPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(OutboxPruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OutboxPruneJob>();
+
+builder.Services
+    .AddOptions<WebhookDeliveryPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(WebhookDeliveryPruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<WebhookDeliveryPruneJob>();
+
+builder.Services
+    .AddOptions<InboxPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(InboxPruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<InboxPruneJob>();
+
+builder.Services
+    .AddOptions<MessagePartitionPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(MessagePartitionPruneJobOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddHostedService<MessagePartitionPruneJob>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()

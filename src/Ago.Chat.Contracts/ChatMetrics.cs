@@ -41,6 +41,27 @@ public static class ChatMetrics
     public const string AssignmentCapacityReleaseDeadlocksInstrumentName = "ago.chat.assignment.capacity_release_deadlocks";
     public const string DeliveryRecipientsInstrumentName = "ago.chat.delivery.recipients";
 
+    /// <summary>`15-04`: one heartbeat instrument shared by every retention-pruning job
+    /// (<c>OutboxPruneJob</c>, <c>WebhookDeliveryPruneJob</c>, <c>InboxPruneJob</c>,
+    /// <c>MessagePartitionPruneJob</c>), tagged by <c>table</c>. Incremented once per completed cycle
+    /// regardless of whether that cycle found anything to remove - a job with nothing to prune and a
+    /// job that has silently stopped running both report zero rows/partitions removed, and this is the
+    /// one signal that tells them apart (`15-04`'s own scope note: "a maintenance job that silently
+    /// stopped is indistinguishable from one that has nothing to do"). `15-03`'s alerting can key an
+    /// "this stopped running" rule off <c>increase(...[N])  == 0</c> on this counter alone.</summary>
+    public const string RetentionPruneCyclesInstrumentName = "ago.chat.retention.prune_cycles";
+
+    public const string RetentionRowsPrunedInstrumentName = "ago.chat.retention.rows_pruned";
+    public const string RetentionPruneDurationInstrumentName = "ago.chat.retention.prune_duration";
+    public const string RetentionPartitionsDroppedInstrumentName = "ago.chat.retention.partitions_dropped";
+
+    /// <summary>A partition past its retention horizon that <see cref="IMessageArchiveGate"/> (well,
+    /// its `Ago.Chat.Application.Abstractions` namesake - Contracts cannot reference Application)
+    /// declined to confirm, and so was left alone this cycle. Zero every cycle is the healthy state
+    /// once `13-06` ships a real gate; a rising count means archiving has fallen behind pruning, which
+    /// is exactly the condition `adr/0031`'s ordering rule exists to make visible rather than silent.</summary>
+    public const string RetentionPartitionsPendingArchiveInstrumentName = "ago.chat.retention.partitions_pending_archive";
+
     /// <summary>The connection registry had at least one live connection for this recipient when the
     /// fan-out resolved them.</summary>
     public const string ConnectedPresence = "connected";
@@ -75,6 +96,21 @@ public static class ChatMetrics
 
     private static readonly Counter<long> AssignmentCapacityReleaseDeadlocks = Meter.CreateCounter<long>(
         AssignmentCapacityReleaseDeadlocksInstrumentName, unit: "{deadlock}", description: "IOperatorCapacity.ReleaseAsync calls Postgres aborted with 40P01, tagged by outcome (retried/abandoned) - `6-10`. `abandoned` is the one that matters: it means a capacity slot leaked until that operator next goes offline.");
+
+    private static readonly Counter<long> RetentionPruneCycles = Meter.CreateCounter<long>(
+        RetentionPruneCyclesInstrumentName, unit: "{cycle}", description: "Retention-pruning job cycles completed, tagged by table (outbox/webhook_deliveries/inbox/messages) - the liveness signal 15-03 alerts on.");
+
+    private static readonly Counter<long> RetentionRowsPruned = Meter.CreateCounter<long>(
+        RetentionRowsPrunedInstrumentName, unit: "{row}", description: "Rows deleted by a retention-pruning job, tagged by table.");
+
+    private static readonly Histogram<double> RetentionPruneDuration = Meter.CreateHistogram<double>(
+        RetentionPruneDurationInstrumentName, unit: "s", description: "Wall-clock duration of one retention-pruning job cycle, tagged by table.");
+
+    private static readonly Counter<long> RetentionPartitionsDropped = Meter.CreateCounter<long>(
+        RetentionPartitionsDroppedInstrumentName, unit: "{partition}", description: "messages partitions dropped by MessagePartitionPruneJob, past their retention horizon and archive-confirmed.");
+
+    private static readonly Counter<long> RetentionPartitionsPendingArchive = Meter.CreateCounter<long>(
+        RetentionPartitionsPendingArchiveInstrumentName, unit: "{partition}", description: "messages partitions past their retention horizon but left alone this cycle because the archive gate did not confirm them.");
 
     private static readonly Counter<long> DeliveryRecipients = Meter.CreateCounter<long>(
         DeliveryRecipientsInstrumentName,
@@ -120,6 +156,43 @@ public static class ChatMetrics
     public static void RecordEnqueueWait(TimeSpan wait) => PipelineEnqueueWait.Record(wait.TotalSeconds);
 
     public static void RecordOutboxPublishFailure() => OutboxPublishFailures.Add(1);
+
+    /// <summary>`15-04`: called once per completed cycle by every row-deleting retention job
+    /// (<c>table</c> is <c>"outbox"</c>, <c>"webhook_deliveries"</c> or <c>"inbox"</c>) - always, even
+    /// when <paramref name="rowsRemoved"/> is zero, since the cycle-completion itself is the liveness
+    /// signal (this class's own remarks on <see cref="RetentionPruneCyclesInstrumentName"/>).</summary>
+    public static void RecordRetentionPruneCycle(string table, int rowsRemoved, TimeSpan duration)
+    {
+        var tableTag = new KeyValuePair<string, object?>("table", table);
+        RetentionPruneCycles.Add(1, tableTag);
+        if (rowsRemoved > 0)
+        {
+            RetentionRowsPruned.Add(rowsRemoved, tableTag);
+        }
+
+        RetentionPruneDuration.Record(duration.TotalSeconds, tableTag);
+    }
+
+    /// <summary>`15-04`: the <c>messages</c>-partition counterpart to
+    /// <see cref="RecordRetentionPruneCycle"/> - a different shape (partitions, not rows; a
+    /// pending-archive count in addition to a removed count) but the same "always record the cycle,
+    /// even at zero" liveness rule, tagged <c>table="messages"</c>.</summary>
+    public static void RecordPartitionPruneCycle(int partitionsDropped, int partitionsPendingArchive, TimeSpan duration)
+    {
+        var tableTag = new KeyValuePair<string, object?>("table", "messages");
+        RetentionPruneCycles.Add(1, tableTag);
+        if (partitionsDropped > 0)
+        {
+            RetentionPartitionsDropped.Add(partitionsDropped, tableTag);
+        }
+
+        if (partitionsPendingArchive > 0)
+        {
+            RetentionPartitionsPendingArchive.Add(partitionsPendingArchive, tableTag);
+        }
+
+        RetentionPruneDuration.Record(duration.TotalSeconds, tableTag);
+    }
 
     public static void RecordCapacityClaimAttempt(bool claimed)
     {
