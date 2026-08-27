@@ -95,6 +95,7 @@ public sealed class KeycloakIdentityPolicyTests(OperatorOidcFixture fixture)
                         options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
                     services.AddScoped<IOperatorRepository, OperatorRepository>();
                     services.AddScoped<ResolveOperatorIdentityHandler>();
+                    services.AddHttpContextAccessor();
                     services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 
                     services.AddAuthentication()

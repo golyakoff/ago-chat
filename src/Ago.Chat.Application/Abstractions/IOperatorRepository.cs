@@ -9,7 +9,27 @@ namespace Ago.Chat.Application.Abstractions;
 /// </summary>
 public interface IOperatorRepository
 {
-    Task<Operator?> GetByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken);
+    /// <summary>
+    /// `13-07`/`adr/0068`: the `RequestedSiteId`-present path of `ResolveOperatorIdentityHandler`'s
+    /// resolution algorithm - the *only* row that may ever answer a request carrying an explicit
+    /// active-site signal. Returns <see langword="null"/> when this identity holds no `operators` row
+    /// for <paramref name="siteId"/> specifically, even if it holds one for a different site - the
+    /// caller must never fall back to a different tenancy on a miss (`adr/0068`'s own "never
+    /// misdirect" invariant, `tenant-isolation.md`'s worst-case failure mode).
+    /// </summary>
+    Task<Operator?> GetByExternalSubjectIdAndSiteIdAsync(string externalSubjectId, SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `13-07`/`adr/0068`: every `operators` row for this identity, across every `Site` it
+    /// administers - the `RequestedSiteId`-absent path. Before this item, `external_subject_id` was
+    /// globally unique, so this list could only ever hold zero or one row; the composite unique index
+    /// on `(external_subject_id, site_id)` this item introduces
+    /// (<c>OperatorConfiguration</c>) is what makes more than one a real, expected shape. Zero, one,
+    /// or "more than one with no site requested" are three genuinely different answers -
+    /// <see cref="ResolveOperatorIdentityHandler"/> is where that distinction is made, never here;
+    /// this method's only job is to return every row, honestly.
+    /// </summary>
+    Task<IReadOnlyList<Operator>> ListByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken);
 
     /// <summary>
     /// `14-04`: is *anybody* on duty for this site right now - the one question the offline

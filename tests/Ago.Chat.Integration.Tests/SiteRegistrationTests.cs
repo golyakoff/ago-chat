@@ -122,8 +122,18 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.OK, operatorOnlyResponse.StatusCode);
     }
 
+    /// <summary>
+    /// `13-07`/`adr/0068`'s own Done-when, replacing what used to be
+    /// "...Returns409_NotASecondSite": before this item, a second `POST /api/v1/sites` from the same
+    /// identity was refused `409` (the "one login, one tenant" constraint `10-02` deliberately shipped
+    /// and this item deliberately relaxes). Now it succeeds, and produces a real, independently
+    /// queryable second `Site`/`Operator` pair - `external_subject_id` equal, `site_id` different,
+    /// verified by querying the rows directly rather than trusting a second `201` alone, exactly as
+    /// this item's own Done-when demands. Fails before this item's change (the old code 409'd on the
+    /// second call) and passes after.
+    /// </summary>
     [Fact]
-    public async Task RegisterSite_ASecondCallFromTheSameIdentity_Returns409_NotASecondSite()
+    public async Task RegisterSite_ASecondCallFromTheSameIdentity_CreatesASecondSiteAndOperatorRow()
     {
         var (token, _) = await fixture.CreateFreshUserAccessTokenAsync();
 
@@ -134,15 +144,29 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         var first = await client.PostAsJsonAsync(
             "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("Acme Support", "https://shop.example.com"));
         var second = await client.PostAsJsonAsync(
-            "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("Acme Support Again", "https://other.example.com"));
+            "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("Acme Support - Second Shop", "https://other.example.com"));
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+
+        var firstBody = await first.Content.ReadFromJsonAsync<SitesEndpoints.RegisterSiteResponse>();
+        var secondBody = await second.Content.ReadFromJsonAsync<SitesEndpoints.RegisterSiteResponse>();
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+        Assert.NotEqual(firstBody.SiteId, secondBody.SiteId);
+        Assert.NotEqual(firstBody.OperatorId, secondBody.OperatorId);
 
         var externalSubjectId = ReadSubjectClaim(token);
         await using var db = fixture.CreateDbContext();
-        var operatorCount = await db.Operators.CountAsync(o => o.ExternalSubjectId == externalSubjectId);
-        Assert.Equal(1, operatorCount);
+        var operatorRows = await db.Operators.Where(o => o.ExternalSubjectId == externalSubjectId).ToListAsync();
+        Assert.Equal(2, operatorRows.Count);
+        Assert.Contains(operatorRows, o => o.SiteId == new SiteId(firstBody.SiteId));
+        Assert.Contains(operatorRows, o => o.SiteId == new SiteId(secondBody.SiteId));
+
+        var siteRows = await db.Sites
+            .Where(s => s.Id == new SiteId(firstBody.SiteId) || s.Id == new SiteId(secondBody.SiteId))
+            .ToListAsync();
+        Assert.Equal(2, siteRows.Count);
     }
 
     // `12-04` added a test here asserting this endpoint answered `403` to a platform-owner token, and
@@ -173,6 +197,9 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
+        // `13-07`: OperatorIdentityClaimsTransformation now reads the active-site signal off the
+        // current request - see Program.cs's own remarks on this exact registration.
+        builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new RegisterSiteRateLimitOptions());
