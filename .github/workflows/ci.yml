@@ -26,6 +26,41 @@ jobs:
         env:
           AGO_PLATFORM_PACKAGES_TOKEN: ${{ secrets.AGO_PLATFORM_PACKAGES_TOKEN }}
 
+      # 17-04: same policy as ago-platform's own CI, stated once in full there and repeated only in
+      # summary here - Critical/High fails the build, Moderate/Low is reported (job log + step
+      # summary) but does not, because a check that blocks every branch on an untriaged transitive Low
+      # advisory nobody can act on trains people to ignore red CI rather than read it
+      # (docs/runbooks/vulnerability-response.md in ago-root). `--format json` rather than the
+      # command's own exit code (always 0) or its human-readable text (locale-dependent - confirmed
+      # while writing this against a non-en-US machine).
+      - name: Vulnerability check (dotnet list package --vulnerable)
+        run: |
+          set -euo pipefail
+          dotnet list Ago.Chat.slnx package --vulnerable --include-transitive --no-restore \
+            --configfile nuget.ci.config --format json --output-version 1 > vulnerable.json
+        env:
+          AGO_PLATFORM_PACKAGES_TOKEN: ${{ secrets.AGO_PLATFORM_PACKAGES_TOKEN }}
+
+      - name: Report and gate on Critical/High
+        run: |
+          set -euo pipefail
+          total=$(jq '[ .projects[]?.frameworks[]? | (.topLevelPackages[]?, .transitivePackages[]?) | .vulnerabilities[]? ] | length' vulnerable.json)
+          high_critical=$(jq '[ .projects[]?.frameworks[]? | (.topLevelPackages[]?, .transitivePackages[]?) | .vulnerabilities[]? | select(.severity=="Critical" or .severity=="High") ] | length' vulnerable.json)
+
+          echo "Vulnerable package references: $total total, $high_critical at Critical/High."
+          jq -r '.projects[] as $p | ($p.frameworks[]? // empty) as $f | (($f.topLevelPackages[]? // empty), ($f.transitivePackages[]? // empty)) | . as $pkg | $pkg.vulnerabilities[]? | "  \($p.path | split("/") | last)  \($pkg.id) \($pkg.resolvedVersion // $pkg.requestedVersion)  \(.severity)  \(.advisoryurl)"' vulnerable.json
+
+          {
+            echo "### Dependency vulnerability check"
+            echo
+            echo "$total vulnerable package reference(s), $high_critical at Critical/High severity."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$high_critical" -gt 0 ]; then
+            echo "::error::$high_critical package(s) at Critical/High severity - failing the build. See the list above."
+            exit 1
+          fi
+
       - name: Format check
         run: dotnet format Ago.Chat.slnx --verify-no-changes
 
@@ -97,7 +132,7 @@ jobs:
       # already uses on a developer machine and on the node, so an image built by CI and one built by
       # hand come out of the same command. --build-context is the reason BuildKit is required at all
       # (the Ago.Platform.* feed is a folder outside the build context, per the Dockerfile's header).
-      - name: Build and push the four host images
+      - name: Build the four host images
         env:
           DOCKER_BUILDKIT: "1"
         run: |
@@ -113,9 +148,54 @@ jobs:
               -t "${repo}:${{ github.sha }}" \
               -t "${repo}:main" \
               .
+            echo "::endgroup::"
+          done
+
+      # `17-04`, and `15-06` is what makes it possible - there was nowhere to scan into before a
+      # registry existed. Runs between build and push, not after push: the obvious place to bolt a
+      # scan onto an existing build-then-push job is the end, but that lets a Critical/High image sit
+      # in GHCR, however briefly, before anyone reacts. Scanning first means nothing this check would
+      # fail ever reaches the registry from this pipeline. Same threshold as the dependency check
+      # above (Critical/High fails, Moderate/Low is reported - docs/runbooks/vulnerability-response.md
+      # in ago-root) and `--scanners vuln` only, deliberately: this item's own scope excludes secret
+      # scanning of source, and Trivy's filesystem secret scanner is close enough to that same job to
+      # stay out of it here too.
+      #
+      # Pinned by digest, not by a version tag or the `aquasecurity/trivy-action` wrapper: both
+      # `trivy-action`'s git tags (0.0.1-0.34.2) and the `aquasec/trivy` Docker Hub image itself
+      # (0.69.4-0.69.6) were compromised in March 2026 - malicious code injected via imposter commits
+      # and malicious image builds respectively - which is exactly the "unpinned or stale Action is a
+      # supply-chain surface" risk this item's own scope names, not a hypothetical one. The digest
+      # below is `aquasec/trivy:0.74.0`, pulled and verified locally while writing this change (well
+      # past the compromised range); Dependabot's github-actions/docker entries above will not bump a
+      # `docker run` invocation like this one, so this digest needs updating by hand when it goes
+      # stale - a real limitation of choosing the CLI form over the Action, stated rather than hidden.
+      - name: Scan images for known vulnerabilities (Trivy)
+        run: |
+          set -euo pipefail
+          fail=0
+          for project in Ago.Chat.Api Ago.Chat.Worker Ago.Chat.Webhooks Ago.Chat.Migrator; do
+            name="ago-chat-$(echo "${project#Ago.Chat.}" | tr '[:upper:]' '[:lower:]')"
+            repo="ghcr.io/${{ github.repository_owner }}/${name}"
+            echo "::group::${repo}"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+              image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 --format table \
+              "${repo}:${{ github.sha }}" || fail=1
+            echo "::endgroup::"
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::At least one image has a Critical/High vulnerability - see the groups above. Nothing was pushed."
+            exit 1
+          fi
+
+      - name: Push the four host images
+        run: |
+          set -euo pipefail
+          for n in api worker webhooks migrator; do
+            repo="ghcr.io/${{ github.repository_owner }}/ago-chat-${n}"
             docker push "${repo}:${{ github.sha }}"
             docker push "${repo}:main"
-            echo "::endgroup::"
           done
 
       - name: Summarise what was published
