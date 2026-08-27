@@ -323,6 +323,7 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ListWebhookEndpointsHandler>();
         builder.Services.AddScoped<RevokeWebhookEndpointHandler>();
         builder.Services.AddScoped<GetWebhookDeliveriesHandler>();
+        builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 
         builder.Services.AddAuthentication()

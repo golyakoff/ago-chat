@@ -30,13 +30,14 @@ public interface ISiteRegistrationRepository
 {
     /// <summary>Persists the whole <paramref name="registration"/> package in one transaction, or
     /// none of it. Returns <c>false</c> without partially writing anything if
-    /// <see cref="Operator.ExternalSubjectId"/> already resolves to an existing `operators` row - the
-    /// database's own unique index (`adr/0022`: "unique when present") is what actually decides this
-    /// under a race between two concurrent registration attempts from the same Keycloak identity, the
-    /// same "let a real constraint be the source of truth for a compare-and-set decision" shape
+    /// <c>(</c><see cref="Operator.ExternalSubjectId"/><c>, </c><see cref="Operator.SiteId"/><c>)</c>
+    /// already resolves to an existing `operators` row - the database's own composite unique index
+    /// (`13-07`/`adr/0068`: "unique when present" on the pair, widened from the single-column index
+    /// `adr/0022` originally described) is what actually decides this under a race, the same "let a
+    /// real constraint be the source of truth for a compare-and-set decision" shape
     /// <see cref="IWebhookDeliveryRepository.SaveAsync"/> already established for its own duplicate
-    /// insert - <c>RegisterSiteHandler</c>'s own pre-check via
-    /// <see cref="IOperatorRepository.GetByExternalSubjectIdAsync"/> is a fast path for the common
-    /// case, not the actual correctness guarantee.</summary>
+    /// insert. <c>RegisterSiteHandler</c>'s own remarks (at this method's call site) explain why, once
+    /// `siteId` is freshly generated on every call, this path is effectively unreachable in ordinary
+    /// operation rather than the reachable race it guarded before `13-07`.</summary>
     Task<bool> TryRegisterAsync(SiteRegistration registration, CancellationToken cancellationToken);
 }

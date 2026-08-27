@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Infrastructure.Keycloak;
 using Microsoft.Extensions.Options;
 using Ago.Chat.Api.Hubs;
+using Ago.Chat.Api.Me;
 using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Realtime;
@@ -181,6 +182,13 @@ var keycloakAuthority = builder.Configuration["Auth:Keycloak:Authority"]
 var keycloakAudience = builder.Configuration["Auth:Keycloak:Audience"] ?? "ago-console";
 var keycloakRequireHttpsMetadata = builder.Configuration.GetValue("Auth:Keycloak:RequireHttpsMetadata", false);
 
+// `13-07`/`adr/0068`: OperatorIdentityClaimsTransformation needs the current request to read the
+// active-site signal off (a header for an ordinary REST call, a query-string parameter for the
+// SignalR hub handshake - that class's own remarks explain why both). IClaimsTransformation has no
+// HttpContext parameter of its own; this is the framework's own seam for reaching the ambient request
+// from a singleton service, registered here rather than left implicit because nothing in this codebase
+// needed it before this item.
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 
 builder.Services.AddAuthentication()
@@ -317,6 +325,8 @@ app.MapAuthEndpoints();
 app.MapAttachmentEndpoints();
 app.MapConversationsEndpoints();
 app.MapOperatorsEndpoints();
+// `13-07`/`adr/0068`
+app.MapMeEndpoints();
 app.MapWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`

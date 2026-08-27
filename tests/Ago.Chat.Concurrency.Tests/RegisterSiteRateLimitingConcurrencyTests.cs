@@ -47,7 +47,6 @@ public sealed class RegisterSiteRateLimitingConcurrencyTests(SiteCachingConcurre
         {
             await using var db = fixture.CreateDbContext();
             var handler = new RegisterSiteHandler(
-                new OperatorRepository(db),
                 new SiteRegistrationRepository(db),
                 limiter,
                 options,

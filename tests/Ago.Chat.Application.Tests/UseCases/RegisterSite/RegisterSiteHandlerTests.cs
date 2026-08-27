@@ -11,22 +11,19 @@ public class RegisterSiteHandlerTests
     private const string ExternalSubjectId = "keycloak-sub-1";
     private const string RequestIp = "203.0.113.5";
 
-    private sealed record Fixture(
-        RegisterSiteHandler Handler, FakeOperatorRepository Operators, FakeSiteRegistrationRepository Registrations);
+    private sealed record Fixture(RegisterSiteHandler Handler, FakeSiteRegistrationRepository Registrations);
 
     private static Fixture CreateFixture(IRateLimiter? rateLimiter = null)
     {
-        var operators = new FakeOperatorRepository();
         var registrations = new FakeSiteRegistrationRepository();
         var handler = new RegisterSiteHandler(
-            operators,
             registrations,
             rateLimiter ?? new FakeRateLimiter(),
             new RegisterSiteRateLimitOptions(),
             new FakeIdGenerator(),
             new FakeClock(Now));
 
-        return new Fixture(handler, operators, registrations);
+        return new Fixture(handler, registrations);
     }
 
     private static Ago.Chat.Application.UseCases.RegisterSite.RegisterSite ValidCommand() =>
@@ -62,18 +59,32 @@ public class RegisterSiteHandlerTests
             registration.AdminRole.Permissions);
     }
 
+    /// <summary>
+    /// `13-07`/`adr/0068`: the direct replacement for what used to be
+    /// "...AlreadyHasAnOperatorRow_ReturnsAlreadyRegistered" - before this item, a `sub` that already
+    /// resolved to *any* `operators` row was refused `409` by a pre-check this handler ran. That
+    /// pre-check is gone; the whole point of `13-07` is that this now succeeds, exactly like a
+    /// first-time caller, and produces a genuinely second `SiteRegistration`. Fails before this item's
+    /// change (the old code returned `Site.AlreadyRegistered` here) and passes after - the regression
+    /// proof this item's own "zero behavioural change for a single-tenant identity" claim does not
+    /// cover, because this identity is deliberately not single-tenant.
+    /// </summary>
     [Fact]
-    public async Task HandleAsync_WhenTheSubjectAlreadyHasAnOperatorRow_ReturnsAlreadyRegistered_WithoutRegistering()
+    public async Task HandleAsync_WhenTheSubjectAlreadyHasAnOperatorRowOnADifferentSite_RegistersASecondSiteAnyway()
     {
         var fixture = CreateFixture();
-        fixture.Operators.Seed(new Operator(
-            new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, 5, ExternalSubjectId));
+        var firstResult = await fixture.Handler.HandleAsync(ValidCommand(), CancellationToken.None);
+        Assert.True(firstResult.IsSuccess);
 
-        var result = await fixture.Handler.HandleAsync(ValidCommand(), CancellationToken.None);
+        var secondResult = await fixture.Handler.HandleAsync(
+            ValidCommand() with { SiteName = "Acme Support - Second Shop", InitialAllowedOrigin = "https://second.example.com" },
+            CancellationToken.None);
 
-        Assert.True(result.IsFailure);
-        Assert.Equal("Site.AlreadyRegistered", result.Error!.Value.Code);
-        Assert.Empty(fixture.Registrations.Registered);
+        Assert.True(secondResult.IsSuccess);
+        Assert.NotEqual(firstResult.Value.SiteId, secondResult.Value.SiteId);
+        Assert.NotEqual(firstResult.Value.OperatorId, secondResult.Value.OperatorId);
+        Assert.Equal(2, fixture.Registrations.Registered.Count);
+        Assert.All(fixture.Registrations.Registered, r => Assert.Equal(ExternalSubjectId, r.Operator.ExternalSubjectId));
     }
 
     [Fact]
