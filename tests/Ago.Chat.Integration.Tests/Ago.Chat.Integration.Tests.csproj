@@ -70,6 +70,11 @@
          but the same "make other tests real" project Ago.Chat.FakeCrm.csproj's own remarks describe;
          transitively pulls in Ago.Chat.FakeCrm itself. -->
     <ProjectReference Include="..\Ago.Chat.FakeCrm.Tests\Ago.Chat.FakeCrm.Tests.csproj" />
+    <!-- `14-02`: MaxChannelAdapterResilienceTests' own real-process MAX stand-in - FakeCrm.Tests' own
+         precedent, reused for the inbound-channel port's first real HTTP boundary. -->
+    <ProjectReference Include="..\Ago.Chat.FakeMax.Tests\Ago.Chat.FakeMax.Tests.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
   </ItemGroup>
 
 

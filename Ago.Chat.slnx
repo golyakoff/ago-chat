@@ -6,6 +6,7 @@
     <Project Path="src/Ago.Chat.Domain/Ago.Chat.Domain.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Keycloak/Ago.Chat.Infrastructure.Keycloak.csproj" />
+    <Project Path="src/Ago.Chat.Infrastructure.MaxBot/Ago.Chat.Infrastructure.MaxBot.csproj" />
     <Project Path="src/Ago.Chat.Module/Ago.Chat.Module.csproj" />
     <Project Path="src/Ago.Chat.Migrator/Ago.Chat.Migrator.csproj" />
     <Project Path="src/Ago.Chat.Webhooks/Ago.Chat.Webhooks.csproj" />
@@ -18,6 +19,8 @@
     <Project Path="tests/Ago.Chat.Domain.Tests/Ago.Chat.Domain.Tests.csproj" />
     <Project Path="tests/Ago.Chat.FakeCrm/Ago.Chat.FakeCrm.csproj" />
     <Project Path="tests/Ago.Chat.FakeCrm.Tests/Ago.Chat.FakeCrm.Tests.csproj" />
+    <Project Path="tests/Ago.Chat.FakeMax/Ago.Chat.FakeMax.csproj" />
+    <Project Path="tests/Ago.Chat.FakeMax.Tests/Ago.Chat.FakeMax.Tests.csproj" />
     <Project Path="tests/Ago.Chat.Integration.Tests/Ago.Chat.Integration.Tests.csproj" />
     <Project Path="tests/Ago.Chat.WebhookDispatchRunner/Ago.Chat.WebhookDispatchRunner.csproj" />
     <Project Path="tests/Ago.Chat.LoadDriver/Ago.Chat.LoadDriver.csproj" />

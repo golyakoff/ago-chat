@@ -9,6 +9,8 @@
     <!-- `8-07`: this host mints (Api) or expires (Worker) demo tenants, so it talks to Keycloak.
          Ago.Chat.Webhooks deliberately does not reference this and is never handed the credential. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Keycloak\Ago.Chat.Infrastructure.Keycloak.csproj" />
+    <!-- `14-02`: Program.cs registers MaxLongPollingService directly. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
   </ItemGroup>
 
   <ItemGroup>

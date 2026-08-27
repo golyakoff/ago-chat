@@ -77,6 +77,50 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("attachments", (string)null);
                 });
 
+            modelBuilder.Entity("Ago.Chat.Domain.ChannelCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean")
+                        .HasColumnName("active");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid>("SiteId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("site_id");
+
+                    b.Property<byte[]>("TokenCiphertext")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("token_ciphertext");
+
+                    b.Property<byte[]>("WebhookSecretHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("webhook_secret_hash");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SiteId", "Kind")
+                        .IsUnique()
+                        .HasDatabaseName("ux_channel_credentials_site_kind_active")
+                        .HasFilter("active");
+
+                    b.ToTable("channel_credentials", (string)null);
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.ChannelIdentity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -625,6 +669,15 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Ago.Chat.Domain.Site", null)
+                        .WithMany()
+                        .HasForeignKey("SiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Ago.Chat.Domain.ChannelCredential", b =>
+                {
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")

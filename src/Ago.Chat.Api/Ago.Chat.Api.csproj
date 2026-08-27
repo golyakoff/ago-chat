@@ -11,6 +11,12 @@
          Ago.Chat.Webhooks deliberately does not reference this and is never handed the credential. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Keycloak\Ago.Chat.Infrastructure.Keycloak.csproj" />
     <ProjectReference Include="..\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
+    <!-- `14-02`: MaxWebhookEndpoints reads MaxUpdate/MaxInboundMessageParser directly (the webhook
+         receiver's own translation from MAX's wire shape to ReceiveChannelMessage) and
+         MaxChannelEndpoints calls MaxApiClient.SubscribeWebhookAsync - both genuinely used here, not
+         only transitively through Ago.Chat.Module, the same "explicit when actually used" reasoning
+         Ago.Chat.Infrastructure.Keycloak's own reference above already follows. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
   </ItemGroup>
 
 

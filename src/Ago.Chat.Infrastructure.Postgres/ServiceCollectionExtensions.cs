@@ -65,6 +65,9 @@ public static class ServiceCollectionExtensions
         // ordinary case; this is the same defense-in-depth belt-and-suspenders shape the constructor
         // guard in WebhookSecretCipher itself already applies.
         services.AddScoped<IWebhookSecretCipher, WebhookSecretCipher>();
+        // `14-02`/`adr/0069`: same shape, same reasoning, a second cipher and a second key.
+        services.AddScoped<IChannelCredentialRepository, ChannelCredentialRepository>();
+        services.AddScoped<IChannelCredentialCipher, ChannelCredentialCipher>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

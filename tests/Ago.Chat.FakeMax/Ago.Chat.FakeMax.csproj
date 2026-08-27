@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    `14-02`'s own Done-when: "MAX's outbound API stopped/unreachable degrades gracefully... proven
+    with a real container-failure-style test, not asserted." A real, standalone process - not an
+    xUnit-hosted TestServer - for the identical reason `Ago.Chat.FakeCrm.csproj` states for the CRM
+    dispatcher: MaxChannelAdapterResilienceTests needs to point a real HttpClient at a running
+    instance over a real socket, and to prove "stopped" by actually stopping the process, which an
+    in-memory TestServer cannot simulate honestly. Lives under tests/ for the same reason FakeCrm
+    does - it is not one of the three hosts this repository ships to production.
+
+    Much smaller than Ago.Chat.FakeCrm: MAX's own outbound call (POST /messages) carries no signature
+    for this harness to verify (this system authenticates *to* MAX with a bearer-shaped token MAX
+    itself checks; nothing calls this harness expecting a signed request the way `6-03`'s webhook
+    deliveries are signed), so there is no signing-secret ceremony here at all.
+  -->
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Kernel" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Kernel\Ago.Platform.Kernel.csproj" />
+  </ItemGroup>
+
+</Project>

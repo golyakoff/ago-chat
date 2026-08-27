@@ -120,6 +120,15 @@ internal static class TenantScopeExemptions
             + "exactly as a visitor is (adr/0016) - and what replaces it is stronger than a site check: every "
             + "write goes to the Visitor that this site's own ChannelIdentity row resolves to, so a message can "
             + "only ever land in a conversation belonging to the site whose credentials received it.",
+        ["Ago.Chat.Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler.HandleAsync"] =
+            "`14-02`, consumer side (Ago.Chat.Worker). SiteId comes off the same MessageAccepted envelope "
+            + "SendOfflineAutoReplyHandler/RecordUnreadMessageHandler already read it from - a fact the triggering "
+            + "write established, not a claim to verify. There is also no principal to check a permission for: "
+            + "nobody asked for this relay, a broker delivery did. What the site id is used for is narrow: loading "
+            + "the conversation it names and asking whether its visitor has a linked ChannelIdentity - the actual "
+            + "authorization-shaped question (\"may this message reach that MAX chat\") is answered structurally, "
+            + "by IChannelIdentityRepository.FindMostRecentForVisitorAsync only ever returning an identity that "
+            + "belongs to this exact conversation's own visitor, never a caller-suppliable one.",
         ["Ago.Chat.Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler.HandleAsync"] =
             "The claims transformation's own lookup - it is what *produces* the OperatorId/SiteId claims every "
             + "gated handler then trusts, so it cannot itself depend on them. Keyed by the `sub` of an "

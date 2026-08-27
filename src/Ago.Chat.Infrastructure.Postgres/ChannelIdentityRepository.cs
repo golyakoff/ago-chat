@@ -16,6 +16,16 @@ public sealed class ChannelIdentityRepository(AgoChatDbContext db) : IChannelIde
             .FirstOrDefaultAsync(
                 c => c.SiteId == siteId && c.Kind == kind && c.Address == address, cancellationToken);
 
+    /// <summary>`14-02`: ordered by <see cref="ChannelIdentity.LastSeenAt"/> descending - a visitor
+    /// touching two channels is a real, if rare, case (`ChannelIdentity`'s own remarks), and "the one
+    /// heard from most recently" is the least surprising tie-break for "which channel does an operator's
+    /// reply go out on."</summary>
+    public Task<ChannelIdentity?> FindMostRecentForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+        db.ChannelIdentities
+            .Where(c => c.VisitorId == visitorId)
+            .OrderByDescending(c => c.LastSeenAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public async Task SaveAsync(ChannelIdentity identity, CancellationToken cancellationToken)
     {
         if (db.Entry(identity).State == EntityState.Detached)

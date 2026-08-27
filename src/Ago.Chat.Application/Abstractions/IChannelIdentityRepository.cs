@@ -28,5 +28,20 @@ public interface IChannelIdentityRepository
     Task<ChannelIdentity?> FindAsync(
         SiteId siteId, ChannelKind kind, ExternalChannelAddress address, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// `14-02`: the gap this item found in `14-01`'s own port shape, noted rather than worked around
+    /// (this item's own Context-to-read-first section). `14-01` shipped only the inbound lookup
+    /// (provider address to identity) because it had no outbound caller yet; this item is that caller -
+    /// <c>DeliverChannelMessageHandler</c> needs the reverse direction, "does this visitor's conversation
+    /// have a channel to relay an operator's reply through, and which one" - to decide whether a
+    /// <see cref="Message"/> belongs on any channel at all before it ever asks
+    /// <see cref="IInboundChannelAdapterRegistry"/> for an adapter. A <see cref="Visitor"/> can hold more
+    /// than one <see cref="ChannelIdentity"/> in principle (`ChannelIdentity`'s own remarks), so this
+    /// returns the most recently active one rather than assuming exactly one - the same "most recent
+    /// wins" tie-break `IConversationRepository.GetActiveForVisitorAsync` already applies for an
+    /// analogous "which one of possibly several" question.
+    /// </summary>
+    Task<ChannelIdentity?> FindMostRecentForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken);
+
     Task SaveAsync(ChannelIdentity identity, CancellationToken cancellationToken);
 }

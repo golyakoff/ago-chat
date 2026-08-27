@@ -45,5 +45,12 @@ public readonly record struct Permission(string Value)
     // managing the endpoint that produces it."
     public static readonly Permission WebhookManage = new("webhook:manage");
 
+    // `14-02`: the same `resource:action` reasoning as `WebhookManage` right above - the resource being
+    // managed is the channel credential (`ChannelCredential`), not the site itself. Gates registering
+    // and revoking a channel's bot token; there is no separate read permission because, per `adr/0069`,
+    // there is nothing to read back - the console only ever learns whether a credential is active, never
+    // its value, so "manage" already covers the one query this item ships.
+    public static readonly Permission ChannelManage = new("channel:manage");
+
     public override string ToString() => Value;
 }

@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Channels;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Demo;
@@ -357,6 +358,10 @@ app.MapOperatorsEndpoints();
 // `13-07`/`adr/0068`
 app.MapMeEndpoints();
 app.MapWebhookEndpoints();
+// `14-02`: the inbound receiver (MAX's own production mechanism) and the console's own connect/
+// disconnect flow - see MaxWebhookEndpoints' own remarks for why this host, not Ago.Chat.Webhooks.
+app.MapMaxWebhookEndpoints();
+app.MapMaxChannelEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();
