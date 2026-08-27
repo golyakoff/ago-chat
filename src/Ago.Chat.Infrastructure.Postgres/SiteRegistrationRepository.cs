@@ -15,10 +15,11 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// place in this codebase that writes across more than one aggregate at once.
 ///
 /// Catches the same unique-index violation <see cref="WebhookDeliveryRepository.SaveAsync"/> already
-/// catches for its own duplicate insert - here it is `operators.external_subject_id`'s unique-when-
-/// present index (`adr/0022`), tripped when two registration attempts for the same Keycloak identity
-/// race each other past <see cref="Ago.Chat.Application.UseCases.RegisterSite.RegisterSiteHandler"/>'s
-/// own pre-check.
+/// catches for its own duplicate insert - here it is `operators`' composite `(external_subject_id,
+/// site_id)` unique-when-present index (`13-07`/`adr/0068`, widened from the single-column index
+/// `adr/0022` originally described). See
+/// <see cref="Ago.Chat.Application.UseCases.RegisterSite.RegisterSiteHandler"/>'s own remarks for why
+/// this is now effectively unreachable in ordinary operation rather than a real, reachable race.
 /// </summary>
 public sealed class SiteRegistrationRepository(AgoChatDbContext db) : ISiteRegistrationRepository
 {

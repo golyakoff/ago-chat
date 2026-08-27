@@ -115,7 +115,6 @@ public sealed class SelfRegisteredSiteOriginTests(SiteCachingFixture fixture)
     private async Task<(string PublicKey, SiteId SiteId)> RegisterSiteAsync(string origin)
     {
         var handler = new RegisterSiteHandler(
-            new OperatorRepository(fixture.CreateDbContext()),
             new SiteRegistrationRepository(fixture.CreateDbContext()),
             new FakeRateLimiter(),
             new RegisterSiteRateLimitOptions(),

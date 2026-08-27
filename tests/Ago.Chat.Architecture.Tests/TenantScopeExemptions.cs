@@ -124,6 +124,18 @@ internal static class TenantScopeExemptions
             "The claims transformation's own lookup - it is what *produces* the OperatorId/SiteId claims every "
             + "gated handler then trusts, so it cannot itself depend on them. Keyed by the `sub` of an "
             + "already-signature-validated Keycloak token.",
+        ["Ago.Chat.Application.UseCases.ListMyTenancies.ListMyTenanciesHandler.HandleAsync"] =
+            "`13-07`/`adr/0068`. No single SiteId to scope to *by design* - this is the console switcher's own "
+            + "read, \"every Site this identity administers\", so a SiteId parameter would be a lie about what "
+            + "the call answers. Gated by `RequireKeycloakIdentity` (RegisterSiteHandler's own policy, for the "
+            + "identical reason: an identity with zero or several tenancies cannot satisfy RequireOperatorIdentity "
+            + "yet). What actually keeps this from being a cross-tenant leak is narrower than a permission check: "
+            + "IOperatorRepository.ListByExternalSubjectIdAsync filters at the query itself on the caller's own "
+            + "`sub` (read from the validated token, never from the request - MeEndpoints' own remarks), so the "
+            + "row set this handler can ever see is already restricted to that identity's own operator rows before "
+            + "a single Site is joined in. Structurally the same category as ResolveOperatorIdentityHandler right "
+            + "above - both are `sub`-keyed lookups feeding an identity's own tenancy, not a cross-tenant read the "
+            + "way ListSitesForOwnerHandler below genuinely is.",
 
         // ---------------------------------------------------------------------------------------
         // The one deliberate cross-tenant read in the codebase.

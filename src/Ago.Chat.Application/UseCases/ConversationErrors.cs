@@ -93,10 +93,18 @@ public static class ConversationErrors
         new("WebhookEndpoint.InvalidUrl", reason);
 
     // `10-02`: same shared vocabulary, same reason - one place a client branching on `type` looks.
-    /// <summary>The caller's `sub` already resolves to an `operators` row - "one registration per
-    /// identity for Stage 10" (`10-02-site-and-operator-registration.md`'s own Scope). A real `409`,
-    /// not a validation error: the request is well-formed, the identity is real, it just already has
-    /// a site.</summary>
+    /// <summary>
+    /// `10-02`'s original meaning: the caller's `sub` already resolved to an `operators` row anywhere
+    /// - "one registration per identity for Stage 10" (`10-02-site-and-operator-registration.md`'s
+    /// own Scope). `13-07`/`adr/0068` removed the pre-check that produced this from that path (an
+    /// identity may now register more than one `Site`), so today this is raised only by
+    /// <c>RegisterSiteHandler</c>'s own defensive check on
+    /// <see cref="ISiteRegistrationRepository.TryRegisterAsync"/> returning <see langword="false"/> -
+    /// effectively unreachable in ordinary operation once `siteId` is freshly generated on every call
+    /// (that handler's own remarks explain why), kept as a `409` rather than a `500` for the same
+    /// reason it always was: a unique-index violation on this specific pair is still "you already have
+    /// this", not a server error.
+    /// </summary>
     public static Error SiteAlreadyRegistered() =>
         new("Site.AlreadyRegistered", "This identity has already registered a site.");
 
