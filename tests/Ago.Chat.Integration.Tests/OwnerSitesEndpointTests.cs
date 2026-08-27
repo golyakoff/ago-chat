@@ -315,6 +315,7 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         // Registered exactly as the real host registers it - the owner token must be accepted while
         // this transformation runs and resolves nothing, since a platform owner has no `operators`
         // row (`12-01`).
+        builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 
         builder.Services.AddAuthentication()

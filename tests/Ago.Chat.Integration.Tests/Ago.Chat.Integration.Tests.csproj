@@ -31,6 +31,11 @@
     <PackageReference Include="Testcontainers.Minio" />
     <PackageReference Include="Testcontainers.Keycloak" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <!-- `13-07`: a real SignalR client, the same package `Ago.Chat.LoadDriver` already uses (its own
+         csproj remarks) - ActiveSiteHubResolutionTests needs a genuine hub connection, over a real
+         WebSocket, to verify the active-site query-string mechanism actually reaches the hub
+         handshake in this app's own transport configuration, not a guess. -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
     <!-- `7-01`: TracingEndToEndTests' own in-memory span exporter - this item's Done-when proves
          correctness against one, not a live Jaeger (that is 7-03's job). -->
     <PackageReference Include="OpenTelemetry" />

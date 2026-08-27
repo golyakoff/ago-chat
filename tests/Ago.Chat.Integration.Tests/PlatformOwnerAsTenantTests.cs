@@ -185,6 +185,7 @@ public sealed class PlatformOwnerAsTenantTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
+        builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new RegisterSiteRateLimitOptions());

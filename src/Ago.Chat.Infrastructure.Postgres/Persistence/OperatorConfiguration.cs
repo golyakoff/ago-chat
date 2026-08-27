@@ -15,10 +15,20 @@ internal sealed class OperatorConfiguration : IEntityTypeConfiguration<Operator>
         builder.Property(o => o.Status).HasColumnName("status").HasConversion<string>();
         builder.Property(o => o.Capacity).HasColumnName("capacity");
         // `5-05`/`adr/0022`: nullable - not every existing row has one, and there is no backfill for
-        // a Keycloak identity that never existed. Unique when present: two operators must never
-        // resolve to the same Keycloak subject.
+        // a Keycloak identity that never existed.
+        //
+        // `13-07`/`adr/0068`: the index widens from single-column globally-unique to composite
+        // `(external_subject_id, site_id)`, still unique when present - "at most one `Operator` row
+        // per identity per `Site`", which was already true of every row that has ever existed (the
+        // old, stricter key made it true trivially), rather than "at most one `Operator` row per
+        // identity anywhere". This is the one schema change the whole "one login, several tenants"
+        // mechanism rests on: `ResolveOperatorIdentityHandler` now expects more than one row per
+        // `external_subject_id` to be a normal, indexable shape, not an anomaly. Migration
+        // `Stage13RelaxOperatorIdentityUniqueness`.
         builder.Property(o => o.ExternalSubjectId).HasColumnName("external_subject_id");
-        builder.HasIndex(o => o.ExternalSubjectId).IsUnique().HasFilter("external_subject_id IS NOT NULL");
+        builder.HasIndex(o => new { o.ExternalSubjectId, o.SiteId })
+            .IsUnique()
+            .HasFilter("external_subject_id IS NOT NULL");
 
         // 4-01: a shadow property, not a CLR property on Operator - EF needs to know this column
         // exists so `dotnet ef migrations add` generates a real ALTER TABLE from the model diff, but
