@@ -1,0 +1,34 @@
+# 17-04. Schedule: weekly, Monday 06:00 UTC - the same day and hour this repository's own
+# `credential-expiry.yml` already uses, so there is one weekly cadence for automated checks rather
+# than a different one per ecosystem.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+
+  # Dockerfile (root): builds all four hosts from one file, selected by --build-arg PROJECT_NAME.
+  # Dependabot parses every FROM line in it, so both stages are covered by this one entry - the SDK
+  # image the build stage uses and the Chiseled runtime image the final stage ships (8-00).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+
+  # An unpinned or stale Action is a supply-chain surface as real as a package - ci.yml's own
+  # actions/checkout, actions/setup-dotnet and actions/upload-artifact are all pinned to a major
+  # version tag today, not a commit SHA.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
