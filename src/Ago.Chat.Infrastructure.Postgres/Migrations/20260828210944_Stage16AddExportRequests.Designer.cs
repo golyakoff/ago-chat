@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260828210944_Stage16AddExportRequests")]
+    partial class Stage16AddExportRequests
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -235,8 +238,7 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("VisitorId")
-                        .HasDatabaseName("ix_channel_identities_visitor_id");
+                    b.HasIndex("VisitorId");
 
                     b.HasIndex("SiteId", "Kind", "Address")
                         .IsUnique()
@@ -250,10 +252,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
-
-                    b.Property<DateTimeOffset?>("ClosedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("closed_at");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -318,11 +316,10 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasDatabaseName("ix_conversations_waiting")
                         .HasFilter("state = 'Waiting'");
 
+                    b.HasIndex("VisitorId");
+
                     b.HasIndex("SiteId", "Id")
                         .HasDatabaseName("ix_conversations_site_all");
-
-                    b.HasIndex("VisitorId", "Id")
-                        .HasDatabaseName("ix_conversations_visitor_all");
 
                     b.ToTable("conversations", (string)null);
                 });

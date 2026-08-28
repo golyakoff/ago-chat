@@ -18,7 +18,7 @@ public static class ErrorExtensions
         var statusCode = error.Code switch
         {
             "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound"
-                or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" => StatusCodes.Status404NotFound,
+                or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" or "Export.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
@@ -37,7 +37,7 @@ public static class ErrorExtensions
             // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own
             // remarks).
             "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
-            "Message.RateLimited" or "Site.RateLimited" => StatusCodes.Status429TooManyRequests,
+            "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status500InternalServerError,
         };
 

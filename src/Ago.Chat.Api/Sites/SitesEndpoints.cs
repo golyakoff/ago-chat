@@ -2,8 +2,10 @@
 using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
+using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Sites;
@@ -40,6 +42,15 @@ public static class SitesEndpoints
         // `PermissionChecker.HasPermissionAsync` checks this specific `(OperatorId, SiteId)` pair
         // regardless of which site the caller's token happens to be scoped to right now.
         app.MapPost("/api/v1/sites/{siteId:guid}/erase", HandleEraseSiteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `16-03`: same siteId-from-the-route convention as `/erase` right above, and the same
+        // reasoning - PermissionChecker.HasPermissionAsync checks this specific (OperatorId, SiteId)
+        // pair regardless of which site the caller's token happens to be scoped to right now.
+        app.MapPost("/api/v1/sites/{siteId:guid}/exports", HandleRequestExportAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        app.MapGet("/api/v1/sites/{siteId:guid}/exports/{exportId:guid}", HandleGetExportStatusAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -109,7 +120,69 @@ public static class SitesEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Accepted();
     }
 
+    /// <summary>
+    /// `16-03`: `POST /api/v1/sites/{siteId}/exports` - inserts one <c>Pending</c> export request and
+    /// returns immediately; no packaging happens on this request (`RequestSiteExportHandler`'s own
+    /// remarks). `202 Accepted`, the same code `/erase` returns and for the identical reason - the
+    /// request is accepted, `Ago.Chat.Worker`'s `SiteExportJob` has not run yet, and "is the archive
+    /// ready" is honestly "not yet." Unlike `/erase`, the response body carries an id
+    /// (<see cref="RequestSiteExportResponse"/>) - erasure ends in "gone" and needs nothing further
+    /// from the caller, while export produces an artifact the caller must be able to poll for, so the
+    /// `Location` header alone (pointing at the status endpoint below) would leave a caller that does
+    /// not parse response headers with no way to find its own request again.
+    /// </summary>
+    private static async Task<IResult> HandleRequestExportAsync(
+        Guid siteId, RequestSiteExportHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RequestSiteExport(new SiteId(siteId), user.GetOperatorId()), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var exportId = result.Value;
+        return Results.Accepted(
+            $"/api/v1/sites/{siteId}/exports/{exportId}", new RequestSiteExportResponse(exportId));
+    }
+
+    /// <summary>
+    /// `16-03`: `GET /api/v1/sites/{siteId}/exports/{exportId}` - the completion poll
+    /// `usePollUntilErased`'s own console-side sibling is expected to drive, the same shape `16-02`'s
+    /// `GetConversationByIdHandler`/`ConversationsEndpoints` route already established for erasure.
+    /// </summary>
+    private static async Task<IResult> HandleGetExportStatusAsync(
+        Guid siteId, Guid exportId, GetSiteExportStatusHandler handler, HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetSiteExportStatus(exportId, new SiteId(siteId), user.GetOperatorId()), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var item = result.Value;
+        return Results.Ok(new SiteExportStatusResponse(
+            item.ExportId, item.Status.ToString(), item.RequestedAt, item.CompletedAt, item.DownloadUrl, item.FailureReason));
+    }
+
     public sealed record RegisterSiteRequest(string SiteName, string InitialAllowedOrigin);
 
     public sealed record RegisterSiteResponse(Guid SiteId, Guid OperatorId);
+
+    public sealed record RequestSiteExportResponse(Guid ExportId);
+
+    /// <summary>
+    /// <paramref name="Status"/> is one of <c>"Pending"</c>, <c>"Ready"</c>, <c>"Failed"</c> -
+    /// <see cref="Domain.ExportStatus"/>'s own member names, serialised via <c>ToString()</c> rather
+    /// than System.Text.Json's numeric default, so a client reads a name, not an enum ordinal it would
+    /// have to keep in sync with this codebase's own declaration order.
+    /// </summary>
+    public sealed record SiteExportStatusResponse(
+        Guid ExportId, string Status, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt, Uri? DownloadUrl, string? FailureReason);
 }

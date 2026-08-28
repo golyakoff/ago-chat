@@ -76,6 +76,8 @@ public static class ServiceCollectionExtensions
         // `16-02`: the erase-request write - see IErasureRequestRepository's own remarks on why it is
         // its own port rather than a method on ISiteRepository/IConversationRepository.
         services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `16-03`: the export-request read/write - see IExportRequestRepository's own remarks.
+        services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

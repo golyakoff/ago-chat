@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -100,6 +101,45 @@ public sealed class RateLimitingTests(SiteCachingFixture fixture)
             await result.ExecuteAsync(httpContext);
             return (httpContext.Response.StatusCode, httpContext.Response.Headers.RetryAfter.FirstOrDefault());
         }
+    }
+
+    // `16-03`: a third real-limiter case in this file, the same shape as the two above - a real
+    // RedisRateLimiter, a capacity exhausted by real calls, and an assertion on the real rejection
+    // rather than on the limiter's own configured numbers.
+    [Fact]
+    public async Task RequestSiteExportHandler_OnceThePerSiteBucketIsExhausted_DeniesFurtherExports()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "subject-rate-limit-test"));
+            var roleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Admin", Permissions = [Permission.SiteExport.Value] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+            await db.SaveChangesAsync();
+        }
+
+        var limiter = CreateLimiter();
+        // Capacity 1, refill slow enough that a third call within the same test cannot have refilled.
+        var rateLimitOptions = new SiteExportRateLimitOptions { PerSiteCapacity = 1, PerSiteRefillPerSecond = 0.001 };
+        var exportRequests = new ExportRequestRepository(fixture.DataSource);
+
+        async Task<Ago.Platform.Kernel.Result<Guid>> InvokeAsync()
+        {
+            await using var db = fixture.CreateDbContext();
+            var handler = new RequestSiteExportHandler(
+                exportRequests, limiter, new PermissionChecker(db), rateLimitOptions, new UuidV7Generator(), new SystemClock());
+            return await handler.HandleAsync(new RequestSiteExport(siteId, operatorId), CancellationToken.None);
+        }
+
+        var first = await InvokeAsync();
+        var second = await InvokeAsync();
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsFailure);
+        Assert.Equal("Export.RateLimited", second.Error!.Value.Code);
     }
 
     private RedisRateLimiter CreateLimiter() => new(

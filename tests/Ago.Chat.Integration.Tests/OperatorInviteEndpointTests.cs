@@ -6,8 +6,10 @@ using Ago.Chat.Api.OperatorInvites;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterSite;
+using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -346,6 +348,15 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<CreateOperatorInviteHandler>();
         builder.Services.AddScoped<RedeemOperatorInviteHandler>();
+        // `16-03`: SitesEndpoints now also maps the export routes - see SiteRegistrationTests'
+        // own remarks (this file's own precedent for a stripped-down host). IPermissionChecker is
+        // already registered above.
+        builder.Services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
+        builder.Services.AddSingleton<IFileStorage, FakeFileStorage>();
+        builder.Services.AddSingleton(new SiteExportRateLimitOptions());
+        builder.Services.AddSingleton(new SiteExportOptions());
+        builder.Services.AddScoped<RequestSiteExportHandler>();
+        builder.Services.AddScoped<GetSiteExportStatusHandler>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
