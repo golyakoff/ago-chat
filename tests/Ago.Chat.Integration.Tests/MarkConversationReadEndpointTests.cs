@@ -7,8 +7,10 @@ using Ago.Chat.Api.Conversations;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
+using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
+using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -214,14 +216,20 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<IConversationReadStore, ConversationReadStore>();
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<MarkConversationReadHandler>();
-        // The other three handlers `MapConversationsEndpoints` references. Registered even though no
+        // The other handlers `MapConversationsEndpoints` references. Registered even though no
         // test here calls their routes, and not optional: minimal APIs infer an unregistered complex
         // parameter as a *body* parameter, so leaving `GetOperatorQueueHandler` out makes the GET
         // routes fail to build at all ("Body was inferred but the method does not allow inferred body
         // parameters") and takes the whole test host down with them. Found by doing exactly that.
+        // `16-02` adds two more to this same list for the identical reason - GetConversationByIdHandler
+        // is itself the *second* GET route this file's own comment already warned about, found live
+        // exactly the way this comment predicts.
         builder.Services.AddScoped<GetOperatorQueueHandler>();
         builder.Services.AddScoped<GetAllConversationsForSiteHandler>();
         builder.Services.AddScoped<CloseConversationHandler>();
+        builder.Services.AddScoped<RequestConversationErasureHandler>();
+        builder.Services.AddScoped<GetConversationByIdHandler>();
+        builder.Services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();

@@ -94,6 +94,29 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return rows.Select(ToHistoryItem).ToList();
     }
 
+    // `16-02`: the same row shape as AllForSiteSql above, filtered to one id instead of paged - see
+    // IConversationReadStore.GetByIdAsync's own remarks on why this is a separate statement rather
+    // than GetAllForSiteAsync with an extra filter bolted on.
+    private const string ByIdSql = """
+        select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
+               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount"
+        from conversations
+        where id = @ConversationId and site_id = @SiteId
+        """;
+
+    public async Task<ConversationSummaryItem?> GetByIdAsync(
+        ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var row = await connection.QuerySingleOrDefaultAsync<ConversationSummaryRow>(new CommandDefinition(
+            ByIdSql,
+            new { ConversationId = conversationId.Value, SiteId = siteId.Value },
+            cancellationToken: cancellationToken));
+
+        return row is null ? null : ToSummaryItem(row);
+    }
+
     public async Task<ConversationListPage> GetAllForSiteAsync(
         SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken)
     {

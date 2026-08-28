@@ -44,6 +44,22 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasDatabaseName("ix_sites_demo_expiry")
             .HasFilter("demo_expires_at is not null");
 
+        // `16-02`: a shadow property, not a mapped Site property - the same reason
+        // OperatorConfiguration's `active_chats` is a shadow property rather than one on Operator. This
+        // column has exactly one legitimate writer (RequestSiteErasureHandler, via
+        // IErasureRequestRepository's own targeted UPDATE) and is read only by SiteErasureJob's
+        // bounded-batch claim query, both raw Npgsql/Dapper - never through Site's own
+        // load-mutate-SaveChangesAsync path. Site aggregate loads never touch this table's write-heavy
+        // columns (WidgetConfig, OfflineAutoReply), but a mapped property here would still tempt a
+        // future caller into exactly the EF-load-races-raw-SQL failure mode the shadow-property split
+        // exists to avoid, and nothing in Site's own behaviour ever needs to reason about "am I pending
+        // erasure" - the aggregate is never consulted again once erasure starts; the job deletes rows
+        // directly. See IErasureRequestRepository's own remarks for the rest of this reasoning.
+        builder.Property<DateTimeOffset?>("ErasureRequestedAt").HasColumnName("erasure_requested_at");
+        builder.HasIndex("ErasureRequestedAt")
+            .HasDatabaseName("ix_sites_erasure_pending")
+            .HasFilter("erasure_requested_at is not null");
+
         // AllowedOrigins is a computed property (IReadOnlyList<string>) over a private List<string>
         // field - Site never exposes a settable collection, so EF is pointed at the field directly.
         builder.Property<List<string>>("_allowedOrigins").HasColumnName("allowed_origins");

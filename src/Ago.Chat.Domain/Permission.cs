@@ -52,5 +52,20 @@ public readonly record struct Permission(string Value)
     // its value, so "manage" already covers the one query this item ships.
     public static readonly Permission ChannelManage = new("channel:manage");
 
+    // `16-02`: two dedicated permissions, not a reuse of SiteConfigure - the same granular-permission
+    // shape adr/0016 already draws everywhere else (ConversationClose is separate from
+    // ConversationAssign; AttachmentDelete is separate from ordinary conversation actions).
+    // SiteConfigure gates reversible administrative changes (branding, widget settings); bundling
+    // irreversible whole-account destruction into it would let anyone who can tweak a widget's colour
+    // also permanently destroy the tenant - a materially larger blast radius than the permission's name
+    // implies. Both are Admin-role-only (RegisterSiteHandler.AdminRolePermissions,
+    // MintDemoTenantHandler.AdminRolePermissions, and `ago-deploy/seed/create-demo-tenant.sh`'s own
+    // restatement - never the base Operator role.
+    public static readonly Permission SiteErase = new("site:erase");
+
+    // Conversation-scoped, narrower than SiteErase - a tenant deleting one visitor's conversation on
+    // request does not need, and must not require, the power to destroy the whole account.
+    public static readonly Permission ConversationErase = new("conversation:erase");
+
     public override string ToString() => Value;
 }

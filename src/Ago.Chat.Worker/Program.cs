@@ -209,6 +209,29 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<MessagePartitionPruneJob>();
 
+// `16-02`: the account/conversation erasure jobs. SiteErasureJob reuses the same
+// IDemoIdentityProvisioner port DemoTenantExpiryJob already registers just below via
+// AddKeycloakDemoIdentities (its own DeleteAsync is already fully generic - see that interface's own
+// remarks on why it was reused as-is rather than renamed for this second caller). One real operational
+// caveat this reuse carries: AddKeycloakDemoIdentities only requires KeycloakAdminOptions.BaseUrl/
+// ClientSecret to be set when DemoTenantOptions.Enabled is true - but real (non-demo) site erasure is
+// a permanent capability, not a demo-only one, so a deployment that disables the demo-tenant feature
+// but still wants SiteErasureJob to actually remove Keycloak users must configure that credential
+// anyway. Not fixed here (widening AddKeycloakDemoIdentities's validation gate is a shared,
+// cross-feature change this item did not set out to make); flagged so it does not surprise the first
+// deployment that erases a real tenant with the demo feature off.
+builder.Services
+    .AddOptions<ConversationErasureJobOptions>()
+    .Bind(builder.Configuration.GetSection(ConversationErasureJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ConversationErasureJob>();
+
+builder.Services
+    .AddOptions<SiteErasureJobOptions>()
+    .Bind(builder.Configuration.GetSection(SiteErasureJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<SiteErasureJob>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()

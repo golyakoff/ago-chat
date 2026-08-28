@@ -11,6 +11,7 @@ using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
+using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
@@ -30,6 +31,8 @@ using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
+using Ago.Chat.Application.UseCases.RequestConversationErasure;
+using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
@@ -358,6 +361,14 @@ public sealed class ChatModule : IProductModule
         // else on this page, even though only `Ago.Chat.Api` maps HTTP endpoints for them today.
         services.AddScoped<GetWidgetConfigHandler>();
         services.AddScoped<UpdateWidgetConfigHandler>();
+
+        // `16-02`: the erase-request writes, and the completion-poll read the console needs since no
+        // single-conversation admin-fetch endpoint existed before this item - see each handler's own
+        // remarks. Registered for every host, the same shape as everything else on this page, even
+        // though only Ago.Chat.Api maps HTTP endpoints for them today.
+        services.AddScoped<RequestSiteErasureHandler>();
+        services.AddScoped<RequestConversationErasureHandler>();
+        services.AddScoped<GetConversationByIdHandler>();
 
         // `14-04`: the offline auto-reply's three handlers. The read/write pair backs `Ago.Chat.Api`'s
         // own settings endpoints (the same `site:configure` gate `11-01`'s pair uses); the third is

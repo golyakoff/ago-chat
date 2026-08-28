@@ -80,5 +80,17 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         // memory the moment a site accumulates more than a handful of conversations.
         builder.HasIndex(c => new { c.SiteId, c.Id })
             .HasDatabaseName("ix_conversations_site_all");
+
+        // `16-02`: the identical shadow-property shape as SiteConfiguration's own
+        // "ErasureRequestedAt" - see its remarks for the full reasoning. One extra reason it matters
+        // more here: Conversation's own repository (ConversationRepository.GetByIdAsync) loads the
+        // entire aggregate, messages included (`Include("_messages")`), so routing an erase *request*
+        // through the aggregate would both load a conversation's full message history just to flip one
+        // flag and race this row's `xmin` against every ordinary message send - exactly the failure
+        // mode this shadow-property/raw-SQL split is chosen to avoid.
+        builder.Property<DateTimeOffset?>("ErasureRequestedAt").HasColumnName("erasure_requested_at");
+        builder.HasIndex("ErasureRequestedAt")
+            .HasDatabaseName("ix_conversations_erasure_pending")
+            .HasFilter("erasure_requested_at is not null");
     }
 }

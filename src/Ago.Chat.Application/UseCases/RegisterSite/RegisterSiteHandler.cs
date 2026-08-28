@@ -43,8 +43,14 @@ public sealed class RegisterSiteHandler(
     private static readonly string[] OperatorRolePermissions =
         [Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value];
 
+    // `16-02`: SiteErase/ConversationErase join the Admin set here too - see Permission's own remarks
+    // on why both are Admin-only, and this class's own remarks above on why this array is restated in
+    // three independent places rather than shared.
     private static readonly string[] AdminRolePermissions =
-        [Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value];
+        [
+            Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
+            Permission.SiteErase.Value, Permission.ConversationErase.Value,
+        ];
 
     public async Task<Result<RegisteredSite>> HandleAsync(RegisterSite command, CancellationToken cancellationToken)
     {

@@ -59,8 +59,14 @@ public sealed class MintDemoTenantHandler(
     private static readonly string[] OperatorRolePermissions =
         [Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value];
 
+    // `16-02`: SiteErase/ConversationErase join the Admin set here too, the same restatement this
+    // class's own remarks already accept - a demo operator gets the full Admin capability set, "half a
+    // console is a worse demonstration than none" applied to erasure as much as anything else.
     private static readonly string[] AdminRolePermissions =
-        [Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value];
+        [
+            Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
+            Permission.SiteErase.Value, Permission.ConversationErase.Value,
+        ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(
         MintDemoTenant command, CancellationToken cancellationToken)

@@ -33,4 +33,16 @@ public interface IConversationReadStore
     /// </summary>
     Task<ConversationListPage> GetAllForSiteAsync(
         SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `16-02`: one conversation by id, scoped to <paramref name="siteId"/> - <see langword="null"/>
+    /// if it does not exist, or belongs to a different site (indistinguishable from each other, the
+    /// same not-found-not-forbidden choice <see cref="Application.UseCases.RequestConversationErasure.RequestConversationErasureHandler"/>
+    /// makes). Its own query rather than reusing <see cref="GetAllForSiteAsync"/> with a filter: that
+    /// method pages a list and this is a point lookup, and its only real caller
+    /// (<c>GetConversationByIdHandler</c>) needs it for exactly one purpose - letting the console poll
+    /// a conversation until it 404s after requesting its erasure, `16-02`'s own "the console must not
+    /// report completion before the job has completed."
+    /// </summary>
+    Task<ConversationSummaryItem?> GetByIdAsync(ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken);
 }

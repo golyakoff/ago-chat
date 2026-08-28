@@ -83,7 +83,10 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
             operatorRole.Permissions);
         var adminRole = Assert.Single(roles, r => r.Name == "Admin");
         Assert.Equal(
-            [Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value],
+            [
+                Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
+                Permission.SiteErase.Value, Permission.ConversationErase.Value,
+            ],
             adminRole.Permissions);
 
         var operatorRoleIds = await db.OperatorRoles
