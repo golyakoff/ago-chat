@@ -21,6 +21,24 @@ ARG PROJECT_NAME
 ARG GIT_COMMIT
 WORKDIR /src
 
+# `14-02`: found live, 2026-08-28, connecting the first real MAX credential - platform-api2.max.ru's
+# certificate chains to "Russian Trusted Root CA" (issued by Russia's own Ministry of Digital
+# Development, confirmed by inspecting the live chain with openssl and verifying it against the
+# published root), which is in no international trust store (Mozilla/Microsoft/Ubuntu) at all - every
+# outbound call MaxApiClient makes failed TLS validation with UntrustedRoot. Fetched from
+# gu-st.ru (Gosuslugi's own static-content domain), the URL this certificate's own publishers
+# document and the one every other .ru-hosted-service integration that needs it uses. Installed
+# system-wide (the author's own explicit choice, 2026-08-28, over scoping trust to MaxApiClient's own
+# HttpClient alone) via the SDK stage's ordinary apt/update-ca-certificates, then the whole
+# /etc/ssl/certs directory is copied into the Chiseled final stage below, which has no package
+# manager of its own to run update-ca-certificates in.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && curl -fsSL https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt \
+      -o /usr/local/share/ca-certificates/russian-trusted-root-ca.crt \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY Directory.Build.props Directory.Packages.props nuget.docker.config ./
 COPY src/Ago.Chat.Api/Ago.Chat.Api.csproj src/Ago.Chat.Api/
 COPY src/Ago.Chat.Worker/Ago.Chat.Worker.csproj src/Ago.Chat.Worker/
@@ -84,5 +102,9 @@ LABEL org.opencontainers.image.source="https://github.com/golyakoff/ago-chat" \
       org.opencontainers.image.revision="${GIT_COMMIT}"
 WORKDIR /app
 COPY --from=build /app .
+# The build stage's own trust store, Russian Trusted Root CA included (see that stage's own remarks) -
+# this final stage has no package manager to run update-ca-certificates in itself, so the whole
+# directory travels rather than one file, the standard pattern for a Chiseled/distroless final stage.
+COPY --from=build /etc/ssl/certs /etc/ssl/certs
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "app.dll"]
