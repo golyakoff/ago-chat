@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Billing;
 using Ago.Chat.Api.Channels;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
@@ -383,6 +384,10 @@ app.MapDemoEndpoints();
 // `12-02`: the platform owner's cross-tenant read - the only route here not scoped to one site,
 // and the only one carrying `12-01`'s RequirePlatformOwner policy (OwnerSitesEndpoints' remarks).
 app.MapOwnerEndpoints();
+// `13-02`: checkout-session creation (operator-authenticated) and the ЮKassa webhook receiver
+// (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
+// why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.
+app.MapBillingEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 

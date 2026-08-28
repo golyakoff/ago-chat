@@ -98,14 +98,15 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasDefaultValue(Locale.En);
         builder.Ignore(s => s.Locale);
 
-        // `13-01`: ordinary mapped properties, not computed-over-a-private-field like every column
-        // above - `Site.Tier`/`Site.SeatLimit` are plain public getters with no invariant to protect
-        // behind a private setter (13-02's job entirely owns changing either away from its default),
-        // so there is nothing for a backing field to buy here the way WidgetConfig/OfflineAutoReply's
-        // richer value objects need one. Both default at the database level too
-        // (Stage13AddSiteTierAndSeatLimit), so every existing row reads back on the free tier without
-        // a backfill, the same "additive column, database default, no migration touches existing data"
-        // shape `Name`'s own remarks already established.
+        // `13-01`/`13-02`: ordinary mapped properties, not computed-over-a-private-field like every
+        // column above - `Site.Tier`/`Site.SeatLimit` are plain auto-properties with a private setter
+        // (13-02's `Site.ActivateSubscription` is that setter's first real caller), so there is nothing
+        // for a backing field to buy here the way WidgetConfig/OfflineAutoReply's richer value objects
+        // need one; EF Core maps a private setter directly, no `Property<T>("_field")` indirection
+        // required. Both default at the database level too (Stage13AddSiteTierAndSeatLimit), so every
+        // existing row reads back on the free tier without a backfill, the same "additive column,
+        // database default, no migration touches existing data" shape `Name`'s own remarks already
+        // established.
         builder.Property(s => s.Tier).HasColumnName("tier").IsRequired().HasDefaultValue("free");
         builder.Property(s => s.SeatLimit).HasColumnName("seat_limit").HasDefaultValue(1);
     }

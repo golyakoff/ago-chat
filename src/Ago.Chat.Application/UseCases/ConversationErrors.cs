@@ -201,4 +201,20 @@ public static class ConversationErrors
     /// identical code succeeds once a seat opens up.</summary>
     public static Error OperatorInviteSeatLimitReached(int seatLimit) =>
         new("OperatorInvite.SeatLimitReached", $"This site has reached its seat limit of {seatLimit}.");
+
+    // `13-02`: same shared vocabulary, same reason - CreateCheckoutSessionHandler adds its own codes
+    // here rather than a separate error class.
+    /// <summary>The requested seat count falls outside <see cref="Domain.SubscriptionTierBands.MinSeats"/>-
+    /// <see cref="Domain.SubscriptionTierBands.MaxSeats"/> - never a purchasable band, including the
+    /// free tier's own single seat.</summary>
+    public static Error BillingInvalidSeatCount(string reason) =>
+        new("Billing.InvalidSeatCount", reason);
+
+    /// <summary>ЮKassa answered but refused the payment-creation request (`CreatePaymentResult.Refused`) -
+    /// a malformed request, bad credentials, or an amount ЮKassa's own validation rejected. Distinct
+    /// from an unhandled transient failure (which this handler deliberately lets propagate as a `5xx` -
+    /// see the handler's own remarks), because this is a terminal, provider-confirmed refusal a retry
+    /// of the identical request would not fix.</summary>
+    public static Error BillingPaymentProviderRefused(string reason) =>
+        new("Billing.PaymentProviderRefused", reason);
 }
