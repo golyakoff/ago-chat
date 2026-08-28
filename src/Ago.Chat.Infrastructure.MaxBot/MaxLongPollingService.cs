@@ -168,7 +168,7 @@ public sealed class MaxLongPollingService(
         var result = await handler.HandleAsync(
             new ReceiveChannelMessage(
                 siteId, ChannelKind.Max,
-                new ExternalChannelAddress(parsed.SenderId.ToString()),
+                new ExternalChannelAddress(parsed.ChatId.ToString()),
                 new ExternalMessageId(parsed.ExternalMessageId),
                 parsed.Text),
             cancellationToken);
