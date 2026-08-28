@@ -32,6 +32,9 @@
          port - the same reasoning ChannelResiliencePipelines above already states for why this project,
          not Ago.Chat.Api or Ago.Chat.Worker individually. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
+    <!-- `14-07`: TelegramChannelAdapter/TelegramApiClient are registered here, the same reasoning as
+         the MAX reference above. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Telegram\Ago.Chat.Infrastructure.Telegram.csproj" />
   </ItemGroup>
 
 </Project>

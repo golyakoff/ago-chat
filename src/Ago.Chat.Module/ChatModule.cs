@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Net;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
@@ -40,6 +41,7 @@ using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
+using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
@@ -224,6 +226,50 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<MaxChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<MaxChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+
+        // `14-07`: Telegram's own outbound client and adapter - the same "registered everywhere,
+        // resolved where it matters" shape as MAX above.
+        services
+            .AddOptions<TelegramBotApiOptions>()
+            .Bind(configuration.GetSection(TelegramBotApiOptions.SectionName))
+            .ValidateOnStart();
+        services
+            .AddOptions<TelegramLongPollingServiceOptions>()
+            .Bind(configuration.GetSection(TelegramLongPollingServiceOptions.SectionName))
+            .ValidateOnStart();
+        // `14-07`/`adr/0070`: this deployment's own outbound SOCKS5 relay - see TelegramProxyOptions'
+        // own remarks for why it is deployment configuration, not a tenant secret, and why it is wired
+        // here (the host's composition root) rather than inside TelegramApiClient itself.
+        services
+            .AddOptions<TelegramProxyOptions>()
+            .Bind(configuration.GetSection(TelegramProxyOptions.SectionName))
+            .ValidateOnStart();
+        services.AddHttpClient<TelegramApiClient>((sp, client) =>
+        {
+            var baseUrl = sp.GetRequiredService<IOptions<TelegramBotApiOptions>>().Value.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
+        })
+        .ConfigurePrimaryHttpMessageHandler(sp =>
+        {
+            var proxyAddress = sp.GetRequiredService<IOptions<TelegramProxyOptions>>().Value.Socks5Address;
+            var handler = new SocketsHttpHandler();
+            if (!string.IsNullOrWhiteSpace(proxyAddress))
+            {
+                // SocketsHttpHandler natively understands a socks5:// proxy URI (.NET 5+) - no
+                // third-party SOCKS package needed, the same "no NuGet package without saying what it
+                // replaces" discipline CLAUDE.md asks for.
+                handler.Proxy = new WebProxy(new Uri($"socks5://{proxyAddress}"));
+                handler.UseProxy = true;
+            }
+
+            return handler;
+        });
+        // Singleton, not scoped - the identical reasoning MaxChannelAdapter's own remarks give: the
+        // singleton InboundChannelAdapterRegistry can only ever hold adapters safe to keep for the
+        // process lifetime.
+        services.AddSingleton<TelegramChannelAdapter>();
+        services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
+            sp.GetRequiredService<TelegramChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();

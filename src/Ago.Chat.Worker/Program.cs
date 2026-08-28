@@ -5,6 +5,7 @@ using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Infrastructure.Postgres.Schema;
+using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Module;
 using Ago.Chat.Module.Pipeline;
 using Ago.Chat.Worker;
@@ -56,6 +57,11 @@ builder.Services.AddHostedService<ChannelMessageDeliveryConsumer>();
 // restart-tolerant background work with no request to answer - adr/0013's own failure-profile split,
 // applied the way this item's backlog note asks.
 builder.Services.AddHostedService<MaxLongPollingService>();
+
+// `14-07`: Telegram's own (only) inbound mechanism - see TelegramLongPollingService's own remarks on
+// why this channel has no separate webhook receiver to also register, unlike MAX above. Ago.Chat.Worker
+// for the identical adr/0013 failure-profile reason MaxLongPollingService's own comment states.
+builder.Services.AddHostedService<TelegramLongPollingService>();
 
 // Found live, 2026-08-28, verifying 14-02 against a real MAX bot: a message received here reaches
 // ReceiveChannelMessageHandler -> SendVisitorMessageHandler -> IMessagePipeline.EnqueueAsync exactly

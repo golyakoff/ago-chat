@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `14-07`: a project of its own because Telegram is a distinct external technology -
+       `naming-and-structure.md`'s "one project per external technology" rule, the same reason
+       Ago.Chat.Infrastructure.MaxBot and Ago.Chat.Infrastructure.Keycloak exist. Everything that
+       knows Telegram's own HTTP shape (its DTOs, its base URL, its bot-API-token-in-the-path
+       convention, its long-polling cursor) lives here and nowhere above it -
+       ChannelPortTests.NoProviderVocabulary_AppearsAboveInfrastructure is what makes that a checked
+       rule rather than a convention. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!-- TelegramLongPollingService is a BackgroundService, and resolves ReceiveChannelMessageHandler
+         (Scoped) through IServiceScopeFactory per iteration, per credential - the same
+         MaxLongPollingService/OfflineAutoReplyConsumer precedent for a singleton hosted service
+         driving a scoped handler. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+</Project>

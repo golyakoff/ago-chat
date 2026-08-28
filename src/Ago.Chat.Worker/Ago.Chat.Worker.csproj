@@ -11,6 +11,9 @@
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Keycloak\Ago.Chat.Infrastructure.Keycloak.csproj" />
     <!-- `14-02`: Program.cs registers MaxLongPollingService directly. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
+    <!-- `14-07`: Program.cs registers TelegramLongPollingService directly - the same reason as MAX
+         above. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Telegram\Ago.Chat.Infrastructure.Telegram.csproj" />
   </ItemGroup>
 
   <ItemGroup>
