@@ -67,5 +67,17 @@ public readonly record struct Permission(string Value)
     // request does not need, and must not require, the power to destroy the whole account.
     public static readonly Permission ConversationErase = new("conversation:erase");
 
+    // `16-03`: a dedicated permission, not a reuse of SiteConfigure or SiteErase - the same
+    // granular-permission reasoning SiteErase's own remarks give, applied to a third, distinct blast
+    // radius. Export is not reversible-config-change shaped (SiteConfigure) and it is not
+    // destruction-shaped (SiteErase) - it is "hand a complete copy of everything this tenant holds to
+    // whoever asks", which deserves its own named capability so a future custom role can grant "may
+    // configure the widget" without also granting "may walk out with every visitor's conversation
+    // history." Admin-role-only, the same three restatements as SiteErase/ConversationErase
+    // (RegisterSiteHandler.AdminRolePermissions, MintDemoTenantHandler.AdminRolePermissions, and
+    // `ago-deploy/seed/create-demo-tenant.sh`'s own restatement) - see this item's own commit-prep
+    // notes for why the seed script's restatement was not reached by this change.
+    public static readonly Permission SiteExport = new("site:export");
+
     public override string ToString() => Value;
 }

@@ -20,6 +20,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<BillingWebhookEvent> BillingWebhookEvents => Set<BillingWebhookEvent>();
     internal DbSet<RoleRecord> Roles => Set<RoleRecord>();
     internal DbSet<OperatorRoleRecord> OperatorRoles => Set<OperatorRoleRecord>();
+    // `16-03`: migration-scaffolding only - ExportRequestEntity's own remarks explain why nothing
+    // ever queries this DbSet.
+    internal DbSet<ExportRequestEntity> ExportRequests => Set<ExportRequestEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

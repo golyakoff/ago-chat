@@ -217,4 +217,16 @@ public static class ConversationErrors
     /// of the identical request would not fix.</summary>
     public static Error BillingPaymentProviderRefused(string reason) =>
         new("Billing.PaymentProviderRefused", reason);
+
+    // `16-03`: same shared vocabulary, same reason - RequestSiteExportHandler/GetSiteExportStatusHandler
+    // add their own codes here rather than a separate error class.
+    public static Error ExportNotFound(Guid exportId) =>
+        new("Export.NotFound", $"Export {exportId} was not found.");
+
+    /// <summary>Distinct code from <see cref="SiteRegistrationRateLimited"/> and the message send
+    /// <c>RateLimited</c> above, the same reasoning each of those gives for its own distinct code - a
+    /// client branching on `type` should be able to tell "you are exporting too often" apart from every
+    /// other rate limit in this vocabulary without parsing the message text.</summary>
+    public static Error ExportRateLimited(TimeSpan retryAfter) =>
+        new("Export.RateLimited", $"Too many export requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
 }

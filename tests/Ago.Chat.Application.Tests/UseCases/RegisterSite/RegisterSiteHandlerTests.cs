@@ -57,7 +57,7 @@ public class RegisterSiteHandlerTests
         Assert.Equal(
             [
                 Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
-                Permission.SiteErase.Value, Permission.ConversationErase.Value,
+                Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
             ],
             registration.AdminRole.Permissions);
     }

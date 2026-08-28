@@ -232,6 +232,20 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<SiteErasureJob>();
 
+// `16-03`: tenant export. SiteExportJobOptions is bound both as IOptions<T> (SiteExportJob itself,
+// the same shape SiteErasureJobOptions uses) and as a plain singleton value
+// (SiteExportArchiveWriter, the same "plain value, not IOptions<T>" shape RegisterSiteRateLimitOptions
+// establishes) - both consumers live in this singleton BackgroundService's own dependency graph, so
+// both need a registration IFileStorage's own Singleton lifetime (Ago.Platform.Storage.S3) can satisfy
+// without a scope.
+builder.Services
+    .AddOptions<SiteExportJobOptions>()
+    .Bind(builder.Configuration.GetSection(SiteExportJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportJobOptions>>().Value);
+builder.Services.AddSingleton<SiteExportArchiveWriter>();
+builder.Services.AddHostedService<SiteExportJob>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()

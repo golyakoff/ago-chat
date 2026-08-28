@@ -5,7 +5,9 @@ using System.Net.Http.Json;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.RegisterSite;
+using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -85,7 +87,7 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         Assert.Equal(
             [
                 Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
-                Permission.SiteErase.Value, Permission.ConversationErase.Value,
+                Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
             ],
             adminRole.Permissions);
 
@@ -200,6 +202,18 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
+        // `16-03`: SitesEndpoints now also maps the export routes - every handler for every route it
+        // maps must resolve from this host's own container, even one this test never calls, because
+        // ASP.NET Core builds every mapped endpoint's metadata eagerly the first time any request is
+        // authorized (FakeFileStorage's own remarks explain why a fake, not a real S3FileStorage, is
+        // enough here).
+        builder.Services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
+        builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
+        builder.Services.AddSingleton<IFileStorage, FakeFileStorage>();
+        builder.Services.AddSingleton(new SiteExportRateLimitOptions());
+        builder.Services.AddSingleton(new SiteExportOptions());
+        builder.Services.AddScoped<RequestSiteExportHandler>();
+        builder.Services.AddScoped<GetSiteExportStatusHandler>();
         // `13-07`: OperatorIdentityClaimsTransformation now reads the active-site signal off the
         // current request - see Program.cs's own remarks on this exact registration.
         builder.Services.AddHttpContextAccessor();

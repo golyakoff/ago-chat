@@ -21,6 +21,7 @@ using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
@@ -38,6 +39,7 @@ using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
+using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
@@ -156,6 +158,20 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(OperatorInviteOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<OperatorInviteOptions>>().Value);
+
+        // `16-03`: bound here, not a host's own Program.cs - RequestSiteExportHandler/
+        // GetSiteExportStatusHandler are registered for every host below, the same
+        // RegisterSiteRateLimitOptions shape (a plain value, not IOptions<T>).
+        services
+            .AddOptions<SiteExportRateLimitOptions>()
+            .Bind(configuration.GetSection(SiteExportRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportRateLimitOptions>>().Value);
+        services
+            .AddOptions<SiteExportOptions>()
+            .Bind(configuration.GetSection(SiteExportOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportOptions>>().Value);
 
         // `6-03`: bound here, not a host's own Program.cs - RegisterWebhookEndpointHandler is
         // registered for every host below, the same MessageSendRateLimitOptions/AttachmentOptions
@@ -420,6 +436,12 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RequestSiteErasureHandler>();
         services.AddScoped<RequestConversationErasureHandler>();
         services.AddScoped<GetConversationByIdHandler>();
+
+        // `16-03`: the export-request write and the completion-poll read, the same "registered for
+        // every host, only Ago.Chat.Api maps routes for them today" shape as the erasure pair right
+        // above.
+        services.AddScoped<RequestSiteExportHandler>();
+        services.AddScoped<GetSiteExportStatusHandler>();
 
         // `14-04`: the offline auto-reply's three handlers. The read/write pair backs `Ago.Chat.Api`'s
         // own settings endpoints (the same `site:configure` gate `11-01`'s pair uses); the third is

@@ -62,10 +62,11 @@ public sealed class MintDemoTenantHandler(
     // `16-02`: SiteErase/ConversationErase join the Admin set here too, the same restatement this
     // class's own remarks already accept - a demo operator gets the full Admin capability set, "half a
     // console is a worse demonstration than none" applied to erasure as much as anything else.
+    // `16-03`: SiteExport joins them, same reasoning.
     private static readonly string[] AdminRolePermissions =
         [
             Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
-            Permission.SiteErase.Value, Permission.ConversationErase.Value,
+            Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
         ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(

@@ -6,8 +6,10 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.RegisterSite;
+using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -185,6 +187,15 @@ public sealed class PlatformOwnerAsTenantTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
+        // `16-03`: SitesEndpoints now also maps the export routes - see SiteRegistrationTests'
+        // own remarks (this file's own precedent for a stripped-down host).
+        builder.Services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
+        builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
+        builder.Services.AddSingleton<IFileStorage, FakeFileStorage>();
+        builder.Services.AddSingleton(new SiteExportRateLimitOptions());
+        builder.Services.AddSingleton(new SiteExportOptions());
+        builder.Services.AddScoped<RequestSiteExportHandler>();
+        builder.Services.AddScoped<GetSiteExportStatusHandler>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
