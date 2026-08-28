@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Ago.Chat.Infrastructure.MaxBot;
 
@@ -30,7 +31,8 @@ namespace Ago.Chat.Infrastructure.MaxBot;
 /// revocation "surfaces as a rejected call at use time," and this is exactly that surfacing, mapped to
 /// <see cref="ChannelSendOutcome.Refused"/> rather than an exception so it is never retried.</para>
 /// </summary>
-public sealed class MaxChannelAdapter(MaxApiClient client, IServiceScopeFactory scopeFactory) : IInboundChannelAdapter
+public sealed class MaxChannelAdapter(
+    MaxApiClient client, IServiceScopeFactory scopeFactory, ILogger<MaxChannelAdapter> logger) : IInboundChannelAdapter
 {
     public ChannelKind Kind => ChannelKind.Max;
 
@@ -59,8 +61,10 @@ public sealed class MaxChannelAdapter(MaxApiClient client, IServiceScopeFactory 
             var credential = await credentials.GetActiveAsync(conversation.SiteId, ChannelKind.Max, cancellationToken);
             if (credential is null)
             {
-                return ChannelSendOutcome.Refused(
-                    "No active MAX bot is connected for this site - the credential was never registered, or has been revoked.");
+                const string reason =
+                    "No active MAX bot is connected for this site - the credential was never registered, or has been revoked.";
+                logger.LogWarning("MAX send refused for conversation {ConversationId}: {Reason}", message.ConversationId.Value, reason);
+                return ChannelSendOutcome.Refused(reason);
             }
 
             if (!long.TryParse(message.Recipient.Value, out chatId))
@@ -70,7 +74,9 @@ public sealed class MaxChannelAdapter(MaxApiClient client, IServiceScopeFactory 
                 // rather than a provider refusal, so this is refused rather than thrown (retrying would
                 // produce the identical outcome forever - the retry-worthiness test resilience.md
                 // applies).
-                return ChannelSendOutcome.Refused($"'{message.Recipient.Value}' is not a MAX chat id.");
+                var reason = $"'{message.Recipient.Value}' is not a MAX chat id.";
+                logger.LogWarning("MAX send refused for conversation {ConversationId}: {Reason}", message.ConversationId.Value, reason);
+                return ChannelSendOutcome.Refused(reason);
             }
 
             token = cipher.Decrypt(credential.TokenCiphertext);
@@ -78,8 +84,19 @@ public sealed class MaxChannelAdapter(MaxApiClient client, IServiceScopeFactory 
 
         var result = await client.SendMessageAsync(token, chatId, message.Body.Value, cancellationToken);
 
-        return result.Success
-            ? ChannelSendOutcome.Sent(result.ProviderMessageId)
-            : ChannelSendOutcome.Refused(result.RefusalReason!);
+        if (result.Success)
+        {
+            return ChannelSendOutcome.Sent(result.ProviderMessageId);
+        }
+
+        // Found live, 2026-08-28: a provider refusal's own reason (MAX's real response body, not just
+        // its status code) reached nowhere before this - DeliverChannelMessageHandler discards
+        // ChannelSendOutcome down to a bare Delivered/Refused enum, so the one place this string is
+        // ever seen has to be here, at the point it is still attached to which conversation it was
+        // trying to reach. Warning, not error - a provider refusal is an expected outcome this system
+        // already models (adr/0069's own "surfaces as a rejected call at use time"), not a fault.
+        logger.LogWarning(
+            "MAX send refused for conversation {ConversationId}: {Reason}", message.ConversationId.Value, result.RefusalReason);
+        return ChannelSendOutcome.Refused(result.RefusalReason!);
     }
 }
