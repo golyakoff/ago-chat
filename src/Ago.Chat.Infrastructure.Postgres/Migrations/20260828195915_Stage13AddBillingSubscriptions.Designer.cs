@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260828195915_Stage13AddBillingSubscriptions")]
+    partial class Stage13AddBillingSubscriptions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -254,10 +257,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<DateTimeOffset?>("ErasureRequestedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("erasure_requested_at");
-
                     b.Property<bool>("HoldsCapacityClaim")
                         .HasColumnType("boolean")
                         .HasColumnName("holds_capacity_claim");
@@ -302,10 +301,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnName("xmin");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("ErasureRequestedAt")
-                        .HasDatabaseName("ix_conversations_erasure_pending")
-                        .HasFilter("erasure_requested_at is not null");
 
                     b.HasIndex("OperatorId");
 
@@ -498,10 +493,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("demo_expires_at");
 
-                    b.Property<DateTimeOffset?>("ErasureRequestedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("erasure_requested_at");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -572,10 +563,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasIndex("DemoExpiresAt")
                         .HasDatabaseName("ix_sites_demo_expiry")
                         .HasFilter("demo_expires_at is not null");
-
-                    b.HasIndex("ErasureRequestedAt")
-                        .HasDatabaseName("ix_sites_erasure_pending")
-                        .HasFilter("erasure_requested_at is not null");
 
                     b.ToTable("sites", null, t =>
                         {

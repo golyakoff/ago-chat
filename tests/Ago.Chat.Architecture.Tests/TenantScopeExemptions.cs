@@ -186,6 +186,25 @@ internal static class TenantScopeExemptions
             + "OperatorHub.OnDisconnectedAsync only when this was the operator's last live connection.",
 
         // ---------------------------------------------------------------------------------------
+        // `13-02`. Inbound, HTTP-triggered (not broker-consumed) - the third-party mirror of the
+        // consumer/adapter category above, not the broker itself.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.ProcessYooKassaWebhook.ProcessYooKassaWebhookHandler.HandleAsync"] =
+            "`13-02`/`adr/0025`. Carries no SiteId at all, by design: the input is ЮKassa's own payment id, which "
+            + "no external caller can choose a site with - IBillingWebhookApplier resolves the one billing_subscriptions "
+            + "row that payment id names and acts on *that* row's own SiteId, a fact CreateCheckoutSessionHandler "
+            + "already established (gated by SiteConfigure the ordinary way) at checkout-session creation, never a "
+            + "value this webhook call supplies itself. Structurally the same category as "
+            + "ReceiveChannelMessageHandler above (the site is a fact established by our own prior write, not a "
+            + "caller's claim) with an even narrower attack surface: this handler cannot even be reached with an "
+            + "unverified payload at all - HandleYooKassaWebhookAsync (the endpoint) rejects a missing/invalid "
+            + "`Webhook-Signature` header before this handler is ever constructed, so every payment id this method "
+            + "ever sees is one ЮKassa itself signed with a key only this deployment and ЮKassa hold. There is also "
+            + "no principal to check a permission for - nobody asked for this write, ЮKassa's own webhook delivery "
+            + "did, the same 'no principal' category SendOfflineAutoReplyHandler/DeliverChannelMessageHandler above "
+            + "are in for the identical reason.",
+
+        // ---------------------------------------------------------------------------------------
         // The one deliberate cross-tenant read in the codebase.
         // ---------------------------------------------------------------------------------------
         ["Ago.Chat.Application.UseCases.ListSitesForOwner.ListSitesForOwnerHandler.HandleAsync"] =

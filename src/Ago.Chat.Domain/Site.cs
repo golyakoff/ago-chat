@@ -129,16 +129,27 @@ public sealed class Site
     /// <summary>`13-01`: the billing tier driving <see cref="SeatLimit"/> - `"free"` for every existing
     /// and newly registered site until `13-02` gives a real payment somewhere to write a different
     /// value from. Not an enum: `13-02`'s own tiers are not decided yet, and a `text` column with no
-    /// fixed set of legal values it must not close over is one fewer thing this item has to guess at.</summary>
-    public string Tier { get; } = "free";
+    /// fixed set of legal values it must not close over is one fewer thing this item has to guess at.
+    ///
+    /// <para>`13-02`: <c>private set</c>, not the original get-only shape - <see cref="ActivateSubscription"/>
+    /// is this property's first real writer. A plain private setter, not a backing field routed through
+    /// `SiteConfiguration`'s `Property&lt;T&gt;("_field")` shape the way `WidgetConfig`/`OfflineAutoReply`
+    /// need - `13-01`'s own remarks on `SiteConfiguration.cs` already anticipated this: "there is nothing
+    /// for a backing field to buy here," because `Tier`/`SeatLimit` are plain scalars with no wrapping
+    /// value object to compute, unlike those two. EF Core maps a private setter by convention with no
+    /// configuration change needed.</para></summary>
+    public string Tier { get; private set; } = "free";
 
     /// <summary>`13-01`: how many `operators` rows this site may hold at once, enforced only at
     /// `OperatorInviteRedemptionRepository`'s own row-locked check - never here, and never against
     /// `10-02`'s own registration flow, which already has a hard, structural one-operator cap by
     /// construction and needs no check against this column at all (this item's own Out of scope).
     /// Defaults to `1`, matching every site's `Tier` default of `"free"` - a lone self-registered
-    /// operator is exactly what the free tier already allows before this item exists.</summary>
-    public int SeatLimit { get; } = 1;
+    /// operator is exactly what the free tier already allows before this item exists.
+    ///
+    /// <para>`13-02`: <c>private set</c> for the identical reason <see cref="Tier"/>'s own remarks
+    /// give.</para></summary>
+    public int SeatLimit { get; private set; } = 1;
 
     private readonly List<IDomainEvent> _domainEvents = [];
 
@@ -236,6 +247,28 @@ public sealed class Site
     {
         _locale = locale;
         _domainEvents.Add(new SiteLocaleUpdated(Id, PublicKey, now));
+    }
+
+    /// <summary>
+    /// `13-02`: `Site`'s fourth update path, and the first real writer of <see cref="Tier"/>/
+    /// <see cref="SeatLimit"/> since `13-01` gave them a default. Called from exactly one place -
+    /// the webhook applier's own transaction, on a verified `payment.succeeded` event, never from a
+    /// checkout-session *creation* (the redirect alone proves nothing - `roadmap.md`'s own wording,
+    /// restated in this item's Goal). <paramref name="tier"/>/<paramref name="seatLimit"/> arrive
+    /// already resolved (<see cref="SubscriptionTierBands"/>), so - matching <see cref="UpdateWidgetConfig"/>'s
+    /// own split - this method's only job is applying them and recording that it happened.
+    ///
+    /// <para>Raises <see cref="SiteSubscriptionActivated"/>, mapped to the same `SiteSettingsChanged`
+    /// integration event every other `Site` write path already converges on - a tier change is exactly
+    /// the kind of "this site's settings changed, drop its cache entries" fact
+    /// <see cref="SiteOfflineAutoReplyUpdated"/>'s own remarks describe, and nothing about `13-02`'s own
+    /// scope needs a fourth distinct cache-invalidation shape.</para>
+    /// </summary>
+    public void ActivateSubscription(string tier, int seatLimit, DateTimeOffset now)
+    {
+        Tier = tier;
+        SeatLimit = seatLimit;
+        _domainEvents.Add(new SiteSubscriptionActivated(Id, PublicKey, tier, seatLimit, now));
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();

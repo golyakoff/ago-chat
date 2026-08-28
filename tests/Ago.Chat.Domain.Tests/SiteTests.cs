@@ -156,4 +156,60 @@ public class SiteTests
 
         Assert.Single(site.DomainEvents);
     }
+
+    // `13-02`: the free-tier defaults every existing and newly-registered site reads until a real
+    // payment writes something else - `13-01`'s own regression, restated here alongside every other
+    // "what does a fresh Site look like" assertion in this file.
+    [Fact]
+    public void Constructor_WhenValid_DefaultsToFreeTierWithOneSeat()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Equal("free", site.Tier);
+        Assert.Equal(1, site.SeatLimit);
+    }
+
+    [Fact]
+    public void ActivateSubscription_WhenCalled_SetsTierAndSeatLimit()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, DateTimeOffset.UtcNow);
+
+        Assert.Equal(SubscriptionTierBands.Growth, site.Tier);
+        Assert.Equal(25, site.SeatLimit);
+    }
+
+    [Fact]
+    public void ActivateSubscription_WhenCalled_RaisesDomainEventExactlyOnce()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteSubscriptionActivated>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Equal("shop_7f3a", raised.PublicKey);
+        Assert.Equal(SubscriptionTierBands.Starter, raised.Tier);
+        Assert.Equal(5, raised.SeatLimit);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void ActivateSubscription_WhenCalledTwice_RaisesTwoDomainEventsUntilCleared()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, now);
+        site.ClearDomainEvents();
+        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, now);
+
+        Assert.Single(site.DomainEvents);
+        Assert.Equal(SubscriptionTierBands.Growth, site.Tier);
+        Assert.Equal(25, site.SeatLimit);
+    }
 }

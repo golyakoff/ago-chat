@@ -1,4 +1,6 @@
 ﻿using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
@@ -6,6 +8,7 @@ using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
+using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
@@ -25,6 +28,7 @@ using Ago.Chat.Application.UseCases.ListMyTenancies;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
+using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
@@ -48,6 +52,7 @@ using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
+using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
@@ -294,6 +299,49 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<TelegramChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<TelegramChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+
+        // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
+        // above - PricePerSeatRub deliberately ships no code default (BillingOptions' own remarks:
+        // "measure or stay silent" applies with more force to a figure that charges a real card), so
+        // .ValidateOnStart() alone (no .Validate() predicate) is what turns "left at 0" into a startup
+        // failure - a positive check is added explicitly below since the CLR default for `decimal` (0)
+        // would otherwise satisfy a binder with nothing to complain about.
+        services
+            .AddOptions<BillingOptions>()
+            .Bind(configuration.GetSection(BillingOptions.SectionName))
+            .Validate(o => o.PricePerSeatRub > 0, "Billing:PricePerSeatRub must be set to a positive value.")
+            .Validate(o => Uri.IsWellFormedUriString(o.CheckoutReturnUrl, UriKind.Absolute), "Billing:CheckoutReturnUrl must be an absolute URL.")
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<BillingOptions>>().Value);
+
+        // `13-02`/`adr/0025`: our own fixed ЮKassa application credentials - see YooKassaOptions' own
+        // remarks for the contrast with WebhookSecretCipherOptions' per-tenant ciphertext shape right
+        // above (a different reason to change, a different validation - non-empty strings, not a
+        // base64-32-byte key).
+        services
+            .AddOptions<YooKassaOptions>()
+            .Bind(configuration.GetSection(YooKassaOptions.SectionName))
+            .Validate(o => !string.IsNullOrWhiteSpace(o.ShopId), "Billing:YooKassa:ShopId must be set.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.SecretKey), "Billing:YooKassa:SecretKey must be set.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.WebhookKey), "Billing:YooKassa:WebhookKey must be set.")
+            .ValidateOnStart();
+        services.AddHttpClient<YooKassaPaymentsApiClient>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<YooKassaOptions>>().Value;
+            var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
+            client.BaseAddress = new Uri(baseUrl);
+            // Basic auth, shop id as the username - ЮKassa's own documented scheme for the Payments
+            // API. Set once here, at the composition root, rather than per-request inside
+            // YooKassaPaymentsApiClient - the same "ChatModule builds the HttpClient, the client class
+            // stays thin" split TelegramApiClient's own remarks describe for its base address.
+            var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{options.ShopId}:{options.SecretKey}"));
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+        });
+        services.AddScoped<IYooKassaPaymentsClient>(sp => sp.GetRequiredService<YooKassaPaymentsApiClient>());
+        services.AddSingleton<IYooKassaWebhookSignatureVerifier>(sp =>
+            new YooKassaWebhookSignatureVerifier(sp.GetRequiredService<IOptions<YooKassaOptions>>().Value));
+        services.AddScoped<CreateCheckoutSessionHandler>();
+        services.AddScoped<ProcessYooKassaWebhookHandler>();
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
