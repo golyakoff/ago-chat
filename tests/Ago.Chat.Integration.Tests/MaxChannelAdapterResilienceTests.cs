@@ -5,6 +5,7 @@ using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Module.Channels;
 using Ago.Platform.Resilience;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Polly;
 using Polly.CircuitBreaker;
 using Polly.Timeout;
@@ -49,7 +50,8 @@ public class MaxChannelAdapterResilienceTests
         var httpClient = new HttpClient { BaseAddress = baseAddress, Timeout = TimeSpan.FromSeconds(60) };
         var apiClient = new MaxApiClient(httpClient);
 
-        return new MaxChannelAdapter(apiClient, provider.GetRequiredService<IServiceScopeFactory>());
+        return new MaxChannelAdapter(
+            apiClient, provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<MaxChannelAdapter>.Instance);
     }
 
     private static ChannelResiliencePipelines Pipelines(Action<ResiliencePipelineOptions> configure)
