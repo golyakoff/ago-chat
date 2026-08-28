@@ -121,7 +121,14 @@ public class MaxChannelAdapterResilienceTests
 
         var pipelines = Pipelines(options =>
         {
-            options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromMilliseconds(500) };
+            // 500ms measured flaky on a shared GitHub Actions runner (ubuntu-latest, 2 vCPUs): a
+            // connection refusal on loopback is normally sub-millisecond work, but thread-pool
+            // scheduling delay under a loaded, noisy-neighbour runner can occasionally push even that
+            // past a tight margin, and a timeout firing mid-call is indistinguishable from a real
+            // provider fault to the code under test. 1500ms keeps 3x the original margin while still
+            // leaving the 10s SamplingDuration below comfortable room for all five calls in this test,
+            // even if every one of them were unlucky enough to hit the full margin (5 * 1.5s = 7.5s).
+            options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromMilliseconds(1500) };
             options.CircuitBreaker = new ResilienceCircuitBreakerOptions
             {
                 FailureRatio = 0.5,
