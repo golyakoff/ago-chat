@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System.Collections;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
@@ -65,7 +66,19 @@ public sealed class TelemetryLeakGuardTests(PostgresFixture fixture)
     public async Task AMessageBodyWrittenThroughTheProductionPersistenceWiring_ReachesNoLogAndNoSpanAttribute()
     {
         var capturedLogs = new CapturingLoggerProvider();
-        var exportedSpans = new List<Activity>();
+        // SynchronizedActivityCollection, not List<Activity>: ActivityListener subscriptions are
+        // process-global by source name, so this wildcard subscription receives every matching
+        // Activity created *anywhere in the test process* while it is alive - including from
+        // unrelated tests xUnit is running concurrently in other collections - and
+        // AddInMemoryExporter's default processor (SimpleActivityExportProcessor) calls Export
+        // synchronously on whatever thread stops the Activity, with no locking of its own around the
+        // collection it was handed. A plain List<T> is not thread-safe against that, which is exactly
+        // what "Collection was modified; enumeration operation may not execute" was: two threads'
+        // Adds (or an Add racing this test's own enumeration below) interleaving on the same list.
+        // This test does not control the SDK's own write path, so a lock here alone would not be
+        // enough unless the SDK's writes went through it too - which they do not - so the fix has to
+        // be the collection itself: see SynchronizedActivityCollection's own remarks for why.
+        var exportedSpans = new SynchronizedActivityCollection();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             // Exactly what AddPlatformObservability subscribes to, so this sees what Jaeger would
             // see rather than a hand-picked subset (TracingEndToEndTests makes the same argument).
@@ -152,7 +165,11 @@ public sealed class TelemetryLeakGuardTests(PostgresFixture fixture)
     [Fact]
     public async Task AQueryStringOnAnOutboundHttpCall_IsRedactedBeforeItBecomesASpanAttribute()
     {
-        var exportedSpans = new List<Activity>();
+        // Same reasoning as the first test's exportedSpans: "System.Net.Http" is just as
+        // process-global as the wildcard, and other tests running concurrently in different xUnit
+        // collections also make outbound HTTP calls (MaxChannelAdapterResilienceTests among them),
+        // so this listener can receive their spans on their threads too.
+        var exportedSpans = new SynchronizedActivityCollection();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             // The .NET runtime's own HttpClient activity source - `AddHttpClientInstrumentation()`
             // in `AddPlatformObservability` subscribes to this one, which is why the spans in Jaeger
@@ -188,6 +205,95 @@ public sealed class TelemetryLeakGuardTests(PostgresFixture fixture)
         Assert.True(
             leakingTag.Value is null,
             $"Span '{leakingTag.OperationName}' carried the outbound query string on attribute '{leakingTag.Key}': {leakingTag.Value}");
+    }
+
+    /// <summary>
+    /// The <c>ICollection&lt;Activity&gt;</c> <see cref="OpenTelemetry.Trace.InMemoryExporterHelperExtensions.AddInMemoryExporter{T}"/>
+    /// asks for, made safe against concurrent writers - which the SDK's own default processor does
+    /// not guarantee (see the callers' remarks for the full mechanism). <see cref="ConcurrentBag{T}"/>
+    /// would make <see cref="Add"/> itself thread-safe but does not implement generic
+    /// <see cref="ICollection{T}"/>, so this wraps a plain <see cref="List{T}"/> behind one lock
+    /// instead: every mutation and every read take the same lock, and a read returns a full snapshot
+    /// rather than a live enumerator, so no thread can ever observe - or write into - a half-updated
+    /// list. This is "synchronize access" from the two real options for this race, chosen over
+    /// isolating the test into a non-parallel xUnit collection because it fixes the actual defect (a
+    /// thread-unsafe collection shared across threads outside this test's control) rather than
+    /// reducing how often it gets hit, and it does so without narrowing what the test watches - the
+    /// wildcard subscription itself is unchanged.
+    /// </summary>
+    private sealed class SynchronizedActivityCollection : ICollection<Activity>
+    {
+        private readonly List<Activity> _items = [];
+        private readonly Lock _gate = new();
+
+        public int Count
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _items.Count;
+                }
+            }
+        }
+
+        public bool IsReadOnly => false;
+
+        public void Add(Activity item)
+        {
+            lock (_gate)
+            {
+                _items.Add(item);
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_gate)
+            {
+                _items.Clear();
+            }
+        }
+
+        public bool Contains(Activity item)
+        {
+            lock (_gate)
+            {
+                return _items.Contains(item);
+            }
+        }
+
+        public void CopyTo(Activity[] array, int arrayIndex)
+        {
+            lock (_gate)
+            {
+                _items.CopyTo(array, arrayIndex);
+            }
+        }
+
+        public bool Remove(Activity item)
+        {
+            lock (_gate)
+            {
+                return _items.Remove(item);
+            }
+        }
+
+        // A snapshot copy, not a live view over _items - so a writer on another thread can never
+        // invalidate an enumerator a reader already holds, which is exactly the exception this
+        // collection exists to make impossible.
+        public IEnumerator<Activity> GetEnumerator()
+        {
+            List<Activity> snapshot;
+            lock (_gate)
+            {
+                snapshot = [.. _items];
+            }
+
+            return snapshot.GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>
