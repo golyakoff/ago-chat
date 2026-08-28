@@ -74,6 +74,9 @@
          precedent, reused for the inbound-channel port's first real HTTP boundary. -->
     <ProjectReference Include="..\Ago.Chat.FakeMax.Tests\Ago.Chat.FakeMax.Tests.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
+    <!-- `14-07`: TelegramInboundMessageParserTests/TelegramApiClientTests/TelegramProxyTests' own
+         real HTTP boundary - the same reasoning as the MAX reference above. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Telegram\Ago.Chat.Infrastructure.Telegram.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
   </ItemGroup>
 

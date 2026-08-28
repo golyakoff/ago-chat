@@ -364,6 +364,11 @@ app.MapWebhookEndpoints();
 // disconnect flow - see MaxWebhookEndpoints' own remarks for why this host, not Ago.Chat.Webhooks.
 app.MapMaxWebhookEndpoints();
 app.MapMaxChannelEndpoints();
+// `14-07`: the console's own Telegram connect/disconnect flow. No MapTelegramWebhookEndpoints - this
+// channel has no webhook receiver at all (TelegramBotApiOptions' own remarks); its inbound mechanism,
+// TelegramLongPollingService, is registered on Ago.Chat.Worker instead, the same "restart-tolerant
+// background work with no request to answer" reasoning MaxLongPollingService's own registration uses.
+app.MapTelegramChannelEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();

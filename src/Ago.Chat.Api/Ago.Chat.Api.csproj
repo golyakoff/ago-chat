@@ -17,6 +17,11 @@
          only transitively through Ago.Chat.Module, the same "explicit when actually used" reasoning
          Ago.Chat.Infrastructure.Keycloak's own reference above already follows. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.MaxBot\Ago.Chat.Infrastructure.MaxBot.csproj" />
+    <!-- `14-07`: TelegramChannelEndpoints calls TelegramApiClient.GetMeAsync directly (this channel's
+         own "reject a bad token immediately" step) - the same "explicit when actually used" reasoning
+         the MAX reference above already follows. Unlike MAX there is no webhook receiver here, so this
+         is the only reason Ago.Chat.Api references this project at all. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Telegram\Ago.Chat.Infrastructure.Telegram.csproj" />
   </ItemGroup>
 
 
