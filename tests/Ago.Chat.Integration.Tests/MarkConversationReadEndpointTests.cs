@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Domain;
@@ -230,6 +231,11 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<RequestConversationErasureHandler>();
         builder.Services.AddScoped<GetConversationByIdHandler>();
         builder.Services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `18-07`: same reason as the three above it - MapConversationsEndpoints now also maps
+        // GET .../visitor-history, whose GetVisitorHistoryHandler parameter must resolve as a
+        // registered service or the whole route table fails to build.
+        builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
+        builder.Services.AddScoped<GetVisitorHistoryHandler>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();

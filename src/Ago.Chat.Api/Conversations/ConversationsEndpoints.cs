@@ -4,6 +4,7 @@ using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Contracts;
@@ -59,6 +60,15 @@ public static class ConversationsEndpoints
         // which any operator holding `conversation:assign`'s sibling `conversation:close` may do on
         // their own assigned conversation.
         app.MapPost("/api/v1/conversations/{conversationId:guid}/erase", HandleEraseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-07`: the returning-visitor-history panel's own sub-resource - same shape as `/close` and
+        // `/read` above (a compound read/action scoped to one already-identified conversation, not a
+        // query-parameter mode on the plural `conversations` resource). Operator-only for the same
+        // reason `/all` is: a visitor has no reason to see their own past conversations listed this
+        // way (the widget already reuses one active conversation - `IConversationRepository.
+        // GetActiveForVisitorAsync` - so there is nothing here for a visitor caller to ask for).
+        app.MapGet("/api/v1/conversations/{conversationId:guid}/visitor-history", HandleGetVisitorHistoryAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `16-02`: the single-conversation admin fetch this codebase did not have - see
@@ -179,5 +189,24 @@ public static class ConversationsEndpoints
         var item = result.Value;
         return Results.Ok(new ConversationSummaryDto(
             item.Id.Value, item.VisitorId.Value, item.State, item.CreatedAt, item.OperatorUnreadCount, item.OperatorId?.Value));
+    }
+
+    /// <summary>`18-07`: the returning-visitor-history panel's own read - see `GetVisitorHistoryHandler`'s
+    /// own remarks for the structural channel-identity gate.</summary>
+    private static async Task<IResult> HandleGetVisitorHistoryAsync(
+        Guid conversationId,
+        Guid? beforeId,
+        int? pageSize,
+        GetVisitorHistoryHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsOperatorAsync(
+            new GetVisitorHistory(
+                new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 20),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 }

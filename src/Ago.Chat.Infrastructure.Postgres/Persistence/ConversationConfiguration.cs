@@ -17,6 +17,10 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property(c => c.State).HasColumnName("state").HasConversion<string>();
         builder.Property(c => c.LastSequence).HasColumnName("last_sequence");
         builder.Property(c => c.CreatedAt).HasColumnName("created_at");
+
+        // `18-07`: nullable - null for every conversation that predates this column, and for every
+        // conversation still open. See Conversation.ClosedAt's own remarks.
+        builder.Property(c => c.ClosedAt).HasColumnName("closed_at");
         builder.Property(c => c.VisitorUnreadCount).HasColumnName("visitor_unread_count");
         builder.Property(c => c.OperatorUnreadCount).HasColumnName("operator_unread_count");
 
@@ -92,5 +96,17 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.HasIndex("ErasureRequestedAt")
             .HasDatabaseName("ix_conversations_erasure_pending")
             .HasFilter("erasure_requested_at is not null");
+
+        // `18-07`: EF's own convention had already created an unnamed single-column index on
+        // VisitorId here (for the HasOne&lt;Visitor&gt; foreign key below) - not a real gap, just
+        // never spelled out in this file the way every other index on this table is, so a
+        // code-reading audit (rather than a live `\d conversations`) would miss it. This item's own
+        // read (ConversationReadStore.GetVisitorHistoryAsync) is a keyset scan - filtered by
+        // visitor_id *and* ordered by id - that the single-column index cannot serve without a
+        // separate sort, so the composite below replaces it outright (the generated migration drops
+        // the old one) rather than sitting alongside it as a second index EF would otherwise keep
+        // paying to maintain on every insert.
+        builder.HasIndex(c => new { c.VisitorId, c.Id })
+            .HasDatabaseName("ix_conversations_visitor_all");
     }
 }

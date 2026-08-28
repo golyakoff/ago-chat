@@ -71,4 +71,35 @@ public sealed class FakeConversationReadStore : IConversationReadStore
             conversation.Id, conversation.VisitorId, conversation.OperatorId, conversation.State.ToString(),
             conversation.CreatedAt, conversation.OperatorUnreadCount));
     }
+
+    /// <summary>`18-07`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive,
+    /// current conversation excluded) and its "last message wins the preview" choice - good enough to
+    /// test a handler's own access-check, gating and paging-forwarding logic without a real
+    /// Postgres.</summary>
+    public Task<VisitorHistoryPage> GetVisitorHistoryAsync(
+        VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var items = _bySource.Values
+            .Where(c => c.VisitorId == visitorId && c.Id != excludeConversationId)
+            .Where(c => beforeId is null || c.Id.Value.CompareTo(beforeId) < 0)
+            .OrderByDescending(c => c.Id.Value)
+            .Take(pageSize)
+            .Select(c =>
+            {
+                var lastMessage = c.Messages.OrderByDescending(m => m.Sequence).FirstOrDefault();
+                return new VisitorHistoryItem(
+                    c.Id,
+                    c.State.ToString(),
+                    c.CreatedAt,
+                    c.ClosedAt,
+                    lastMessage?.Body.Value,
+                    lastMessage?.AuthorKind,
+                    lastMessage?.CreatedAt);
+            })
+            .ToList();
+
+        var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
+        return Task.FromResult(new VisitorHistoryPage(items, nextCursor));
+    }
 }

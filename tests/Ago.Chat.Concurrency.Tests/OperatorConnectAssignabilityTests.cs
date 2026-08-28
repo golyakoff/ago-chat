@@ -5,6 +5,7 @@ using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -174,6 +175,9 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
+        var getVisitorHistory = new GetVisitorHistoryHandler(
+            new ConversationRepository(db), new ConversationReadStore(fixture.DataSource),
+            new ChannelIdentityRepository(db), new PermissionChecker(db));
         var getVisitorPresence = new GetVisitorPresenceHandler(new ConversationRepository(db), new PermissionChecker(db), registry);
         var registration = new HubConnectionRegistration(registry, tracker, node);
         var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
@@ -182,8 +186,8 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             new ConsoleOriginOptions { AllowedOrigins = ["https://console.test"] });
 
         return new OperatorHub(
-            assignConversation, sendMessage, getHistory, getVisitorPresence, registration, consoleOrigin, presencePublisher,
-            operatorPresence, new DrainState())
+            assignConversation, sendMessage, getHistory, getVisitorHistory, getVisitorPresence, registration, consoleOrigin,
+            presencePublisher, operatorPresence, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),

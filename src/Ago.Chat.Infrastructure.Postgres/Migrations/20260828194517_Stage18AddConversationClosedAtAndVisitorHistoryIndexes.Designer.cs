@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260828194517_Stage18AddConversationClosedAtAndVisitorHistoryIndexes")]
+    partial class Stage18AddConversationClosedAtAndVisitorHistoryIndexes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -75,84 +78,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasIndex("SiteId");
 
                     b.ToTable("attachments", (string)null);
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.BillingSubscription", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("PaymentMethodId")
-                        .HasColumnType("text")
-                        .HasColumnName("payment_method_id");
-
-                    b.Property<int>("RequestedSeats")
-                        .HasColumnType("integer")
-                        .HasColumnName("requested_seats");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("status");
-
-                    b.Property<string>("Tier")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("tier");
-
-                    b.Property<string>("YooKassaPaymentId")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("yookassa_payment_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("YooKassaPaymentId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_billing_subscriptions_yookassa_payment_id");
-
-                    b.HasIndex("SiteId", "CreatedAt")
-                        .HasDatabaseName("ix_billing_subscriptions_site_id_created_at");
-
-                    b.ToTable("billing_subscriptions", (string)null);
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.BillingWebhookEvent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("event_type");
-
-                    b.Property<DateTimeOffset>("ReceivedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("received_at");
-
-                    b.Property<string>("YooKassaPaymentId")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("yookassa_payment_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("YooKassaPaymentId", "EventType")
-                        .IsUnique()
-                        .HasDatabaseName("ux_billing_webhook_events_payment_id_event_type");
-
-                    b.ToTable("billing_webhook_events", (string)null);
                 });
 
             modelBuilder.Entity("Ago.Chat.Domain.ChannelCredential", b =>
@@ -259,10 +184,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<DateTimeOffset?>("ErasureRequestedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("erasure_requested_at");
-
                     b.Property<bool>("HoldsCapacityClaim")
                         .HasColumnType("boolean")
                         .HasColumnName("holds_capacity_claim");
@@ -307,10 +228,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnName("xmin");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("ErasureRequestedAt")
-                        .HasDatabaseName("ix_conversations_erasure_pending")
-                        .HasFilter("erasure_requested_at is not null");
 
                     b.HasIndex("OperatorId");
 
@@ -504,10 +421,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("demo_expires_at");
 
-                    b.Property<DateTimeOffset?>("ErasureRequestedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("erasure_requested_at");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -578,10 +491,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasIndex("DemoExpiresAt")
                         .HasDatabaseName("ix_sites_demo_expiry")
                         .HasFilter("demo_expires_at is not null");
-
-                    b.HasIndex("ErasureRequestedAt")
-                        .HasDatabaseName("ix_sites_erasure_pending")
-                        .HasFilter("erasure_requested_at is not null");
 
                     b.ToTable("sites", null, t =>
                         {
@@ -840,15 +749,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Ago.Chat.Domain.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.BillingSubscription", b =>
-                {
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")

@@ -29,6 +29,17 @@ public sealed class Conversation
 
     public DateTimeOffset CreatedAt { get; }
 
+    /// <summary>
+    /// `18-07`: when <see cref="Close"/> committed - <see langword="null"/> for every conversation
+    /// still open, and also, permanently, for one closed before this column existed (the migration
+    /// backfills nothing, the same "zero means predates the column" shape
+    /// <see cref="OperatorLastReadSequence"/> already established). Added for this item's own
+    /// visitor-history summary, which is the first caller that ever needed to say *when* a past
+    /// conversation ended rather than only that it had - nothing before this checked more than
+    /// <see cref="State"/> itself.
+    /// </summary>
+    public DateTimeOffset? ClosedAt { get; private set; }
+
     /// <summary>Messages the visitor has not yet seen - i.e. authored by the operator.</summary>
     public int VisitorUnreadCount { get; private set; }
 
@@ -193,6 +204,7 @@ public sealed class Conversation
         var claimConsumed = HoldsCapacityClaim;
         HoldsCapacityClaim = false;
         State = ConversationState.Closed;
+        ClosedAt = now;
         _domainEvents.Add(new ConversationClosed(Id, now));
         return claimConsumed;
     }
