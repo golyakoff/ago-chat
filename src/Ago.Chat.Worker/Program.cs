@@ -3,8 +3,10 @@ using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Module;
+using Ago.Chat.Module.Pipeline;
 using Ago.Chat.Worker;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
@@ -54,6 +56,23 @@ builder.Services.AddHostedService<ChannelMessageDeliveryConsumer>();
 // restart-tolerant background work with no request to answer - adr/0013's own failure-profile split,
 // applied the way this item's backlog note asks.
 builder.Services.AddHostedService<MaxLongPollingService>();
+
+// Found live, 2026-08-28, verifying 14-02 against a real MAX bot: a message received here reaches
+// ReceiveChannelMessageHandler -> SendVisitorMessageHandler -> IMessagePipeline.EnqueueAsync exactly
+// the same way a widget message does (ReceiveChannelMessageHandler's own doc comment: "the code path
+// a widget message already takes, unchanged") - but nothing in this host ever drained that pipeline.
+// Ago.Chat.Api's own Program.cs registers ConversationSequencer/BatchAccumulator/MessageBatchWriter/
+// MessagePipelineWorkerHost/BatchFlusherService on the explicit assumption "only Ago.Chat.Api's hubs
+// ever enqueue onto it" (that comment, now stale) - true before 14-02 gave this host its own
+// producer. The item's own conversation-was-created-but-the-message-never-landed symptom (silent: no
+// exception, because EnqueueAsync's caller awaits an ack nothing ever completes) is exactly what a
+// missing drainer looks like. Same five lines Ago.Chat.Api registers, because the classes themselves
+// have no Api-specific dependency (verified by reading each one) - only which host runs them differs.
+builder.Services.AddSingleton<ConversationSequencer>();
+builder.Services.AddSingleton<BatchAccumulator>();
+builder.Services.AddSingleton<MessageBatchWriter>();
+builder.Services.AddHostedService<MessagePipelineWorkerHost>();
+builder.Services.AddHostedService<BatchFlusherService>();
 
 builder.Services
     .AddOptions<PartitionMaintenanceJobOptions>()
