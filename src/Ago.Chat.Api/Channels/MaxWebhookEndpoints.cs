@@ -86,7 +86,7 @@ public static class MaxWebhookEndpoints
             new ReceiveChannelMessage(
                 credential.SiteId,
                 ChannelKind.Max,
-                new ExternalChannelAddress(parsed.SenderId.ToString()),
+                new ExternalChannelAddress(parsed.ChatId.ToString()),
                 new ExternalMessageId(parsed.ExternalMessageId),
                 parsed.Text),
             cancellationToken);

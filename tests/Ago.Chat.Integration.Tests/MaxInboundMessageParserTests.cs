@@ -21,17 +21,23 @@ namespace Ago.Chat.Integration.Tests;
 /// </summary>
 public class MaxInboundMessageParserTests
 {
-    private static MaxUpdate MessageCreated(long senderId, string text, string? mid = "provider-mid-1", long? timestamp = 1_700_000_000_000) =>
-        new("message_created", timestamp, new MaxIncomingMessage(new MaxUser(senderId), new MaxRecipient(999), new MaxMessageBody(mid, text), timestamp));
+    private static MaxUpdate MessageCreated(
+        long senderId, string text, string? mid = "provider-mid-1", long? timestamp = 1_700_000_000_000, long chatId = 999) =>
+        new("message_created", timestamp, new MaxIncomingMessage(new MaxUser(senderId), new MaxRecipient(chatId), new MaxMessageBody(mid, text), timestamp));
 
+    /// <summary>Found live, 2026-08-28: `chat_id`, not `sender.user_id`, is what every outbound reply
+    /// must target - see `MaxInboundMessageParser.TryParse`'s own remarks on the real `chat.not.found`
+    /// refusal that exposed this. `SenderId` is still extracted and asserted here (nothing this parser
+    /// does should regress it), but it is `ChatId` that becomes the channel identity's own address.</summary>
     [Fact]
-    public void TryParse_ForAMessageCreatedUpdate_ExtractsSenderTextAndId()
+    public void TryParse_ForAMessageCreatedUpdate_ExtractsChatIdSenderTextAndId()
     {
-        var update = MessageCreated(12345, "hello there", "mid-abc");
+        var update = MessageCreated(12345, "hello there", "mid-abc", chatId: 999);
 
         var parsed = MaxInboundMessageParser.TryParse(update);
 
         Assert.NotNull(parsed);
+        Assert.Equal(999, parsed.ChatId);
         Assert.Equal(12345, parsed.SenderId);
         Assert.Equal("hello there", parsed.Text);
         Assert.Equal("mid-abc", parsed.ExternalMessageId);
@@ -56,6 +62,17 @@ public class MaxInboundMessageParserTests
         Assert.Null(MaxInboundMessageParser.TryParse(update));
     }
 
+    /// <summary>The other half of the same live finding – a message with a sender but no chat_id
+    /// has nowhere this system could ever reply to, even once it understands everything else about
+    /// it, so this is refused the identical way a missing sender already was.</summary>
+    [Fact]
+    public void TryParse_WithNoRecipientChatId_ReturnsNull()
+    {
+        var update = new MaxUpdate("message_created", 1, new MaxIncomingMessage(new MaxUser(1), new MaxRecipient(null), new MaxMessageBody("m", "hi"), 1));
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -68,16 +85,17 @@ public class MaxInboundMessageParserTests
     }
 
     /// <summary>The documented fallback for a field the public documentation never confirmed MAX
-    /// always sends - see this class's own honesty note.</summary>
+    /// always sends - see this class's own honesty note. Derived from chat_id, not sender_id, now
+    /// that chat_id is the field the rest of this parser actually keys on.</summary>
     [Fact]
-    public void TryParse_WithNoMid_FallsBackToASenderAndTimestampDerivedId()
+    public void TryParse_WithNoMid_FallsBackToAChatAndTimestampDerivedId()
     {
-        var update = MessageCreated(555, "hi", mid: null, timestamp: 42);
+        var update = MessageCreated(555, "hi", mid: null, timestamp: 42, chatId: 777);
 
         var parsed = MaxInboundMessageParser.TryParse(update);
 
         Assert.NotNull(parsed);
-        Assert.Equal("555:42", parsed.ExternalMessageId);
+        Assert.Equal("777:42", parsed.ExternalMessageId);
     }
 
     [Fact]
