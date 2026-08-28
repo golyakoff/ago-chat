@@ -1,7 +1,10 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.RegisterSite;
+using Ago.Chat.Application.UseCases.RequestSiteErasure;
+using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Sites;
 
@@ -29,6 +32,15 @@ public static class SitesEndpoints
         // second attempt.
         app.MapPost("/api/v1/sites", HandleRegisterSiteAsync)
             .RequireAuthorization("RequireKeycloakIdentity");
+
+        // `16-02`: siteId from the route, not `user.GetSiteId()` - the same convention
+        // `WidgetConfigEndpoints` already established for a site-scoped, operator-only admin action:
+        // an operator's own active-site claim is not necessarily the site being erased (`13-07`'s
+        // multi-tenancy means one identity can hold operator rows on several sites), and
+        // `PermissionChecker.HasPermissionAsync` checks this specific `(OperatorId, SiteId)` pair
+        // regardless of which site the caller's token happens to be scoped to right now.
+        app.MapPost("/api/v1/sites/{siteId:guid}/erase", HandleEraseSiteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
     }
 
     private static async Task<IResult> HandleRegisterSiteAsync(
@@ -75,6 +87,26 @@ public static class SitesEndpoints
         return Results.Created(
             $"/api/v1/sites/{result.Value.SiteId}",
             new RegisterSiteResponse(result.Value.SiteId, result.Value.OperatorId));
+    }
+
+    /// <summary>
+    /// `16-02`: `POST /api/v1/sites/{siteId}/erase` - stamps `sites.erasure_requested_at` in one
+    /// statement and returns immediately; no deletion happens on this request
+    /// (`RequestSiteErasureHandler`'s own remarks). `202 Accepted`, not `204 No Content`
+    /// (`CloseConversationHandler`'s own code for a write that *is* complete when the response is
+    /// sent) - the first `202` this codebase returns, because this is the first write whose effect
+    /// genuinely is not yet visible when the response is sent: the request is accepted,
+    /// `Ago.Chat.Worker`'s `SiteErasureJob` has not run yet, and the honest answer to "is the site gone
+    /// now" is "not yet."
+    /// </summary>
+    private static async Task<IResult> HandleEraseSiteAsync(
+        Guid siteId, RequestSiteErasureHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RequestSiteErasure(new SiteId(siteId), user.GetOperatorId()), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Accepted();
     }
 
     public sealed record RegisterSiteRequest(string SiteName, string InitialAllowedOrigin);

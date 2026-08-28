@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260828190906_Stage16AddErasureRequestedAt")]
+    partial class Stage16AddErasureRequestedAt
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -348,64 +351,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("operators", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Domain.OperatorInvite", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<byte[]>("CodeHash")
-                        .IsRequired()
-                        .HasColumnType("bytea")
-                        .HasColumnName("code_hash");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<Guid>("CreatedByOperatorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("created_by_operator_id");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("expires_at");
-
-                    b.Property<DateTimeOffset?>("RedeemedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("redeemed_at");
-
-                    b.Property<Guid?>("RedeemedByOperatorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("redeemed_by_operator_id");
-
-                    b.Property<Guid>("RoleId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("role_id");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CodeHash")
-                        .IsUnique()
-                        .HasDatabaseName("ux_operator_invites_code_hash");
-
-                    b.HasIndex("RoleId");
-
-                    b.HasIndex("SiteId");
-
-                    b.ToTable("operator_invites", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Domain.Site", b =>
                 {
                     b.Property<Guid>("Id")
@@ -435,19 +380,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("public_key");
-
-                    b.Property<int>("SeatLimit")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(1)
-                        .HasColumnName("seat_limit");
-
-                    b.Property<string>("Tier")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("text")
-                        .HasDefaultValue("free")
-                        .HasColumnName("tier");
 
                     b.PrimitiveCollection<List<string>>("_allowedOrigins")
                         .IsRequired()
@@ -817,21 +749,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
             modelBuilder.Entity("Ago.Chat.Domain.Operator", b =>
                 {
-                    b.HasOne("Ago.Chat.Domain.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.OperatorInvite", b =>
-                {
-                    b.HasOne("Ago.Chat.Infrastructure.Postgres.Persistence.RoleRecord", null)
-                        .WithMany()
-                        .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")

@@ -56,4 +56,19 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
         return Task.FromResult(new ConversationListPage(items, nextCursor));
     }
+
+    /// <summary>`16-02`: the point-lookup counterpart to <see cref="GetAllForSiteAsync"/> above - the
+    /// same site-scoped filter, no paging.</summary>
+    public Task<ConversationSummaryItem?> GetByIdAsync(
+        ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken)
+    {
+        if (!_bySource.TryGetValue(conversationId, out var conversation) || conversation.SiteId != siteId)
+        {
+            return Task.FromResult<ConversationSummaryItem?>(null);
+        }
+
+        return Task.FromResult<ConversationSummaryItem?>(new ConversationSummaryItem(
+            conversation.Id, conversation.VisitorId, conversation.OperatorId, conversation.State.ToString(),
+            conversation.CreatedAt, conversation.OperatorUnreadCount));
+    }
 }

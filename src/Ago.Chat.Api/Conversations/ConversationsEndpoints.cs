@@ -2,8 +2,11 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
+using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
+using Ago.Chat.Application.UseCases.RequestConversationErasure;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Conversations;
@@ -48,6 +51,21 @@ public static class ConversationsEndpoints
         // `OperatorHub` - see this file's `HandleMarkReadAsync` for the argument, which is not the
         // obvious one.
         app.MapPost("/api/v1/conversations/{conversationId:guid}/read", HandleMarkReadAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `16-02`: the same sub-resource shape as `/close`/`/read` above - erasure is Admin-scoped
+        // (`conversation:erase`, distinct from `conversation:close`/`conversation:assign` the same way
+        // every other destructive verb in this codebase gets its own permission), unlike `/close`
+        // which any operator holding `conversation:assign`'s sibling `conversation:close` may do on
+        // their own assigned conversation.
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/erase", HandleEraseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `16-02`: the single-conversation admin fetch this codebase did not have - see
+        // GetConversationByIdHandler's own remarks on why it exists and why it is gated the way it is.
+        // Its one real caller is the console polling this route until it 404s, after requesting the
+        // erasure above.
+        app.MapGet("/api/v1/conversations/{conversationId:guid}", HandleGetByIdAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -126,5 +144,40 @@ public static class ConversationsEndpoints
         // became. It also makes the no-op case honest: an already-read conversation returns the count
         // as it actually stands rather than an assumed zero.
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`16-02`: stamps `conversations.erasure_requested_at` and returns immediately - the
+    /// same `202 Accepted`, no-deletion-here shape as `SitesEndpoints`' own `/erase` route; see
+    /// `RequestConversationErasureHandler`'s remarks for why nothing is deleted on this request.</summary>
+    private static async Task<IResult> HandleEraseAsync(
+        Guid conversationId, RequestConversationErasureHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RequestConversationErasure(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Accepted();
+    }
+
+    /// <summary>`16-02`: the completion-poll target for `/erase` above - a `404 Conversation.NotFound`
+    /// is the signal the erasure job has finished. See `GetConversationByIdHandler`'s own remarks for
+    /// why this route exists and its permission gate.</summary>
+    private static async Task<IResult> HandleGetByIdAsync(
+        Guid conversationId, GetConversationByIdHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetConversationById(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var item = result.Value;
+        return Results.Ok(new ConversationSummaryDto(
+            item.Id.Value, item.VisitorId.Value, item.State, item.CreatedAt, item.OperatorUnreadCount, item.OperatorId?.Value));
     }
 }
