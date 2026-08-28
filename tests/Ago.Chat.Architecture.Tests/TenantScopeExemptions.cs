@@ -129,6 +129,19 @@ internal static class TenantScopeExemptions
             + "authorization-shaped question (\"may this message reach that MAX chat\") is answered structurally, "
             + "by IChannelIdentityRepository.FindMostRecentForVisitorAsync only ever returning an identity that "
             + "belongs to this exact conversation's own visitor, never a caller-suppliable one.",
+        ["Ago.Chat.Application.UseCases.AutoCloseConversation.AutoCloseConversationHandler.HandleAsync"] =
+            "`18-06`, worker side (Ago.Chat.Worker), but keyed by neither a caller nor a broker event - the only "
+            + "input is a ConversationId that AutoCloseInactiveConversationsJob's own candidate scan already "
+            + "restricted to Assigned conversations past their per-channel-kind inactivity window, a fact the "
+            + "scan itself established by reading conversations.state and messages.created_at, not a claim to "
+            + "verify. There is also no principal to check a permission for: nobody asked for this close, a "
+            + "scheduled sweep did, and CloseConversationHandler's own IPermissionChecker/OperatorId gate "
+            + "answers \"may this operator close this conversation\" - a question with no subject when the "
+            + "caller is not an operator at all (this handler's own remarks explain why that made a second "
+            + "handler the right shape, not a nullable OperatorId branch on the first). What a SiteId check "
+            + "would have protected against - reaching another tenant's row - is already ruled out "
+            + "structurally: IConversationRepository.GetByIdAsync loads exactly the row named by the "
+            + "ConversationId the scan produced, and Conversation.Close() only ever mutates that one aggregate.",
         ["Ago.Chat.Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler.HandleAsync"] =
             "The claims transformation's own lookup - it is what *produces* the OperatorId/SiteId claims every "
             + "gated handler then trusts, so it cannot itself depend on them. Keyed by the `sub` of an "

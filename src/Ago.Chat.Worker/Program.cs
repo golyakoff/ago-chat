@@ -135,6 +135,15 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<OperatorDisconnectSweepJob>();
 
+// `18-06`: an Assigned conversation nobody has touched inside its per-channel-kind inactivity window
+// closes itself - AutoCloseConversationHandler (registered in ChatModule) is what this job actually
+// calls, resolved per candidate from a fresh scope (the job's own remarks explain why).
+builder.Services
+    .AddOptions<AutoCloseInactiveConversationsJobOptions>()
+    .Bind(builder.Configuration.GetSection(AutoCloseInactiveConversationsJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<AutoCloseInactiveConversationsJob>();
+
 builder.Services
     .AddOptions<SiteCacheInvalidationConsumerOptions>()
     .Bind(builder.Configuration.GetSection(SiteCacheInvalidationConsumerOptions.SectionName))

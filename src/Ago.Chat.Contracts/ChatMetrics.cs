@@ -41,6 +41,17 @@ public static class ChatMetrics
     public const string AssignmentCapacityReleaseDeadlocksInstrumentName = "ago.chat.assignment.capacity_release_deadlocks";
     public const string DeliveryRecipientsInstrumentName = "ago.chat.delivery.recipients";
 
+    /// <summary>`18-06`: a conversation `AutoCloseInactiveConversationsJob` closed for inactivity,
+    /// tagged by <c>channel_kind</c> (<c>"widget"</c>, or one of `Ago.Chat.Domain.ChannelKind`'s
+    /// member names). This class cannot reference `Ago.Chat.Domain`
+    /// (`Ago.Chat.Contracts`/`Ago.Chat.Domain`'s own project-reference direction), so the caller passes
+    /// the tag as a plain string - the same shape <see cref="RecordRetentionPruneCycle"/>'s `table`
+    /// parameter already uses for the same reason. The whole point of a separate counter from
+    /// <c>ConversationEnded</c>'s outbox row is the Goal this item states plainly: an operator should
+    /// be able to tell "the system closed this" from "I closed this" from observability alone, without
+    /// the domain event itself needing a field that says who.</summary>
+    public const string ConversationAutoClosedInstrumentName = "ago.chat.conversation.auto_closed";
+
     /// <summary>`15-04`: one heartbeat instrument shared by every retention-pruning job
     /// (<c>OutboxPruneJob</c>, <c>WebhookDeliveryPruneJob</c>, <c>InboxPruneJob</c>,
     /// <c>MessagePartitionPruneJob</c>), tagged by <c>table</c>. Incremented once per completed cycle
@@ -123,6 +134,9 @@ public static class ChatMetrics
             + "a day; what is worth looking at is an *operator* under `absent`, or a rise in `connected` recipients "
             + "whose dispatches come back `connection_not_local` on ago.platform.realtime.dispatches.");
 
+    private static readonly Counter<long> ConversationAutoClosed = Meter.CreateCounter<long>(
+        ConversationAutoClosedInstrumentName, unit: "{conversation}", description: "Conversations closed by AutoCloseInactiveConversationsJob rather than an operator's own close, tagged by channel_kind (widget or a Domain.ChannelKind member name).");
+
     private static Func<int>? _channelOccupancyProvider;
     private static int _channelCapacity;
     private static double _outboxLagSeconds;
@@ -193,6 +207,13 @@ public static class ChatMetrics
 
         RetentionPruneDuration.Record(duration.TotalSeconds, tableTag);
     }
+
+    /// <summary>`18-06`: one point per conversation `AutoCloseInactiveConversationsJob` actually
+    /// closed - never called for a candidate that turned out to no longer qualify by the time the job
+    /// reached it (the job's own remarks on why that is logged, not counted, as a skip rather than a
+    /// failure).</summary>
+    public static void RecordConversationAutoClosed(string channelKind) =>
+        ConversationAutoClosed.Add(1, new KeyValuePair<string, object?>("channel_kind", channelKind));
 
     public static void RecordCapacityClaimAttempt(bool claimed)
     {

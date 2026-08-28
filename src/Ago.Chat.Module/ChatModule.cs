@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
+using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
@@ -309,6 +310,11 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetMyPermissionsHandler>();
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
         services.AddScoped<CloseConversationHandler>();
+        // `18-06`: the system-initiated twin of CloseConversationHandler, resolved once per
+        // conversation from a fresh IServiceScopeFactory scope by AutoCloseInactiveConversationsJob
+        // (Ago.Chat.Worker) - see the handler's own remarks for why it is a second handler rather than
+        // a nullable OperatorId branch on the one above.
+        services.AddScoped<AutoCloseConversationHandler>();
         // `5-15`: the unread counter's first-ever downward writer - see the handler's own remarks.
         services.AddScoped<MarkConversationReadHandler>();
         // `10-02`
