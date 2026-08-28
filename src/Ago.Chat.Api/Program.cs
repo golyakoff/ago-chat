@@ -126,10 +126,12 @@ builder.Services.AddHostedService<ConnectionDrainCoordinator>();
 
 // 4-05: concurrency.md's "In-process pipeline (Api)" - ChatModule registers IMessagePipeline's
 // implementation (ChannelMessagePipeline) for every host, the same "registered everywhere, only
-// this host runs the hosted service" shape as everything else on this page; only Ago.Chat.Api
-// actually drains it, since only Ago.Chat.Api's hubs ever enqueue onto it. ConversationSequencer,
-// BatchAccumulator and MessageBatchWriter are internal plumbing MessagePipelineWorkerHost/
-// BatchFlusherService share, not needed anywhere else.
+// the hosts that actually enqueue drain it" shape as everything else on this page. Ago.Chat.Api's
+// hubs are the original enqueuer; `14-02` gave Ago.Chat.Worker's own MaxLongPollingService a second
+// one (its own Program.cs registers the identical five lines below, for the identical reason - see
+// that host's own remarks on the bug this was found fixing). ConversationSequencer, BatchAccumulator
+// and MessageBatchWriter are internal plumbing MessagePipelineWorkerHost/BatchFlusherService share,
+// not needed anywhere else.
 builder.Services.AddSingleton<ConversationSequencer>();
 builder.Services.AddSingleton<BatchAccumulator>();
 builder.Services.AddSingleton<MessageBatchWriter>();
