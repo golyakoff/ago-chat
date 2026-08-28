@@ -6,6 +6,7 @@ using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
+using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
@@ -25,6 +26,7 @@ using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
@@ -136,6 +138,15 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(RegisterSiteRateLimitOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<RegisterSiteRateLimitOptions>>().Value);
+
+        // `13-01`: bound here, not a host's own Program.cs - CreateOperatorInviteHandler is registered
+        // for every host below, the same RegisterSiteRateLimitOptions shape (a plain value handed to
+        // the handler, not IOptions<T> - see that class's own remarks).
+        services
+            .AddOptions<OperatorInviteOptions>()
+            .Bind(configuration.GetSection(OperatorInviteOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<OperatorInviteOptions>>().Value);
 
         // `6-03`: bound here, not a host's own Program.cs - RegisterWebhookEndpointHandler is
         // registered for every host below, the same MessageSendRateLimitOptions/AttachmentOptions
@@ -321,6 +332,10 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RegisterSiteHandler>();
         // `13-07`/`adr/0068`: the console switcher's own read - see the handler's own remarks.
         services.AddScoped<ListMyTenanciesHandler>();
+        // `13-01`: `Permission.SiteManageOperators`'s first real write-path caller, and the seat-limit
+        // entitlement check's one enforcement point - see each handler's own remarks.
+        services.AddScoped<CreateOperatorInviteHandler>();
+        services.AddScoped<RedeemOperatorInviteHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
         // `12-01`'s owner policy), registered here for the same reason as everything else on this
         // page - ChatModule is where handler registration lives, and a host that never maps the route

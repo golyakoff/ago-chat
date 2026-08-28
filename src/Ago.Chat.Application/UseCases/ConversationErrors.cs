@@ -164,4 +164,41 @@ public static class ConversationErrors
 
     public static Error ChannelInvalidToken(string reason) =>
         new("ChannelCredential.InvalidToken", reason);
+
+    // `13-01`: same shared vocabulary, same reason - CreateOperatorInviteHandler/RedeemOperatorInviteHandler
+    // add their own codes here rather than a separate error class.
+    public static Error OperatorInviteInvalidRole(string reason) =>
+        new("OperatorInvite.InvalidRole", reason);
+
+    /// <summary>No invite matches the presented code - never generated, or the caller mistyped it.
+    /// Deliberately the same response whether the code truly never existed or belongs to a different
+    /// site than the caller assumed - <c>RedeemOperatorInviteHandler</c>'s own remarks on why this
+    /// route (gated by `RequireKeycloakIdentity`, not `RequireOperatorIdentity`) has no `SiteId` to
+    /// scope an info-hiding check against in the first place; the code itself is the only key.</summary>
+    public static Error OperatorInviteNotFound() =>
+        new("OperatorInvite.NotFound", "No operator invite matches this code.");
+
+    /// <summary>A real invite that once existed, past its own `expires_at` - `410 Gone`, not `404`,
+    /// because the distinction is genuinely useful to a caller: a mistyped code should be tried again
+    /// carefully, an expired one should be asked for a fresh invite instead.</summary>
+    public static Error OperatorInviteExpired() =>
+        new("OperatorInvite.Expired", "This operator invite has expired.");
+
+    public static Error OperatorInviteAlreadyRedeemed() =>
+        new("OperatorInvite.AlreadyRedeemed", "This operator invite has already been redeemed.");
+
+    /// <summary>`13-07`/`adr/0068`'s own adjustment: the redeeming identity already resolves to an
+    /// `Operator` row on *this invite's own* site - never "resolves to an operator row anywhere", the
+    /// older, superseded rule this item's own backlog note was corrected away from once `13-07`
+    /// shipped.</summary>
+    public static Error OperatorInviteAlreadyOperatorOnSite() =>
+        new("OperatorInvite.AlreadyOperatorOnSite", "This identity already administers this site.");
+
+    /// <summary>`402 Payment Required`, not a generic `409` - the backlog item's own reasoned choice.
+    /// The actual remedy for a site at its seat limit is "upgrade", not "retry the same request later",
+    /// which is exactly what `402` signals and `409` does not. The invite itself is never consumed by
+    /// this rejection (`OperatorInviteRedemptionRepository`'s own remarks) - a later redemption of the
+    /// identical code succeeds once a seat opens up.</summary>
+    public static Error OperatorInviteSeatLimitReached(int seatLimit) =>
+        new("OperatorInvite.SeatLimitReached", $"This site has reached its seat limit of {seatLimit}.");
 }

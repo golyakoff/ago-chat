@@ -18,15 +18,25 @@ public static class ErrorExtensions
         var statusCode = error.Code switch
         {
             "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound"
-                or "ChannelCredential.NotFound" => StatusCodes.Status404NotFound,
+                or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
-                or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken" => StatusCodes.Status400BadRequest,
+                or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken"
+                or "OperatorInvite.InvalidRole" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
-                or "ChannelCredential.AlreadyConnected" => StatusCodes.Status409Conflict,
+                or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
+                or "OperatorInvite.AlreadyOperatorOnSite" => StatusCodes.Status409Conflict,
+            // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
+            // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
+            "OperatorInvite.Expired" => StatusCodes.Status410Gone,
+            // `13-01`'s own reasoned choice: `402 Payment Required`, not a generic `409` - the actual
+            // remedy for a site at its seat limit is "upgrade", not "retry", which `402` signals
+            // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own
+            // remarks).
+            "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
             "Message.RateLimited" or "Site.RateLimited" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status500InternalServerError,
         };

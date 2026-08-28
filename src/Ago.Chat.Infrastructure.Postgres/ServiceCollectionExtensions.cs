@@ -68,6 +68,11 @@ public static class ServiceCollectionExtensions
         // `14-02`/`adr/0069`: same shape, same reasoning, a second cipher and a second key.
         services.AddScoped<IChannelCredentialRepository, ChannelCredentialRepository>();
         services.AddScoped<IChannelCredentialCipher, ChannelCredentialCipher>();
+        // `13-01`
+        services.AddScoped<IRoleRepository, RoleRepository>();
+        services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
+        services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
+        services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 
