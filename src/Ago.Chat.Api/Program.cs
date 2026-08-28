@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Me;
 using Ago.Chat.Api.Operators;
+using Ago.Chat.Api.OperatorInvites;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Api.Sites;
@@ -373,6 +374,8 @@ app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();
 app.MapSitesEndpoints();
+// `13-01`
+app.MapOperatorInviteEndpoints();
 // `8-07`: the anonymous demo-credential route. Registered unconditionally; the handler refuses when
 // DemoTenant:Enabled is false, so a deployment that has not opted in answers a clear
 // "not enabled here" rather than a 404 that reads like a bug (MintDemoTenantHandler's own remarks).

@@ -120,6 +120,26 @@ public sealed class Site
     /// the safe default rather than an arbitrary one.</summary>
     public Locale Locale => _locale;
 
+    // `13-01`: the seat-entitlement columns this item ships. Two flat properties, not a value object -
+    // there is exactly one caller that ever reads either (`OperatorInviteRedemptionRepository`'s own
+    // row-locked seat check) and nothing yet writes them to anything but their own default (`13-02`'s
+    // job, once a real payment exists to drive it) - the same "one column, one column, no object to
+    // bundle them into yet" judgement `clean-architecture.md`'s qualifying rules ask for before adding
+    // structure nothing requires.
+    /// <summary>`13-01`: the billing tier driving <see cref="SeatLimit"/> - `"free"` for every existing
+    /// and newly registered site until `13-02` gives a real payment somewhere to write a different
+    /// value from. Not an enum: `13-02`'s own tiers are not decided yet, and a `text` column with no
+    /// fixed set of legal values it must not close over is one fewer thing this item has to guess at.</summary>
+    public string Tier { get; } = "free";
+
+    /// <summary>`13-01`: how many `operators` rows this site may hold at once, enforced only at
+    /// `OperatorInviteRedemptionRepository`'s own row-locked check - never here, and never against
+    /// `10-02`'s own registration flow, which already has a hard, structural one-operator cap by
+    /// construction and needs no check against this column at all (this item's own Out of scope).
+    /// Defaults to `1`, matching every site's `Tier` default of `"free"` - a lone self-registered
+    /// operator is exactly what the free tier already allows before this item exists.</summary>
+    public int SeatLimit { get; } = 1;
+
     private readonly List<IDomainEvent> _domainEvents = [];
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -130,7 +150,9 @@ public sealed class Site
         IReadOnlyList<string> allowedOrigins,
         string name = "",
         DateTimeOffset? createdAt = null,
-        DateTimeOffset? demoExpiresAt = null)
+        DateTimeOffset? demoExpiresAt = null,
+        string tier = "free",
+        int seatLimit = 1)
     {
         if (string.IsNullOrWhiteSpace(publicKey))
         {
@@ -142,6 +164,8 @@ public sealed class Site
         Name = name;
         CreatedAt = createdAt;
         DemoExpiresAt = demoExpiresAt;
+        Tier = tier;
+        SeatLimit = seatLimit;
         _allowedOrigins = [.. allowedOrigins];
         // WidgetConfig.Default's own values (null color, BottomRight) - a freshly created Site never
         // renders broken just because nobody has configured a widget appearance yet.

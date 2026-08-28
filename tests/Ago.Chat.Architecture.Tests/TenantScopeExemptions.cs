@@ -82,6 +82,15 @@ internal static class TenantScopeExemptions
             "Creates the tenant, so there is no site to be scoped to yet. Gated instead by `10-01`'s "
             + "RequireKeycloakIdentity policy plus one-registration-per-Keycloak-subject, enforced by a unique "
             + "index inside the registration transaction.",
+        ["Ago.Chat.Application.UseCases.RedeemOperatorInvite.RedeemOperatorInviteHandler.HandleAsync"] =
+            "`13-01`. The redeeming caller has no SiteId claim yet, by definition (gated by "
+            + "RequireKeycloakIdentity, the same category and the same reason as RegisterSiteHandler right above) "
+            + "- the whole point of this call is to *acquire* one. The site the write actually lands on is never a "
+            + "caller-supplied value: OperatorInviteRedemptionRepository looks the invite up by its own code_hash "
+            + "and then acts on invite.SiteId, a fact the earlier CreateOperatorInviteHandler call already "
+            + "established (gated by SiteManageOperators the ordinary way) - the presented code is what proves the "
+            + "caller was actually handed an invite for that site, structurally the same 'ownership already proven "
+            + "by construction' shape the visitor entries above use their signed token for.",
 
         // ---------------------------------------------------------------------------------------
         // Consumer and worker side. No external caller reaches these: the input is an integration
