@@ -263,7 +263,16 @@ public sealed class ChatModule : IProductModule
             }
 
             return handler;
-        });
+        })
+        // Found live 2026-08-28: HttpClientFactory's own default logging handlers redact header
+        // *values* but log the request URI in full - safe for MAX (auth in a header) and a real token
+        // leak for Telegram (auth in the URL path, TelegramBotApiOptions' own remarks). RemoveAllLoggers
+        // strips those defaults; TelegramTokenRedactingLoggingHandler (its own remarks have the full
+        // story) replaces them with the same shape of log line, token redacted structurally rather than
+        // simply omitted, so this client keeps the operational visibility MAX's own gets for free.
+        .RemoveAllLoggers()
+        .AddHttpMessageHandler<TelegramTokenRedactingLoggingHandler>();
+        services.AddTransient<TelegramTokenRedactingLoggingHandler>();
         // Singleton, not scoped - the identical reasoning MaxChannelAdapter's own remarks give: the
         // singleton InboundChannelAdapterRegistry can only ever hold adapters safe to keep for the
         // process lifetime.
