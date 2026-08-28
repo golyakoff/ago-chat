@@ -188,6 +188,15 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(ChannelCredentialCipherOptions.SectionName))
             .Validate(IsValidBase64Aes256Key, "Channels:CredentialEncryptionKey must be a base64-encoded 32-byte AES-256 key.")
             .ValidateOnStart();
+        // Found live, 2026-08-28: missing at 14-02's own merge - ChannelCredentialCipher's
+        // constructor takes the raw ChannelCredentialCipherOptions, not IOptions<T> (the same shape
+        // WebhookSecretCipher above it uses), so without this line the DI container has bound and
+        // validated the options but never made the type itself resolvable - a "startup failure that
+        // waits for the first request" rather than the fail-fast-on-boot every other option on this
+        // page gets, because nothing calls RegisterChannelCredentialHandler until an operator actually
+        // tries to connect a channel. No integration test caught it because the handler tests resolve
+        // FakeChannelCredentialCipher directly, never through this real registration path.
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ChannelCredentialCipherOptions>>().Value);
         services.AddScoped<RegisterChannelCredentialHandler>();
         services.AddScoped<RevokeChannelCredentialHandler>();
 
