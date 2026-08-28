@@ -76,6 +76,15 @@ public sealed class FakeMaxProcessFixture : IAsyncLifetime
             _process.Kill(entireProcessTree: true);
             await _process.WaitForExitAsync();
         }
+
+        // WaitForExitAsync only proves the Process object is gone, not that a caller dialling
+        // 127.0.0.1:Port right now gets a refusal - on a loaded CI runner those two facts can be a
+        // scheduling gap apart, and a resilience test that starts asserting on breaker behaviour
+        // before the port is actually dead is racing that gap rather than testing "MAX is
+        // unreachable." WaitUntilHealthyAsync's mirror image: poll a real socket until it stops
+        // answering, the same kind of synchronization point that method already uses to prove the
+        // opposite fact before releasing control to a test.
+        await WaitUntilUnreachableAsync();
     }
 
     private async Task WaitUntilHealthyAsync()
@@ -109,6 +118,34 @@ public sealed class FakeMaxProcessFixture : IAsyncLifetime
         }
 
         throw new TimeoutException("Ago.Chat.FakeMax did not become healthy within 30s.", lastError);
+    }
+
+    /// <summary>Polls a real HTTP call against the port this process was using until it fails at the
+    /// connection level, rather than trusting process-exit timing alone. Bounded short: the process
+    /// really is dead by the time this runs, so the overwhelming case returns on the first attempt -
+    /// this loop exists for the rare gap between "the process object reports exited" and "the OS has
+    /// released the port," not to wait out anything genuinely slow.</summary>
+    private async Task WaitUntilUnreachableAsync()
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(500) };
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            try
+            {
+                await client.GetAsync(new Uri(BaseAddress, "healthz/live"));
+                // Still answering - the port has not actually been released yet.
+            }
+            catch (Exception ex) when (ex is HttpRequestException or SocketException or TaskCanceledException)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        throw new TimeoutException($"Ago.Chat.FakeMax on port {Port} was still reachable 5s after being killed.");
     }
 
     private static int GetFreeTcpPort()
