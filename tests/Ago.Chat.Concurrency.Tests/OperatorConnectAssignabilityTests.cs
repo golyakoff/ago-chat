@@ -100,6 +100,71 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         Assert.Equal(OperatorStatus.Offline, finalStatus);
     }
 
+    /// <summary>
+    /// `4-06`'s multi-connection case, missing from the fix's own test even though the production
+    /// code already handles it: `OperatorHub.OnDisconnectedAsync` only calls `Operator.GoOffline` when
+    /// `HubConnectionRegistration.OnDisconnectedAsync` reports `lastConnectionGone`, exactly mirroring
+    /// 4-04's own multi-connection contract for the disconnect grace period. Two hubs, two
+    /// `LocalConnectionTracker`s (one per connection, standing in for two Api replicas, or simply two
+    /// browser tabs on the same one) sharing the one real Redis registry - the registry, not either
+    /// tracker, is what makes "does the operator have connections left anywhere" the right question.
+    /// </summary>
+    [Fact]
+    public async Task ASecondConnection_ThenDroppingOnlyOne_DoesNotFlipOffline()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        var registry = new RedisConnectionRegistry(
+            fixture.RedisMultiplexer, Options.Create(new ConnectionRegistryOptions()), NullLogger<RedisConnectionRegistry>.Instance);
+
+        // --- First connection: a tab opens. ---
+        var operatorOnConnA = CreateOperatorHub(
+            siteId, operatorId, "operator-conn-a", registry, new LocalConnectionTracker(), new NodeId($"node-{Guid.NewGuid():N}"));
+        await operatorOnConnA.OnConnectedAsync();
+
+        // --- Second connection, same operator: another tab, or another device. GoOnline is
+        // idempotent (OperatorHub.OnConnectedAsync's own comment), so this must not disturb anything,
+        // but the registry must now hold two live entries for this principal. ---
+        var operatorOnConnB = CreateOperatorHub(
+            siteId, operatorId, "operator-conn-b", registry, new LocalConnectionTracker(), new NodeId($"node-{Guid.NewGuid():N}"));
+        await operatorOnConnB.OnConnectedAsync();
+
+        await using (var afterBothConnect = fixture.CreateDbContext())
+        {
+            var status = await afterBothConnect.Operators.AsNoTracking()
+                .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Online, status);
+        }
+
+        // --- Drop only the first connection. The second is still live in the registry, so
+        // lastConnectionGone must be false and Status must stay Online - the exact case that was
+        // untested even though 4-06 already relies on it. ---
+        await operatorOnConnA.OnDisconnectedAsync(exception: null);
+
+        await using (var afterOneDrops = fixture.CreateDbContext())
+        {
+            var status = await afterOneDrops.Operators.AsNoTracking()
+                .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Online, status);
+        }
+
+        // --- Drop the second, and now last, connection - this is the one that must flip it. ---
+        await operatorOnConnB.OnDisconnectedAsync(exception: null);
+
+        await using var afterBothDrop = fixture.CreateDbContext();
+        var finalStatus = await afterBothDrop.Operators.AsNoTracking()
+            .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+        Assert.Equal(OperatorStatus.Offline, finalStatus);
+    }
+
     private OperatorHub CreateOperatorHub(
         SiteId siteId, OperatorId operatorId, string connectionId, IConnectionRegistry registry, LocalConnectionTracker tracker, NodeId node)
     {
