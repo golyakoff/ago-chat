@@ -207,6 +207,8 @@ public class ConversationTests
 
         Assert.Equal(ConversationState.Closed, conversation.State);
         Assert.Contains(conversation.DomainEvents, e => e is ConversationClosed);
+        // `18-07`: the visitor-history summary's own timestamp - see Conversation.ClosedAt's remarks.
+        Assert.Equal(Now, conversation.ClosedAt);
     }
 
     public static TheoryData<Action<Conversation>> NonClosedStates() => new()
@@ -214,6 +216,14 @@ public class ConversationTests
         _ => { }, // still Waiting
         c => c.AssignTo(OperatorId, Now), // Assigned
     };
+
+    [Fact]
+    public void ClosedAt_BeforeTheConversationIsEverClosed_IsNull()
+    {
+        var conversation = StartConversation();
+
+        Assert.Null(conversation.ClosedAt);
+    }
 
     [Fact]
     public void Close_WhenAlreadyClosed_ThrowsInvalidConversationStateException()

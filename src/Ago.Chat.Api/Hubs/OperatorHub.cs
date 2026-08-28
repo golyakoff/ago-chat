@@ -5,6 +5,7 @@ using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -31,6 +32,7 @@ public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
+    GetVisitorHistoryHandler getVisitorHistory,
     GetVisitorPresenceHandler getVisitorPresence,
     HubConnectionRegistration connectionRegistration,
     ConsoleOriginValidator consoleOrigin,
@@ -241,6 +243,39 @@ public sealed class OperatorHub(
         }
 
         return new HistoryPage(ToDtos(page.Value.Messages, id), page.Value.NextBeforeSequence);
+    }
+
+    /// <summary>
+    /// `18-07`: "open one" from the returning-visitor-history panel - <paramref name="conversationId"/>
+    /// is the operator's own standing (the conversation they are actually assigned to right now),
+    /// <paramref name="historicalConversationId"/> is the different, past conversation of the same
+    /// visitor they are asking to read. Returns the identical `HistoryPage`/`MessageDto` wire shape
+    /// <see cref="GetHistoryAsync"/> above does, through the same <see cref="MessageDtoMapper"/> - the
+    /// backlog item's own "reusing 11-06's existing history-rendering rather than a second
+    /// message-list component" applies to the console's rendering *and* to this fetch, so the console
+    /// needs no new message-rendering code path for a historical conversation, only a new hub call to
+    /// feed the one it already has. See <c>GetVisitorHistoryHandler.HandleHistoricalConversationAsOperatorAsync</c>'s
+    /// own remarks for why this is not simply <see cref="GetHistoryAsync"/> called with a different id
+    /// - the authorization rule is genuinely different (assigned to *a* live conversation with this
+    /// visitor, not to this specific historical one).
+    /// </summary>
+    public async Task<HistoryPage> GetVisitorHistoryConversationAsync(
+        Guid conversationId, Guid historicalConversationId, int? beforeSequence, int pageSize)
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        var siteId = Context.User!.GetSiteId();
+        var id = new ConversationId(conversationId);
+        var historicalId = new ConversationId(historicalConversationId);
+
+        var page = await getVisitorHistory.HandleHistoricalConversationAsOperatorAsync(
+            new GetVisitorHistoryConversation(id, historicalId, operatorId, siteId, beforeSequence, pageSize),
+            Context.ConnectionAborted);
+        if (page.IsFailure)
+        {
+            throw new HubException(page.Error!.Value.Message);
+        }
+
+        return new HistoryPage(ToDtos(page.Value.Messages, historicalId), page.Value.NextBeforeSequence);
     }
 
     /// <summary>

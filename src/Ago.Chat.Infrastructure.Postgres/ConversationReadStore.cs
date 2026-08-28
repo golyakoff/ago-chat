@@ -117,6 +117,53 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return row is null ? null : ToSummaryItem(row);
     }
 
+    // `18-07`: the visitor-history panel's own read. `visitor_id` is the whole filter -
+    // ChannelIdentityConfiguration's remarks explain why a Visitor (and therefore every conversation
+    // hanging off one) already belongs to exactly one Site, so this needs no separate site_id check
+    // the way GetAllForSiteAsync does. The `LEFT JOIN LATERAL` picks each conversation's own last
+    // message (by `sequence`, matching every other ordering in this file - never `created_at`,
+    // adr/0011) without a second round trip or an N+1 query per row.
+    private const string VisitorHistorySql = """
+        select c.id as "Id", c.state as "State", c.created_at as "StartedAt", c.closed_at as "ClosedAt",
+               lm.body as "PreviewBody", lm.author_kind as "PreviewAuthorKind", lm.created_at as "PreviewCreatedAt"
+        from conversations c
+        left join lateral (
+            select body, author_kind, created_at
+            from messages m
+            where m.conversation_id = c.id
+            order by m.sequence desc
+            limit 1
+        ) lm on true
+        where c.visitor_id = @VisitorId
+          and c.id <> @ExcludeConversationId
+          and (@BeforeId is null or c.id < @BeforeId)
+        order by c.id desc
+        limit @PageSize
+        """;
+
+    public async Task<VisitorHistoryPage> GetVisitorHistoryAsync(
+        VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var rows = await connection.QueryAsync<VisitorHistoryRow>(new CommandDefinition(
+            VisitorHistorySql,
+            new
+            {
+                VisitorId = visitorId.Value,
+                ExcludeConversationId = excludeConversationId.Value,
+                BeforeId = beforeId,
+                PageSize = pageSize,
+            },
+            cancellationToken: cancellationToken));
+
+        var items = rows.Select(ToVisitorHistoryItem).ToList();
+
+        var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
+        return new VisitorHistoryPage(items, nextCursor);
+    }
+
     public async Task<ConversationListPage> GetAllForSiteAsync(
         SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken)
     {
@@ -140,6 +187,17 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.State,
         new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
         r.OperatorUnreadCount);
+
+    private static VisitorHistoryItem ToVisitorHistoryItem(VisitorHistoryRow r) => new(
+        new ConversationId(r.Id),
+        r.State,
+        new DateTimeOffset(DateTime.SpecifyKind(r.StartedAt, DateTimeKind.Utc)),
+        r.ClosedAt is { } closedAt ? new DateTimeOffset(DateTime.SpecifyKind(closedAt, DateTimeKind.Utc)) : null,
+        r.PreviewBody,
+        r.PreviewAuthorKind is { } authorKind ? Enum.Parse<MessageAuthorKind>(authorKind) : null,
+        r.PreviewCreatedAt is { } previewCreatedAt
+            ? new DateTimeOffset(DateTime.SpecifyKind(previewCreatedAt, DateTimeKind.Utc))
+            : null);
 
     private static MessageHistoryItem ToHistoryItem(MessageRow r) => new(
         new MessageId(r.Id),

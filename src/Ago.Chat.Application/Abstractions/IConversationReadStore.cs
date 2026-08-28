@@ -45,4 +45,19 @@ public interface IConversationReadStore
     /// report completion before the job has completed."
     /// </summary>
     Task<ConversationSummaryItem?> GetByIdAsync(ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `18-07`: every other conversation this visitor has ever had, newest first - the read behind
+    /// the console's returning-visitor-history panel. Keyset-paginated like
+    /// <see cref="GetAllForSiteAsync"/>, for the identical reason: a visitor's own history only grows
+    /// and carries no natural bound.
+    ///
+    /// <paramref name="excludeConversationId"/> is the conversation the operator is already looking
+    /// at - always excluded, since a panel showing "this visitor's other conversations" that includes
+    /// the one already on screen would be confusing rather than useful, and the caller
+    /// (<c>GetVisitorHistoryHandler</c>) already knows exactly which id that is.
+    /// </summary>
+    Task<VisitorHistoryPage> GetVisitorHistoryAsync(
+        VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize,
+        CancellationToken cancellationToken);
 }

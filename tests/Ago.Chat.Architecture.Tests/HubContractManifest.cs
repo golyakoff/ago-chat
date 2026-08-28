@@ -53,5 +53,10 @@ internal static class HubContractManifest
             "ago-console OperatorConnection"),
         new("OperatorHub.GetVisitorPresenceAsync", 1,
             "ago-console OperatorConnection (`5-14`)"),
+        new("OperatorHub.GetVisitorHistoryConversationAsync", 4,
+            "ago-console OperatorConnection.getVisitorHistoryConversation (`18-07`) - the "
+            + "returning-visitor-history panel's own \"open one\", not a caller of GetHistoryAsync "
+            + "above: the authorization rule genuinely differs (assigned to *a* live conversation with "
+            + "this visitor, not to the specific historical one being read)."),
     ];
 }

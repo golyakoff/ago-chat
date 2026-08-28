@@ -38,6 +38,17 @@ internal sealed class ChannelIdentityConfiguration : IEntityTypeConfiguration<Ch
             .IsUnique()
             .HasDatabaseName("ux_channel_identities_site_kind_address");
 
+        // `18-07`: `AutoCloseInactiveConversationsQuery`'s own remarks (`18-06`) claimed there was no
+        // index on `channel_identities.visitor_id`. Checked while wiring this item's own gating call
+        // to `FindMostRecentForVisitorAsync` and found that claim wrong - EF's own convention already
+        // creates one for the `HasOne&lt;Visitor&gt;` foreign key below, it was just never spelled out
+        // here the way this table's unique index is, so a reading of this file (rather than the live
+        // schema) would miss it, which is what happened. Naming it explicitly, matching every other
+        // index in this file, rather than leaving it as an EF-generated `IX_...` default - a
+        // documentation fix, not a new index; the generated migration is a rename, not a create.
+        builder.HasIndex(c => c.VisitorId)
+            .HasDatabaseName("ix_channel_identities_visitor_id");
+
         // Not navigations (aggregates stay independent - data-model.md lists site_id as a plain
         // foreign key, never a loaded Site) - HasOne/WithMany with no exposed property is how EF adds
         // the DB-level constraint without adding a Domain reference, exactly as VisitorConfiguration

@@ -21,6 +21,7 @@ using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
@@ -368,6 +369,8 @@ public sealed class ChatModule : IProductModule
         // GetOperatorQueueHandler/GetVisitorPresenceHandler closed for `5-07` - see each handler's
         // own remarks.
         services.AddScoped<GetAllConversationsForSiteHandler>();
+        // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
+        services.AddScoped<GetVisitorHistoryHandler>();
         services.AddScoped<DeleteAttachmentHandler>();
         services.AddScoped<GetMyPermissionsHandler>();
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
