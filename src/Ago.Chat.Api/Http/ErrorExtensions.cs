@@ -31,7 +31,10 @@ public static class ErrorExtensions
                 or "OperatorInvite.InvalidRole" or "Conversation.SearchInvalidQuery"
                 // `18-02`: a real client mistake (naming the operator who already holds the
                 // conversation), not a conflict with anything concurrent - see the error's own remarks.
-                or "Conversation.TransferTargetIsCurrentOperator" => StatusCodes.Status400BadRequest,
+                or "Conversation.TransferTargetIsCurrentOperator"
+                // `18-03`: CannedResponseEndpoints' own PUT - an empty/oversized title or body, or too
+                // many responses, is the caller's mistake to fix, not a server failure.
+                or "CannedResponse.Invalid" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

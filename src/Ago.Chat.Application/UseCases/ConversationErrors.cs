@@ -150,6 +150,12 @@ public static class ConversationErrors
     public static Error OfflineAutoReplyInvalid(string reason) =>
         new("OfflineAutoReply.Invalid", reason);
 
+    /// <summary>`18-03`: a canned response `CannedResponse` refused - an empty or oversized title or
+    /// body, or too many in the list. Same "one code, the message carries the detail" reasoning
+    /// `OfflineAutoReplyInvalid` states for itself.</summary>
+    public static Error CannedResponseInvalid(string reason) =>
+        new("CannedResponse.Invalid", reason);
+
     // `14-02`: same shared vocabulary, same reason - RegisterChannelCredentialHandler/
     // RevokeChannelCredentialHandler add their own codes here rather than a separate error class.
     public static Error ChannelCredentialNotFound(Guid channelCredentialId) =>

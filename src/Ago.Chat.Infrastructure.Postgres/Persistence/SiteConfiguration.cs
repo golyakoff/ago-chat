@@ -98,6 +98,16 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasDefaultValue(Locale.En);
         builder.Ignore(s => s.Locale);
 
+        // `18-03`: same shape again - one backing field, one column, no check constraint (unlike
+        // WidgetConfig/OfflineAutoReply, nothing here is a closed enum-like set of legal values a CHECK
+        // could enforce; CannedResponse's own constructor is the only validation this value has, the
+        // same "the constraint enforces a fact SQL itself can express" boundary widget_position/
+        // widget_locale's own comments draw - a free-text title/body pair isn't such a fact).
+        builder.Property<List<CannedResponse>?>("_cannedResponses")
+            .HasColumnName("canned_responses")
+            .HasConversion(CannedResponseConverters.Responses, CannedResponseConverters.ResponsesComparer);
+        builder.Ignore(s => s.CannedResponses);
+
         // `13-01`/`13-02`: ordinary mapped properties, not computed-over-a-private-field like every
         // column above - `Site.Tier`/`Site.SeatLimit` are plain auto-properties with a private setter
         // (13-02's `Site.ActivateSubscription` is that setter's first real caller), so there is nothing
