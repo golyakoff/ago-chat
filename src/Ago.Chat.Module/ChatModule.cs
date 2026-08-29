@@ -16,6 +16,7 @@ using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
+using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
@@ -384,6 +385,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ISeatChangeApplier, SeatChangeApplier>();
         services.AddScoped<CancelSubscriptionHandler>();
         services.AddScoped<ChangeSubscriptionSeatsHandler>();
+        // `13-04`: the console billing screen's own bootstrap read - GetBillingStatus's own remarks.
+        services.AddScoped<GetBillingStatusHandler>();
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();

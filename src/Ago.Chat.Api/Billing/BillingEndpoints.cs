@@ -4,6 +4,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.YooKassa;
@@ -37,7 +38,15 @@ public static class BillingEndpoints
         app.MapYooKassaWebhookEndpoint();
         app.MapCancelSubscriptionEndpoint();
         app.MapChangeSubscriptionSeatsEndpoint();
+        app.MapGetBillingStatusEndpoint();
     }
+
+    /// <summary>`13-04`: the console billing screen's own bootstrap read - `GetBillingStatus`'s own
+    /// remarks on why this did not already exist. Same `Permission.SiteConfigure` gate every other
+    /// route in this file uses for a billing decision or a billing view of one.</summary>
+    public static void MapGetBillingStatusEndpoint(this WebApplication app) =>
+        app.MapGet("/api/v1/sites/{siteId:guid}/billing/status", HandleGetBillingStatusAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
 
     /// <summary>`13-03`: `decisions/0006`'s cancellation - `RequireOperatorIdentity` +
     /// `Permission.SiteConfigure`, the identical gate the checkout endpoint above already uses for a
@@ -159,6 +168,15 @@ public static class BillingEndpoints
             new ChangeSubscriptionSeats(
                 user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId), request.RequestedSeats),
             cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleGetBillingStatusAsync(
+        Guid siteId, GetBillingStatusHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(new GetBillingStatus(user.GetOperatorId(), new SiteId(siteId)), cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
