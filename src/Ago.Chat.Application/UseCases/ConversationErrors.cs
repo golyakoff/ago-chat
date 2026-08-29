@@ -320,4 +320,26 @@ public static class ConversationErrors
     /// is exactly what a `409` tells the caller to do.</summary>
     public static Error TransferContended(Guid conversationId) =>
         new("Conversation.TransferContended", $"Conversation {conversationId} could not be transferred because of write contention; retry the request.");
+
+    // `18-04`: same shared vocabulary, same reason - the note/tag handlers add their own codes here
+    // rather than a separate error class.
+    /// <summary>An empty or oversized note body - <see cref="Domain.ConversationNote.Write"/>'s own
+    /// invariant, translated at the Application boundary the same way <see cref="CannedResponseInvalid"/>
+    /// translates <see cref="Domain.CannedResponse"/>'s.</summary>
+    public static Error NoteInvalid(string reason) =>
+        new("ConversationNote.Invalid", reason);
+
+    public static Error TagNotFound(Guid tagId) =>
+        new("Tag.NotFound", $"Tag {tagId} was not found for this site.");
+
+    /// <summary>An empty or oversized tag name - <see cref="Domain.Tag"/>'s own invariant.</summary>
+    public static Error TagInvalid(string reason) =>
+        new("Tag.Invalid", reason);
+
+    /// <summary>A tag name that already exists for this site (case-insensitive - `TagConfiguration`'s
+    /// own unique index). `409`, not a silent rename of the existing row: a caller asking to create
+    /// "Billing" when "billing" already exists almost certainly means to reuse it, and this makes that
+    /// choice explicit rather than quietly creating a second label operators cannot tell apart.</summary>
+    public static Error TagAlreadyExists(string name) =>
+        new("Tag.AlreadyExists", $"A tag named '{name}' already exists for this site.");
 }

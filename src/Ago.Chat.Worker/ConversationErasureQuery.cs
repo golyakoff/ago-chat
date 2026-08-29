@@ -118,6 +118,40 @@ public static class ConversationErasureQuery
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// `18-04`/`16-02`: a note is personal data about a visitor, written by an operator
+    /// (<c>ConversationNote</c>'s own remarks) - in scope for erasure the same as every message.
+    /// Bounded the same way <see cref="DeleteAttachmentsAsync"/> is (small relative to a
+    /// conversation's own message count, an operator writes at most a handful of notes per
+    /// conversation), so this is one unbounded statement, not a batched loop. Never reached through
+    /// <c>INoteRepository</c> - this Worker job talks to Postgres directly, the same "raw Npgsql,
+    /// forward-only" shape every other method in this file uses, and <c>INoteRepository</c>'s own
+    /// remarks are explicit that it has exactly two real callers, neither of them this one.
+    /// </summary>
+    public static async Task<int> DeleteNotesForConversationAsync(
+        NpgsqlConnection connection, Guid conversationId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "delete from conversation_notes where conversation_id = @conversationId", connection);
+        command.Parameters.AddWithValue("conversationId", conversationId);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// `18-04`/`16-02`: this conversation's own tag *associations* - the tag *definitions* (`tags`)
+    /// are untouched, since another conversation on the same site may still carry them; only the rows
+    /// naming this specific conversation disappear. The same "small, one unbounded statement" shape as
+    /// <see cref="DeleteNotesForConversationAsync"/> right above.
+    /// </summary>
+    public static async Task<int> DeleteTagsForConversationAsync(
+        NpgsqlConnection connection, Guid conversationId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "delete from conversation_tags where conversation_id = @conversationId", connection);
+        command.Parameters.AddWithValue("conversationId", conversationId);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>The conversation row itself - last, once every row and object it owns is confirmed
     /// gone. A stray message or attachment this sequence somehow missed would still cascade-delete
     /// with it (`ConversationConfiguration`'s own `OnDelete(DeleteBehavior.Cascade)` on `_messages`;

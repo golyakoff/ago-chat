@@ -105,12 +105,18 @@ public static class SiteErasureQuery
     /// attached to it, the identical "one line, not a hand-ordered list of deletes" reasoning
     /// `DemoTenantRepository.DeleteSiteAsync`'s own remarks give in full: `operators` (and
     /// `operator_roles` through it), `roles` (and `operator_roles` through it too), `visitors`,
-    /// `channel_identities`, `webhook_endpoints` (and `webhook_deliveries` through it) - every one a
-    /// required foreign key to `sites`, EF's default `ON DELETE CASCADE`. By the time this runs,
-    /// `conversations`/`messages`/`attachments` are already empty for this site
-    /// (<see cref="HasAnyConversationAsync"/> gates it), so cascading into those three tables here
-    /// deletes zero rows rather than being the mechanism that empties them - the bounded
-    /// <see cref="ConversationErasureQuery"/> is what actually did that work, batch by batch.
+    /// `channel_identities`, `webhook_endpoints` (and `webhook_deliveries` through it), and - `18-04`
+    /// - `tags` (`TagConfiguration`'s own required FK, `ON DELETE CASCADE`) - every one a required
+    /// foreign key to `sites`. By the time this runs, `conversations`/`messages`/`attachments` are
+    /// already empty for this site (<see cref="HasAnyConversationAsync"/> gates it), and so are
+    /// `conversation_notes`/`conversation_tags` (drained per-conversation by
+    /// <see cref="ConversationErasureQuery.DeleteNotesForConversationAsync"/>/
+    /// <see cref="ConversationErasureQuery.DeleteTagsForConversationAsync"/> before each conversation
+    /// row itself was deleted) - so cascading into any of those five tables here deletes zero rows
+    /// rather than being the mechanism that empties them - the bounded <see cref="ConversationErasureQuery"/>
+    /// is what actually did that work, batch by batch. `tags` is the one table in this cascade list
+    /// that genuinely still has rows at this point: the tag *vocabulary* itself, which nothing drains
+    /// per-conversation because a tag definition outlives any one conversation that carried it.
     /// </summary>
     public static async Task<int> DeleteSiteAsync(
         NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)

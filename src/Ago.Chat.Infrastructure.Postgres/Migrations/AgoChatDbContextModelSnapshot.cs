@@ -356,6 +356,38 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("conversations", (string)null);
                 });
 
+            modelBuilder.Entity("Ago.Chat.Domain.ConversationNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AuthorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_id");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("body");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId", "CreatedAt")
+                        .HasDatabaseName("ix_conversation_notes_conversation");
+
+                    b.ToTable("conversation_notes", (string)null);
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.Message", b =>
                 {
                     b.Property<Guid>("Id")
@@ -644,6 +676,35 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Ago.Chat.Domain.Tag", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("SiteId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("site_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SiteId", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_tags_site_name");
+
+                    b.ToTable("tags", (string)null);
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.Visitor", b =>
                 {
                     b.Property<Guid>("Id")
@@ -765,6 +826,24 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasDatabaseName("ix_webhook_endpoints_site_id");
 
                     b.ToTable("webhook_endpoints", (string)null);
+                });
+
+            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.ConversationTagRecord", b =>
+                {
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tag_id");
+
+                    b.HasKey("ConversationId", "TagId");
+
+                    b.HasIndex("TagId")
+                        .HasDatabaseName("ix_conversation_tags_tag_id");
+
+                    b.ToTable("conversation_tags", (string)null);
                 });
 
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.ExportRequestEntity", b =>
@@ -1039,6 +1118,15 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Ago.Chat.Domain.ConversationNote", b =>
+                {
+                    b.HasOne("Ago.Chat.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.Message", b =>
                 {
                     b.HasOne("Ago.Chat.Domain.Conversation", null)
@@ -1072,6 +1160,15 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Ago.Chat.Domain.Tag", b =>
+                {
+                    b.HasOne("Ago.Chat.Domain.Site", null)
+                        .WithMany()
+                        .HasForeignKey("SiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.Visitor", b =>
                 {
                     b.HasOne("Ago.Chat.Domain.Site", null)
@@ -1095,6 +1192,21 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.ConversationTagRecord", b =>
+                {
+                    b.HasOne("Ago.Chat.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Ago.Chat.Domain.Tag", null)
+                        .WithMany()
+                        .HasForeignKey("TagId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

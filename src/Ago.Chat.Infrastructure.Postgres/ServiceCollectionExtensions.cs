@@ -104,6 +104,10 @@ public static class ServiceCollectionExtensions
         // it with a per-cycle scope the way that fix needed to.
         services.AddSingleton<IMessageArchiveRepository, MessageArchiveRepository>();
         services.AddSingleton<IMessageArchiveGate, MessageArchiveGate>();
+        // `18-04`: notes and tags - INoteRepository's own remarks on why it is registered here like
+        // every other repository and yet reachable from only two handlers in the whole codebase.
+        services.AddScoped<INoteRepository, NoteRepository>();
+        services.AddScoped<ITagRepository, TagRepository>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

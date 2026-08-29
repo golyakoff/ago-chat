@@ -40,10 +40,23 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         var toErase = await SeedConversationWithAttachmentAsync(siteId);
         var toKeep = await SeedConversationWithAttachmentAsync(siteId);
 
+        // `18-04`: one tag shared by both conversations (the vocabulary is per-site, not
+        // per-conversation), plus one note each - both are personal data about a visitor
+        // (ConversationNote's own remarks) and in scope for this same completeness claim.
+        var tagId = await SeedTagAsync(siteId, "vip");
+        await TagConversationAsync(toErase.ConversationId, tagId);
+        await TagConversationAsync(toKeep.ConversationId, tagId);
+        await SeedNoteAsync(toErase.ConversationId, adminOperatorId, "erase-me note");
+        await SeedNoteAsync(toKeep.ConversationId, adminOperatorId, "keep-me note");
+
         // Both halves genuinely exist before erasure - the "narrower scope, same completeness" claim
         // is only interesting if there was something to distinguish in the first place.
         Assert.Equal(2, await CountAsync("select count(*) from messages where conversation_id = @id", toErase.ConversationId.Value));
         Assert.Equal(2, await CountAsync("select count(*) from messages where conversation_id = @id", toKeep.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_notes where conversation_id = @id", toErase.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_notes where conversation_id = @id", toKeep.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toErase.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toKeep.ConversationId.Value));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toErase.ObjectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toKeep.ObjectKey), CancellationToken.None));
 
@@ -73,13 +86,24 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toErase.ObjectKey), CancellationToken.None));
         Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toErase.ThumbnailKey), CancellationToken.None));
 
+        // `18-04`: the erased conversation's own note and tag association are gone too.
+        Assert.Equal(0, await CountAsync("select count(*) from conversation_notes where conversation_id = @id", toErase.ConversationId.Value));
+        Assert.Equal(0, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toErase.ConversationId.Value));
+
         // The other conversation and the site itself: completely untouched.
         Assert.Equal(1, await CountAsync("select count(*) from conversations where id = @id", toKeep.ConversationId.Value));
         Assert.Equal(2, await CountAsync("select count(*) from messages where conversation_id = @id", toKeep.ConversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from attachments where conversation_id = @id", toKeep.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_notes where conversation_id = @id", toKeep.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toKeep.ConversationId.Value));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toKeep.ObjectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toKeep.ThumbnailKey), CancellationToken.None));
         Assert.Equal(1, await CountAsync("select count(*) from sites where id = @id", siteId.Value));
+
+        // `18-04`: the tag *definition* itself survives - another conversation (toKeep) still carries
+        // it, and a tag vocabulary entry is site-scoped, not conversation-scoped (TagConfiguration's
+        // own remarks); only SiteErasureJob's whole-account cascade removes the definition row.
+        Assert.Equal(1, await CountAsync("select count(*) from tags where id = @id", tagId.Value));
     }
 
     private async Task<SiteId> SeedSiteAsync(string name)
@@ -149,6 +173,27 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
             });
 
         return (conversation.Id, objectKey, thumbnailKey);
+    }
+
+    private async Task<TagId> SeedTagAsync(SiteId siteId, string name)
+    {
+        var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
+        await using var db = fixture.CreateDbContext();
+        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        return tag.Id;
+    }
+
+    private async Task TagConversationAsync(ConversationId conversationId, TagId tagId)
+    {
+        await using var db = fixture.CreateDbContext();
+        await new TagRepository(db).AddToConversationAsync(conversationId, tagId, CancellationToken.None);
+    }
+
+    private async Task SeedNoteAsync(ConversationId conversationId, OperatorId authorId, string body)
+    {
+        var note = ConversationNote.Write(new ConversationNoteId(Guid.NewGuid()), conversationId, authorId, body, Now);
+        await using var db = fixture.CreateDbContext();
+        await new NoteRepository(db).SaveAsync(note, CancellationToken.None);
     }
 
     private async Task<int> CountAsync(string sql, Guid id)

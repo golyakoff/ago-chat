@@ -30,7 +30,7 @@ public sealed class GetAllConversationsForSiteHandler(
             return ConversationErrors.Forbidden("Operator does not have permission to view every conversation for this site.");
         }
 
-        var page = await readStore.GetAllForSiteAsync(query.SiteId, query.BeforeId, query.PageSize, cancellationToken);
+        var page = await readStore.GetAllForSiteAsync(query.SiteId, query.BeforeId, query.PageSize, query.Tag, cancellationToken);
 
         return new AllConversationsForSiteResponse(page.Conversations.Select(ToSummary).ToList(), page.NextBeforeId);
     }

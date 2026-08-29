@@ -25,6 +25,11 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     internal DbSet<ExportRequestEntity> ExportRequests => Set<ExportRequestEntity>();
     // `13-06`: migration-scaffolding only, the same shape - MessageArchiveEntity's own remarks.
     internal DbSet<MessageArchiveEntity> MessageArchives => Set<MessageArchiveEntity>();
+    // `18-04`: ConversationNote/Tag's own EF-backed tables - see each type's own remarks on why they
+    // are real tables and not owned collections on Conversation/Site.
+    public DbSet<ConversationNote> ConversationNotes => Set<ConversationNote>();
+    public DbSet<Tag> Tags => Set<Tag>();
+    internal DbSet<ConversationTagRecord> ConversationTags => Set<ConversationTagRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

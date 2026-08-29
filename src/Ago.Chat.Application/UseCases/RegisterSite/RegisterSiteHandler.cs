@@ -40,8 +40,19 @@ public sealed class RegisterSiteHandler(
     // third place doing the same restatement would still need to independently match those two, so
     // this handler is the natural third since it is the first thing that ever *writes* these lists
     // instead of comparing against them.
+    // `18-04`: ConversationNoteWrite/ConversationTag join the Operator set here - found missing
+    // 2026-08-29 while landing that item (both permissions existed and both new handlers already
+    // checked them, but no real site's Operator role ever actually held either, so every real operator
+    // was permanently Forbidden from the feature - the same "the type exists and something depends on
+    // it, but nothing ever wires the caller up to hold it" shape as the same day's billing DI gap,
+    // this time in role seeding rather than a service container). Operator-level, not Admin-only: a
+    // note/tag is ordinary day-to-day conversation handling, the same category as
+    // ConversationRead/Send/Assign already here, not a site-configuration action.
     private static readonly string[] OperatorRolePermissions =
-        [Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value];
+        [
+            Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
+            Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+        ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too - see Permission's own remarks
     // on why both are Admin-only, and this class's own remarks above on why this array is restated in

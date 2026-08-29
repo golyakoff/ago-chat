@@ -103,11 +103,12 @@ public static class ConversationsEndpoints
     public sealed record MarkConversationReadRequest(int UpToSequence);
 
     private static async Task<IResult> HandleGetQueueAsync(
-        GetOperatorQueueHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+        Guid? tag, GetOperatorQueueHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new GetOperatorQueue(user.GetOperatorId(), user.GetSiteId()), cancellationToken);
+            new GetOperatorQueue(user.GetOperatorId(), user.GetSiteId(), tag is { } t ? new TagId(t) : null),
+            cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
@@ -115,13 +116,15 @@ public static class ConversationsEndpoints
     private static async Task<IResult> HandleGetAllForSiteAsync(
         Guid? beforeId,
         int? pageSize,
+        Guid? tag,
         GetAllConversationsForSiteHandler handler,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new GetAllConversationsForSite(user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 50),
+            new GetAllConversationsForSite(
+                user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 50, tag is { } t ? new TagId(t) : null),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);

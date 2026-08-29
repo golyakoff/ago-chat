@@ -163,6 +163,12 @@ public sealed class ConversationErasureJob(
                 // Fewer than requested means this was the last batch - every message is gone, so the
                 // rest of this conversation's teardown can proceed in the same call.
                 await ConversationErasureQuery.DeleteAttachmentsAsync(connection, conversationId, cancellationToken);
+                // `18-04`: notes and tag associations - both personal data about this conversation
+                // (ConversationNote's own remarks), removed the same way attachments are, before the
+                // conversation row itself. Tag *definitions* are never touched here - see
+                // ConversationErasureQuery.DeleteTagsForConversationAsync's own remarks.
+                await ConversationErasureQuery.DeleteNotesForConversationAsync(connection, conversationId, cancellationToken);
+                await ConversationErasureQuery.DeleteTagsForConversationAsync(connection, conversationId, cancellationToken);
                 await ConversationErasureQuery.DeleteConversationAsync(connection, conversationId, cancellationToken);
                 return true;
             }

@@ -50,11 +50,46 @@ public class GetOperatorQueueHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WithATagFilter_ReturnsOnlyTaggedConversationsInBothLists()
+    {
+        var taggedWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        var untaggedWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        var taggedAssignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        taggedAssignedToMe.AssignTo(OperatorId, Now);
+        var untaggedAssignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        untaggedAssignedToMe.AssignTo(OperatorId, Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(taggedWaiting);
+        conversations.Seed(untaggedWaiting);
+        conversations.Seed(taggedAssignedToMe);
+        conversations.Seed(untaggedAssignedToMe);
+
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var tags = new FakeTagRepository();
+        var tagId = new TagId(Guid.NewGuid());
+        tags.SeedAssociation(taggedWaiting.Id, tagId);
+        tags.SeedAssociation(taggedAssignedToMe.Id, tagId);
+        var tag = Tag.Create(tagId, SiteId, "VIP", Now);
+        tags.Seed(tag);
+
+        var handler = new GetOperatorQueueHandler(conversations, tags, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, tagId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(taggedWaiting.Id.Value, Assert.Single(result.Value.Waiting).ConversationId);
+        Assert.Equal(taggedAssignedToMe.Id.Value, Assert.Single(result.Value.AssignedToMe).ConversationId);
+    }
+
+    [Fact]
     public async Task HandleAsync_OperatorWithoutConversationReadPermission_ReturnsForbidden()
     {
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
-        var handler = new GetOperatorQueueHandler(conversations, permissions);
+        var handler = new GetOperatorQueueHandler(conversations, new FakeTagRepository(), permissions);
 
         var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
 
@@ -67,6 +102,6 @@ public class GetOperatorQueueHandlerTests
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
-        return (new GetOperatorQueueHandler(conversations, permissions), conversations);
+        return (new GetOperatorQueueHandler(conversations, new FakeTagRepository(), permissions), conversations);
     }
 }

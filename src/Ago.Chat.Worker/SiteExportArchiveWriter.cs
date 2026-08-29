@@ -71,6 +71,15 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
         await WriteConversationsAsync(archive, connection, siteId, cancellationToken);
         await WriteMessagesAsync(archive, connection, siteId, cancellationToken);
         await WriteAttachmentsAsync(archive, connection, siteId, exportedAt, cancellationToken);
+        // `18-04`: a note is personal data about a visitor, written by an operator (ConversationNote's
+        // own remarks) - the same reasoning that put it in scope for erasure puts it in scope for
+        // export. A tag carries no personal data of its own (it is a label an operator chose), but the
+        // *association* between one and a conversation is still a fact about that conversation worth
+        // exporting alongside it - both included as their own stores rather than folded into
+        // conversations.jsonl, matching every other store in this writer being one file per table.
+        await WriteNotesAsync(archive, connection, siteId, cancellationToken);
+        await WriteTagsAsync(archive, connection, siteId, cancellationToken);
+        await WriteConversationTagsAsync(archive, connection, siteId, cancellationToken);
     }
 
     private static async Task WriteManifestAsync(
@@ -81,7 +90,12 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
             siteId,
             exportedAt,
             AttachmentBytes: "referenced-by-url",
-            Stores: ["site", "operators", "visitors", "channelIdentities", "conversations", "messages", "attachments"]);
+            Stores:
+            [
+                "site", "operators", "visitors", "channelIdentities", "conversations", "messages", "attachments",
+                // `18-04`
+                "notes", "tags", "conversationTags",
+            ]);
 
         var entry = archive.CreateEntry("manifest.json", CompressionLevel.Fastest);
         await using var entryStream = entry.Open();
@@ -309,6 +323,90 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
         }
     }
 
+    /// <summary>`18-04`: joined through `conversations` the same way <see cref="WriteMessagesAsync"/>
+    /// is - `conversation_notes` carries no `site_id` of its own (see
+    /// <c>ConversationNoteConfiguration</c>'s own remarks on why that column was never added). Ordered
+    /// by `(conversation_id, created_at)`, the same "each conversation's own children in the order
+    /// they were made" reading order <see cref="WriteMessagesAsync"/> already establishes.</summary>
+    private static async Task WriteNotesAsync(
+        ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            select n.id, n.conversation_id, n.author_id, n.body, n.created_at
+            from conversation_notes n
+            join conversations c on c.id = n.conversation_id
+            where c.site_id = @siteId
+            order by n.conversation_id, n.created_at
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("siteId", siteId);
+
+        var entry = archive.CreateEntry("notes.jsonl", CompressionLevel.Fastest);
+        await using var entryStream = entry.Open();
+        await using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var row = new NoteExportRow(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
+                reader.GetFieldValue<DateTimeOffset>(4));
+            await writer.WriteLineAsync(JsonSerializer.Serialize(row, JsonOptions));
+        }
+    }
+
+    /// <summary>`18-04`: the tag vocabulary itself - a straightforward `site_id` filter, the same
+    /// shape as <see cref="WriteOperatorsAsync"/>.</summary>
+    private static async Task WriteTagsAsync(
+        ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
+    {
+        const string sql = "select id, name, created_at from tags where site_id = @siteId order by id";
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("siteId", siteId);
+
+        var entry = archive.CreateEntry("tags.jsonl", CompressionLevel.Fastest);
+        await using var entryStream = entry.Open();
+        await using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var row = new TagExportRow(reader.GetGuid(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2));
+            await writer.WriteLineAsync(JsonSerializer.Serialize(row, JsonOptions));
+        }
+    }
+
+    /// <summary>`18-04`: the association rows - which conversation carries which tag. Its own file
+    /// rather than an array folded into `conversations.jsonl`/`tags.jsonl`: this writer streams every
+    /// other store one row at a time (this class's own remarks on why), and a conversation's tag list
+    /// nested inside its own row would mean buffering that list in memory while the rest of the row
+    /// streams, the same reason `messages.jsonl` is its own file rather than nested under
+    /// `conversations.jsonl`.</summary>
+    private static async Task WriteConversationTagsAsync(
+        ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            select ct.conversation_id, ct.tag_id
+            from conversation_tags ct
+            join conversations c on c.id = ct.conversation_id
+            where c.site_id = @siteId
+            order by ct.conversation_id, ct.tag_id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("siteId", siteId);
+
+        var entry = archive.CreateEntry("conversation_tags.jsonl", CompressionLevel.Fastest);
+        await using var entryStream = entry.Open();
+        await using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var row = new ConversationTagExportRow(reader.GetGuid(0), reader.GetGuid(1));
+            await writer.WriteLineAsync(JsonSerializer.Serialize(row, JsonOptions));
+        }
+    }
+
     private sealed record ManifestDocument(
         int FormatVersion, Guid SiteId, DateTimeOffset ExportedAt, string AttachmentBytes, IReadOnlyList<string> Stores);
 
@@ -332,4 +430,10 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     private sealed record AttachmentExportRow(
         Guid Id, Guid ConversationId, Guid? MessageId, string ContentType, long SizeBytes, string State,
         DateTimeOffset CreatedAt, Uri DownloadUrl, Uri? ThumbnailDownloadUrl, DateTimeOffset DownloadUrlExpiresAt);
+
+    private sealed record NoteExportRow(Guid Id, Guid ConversationId, Guid AuthorId, string Body, DateTimeOffset CreatedAt);
+
+    private sealed record TagExportRow(Guid Id, string Name, DateTimeOffset CreatedAt);
+
+    private sealed record ConversationTagExportRow(Guid ConversationId, Guid TagId);
 }
