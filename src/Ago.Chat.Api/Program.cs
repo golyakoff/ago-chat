@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Api.Attachments;
+using Ago.Chat.Api.CannedResponses;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Billing;
 using Ago.Chat.Api.Channels;
@@ -374,6 +375,8 @@ app.MapTelegramChannelEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();
+// `18-03`
+app.MapCannedResponseEndpoints();
 app.MapSitesEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();

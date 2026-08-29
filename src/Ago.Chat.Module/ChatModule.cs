@@ -17,6 +17,7 @@ using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
+using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
@@ -60,6 +61,7 @@ using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.TransferConversation;
+using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.MaxBot;
@@ -504,6 +506,14 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetOfflineAutoReplyHandler>();
         services.AddScoped<UpdateOfflineAutoReplyHandler>();
         services.AddScoped<SendOfflineAutoReplyHandler>();
+
+        // `18-03`: the canned-response read/write pair backing `Ago.Chat.Api`'s own settings endpoints
+        // and the console composer's picker - same `site:configure` gate, same "registered for every
+        // host, only Ago.Chat.Api maps routes for them today" shape as the pair just above. No third
+        // handler here - unlike `14-04`'s auto-reply, nothing on the message pipeline ever reads this
+        // (Site.UpdateCannedResponses's own remarks on why there is no consumer to wire up).
+        services.AddScoped<GetCannedResponsesHandler>();
+        services.AddScoped<UpdateCannedResponsesHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

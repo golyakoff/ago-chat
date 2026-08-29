@@ -212,4 +212,68 @@ public class SiteTests
         Assert.Equal(SubscriptionTierBands.Growth, site.Tier);
         Assert.Equal(25, site.SeatLimit);
     }
+
+    // `18-03`: the canned-response library - every existing tenant, one that has never called
+    // UpdateCannedResponses, must read back an empty list rather than throwing or returning null.
+    [Fact]
+    public void Constructor_WhenValid_DefaultsCannedResponsesToEmpty()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Empty(site.CannedResponses);
+    }
+
+    [Fact]
+    public void UpdateCannedResponses_WhenCalled_SetsTheList()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        CannedResponse[] responses =
+        [
+            new("Refund policy", "Refunds take three working days."),
+            new("Greeting", "Hi, how can I help?"),
+        ];
+
+        site.UpdateCannedResponses(responses);
+
+        Assert.Equal(responses, site.CannedResponses);
+    }
+
+    [Fact]
+    public void UpdateCannedResponses_ReplacesRatherThanAppends()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        site.UpdateCannedResponses([new CannedResponse("Greeting", "Hi there.")]);
+
+        site.UpdateCannedResponses([new CannedResponse("Refund policy", "Three days.")]);
+
+        var only = Assert.Single(site.CannedResponses);
+        Assert.Equal("Refund policy", only.Title);
+    }
+
+    [Fact]
+    public void UpdateCannedResponses_WithMoreThanTheCap_Throws()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var tooMany = Enumerable
+            .Range(0, CannedResponse.MaxCount + 1)
+            .Select(i => new CannedResponse($"Title {i}", "Reply text."))
+            .ToList();
+
+        Assert.Throws<ArgumentException>(() => site.UpdateCannedResponses(tooMany));
+    }
+
+    // The architectural decision this item's own remarks (Site.UpdateCannedResponses) make explicit:
+    // unlike every other Site update method in this file, this one raises no domain event, because
+    // nothing downstream ever needs telling - see that method's own doc comment for the full
+    // reasoning. Asserted here so a future change that "helpfully" adds one back gets caught by a
+    // failing test, not just a comment nobody re-reads.
+    [Fact]
+    public void UpdateCannedResponses_WhenCalled_RaisesNoDomainEvent()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        site.UpdateCannedResponses([new CannedResponse("Greeting", "Hi there.")]);
+
+        Assert.Empty(site.DomainEvents);
+    }
 }

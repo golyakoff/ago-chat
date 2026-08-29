@@ -151,6 +151,17 @@ public sealed class Site
     /// give.</para></summary>
     public int SeatLimit { get; private set; } = 1;
 
+    // `18-03`: a fourth flat-backing-field list, the same shape `14-04`'s _offlineAutoReplyRules
+    // established just above - opaque to SQL, read and written as a unit, mapped through a converter
+    // to one column (CannedResponseConverters' own remarks restate OfflineAutoReplyConverters' - text,
+    // not jsonb, for the identical reason).
+    private List<CannedResponse>? _cannedResponses;
+
+    /// <summary>`18-03`: this site's prepared-answer library. Empty for every row that predates the
+    /// feature - the same "list defaults to nothing rather than throwing" shape
+    /// <see cref="OfflineAutoReply"/> already established for its own rules.</summary>
+    public IReadOnlyList<CannedResponse> CannedResponses => _cannedResponses ?? [];
+
     private readonly List<IDomainEvent> _domainEvents = [];
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -269,6 +280,49 @@ public sealed class Site
         Tier = tier;
         SeatLimit = seatLimit;
         _domainEvents.Add(new SiteSubscriptionActivated(Id, PublicKey, tier, seatLimit, now));
+    }
+
+    /// <summary>
+    /// `18-03`: `Site`'s fifth update path, and the first one that raises no domain event - a
+    /// deliberate departure from every method above it, stated here rather than left to look like an
+    /// oversight.
+    ///
+    /// <para><b>Why no <c>SiteCannedResponsesUpdated</c> / <c>SiteSettingsChanged</c>.</b> Every event
+    /// <see cref="UpdateWidgetConfig"/>, <see cref="UpdateOfflineAutoReply"/>, <see cref="UpdateLocale"/>
+    /// and <see cref="ActivateSubscription"/> raise exists for exactly one real consumer:
+    /// <c>SiteCacheInvalidationConsumer</c>, evicting the cached <c>SiteConfigDto</c> the visitor-facing,
+    /// per-message hot path reads (<c>caching.md</c>). Canned responses are never in that cache and
+    /// never read on that path - the only reader is the console's own settings screen and composer
+    /// picker, both operator-authenticated reads that go straight to the database, uncached, the same
+    /// deliberate choice <c>GetOfflineAutoReplyHandler</c>'s own remarks make for its sibling admin read
+    /// ("a low-frequency admin read, not the per-message path"). An uncached read already sees this
+    /// write on its very next call - there is no propagation delay for an event to solve, so raising one
+    /// would mean paying a fake fact through the outbox (an eviction for cache keys this change never
+    /// touches) to make a form look consistent with its neighbours rather than to tell any consumer
+    /// something true. <see cref="Operator.GoOnline"/>/<see cref="Operator.GoOffline"/>/
+    /// <see cref="Operator.ToggleSeat"/> already establish, elsewhere in this same codebase, that not
+    /// every aggregate mutation needs one - this method follows that precedent rather than
+    /// <see cref="Site"/>'s own more recent one, because the reason for the recent ones (a cache with a
+    /// consumer) genuinely does not apply here.</para>
+    ///
+    /// <para>The list-length cap lives here, in the aggregate, rather than in a wrapping value object
+    /// the way <see cref="OfflineAutoReplySettings.MaxRules"/> does - `18-03` has no cross-field
+    /// invariant like "enabled needs a fallback" to justify a wrapper type with nothing else to hold, so
+    /// the collection invariant is guarded at the one place that receives the whole list, matching
+    /// <see cref="Ago.Platform.Kernel"/>-wide "validate once, at the boundary that owns the whole value"
+    /// discipline without inventing a type nothing else needs.</para>
+    /// </summary>
+    public void UpdateCannedResponses(IReadOnlyList<CannedResponse> responses)
+    {
+        ArgumentNullException.ThrowIfNull(responses);
+
+        if (responses.Count > CannedResponse.MaxCount)
+        {
+            throw new ArgumentException(
+                $"A site cannot have more than {CannedResponse.MaxCount} canned responses.", nameof(responses));
+        }
+
+        _cannedResponses = [.. responses];
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();
