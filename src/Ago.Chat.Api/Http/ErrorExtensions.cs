@@ -24,7 +24,7 @@ public static class ErrorExtensions
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
                 or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken"
-                or "OperatorInvite.InvalidRole" => StatusCodes.Status400BadRequest,
+                or "OperatorInvite.InvalidRole" or "Conversation.SearchInvalidQuery" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

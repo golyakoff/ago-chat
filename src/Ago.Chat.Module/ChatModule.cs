@@ -45,6 +45,7 @@ using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
+using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -385,6 +386,8 @@ public sealed class ChatModule : IProductModule
         // GetOperatorQueueHandler/GetVisitorPresenceHandler closed for `5-07` - see each handler's
         // own remarks.
         services.AddScoped<GetAllConversationsForSiteHandler>();
+        // `18-01`
+        services.AddScoped<SearchConversationsHandler>();
         // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
         services.AddScoped<GetVisitorHistoryHandler>();
         services.AddScoped<DeleteAttachmentHandler>();

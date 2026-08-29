@@ -35,6 +35,17 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.ClientMessageId).HasColumnName("client_message_id");
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
 
+        // `18-01`/`adr/0031` Addendum: denormalized straight onto `messages` rather than reached
+        // through `conversations` by a join - the whole point being a tenant-scoped predicate that
+        // does not defeat partition pruning. No `HasIndex` here deliberately: the composite
+        // `(site_id, created_at)` index and the full-text GIN index this column exists to serve both
+        // have to be built once per leaf partition with `CREATE INDEX CONCURRENTLY` (Postgres will not
+        // let either run inside a transaction, and EF wraps a migration's `Up()` in one) - see
+        // `MessageSearchIndexJob` in `Ago.Chat.Worker`, the same "raw SQL owns this table's DDL, EF
+        // does not" split `PartitionMaintenanceJob`'s own remarks already establish for
+        // `CREATE TABLE ... PARTITION OF`.
+        builder.Property(m => m.SiteId).HasColumnName("site_id").HasConversion(IdConverters.NullableSite);
+
         // `14-06`: the structured half, three nullable columns over Message's three private backing
         // fields - the same "computed property, EF pointed at the fields by name" shape
         // SiteConfiguration already uses for Site.WidgetConfig. The storage reasoning (text over

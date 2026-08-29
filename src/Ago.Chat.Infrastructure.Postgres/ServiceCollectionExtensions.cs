@@ -49,6 +49,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDemoTenantRepository, DemoTenantRepository>();
         services.AddSingleton<IDemoCredentialGenerator, DemoCredentialGenerator>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
+        // `18-01`: its own port - IConversationSearchStore's own remarks on why it is not a method on
+        // IConversationReadStore.
+        services.AddScoped<IConversationSearchStore, ConversationSearchStore>();
         // `12-02`: the cross-tenant operations read (IPlatformOverviewReadStore's own remarks on why
         // it is the only one and why it is safe).
         services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();

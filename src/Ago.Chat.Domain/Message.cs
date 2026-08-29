@@ -21,6 +21,26 @@ public sealed class Message
 
     public MessageBody Body { get; }
 
+    /// <summary>
+    /// `18-01`: denormalized from the owning <see cref="Conversation.SiteId"/> at construction -
+    /// <see cref="Conversation.AddMessage"/> is the only place that sets it, using its own aggregate's
+    /// `SiteId`, never a value the caller supplies (adr/0031's Addendum: "a plain denormalized column
+    /// ... populated at write time from the owning Conversation"). It is not a cache of anything a
+    /// write decision depends on - nothing reads it to decide whether a write may proceed
+    /// (`CLAUDE.md` rule 8 does not apply here, the same carve-out `retention_class` claims in
+    /// `adr/0031`) - so a stale or absent value is never a correctness risk for a write, only for how
+    /// far back a search can currently reach.
+    ///
+    /// <para><see langword="null"/> only for a message written before this column existed - every
+    /// message this aggregate constructs from here on always has one, since <see cref="Conversation"/>
+    /// itself never has a null `SiteId`. The nullable-for-history shape matches
+    /// <see cref="AttachmentId"/>/<see cref="ClientMessageId"/> on this same type: a column added after
+    /// rows already existed reads as absent on them rather than being forced to a lie. `18-01`'s own
+    /// migration backfills the gap for existing rows asynchronously, in place, so this stops being null
+    /// for any row without ever locking the table to say so.</para>
+    /// </summary>
+    public SiteId? SiteId { get; }
+
     /// <summary>`5-07`: the client-generated id realtime.md's Client protocol section named as a
     /// design intent since `3-03` and left unwired - see <see cref="Conversation.AddMessage"/> for
     /// where it is actually used (retry-dedup, checked against every message already in memory).
@@ -69,7 +89,8 @@ public sealed class Message
         AttachmentId? attachmentId,
         Guid? clientMessageId,
         MessageContent? content,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        SiteId siteId)
     {
         Id = id;
         ConversationId = conversationId;
@@ -80,6 +101,7 @@ public sealed class Message
         AttachmentId = attachmentId;
         ClientMessageId = clientMessageId;
         CreatedAt = now;
+        SiteId = siteId;
 
         if (content is not null)
         {
