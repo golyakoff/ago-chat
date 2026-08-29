@@ -35,4 +35,11 @@ internal static class IdConverters
     public static readonly ValueConverter<MessageId?, Guid?> NullableMessage = new(
         id => id.HasValue ? id.Value.Value : (Guid?)null,
         value => value.HasValue ? new MessageId(value.Value) : (MessageId?)null);
+
+    /// <summary>`18-01`: <see cref="Message.SiteId"/> - nullable for the same reason
+    /// <see cref="NullableAttachment"/>/<see cref="NullableMessage"/> are, a column that does not have
+    /// a value for every historical row.</summary>
+    public static readonly ValueConverter<SiteId?, Guid?> NullableSite = new(
+        id => id.HasValue ? id.Value.Value : (Guid?)null,
+        value => value.HasValue ? new SiteId(value.Value) : (SiteId?)null);
 }

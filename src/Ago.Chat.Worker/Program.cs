@@ -86,6 +86,21 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<PartitionMaintenanceJob>();
 
+// `18-01`: the per-partition search indexes and the site_id backfill - see MessageSearchIndexJob's/
+// MessageSiteIdBackfillJob's own remarks for why both live here rather than in the EF migration that
+// adds the column.
+builder.Services
+    .AddOptions<MessageSearchIndexJobOptions>()
+    .Bind(builder.Configuration.GetSection(MessageSearchIndexJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<MessageSearchIndexJob>();
+
+builder.Services
+    .AddOptions<MessageSiteIdBackfillJobOptions>()
+    .Bind(builder.Configuration.GetSection(MessageSiteIdBackfillJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<MessageSiteIdBackfillJob>();
+
 builder.Services
     .AddOptions<ConnectionFanoutConsumerOptions>()
     .Bind(builder.Configuration.GetSection(ConnectionFanoutConsumerOptions.SectionName))

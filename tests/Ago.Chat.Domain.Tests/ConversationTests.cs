@@ -248,6 +248,21 @@ public class ConversationTests
         Assert.Equal(MessageAuthorKind.Visitor, message.AuthorKind);
     }
 
+    /// <summary>`18-01`: every message stamps the conversation's own `SiteId` at construction -
+    /// `Conversation.AddMessage` is the single place this happens, never left for `Ago.Chat.
+    /// Infrastructure.Postgres` to fill in later, so a message can never exist, even in memory,
+    /// without knowing which tenant it belongs to.</summary>
+    [Fact]
+    public void AddVisitorMessage_StampsTheConversationsOwnSiteId()
+    {
+        var conversation = StartConversation();
+
+        var message = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now);
+
+        Assert.Equal(SiteId, message.SiteId);
+    }
+
     [Fact]
     public void AddVisitorMessage_WhenAssigned_Succeeds()
     {
@@ -291,6 +306,7 @@ public class ConversationTests
 
         Assert.Equal(1, message.Sequence);
         Assert.Equal(MessageAuthorKind.Operator, message.AuthorKind);
+        Assert.Equal(SiteId, message.SiteId);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
+using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
@@ -39,6 +40,14 @@ public static class ConversationsEndpoints
         // `/queue`. `beforeId`/`pageSize` are query parameters, not a route segment, because they page
         // one already-identified resource rather than select which resource this is (api-design.md).
         app.MapGet("/api/v1/conversations/all", HandleGetAllForSiteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-01`: same sibling sub-resource shape as `/all` right above it - a compound read
+        // (phrase, an optional date range, a page) over the plural `conversations` resource, not a
+        // point lookup or a write. `from`/`to` are ISO-8601 query parameters (`api-design.md`'s wire
+        // format, `date-and-time.md`); either or both absent means "let the handler default the
+        // window" (`SearchConversationsHandler`'s own remarks on the bound decision).
+        app.MapGet("/api/v1/conversations/search", HandleSearchAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `6-02`: api-design.md's "actions that are not CRUD become sub-resources" example, verbatim -
@@ -105,6 +114,25 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new GetAllConversationsForSite(user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 50),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleSearchAsync(
+        string? phrase,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        Guid? beforeMessageId,
+        int? pageSize,
+        SearchConversationsHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new SearchConversations(
+                user.GetOperatorId(), user.GetSiteId(), phrase ?? string.Empty, from, to, beforeMessageId, pageSize ?? 20),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);

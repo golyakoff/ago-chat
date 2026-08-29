@@ -229,4 +229,14 @@ public static class ConversationErrors
     /// other rate limit in this vocabulary without parsing the message text.</summary>
     public static Error ExportRateLimited(TimeSpan retryAfter) =>
         new("Export.RateLimited", $"Too many export requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
+    // `18-01`: same shared vocabulary, same reason - SearchConversationsHandler adds its own code here
+    // rather than a separate error class.
+    /// <summary>An empty search phrase, or a caller-supplied range whose start is not before its end -
+    /// a client error either way. Mapped to `400` in `Ago.Chat.Api`'s `ErrorExtensions` (alongside
+    /// `WidgetConfig.InvalidColor` and its siblings) rather than left to fall through to that switch's
+    /// `500` default, since the query itself was malformed, not the server's handling of a well-formed
+    /// one.</summary>
+    public static Error SearchInvalidQuery(string reason) =>
+        new("Conversation.SearchInvalidQuery", reason);
 }

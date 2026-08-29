@@ -441,7 +441,7 @@ public sealed class Conversation
 
         LastSequence++;
         var message = new Message(
-            messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, content, now);
+            messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, content, now, SiteId);
         _messages.Add(message);
 
         // `14-06`: MessageAdded gains nothing. The integration event it maps to (MessageAccepted)

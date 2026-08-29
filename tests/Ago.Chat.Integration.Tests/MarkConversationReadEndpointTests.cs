@@ -12,6 +12,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
+using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -236,6 +237,10 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // registered service or the whole route table fails to build.
         builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         builder.Services.AddScoped<GetVisitorHistoryHandler>();
+        // `18-01`: same reason again - MapConversationsEndpoints now also maps GET .../search, whose
+        // SearchConversationsHandler parameter must resolve as a registered service.
+        builder.Services.AddScoped<IConversationSearchStore, ConversationSearchStore>();
+        builder.Services.AddScoped<SearchConversationsHandler>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
