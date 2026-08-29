@@ -30,6 +30,20 @@ internal sealed class OperatorConfiguration : IEntityTypeConfiguration<Operator>
             .IsUnique()
             .HasFilter("external_subject_id IS NOT NULL");
 
+        // `13-03`: the seat-assignment and operator-removal columns - see each property's own remarks
+        // on Operator for who writes them and why. HoldsSeat defaults true at the database level too,
+        // matching the CLR default (`Operator`'s own constructor default) - belt and braces for any
+        // future raw-SQL insert that bypasses the aggregate.
+        builder.Property(o => o.HoldsSeat).HasColumnName("holds_seat").HasDefaultValue(true);
+        builder.Property(o => o.RemovedAt).HasColumnName("removed_at");
+
+        // `13-03`: serves OperatorInviteRedemptionRepository's own fixed regression
+        // (`AND removed_at IS NULL`) and GetSeatAssignmentSummaryHandler's own count - both filter on
+        // `site_id` plus a live/removed distinction, so this indexes exactly the pair either query
+        // actually reads together, the same "index the column a real caller filters by" shape this
+        // codebase already uses everywhere else.
+        builder.HasIndex(o => new { o.SiteId, o.RemovedAt }).HasDatabaseName("ix_operators_site_id_removed_at");
+
         // 4-01: a shadow property, not a CLR property on Operator - EF needs to know this column
         // exists so `dotnet ef migrations add` generates a real ALTER TABLE from the model diff, but
         // nothing may ever write it through SaveChanges. The only writer is OperatorCapacityStore's

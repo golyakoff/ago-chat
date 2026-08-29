@@ -83,13 +83,39 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<bool>("CancelRequested")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("cancel_requested");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTimeOffset?>("CurrentPeriodEnd")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("current_period_end");
+
+                    b.Property<DateTimeOffset?>("LastRenewalAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_renewal_attempt_at");
+
+                    b.Property<DateTimeOffset?>("PastDueSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("past_due_since");
+
                     b.Property<string>("PaymentMethodId")
                         .HasColumnType("text")
                         .HasColumnName("payment_method_id");
+
+                    b.Property<int?>("PendingSeatCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("pending_seat_count");
+
+                    b.Property<string>("PendingTier")
+                        .HasColumnType("text")
+                        .HasColumnName("pending_tier");
 
                     b.Property<int>("RequestedSeats")
                         .HasColumnType("integer")
@@ -122,6 +148,9 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.HasIndex("SiteId", "CreatedAt")
                         .HasDatabaseName("ix_billing_subscriptions_site_id_created_at");
+
+                    b.HasIndex("Status", "CurrentPeriodEnd")
+                        .HasDatabaseName("ix_billing_subscriptions_status_current_period_end");
 
                     b.ToTable("billing_subscriptions", (string)null);
                 });
@@ -410,6 +439,16 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("text")
                         .HasColumnName("external_subject_id");
 
+                    b.Property<bool>("HoldsSeat")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("holds_seat");
+
+                    b.Property<DateTimeOffset?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("removed_at");
+
                     b.Property<Guid>("SiteId")
                         .HasColumnType("uuid")
                         .HasColumnName("site_id");
@@ -427,11 +466,12 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SiteId");
-
                     b.HasIndex("ExternalSubjectId", "SiteId")
                         .IsUnique()
                         .HasFilter("external_subject_id IS NOT NULL");
+
+                    b.HasIndex("SiteId", "RemovedAt")
+                        .HasDatabaseName("ix_operators_site_id_removed_at");
 
                     b.ToTable("operators", (string)null);
                 });

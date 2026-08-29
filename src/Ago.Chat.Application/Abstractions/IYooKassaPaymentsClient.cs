@@ -12,6 +12,16 @@
 public interface IYooKassaPaymentsClient
 {
     Task<CreatePaymentResult> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
+
+    /// <summary>`13-03`: the recurring-charge half - a "charge on file" payment against a
+    /// <see cref="BillingSubscription.PaymentMethodId"/> a prior <see cref="CreatePaymentAsync"/> call
+    /// already saved (`save_payment_method = true`), with no `confirmation` object and nobody's browser
+    /// involved: ЮKassa's own documented shape for a merchant-initiated recurring payment. Used by both
+    /// the recurring-charge job (an on-time renewal, a `PastDue` retry) and a mid-cycle upgrade's own
+    /// immediate prorated charge - every caller in this codebase that charges a seat count already on
+    /// file, rather than starting a fresh checkout.</summary>
+    Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
+        ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken);
 }
 
 /// <summary><paramref name="IdempotenceKey"/> is this call's own retry-safety, not the webhook ledger's
@@ -36,4 +46,27 @@ public abstract record CreatePaymentResult
     public sealed record Success(string PaymentId, string ConfirmationUrl) : CreatePaymentResult;
 
     public sealed record Refused(string Reason) : CreatePaymentResult;
+}
+
+/// <summary>`13-03`: <paramref name="IdempotenceKey"/> carries the same job here as
+/// <see cref="CreatePaymentRequest.IdempotenceKey"/> does for a checkout, with an extra duty: this
+/// codebase's own recurring-charge job derives it deterministically from
+/// <c>(BillingSubscriptionId, attempt date)</c> rather than a fresh id per call
+/// (`SubscriptionRenewalApplier`'s own remarks) - the reason is not "the network might retry this exact
+/// HTTP request" (true here too), but "two `Ago.Chat.Worker` replicas might both decide the same
+/// subscription is due on the same day". A deterministic key turns that race into ЮKassa itself
+/// returning the one real payment's result twice, rather than two real charges.</summary>
+public sealed record ChargeStoredPaymentMethodRequest(decimal AmountRub, string Description, string PaymentMethodId, string IdempotenceKey);
+
+/// <summary>The identical terminal/transient split <see cref="CreatePaymentResult"/> already
+/// establishes, for the charge-on-file shape.</summary>
+public abstract record ChargeStoredPaymentMethodResult
+{
+    private ChargeStoredPaymentMethodResult()
+    {
+    }
+
+    public sealed record Success(string PaymentId) : ChargeStoredPaymentMethodResult;
+
+    public sealed record Refused(string Reason) : ChargeStoredPaymentMethodResult;
 }

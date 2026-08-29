@@ -76,7 +76,7 @@ public sealed class BillingWebhookApplier(AgoChatDbContext db, IOutboxWriter out
         switch (request.EventType)
         {
             case PaymentSucceededEvent:
-                subscription.MarkSucceeded(request.PaymentMethodId);
+                subscription.MarkSucceeded(request.PaymentMethodId, request.Now);
 
                 var site = await db.Sites.FirstOrDefaultAsync(s => s.Id == subscription.SiteId, cancellationToken);
                 if (site is null)

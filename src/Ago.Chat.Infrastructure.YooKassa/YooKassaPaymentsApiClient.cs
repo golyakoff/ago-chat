@@ -71,5 +71,48 @@ public sealed class YooKassaPaymentsApiClient(HttpClient httpClient) : IYooKassa
             null, response.StatusCode);
     }
 
+    /// <summary>`13-03`: the charge-on-file half - same endpoint, same terminal/transient split as
+    /// <see cref="CreatePaymentAsync"/>, no `confirmation` object in the request and no
+    /// `confirmation_url` expected back in the response (there is no browser to redirect).</summary>
+    public async Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
+        ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "payments")
+        {
+            Content = JsonContent.Create(new YooKassaChargeStoredPaymentMethodRequest(
+                Amount: new YooKassaAmount(request.AmountRub.ToString("F2", CultureInfo.InvariantCulture), "RUB"),
+                Capture: true,
+                PaymentMethodId: request.PaymentMethodId,
+                Description: request.Description)),
+        };
+        httpRequest.Headers.Add("Idempotence-Key", request.IdempotenceKey);
+
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadFromJsonAsync<YooKassaPaymentResponse>(cancellationToken);
+            if (body?.Id is not { Length: > 0 } paymentId)
+            {
+                throw new HttpRequestException(
+                    $"ЮKassa charge-on-file returned {(int)response.StatusCode} with no payment id.");
+            }
+
+            return new ChargeStoredPaymentMethodResult.Success(paymentId);
+        }
+
+        if (TerminalRefusalStatusCodes.Contains(response.StatusCode))
+        {
+            var error = await response.Content.ReadFromJsonAsync<YooKassaErrorResponse>(cancellationToken);
+            return new ChargeStoredPaymentMethodResult.Refused(
+                $"ЮKassa refused the charge ({(int)response.StatusCode}): {error?.Description ?? error?.Code ?? "no reason given"}");
+        }
+
+        var transientErrorText = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException(
+            $"ЮKassa API returned {(int)response.StatusCode} for POST payments (charge on file): {Truncate(transientErrorText)}",
+            null, response.StatusCode);
+    }
+
     private static string Truncate(string text) => text.Length > 500 ? text[..500] : text;
 }

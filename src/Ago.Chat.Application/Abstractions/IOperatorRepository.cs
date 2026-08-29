@@ -16,6 +16,16 @@ public interface IOperatorRepository
     /// for <paramref name="siteId"/> specifically, even if it holds one for a different site - the
     /// caller must never fall back to a different tenancy on a miss (`adr/0068`'s own "never
     /// misdirect" invariant, `tenant-isolation.md`'s worst-case failure mode).
+    ///
+    /// <para><b>`13-03`: only a row with <see cref="Operator.HoldsSeat"/> and no
+    /// <see cref="Operator.RemovedAt"/> is ever returned.</b> This is the mechanism behind
+    /// `Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`'s own sign-in-blocking behaviour - a
+    /// seat-less or removed operator resolves to no <see cref="Operator"/> here, which
+    /// `ResolveOperatorIdentityHandler` already turns into "no `OperatorId` claim added", the exact same
+    /// shape as no row existing at all (`decisions/0006`'s "only the owner and as many operators as are
+    /// paid for can sign in"). No new policy code needed anywhere above this query - the same "the query
+    /// itself is the source of truth" discipline `adr/0068`'s own remarks already establish for the
+    /// `RequestedSiteId` case.</para>
     /// </summary>
     Task<Operator?> GetByExternalSubjectIdAndSiteIdAsync(string externalSubjectId, SiteId siteId, CancellationToken cancellationToken);
 
@@ -28,6 +38,12 @@ public interface IOperatorRepository
     /// or "more than one with no site requested" are three genuinely different answers -
     /// <see cref="ResolveOperatorIdentityHandler"/> is where that distinction is made, never here;
     /// this method's only job is to return every row, honestly.
+    ///
+    /// <para>`13-03`: "every row" here means every row this identity may still sign in with - the same
+    /// <see cref="Operator.HoldsSeat"/>/<see cref="Operator.RemovedAt"/> filter
+    /// <see cref="GetByExternalSubjectIdAndSiteIdAsync"/>'s own remarks describe, for the identical
+    /// reason: a tenancy this identity administers but cannot currently sign in to is not a real answer
+    /// to "which site should this token resolve to".</para>
     /// </summary>
     Task<IReadOnlyList<Operator>> ListByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken);
 
@@ -59,10 +75,28 @@ public interface IOperatorRepository
     /// external principal resolves to".</summary>
     Task<Operator?> GetByIdAsync(OperatorId id, CancellationToken cancellationToken);
 
-    /// <summary>Persists a <see cref="Operator"/> mutated via <see cref="Operator.GoOnline"/>/
-    /// <see cref="Operator.GoOffline"/>. Always called on an entity this same request already loaded
-    /// through <see cref="GetByIdAsync"/>, so EF's change tracking is what actually writes the row -
-    /// no concurrency token on this table (`OperatorConfiguration`), so unlike
-    /// `IConversationRepository.SaveAsync` there is nothing here to retry.</summary>
+    /// <summary>`13-03`: the same by-id lookup, scoped to a site - `ToggleOperatorSeatHandler`/
+    /// `RemoveOperatorHandler` both act on an operator named by a site's own administrator, and both
+    /// must refuse an id that resolves to a real operator on a *different* site rather than silently
+    /// finding it anyway (the identical cross-tenant-misdirection concern `adr/0068`'s own remarks name
+    /// for the resolution path above). <see langword="null"/> for either "no such operator" or "that
+    /// operator belongs to a different site" - deliberately the same answer for both, so a caller
+    /// cannot use this method to probe whether an id exists at all.</summary>
+    Task<Operator?> GetByIdAsync(OperatorId id, SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>`13-03`: the over-seats condition's own read -
+    /// `count(operators where HoldsSeat AND RemovedAt IS NULL)` for one site. A derived, read-time
+    /// count, not a stored counter (this item's own Scope: "computed at read time, not a stored flag") -
+    /// `GetSeatAssignmentSummaryHandler`'s only caller, and `ToggleOperatorSeatHandler`'s own capacity
+    /// guard before assigning one more seat.</summary>
+    Task<int> CountHeldSeatsAsync(SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>Persists an <see cref="Operator"/> mutated via <see cref="Operator.GoOnline"/>/
+    /// <see cref="Operator.GoOffline"/>/<see cref="Operator.ToggleSeat"/>/<see cref="Operator.Remove"/>.
+    /// Always called on an entity this same request already loaded through one of the
+    /// <see cref="GetByIdAsync(OperatorId,System.Threading.CancellationToken)"/> overloads, so EF's
+    /// change tracking is what actually writes the row - no concurrency token on this table
+    /// (`OperatorConfiguration`), so unlike `IConversationRepository.SaveAsync` there is nothing here to
+    /// retry.</summary>
     Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken);
 }

@@ -21,6 +21,15 @@ public sealed record YooKassaCreatePaymentRequest(
     [property: JsonPropertyName("save_payment_method")] bool SavePaymentMethod,
     [property: JsonPropertyName("description")] string Description);
 
+/// <summary>`13-03`: the charge-on-file shape - no `confirmation` object (nobody's browser is involved)
+/// and `payment_method_id` in place of `save_payment_method`, ЮKassa's own documented request shape for
+/// a merchant-initiated recurring payment against a previously saved method.</summary>
+public sealed record YooKassaChargeStoredPaymentMethodRequest(
+    [property: JsonPropertyName("amount")] YooKassaAmount Amount,
+    [property: JsonPropertyName("capture")] bool Capture,
+    [property: JsonPropertyName("payment_method_id")] string PaymentMethodId,
+    [property: JsonPropertyName("description")] string Description);
+
 public sealed record YooKassaAmount(
     [property: JsonPropertyName("value")] string Value,
     [property: JsonPropertyName("currency")] string Currency);

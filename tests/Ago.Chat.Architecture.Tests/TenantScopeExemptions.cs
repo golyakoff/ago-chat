@@ -203,6 +203,18 @@ internal static class TenantScopeExemptions
             + "no principal to check a permission for - nobody asked for this write, ЮKassa's own webhook delivery "
             + "did, the same 'no principal' category SendOfflineAutoReplyHandler/DeliverChannelMessageHandler above "
             + "are in for the identical reason.",
+        ["Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewalHandler.HandleAsync"] =
+            "`13-03`, worker side (Ago.Chat.Worker), the same category as AutoCloseConversationHandler above: the "
+            + "only input is a BillingSubscriptionId that SubscriptionRenewalJob's own candidate scan "
+            + "(IBillingSubscriptionRepository.ListDueForRenewalAsync) already restricted to rows due for renewal "
+            + "or retry by reading billing_subscriptions.status/current_period_end/last_renewal_attempt_at, not a "
+            + "claim a caller supplies. The site this handler's own applier (ISubscriptionRenewalApplier) ends up "
+            + "writing to is never a value this call carries at all - it comes from subscription.SiteId, a fact "
+            + "CreateCheckoutSessionHandler (gated by SiteConfigure) and BillingWebhookApplier (a verified ЮKassa "
+            + "webhook) already established when that row was created and first activated, exactly the "
+            + "'site is a fact established by our own prior write' category ProcessYooKassaWebhookHandler right "
+            + "above is in. There is also no principal to check a permission for: nobody asked for this renewal "
+            + "attempt, a scheduled job did.",
 
         // ---------------------------------------------------------------------------------------
         // The one deliberate cross-tenant read in the codebase.
