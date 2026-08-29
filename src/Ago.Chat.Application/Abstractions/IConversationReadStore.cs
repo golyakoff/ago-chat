@@ -31,8 +31,15 @@ public interface IConversationReadStore
     /// only grows, which is exactly the "paginated, potentially-large read" case this read store
     /// exists for, so this lives here rather than as a third method on the write-side repository.
     /// </summary>
+    /// <summary><paramref name="tagId"/>: `18-04`'s own list filter, <see langword="null"/> means
+    /// unfiltered - pushed into this method's own query rather than applied after paging, unlike
+    /// `GetOperatorQueueHandler`'s in-memory filter over its two small, unpaginated reads. This read
+    /// is the one genuinely paginated list on this table (an admin's whole site history, unbounded),
+    /// so filtering after a page was already cut would return fewer than <paramref name="pageSize"/>
+    /// items whenever a tag is rare, with no way for the caller to tell "this page is short" apart
+    /// from "this is the last page".</summary>
     Task<ConversationListPage> GetAllForSiteAsync(
-        SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken);
+        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken);
 
     /// <summary>
     /// `16-02`: one conversation by id, scoped to <paramref name="siteId"/> - <see langword="null"/>

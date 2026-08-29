@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.CannedResponses;
+using Ago.Chat.Api.Notes;
+using Ago.Chat.Api.Tags;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Billing;
 using Ago.Chat.Api.Channels;
@@ -377,6 +379,9 @@ app.MapWidgetConfigEndpoints();
 app.MapOfflineAutoReplyEndpoints();
 // `18-03`
 app.MapCannedResponseEndpoints();
+// `18-04`
+app.MapNoteEndpoints();
+app.MapTagEndpoints();
 app.MapSitesEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();

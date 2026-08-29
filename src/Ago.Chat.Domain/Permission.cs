@@ -79,5 +79,25 @@ public readonly record struct Permission(string Value)
     // notes for why the seed script's restatement was not reached by this change.
     public static readonly Permission SiteExport = new("site:export");
 
+    // `18-04`: dedicated, not a reuse of ConversationSend - the same granular-permission reasoning
+    // ConversationClose/ConversationAssign already draw for themselves. A note is never sent to the
+    // visitor, so "may send a message" is not the same capability as "may write about this
+    // conversation for the operator team" - a future custom role could plausibly grant one without
+    // the other. Reading a note reuses ConversationRead deliberately: a note is context for whoever
+    // can already see the conversation, not a separately-gated capability, and it is never reachable
+    // by anyone who lacks ConversationRead in the first place (there is no code path from a note back
+    // to a caller who has not already passed that check).
+    public static readonly Permission ConversationNoteWrite = new("conversation:note_write");
+
+    // `18-04`: dedicated rather than folded into ConversationAssign - tagging is a labelling action,
+    // not a routing one (this item's own Out-of-scope: tags carry no meaning to automation), so the
+    // same granular-permission reasoning applies again: a future role that may tag conversations for
+    // later search without being trusted to reassign them is a plausible split. Applying/removing a
+    // tag on a conversation is gated by this; creating, renaming and deleting the tag vocabulary
+    // itself reuses SiteConfigure, the same "small per-site management surface" permission
+    // `CannedResponse`'s own read/write pair already uses - a new vocabulary entry is a site
+    // configuration change, not a per-conversation action.
+    public static readonly Permission ConversationTag = new("conversation:tag");
+
     public override string ToString() => Value;
 }

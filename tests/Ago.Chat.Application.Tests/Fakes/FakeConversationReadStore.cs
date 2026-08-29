@@ -8,8 +8,15 @@ namespace Ago.Chat.Application.Tests.Fakes;
 public sealed class FakeConversationReadStore : IConversationReadStore
 {
     private readonly Dictionary<ConversationId, Conversation> _bySource = [];
+    private readonly Dictionary<TagId, HashSet<ConversationId>> _taggedBy = [];
 
     public void Seed(Conversation conversation) => _bySource[conversation.Id] = conversation;
+
+    /// <summary>`18-04`: mirrors the real `conversation_tags` join for
+    /// <see cref="GetAllForSiteAsync"/>'s own filter - a test seeds this the same way it seeds a
+    /// conversation, without needing a real Postgres.</summary>
+    public void SeedTag(ConversationId conversationId, TagId tagId) =>
+        (_taggedBy.TryGetValue(tagId, out var set) ? set : _taggedBy[tagId] = []).Add(conversationId);
 
     public Task<ConversationHistoryPage> GetHistoryAsync(
         ConversationId conversationId, int? beforeSequence, int pageSize, CancellationToken cancellationToken)
@@ -43,10 +50,11 @@ public sealed class FakeConversationReadStore : IConversationReadStore
     /// over whatever this fake was seeded with for the requested site - good enough to test a
     /// handler's own access-check and paging-forwarding logic without a real Postgres.</summary>
     public Task<ConversationListPage> GetAllForSiteAsync(
-        SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken)
+        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken)
     {
         var items = _bySource.Values
             .Where(c => c.SiteId == siteId && (beforeId is null || c.Id.Value.CompareTo(beforeId) < 0))
+            .Where(c => tagId is null || (_taggedBy.TryGetValue(tagId.Value, out var set) && set.Contains(c.Id)))
             .OrderByDescending(c => c.Id.Value)
             .Take(pageSize)
             .Select(c => new ConversationSummaryItem(

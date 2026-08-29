@@ -46,11 +46,27 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         var (adminOperatorId, subjectId) = await SeedAdminOperatorAsync(siteId);
         var (conversationId, objectKey, thumbnailKey) = await SeedConversationWithAttachmentAsync(siteId);
 
+        // `18-04`: a note and a tag - both personal data about this tenant's visitor, so both must be
+        // gone once the whole account is erased, tag *vocabulary* included this time (unlike the
+        // narrower single-conversation case, there is no other conversation left for it to survive
+        // for).
+        var tagId = await SeedTagAsync(siteId, "priority");
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new TagRepository(db).AddToConversationAsync(conversationId, tagId, CancellationToken.None);
+            await new NoteRepository(db).SaveAsync(
+                ConversationNote.Write(new ConversationNoteId(Guid.NewGuid()), conversationId, adminOperatorId, "erasure test note", Now),
+                CancellationToken.None);
+        }
+
         Assert.True(await fixture.UserExistsAsync(subjectId));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(thumbnailKey), CancellationToken.None));
         Assert.Equal(2, await CountAsync("select count(*) from messages where conversation_id = @conversationId", conversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from attachments where conversation_id = @conversationId", conversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_notes where conversation_id = @conversationId", conversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @conversationId", conversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from tags where id = @siteId", tagId.Value));
 
         // The real HTTP-facing write: permission-checked, one flag set, no deletion here.
         var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
@@ -95,6 +111,15 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(0, await CountAsync("select count(*) from operators where site_id = @siteId", siteId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from roles where site_id = @siteId", siteId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from visitors where site_id = @siteId", siteId.Value));
+        // `18-04`: the note and the tag *association* are drained per-conversation by
+        // ConversationErasureJob (the same table this test already proves for messages/attachments
+        // above), and the tag *definition* itself is gone too - the only other conversation that could
+        // have kept it alive never existed in this test, so SiteErasureQuery.DeleteSiteAsync's own
+        // cascade is what removes it (SiteErasureQuery's own remarks on why `tags` is the one table in
+        // its cascade list that still had rows at that point).
+        Assert.Equal(0, await CountAsync("select count(*) from conversation_notes where conversation_id = @conversationId", conversationId.Value));
+        Assert.Equal(0, await CountAsync("select count(*) from conversation_tags where conversation_id = @conversationId", conversationId.Value));
+        Assert.Equal(0, await CountAsync("select count(*) from tags where site_id = @siteId", siteId.Value));
 
         // MinIO: both the object and 5-04's thumbnail beside it.
         Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));
@@ -207,6 +232,14 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
             });
 
         return (conversation.Id, objectKey, thumbnailKey);
+    }
+
+    private async Task<TagId> SeedTagAsync(SiteId siteId, string name)
+    {
+        var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
+        await using var db = fixture.CreateDbContext();
+        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        return tag.Id;
     }
 
     private async Task<int> CountAsync(string sql, Guid id)

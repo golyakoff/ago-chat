@@ -55,12 +55,18 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // already creation order, the same single-column cursor GetHistoryAsync uses `sequence` for.
     // No state filter, unlike ix_conversations_waiting - this is the admin's "every conversation"
     // read, backed by the new ix_conversations_site_all index (ConversationConfiguration).
+    // `18-04`: the `exists(...)` clause is only ever added in spirit - Dapper always sends
+    // @TagId (null when unfiltered), and `@TagId is null or exists(...)` short-circuits to a plain
+    // site-scoped scan for the unfiltered case, the same "one statement handles both" shape
+    // `GetHistoryAsync`'s own `@BeforeSequence is null or ...` clause already uses on this file.
     private const string AllForSiteSql = """
         select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
                created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount"
-        from conversations
+        from conversations c
         where site_id = @SiteId
           and (@BeforeId is null or id < @BeforeId)
+          and (@TagId is null or exists(
+              select 1 from conversation_tags ct where ct.conversation_id = c.id and ct.tag_id = @TagId))
         order by id desc
         limit @PageSize
         """;
@@ -165,13 +171,13 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     }
 
     public async Task<ConversationListPage> GetAllForSiteAsync(
-        SiteId siteId, Guid? beforeId, int pageSize, CancellationToken cancellationToken)
+        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var rows = await connection.QueryAsync<ConversationSummaryRow>(new CommandDefinition(
             AllForSiteSql,
-            new { SiteId = siteId.Value, BeforeId = beforeId, PageSize = pageSize },
+            new { SiteId = siteId.Value, BeforeId = beforeId, PageSize = pageSize, TagId = tagId.HasValue ? tagId.Value.Value : (Guid?)null },
             cancellationToken: cancellationToken));
 
         var items = rows.Select(ToSummaryItem).ToList();
