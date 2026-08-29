@@ -83,7 +83,10 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         Assert.Equal(2, roles.Count);
         var operatorRole = Assert.Single(roles, r => r.Name == "Operator");
         Assert.Equal(
-            [Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value],
+            [
+                Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
+                Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+            ],
             operatorRole.Permissions);
         var adminRole = Assert.Single(roles, r => r.Name == "Admin");
         Assert.Equal(

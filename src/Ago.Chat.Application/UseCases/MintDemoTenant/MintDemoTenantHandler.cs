@@ -56,8 +56,14 @@ public sealed class MintDemoTenantHandler(
     // seed script and that handler already each hold a copy, so a shared constant would still have to
     // match two independent restatements. A demo operator gets both roles - the point of the demo is
     // to show the console, and half a console is a worse demonstration than none.
+    // `18-04`: ConversationNoteWrite/ConversationTag join the Operator set here too, restated for the
+    // same reason `RegisterSiteHandler`'s own array is restated rather than shared - found missing
+    // 2026-08-29 while landing that item; see that class's own remarks for why this is Operator-level.
     private static readonly string[] OperatorRolePermissions =
-        [Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value];
+        [
+            Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
+            Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+        ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too, the same restatement this
     // class's own remarks already accept - a demo operator gets the full Admin capability set, "half a

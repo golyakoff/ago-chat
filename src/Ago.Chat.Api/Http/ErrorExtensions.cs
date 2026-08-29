@@ -22,7 +22,10 @@ public static class ErrorExtensions
                 // `18-02`: deliberately the same 404 group as Conversation.NotFound, not its own
                 // bucket - ConversationErrors.TransferTargetNotEligible's own remarks on why a
                 // wrong-tenant or ineligible operator must read exactly like one that does not exist.
-                or "Conversation.TransferTargetNotEligible" => StatusCodes.Status404NotFound,
+                or "Conversation.TransferTargetNotEligible"
+                // `18-04`: same "wrong tenant reads like no such row" info-hiding shape - a tag id
+                // from a different site is indistinguishable from one that never existed.
+                or "Tag.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
@@ -34,7 +37,10 @@ public static class ErrorExtensions
                 or "Conversation.TransferTargetIsCurrentOperator"
                 // `18-03`: CannedResponseEndpoints' own PUT - an empty/oversized title or body, or too
                 // many responses, is the caller's mistake to fix, not a server failure.
-                or "CannedResponse.Invalid" => StatusCodes.Status400BadRequest,
+                or "CannedResponse.Invalid"
+                // `18-04`: the same "caller's mistake to fix" shape - an empty/oversized note body or
+                // tag name.
+                or "ConversationNote.Invalid" or "Tag.Invalid" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -43,7 +49,10 @@ public static class ErrorExtensions
                 // TransferTargetAtCapacity is not 402 like OperatorInviteSeatLimitReached: there is no
                 // purchase that adds room to one specific operator right now (ConversationErrors'
                 // own remarks on why).
-                or "Conversation.TransferTargetAtCapacity" or "Conversation.TransferContended" => StatusCodes.Status409Conflict,
+                or "Conversation.TransferTargetAtCapacity" or "Conversation.TransferContended"
+                // `18-04`: a real conflict with existing data (a duplicate name), not a malformed
+                // request - ConversationErrors.TagAlreadyExists's own remarks.
+                or "Tag.AlreadyExists" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             "OperatorInvite.Expired" => StatusCodes.Status410Gone,

@@ -50,7 +50,10 @@ public class RegisterSiteHandlerTests
 
         Assert.Equal("Operator", registration.OperatorRole.Name);
         Assert.Equal(
-            [Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value],
+            [
+                Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
+                Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+            ],
             registration.OperatorRole.Permissions);
 
         Assert.Equal("Admin", registration.AdminRole.Name);

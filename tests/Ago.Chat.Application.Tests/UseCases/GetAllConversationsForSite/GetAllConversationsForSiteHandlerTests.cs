@@ -41,6 +41,25 @@ public class GetAllConversationsForSiteHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WithATagFilter_ReturnsOnlyConversationsCarryingThatTag()
+    {
+        var (handler, readStore) = CreateFixture();
+        var tagged = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        var untagged = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        readStore.Seed(tagged);
+        readStore.Seed(untagged);
+        var tagId = new TagId(Guid.NewGuid());
+        readStore.SeedTag(tagged.Id, tagId);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(AdminId, SiteId, null, 50, tagId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(tagged.Id.Value, Assert.Single(result.Value.Conversations).ConversationId);
+    }
+
+    [Fact]
     public async Task HandleAsync_WithoutSiteConfigure_ReturnsForbidden()
     {
         var (handler, _) = CreateFixture(grantPermission: false);

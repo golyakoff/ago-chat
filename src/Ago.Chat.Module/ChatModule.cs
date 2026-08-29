@@ -11,7 +11,16 @@ using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+using Ago.Chat.Application.UseCases.AddConversationNote;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.CreateTag;
+using Ago.Chat.Application.UseCases.DeleteTag;
+using Ago.Chat.Application.UseCases.GetConversationNotes;
+using Ago.Chat.Application.UseCases.GetConversationTags;
+using Ago.Chat.Application.UseCases.ListTags;
+using Ago.Chat.Application.UseCases.RenameTag;
+using Ago.Chat.Application.UseCases.TagConversation;
+using Ago.Chat.Application.UseCases.UntagConversation;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
@@ -514,6 +523,23 @@ public sealed class ChatModule : IProductModule
         // (Site.UpdateCannedResponses's own remarks on why there is no consumer to wire up).
         services.AddScoped<GetCannedResponsesHandler>();
         services.AddScoped<UpdateCannedResponsesHandler>();
+
+        // `18-04`: notes and tags. AddConversationNoteHandler/GetConversationNotesHandler are the
+        // only two handlers in this codebase that ever resolve INoteRepository - see that interface's
+        // own remarks on why that narrowness is the leak-proofing itself, not an implementation
+        // detail. The tag trio (Create/Rename/Delete) backs the management surface
+        // (`site:configure`-gated, the same shape as the canned-response pair above); ListTags/
+        // GetConversationTags/TagConversation/UntagConversation back the console's queue filter and
+        // per-conversation tag picker.
+        services.AddScoped<AddConversationNoteHandler>();
+        services.AddScoped<GetConversationNotesHandler>();
+        services.AddScoped<CreateTagHandler>();
+        services.AddScoped<RenameTagHandler>();
+        services.AddScoped<DeleteTagHandler>();
+        services.AddScoped<ListTagsHandler>();
+        services.AddScoped<GetConversationTagsHandler>();
+        services.AddScoped<TagConversationHandler>();
+        services.AddScoped<UntagConversationHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

@@ -23,6 +23,8 @@ internal static class IdConverters
     public static readonly ValueConverter<OperatorInviteId, Guid> OperatorInvite = new(id => id.Value, value => new OperatorInviteId(value));
     public static readonly ValueConverter<BillingSubscriptionId, Guid> BillingSubscription = new(id => id.Value, value => new BillingSubscriptionId(value));
     public static readonly ValueConverter<BillingWebhookEventId, Guid> BillingWebhookEvent = new(id => id.Value, value => new BillingWebhookEventId(value));
+    public static readonly ValueConverter<ConversationNoteId, Guid> ConversationNote = new(id => id.Value, value => new ConversationNoteId(value));
+    public static readonly ValueConverter<TagId, Guid> Tag = new(id => id.Value, value => new TagId(value));
 
     public static readonly ValueConverter<OperatorId?, Guid?> NullableOperator = new(
         id => id.HasValue ? id.Value.Value : (Guid?)null,

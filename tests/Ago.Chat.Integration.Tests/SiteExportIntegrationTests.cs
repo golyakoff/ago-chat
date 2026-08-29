@@ -48,6 +48,16 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
         var channelAddress = await SeedChannelIdentityAsync(siteId, visitorId);
         var (attachmentBytes, attachmentObjectKey) = await SeedAttachmentAsync(siteId, conversationId, messageIds[0]);
 
+        // `18-04`: a note and a tag - both in scope for export, SiteExportArchiveWriter's own remarks.
+        var tagId = await SeedTagAsync(siteId, "vip");
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new TagRepository(db).AddToConversationAsync(conversationId, tagId, CancellationToken.None);
+            await new NoteRepository(db).SaveAsync(
+                ConversationNote.Write(new ConversationNoteId(Guid.NewGuid()), conversationId, operatorId, "export test note", Now),
+                CancellationToken.None);
+        }
+
         // The real HTTP-facing write: permission-checked, rate-limited, one row inserted, no
         // packaging here.
         var exportRequests = new ExportRequestRepository(fixture.DataSource);
@@ -100,7 +110,11 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
         Assert.Equal(siteId.Value, manifest.GetProperty("siteId").GetGuid());
         var stores = manifest.GetProperty("stores").EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(
-            new[] { "site", "operators", "visitors", "channelIdentities", "conversations", "messages", "attachments" },
+            new[]
+            {
+                "site", "operators", "visitors", "channelIdentities", "conversations", "messages", "attachments",
+                "notes", "tags", "conversationTags",
+            },
             stores);
 
         // site.json
@@ -151,6 +165,24 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
         // Sanity: the object key this test asserted against MinIO metadata for is the same one the
         // archive's own attachment row was built from.
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(attachmentObjectKey), CancellationToken.None));
+
+        // `18-04`: notes.jsonl, tags.jsonl, conversation_tags.jsonl - the note's own body, the tag's
+        // own name, and the association linking them to this conversation.
+        var noteRows = await ReadJsonLinesAsync(archive, "notes.jsonl");
+        var noteRow = Assert.Single(noteRows);
+        Assert.Equal(conversationId.Value, noteRow.GetProperty("conversationId").GetGuid());
+        Assert.Equal(operatorId.Value, noteRow.GetProperty("authorId").GetGuid());
+        Assert.Equal("export test note", noteRow.GetProperty("body").GetString());
+
+        var tagRows = await ReadJsonLinesAsync(archive, "tags.jsonl");
+        var tagRow = Assert.Single(tagRows);
+        Assert.Equal(tagId.Value, tagRow.GetProperty("id").GetGuid());
+        Assert.Equal("vip", tagRow.GetProperty("name").GetString());
+
+        var conversationTagRows = await ReadJsonLinesAsync(archive, "conversation_tags.jsonl");
+        var conversationTagRow = Assert.Single(conversationTagRows);
+        Assert.Equal(conversationId.Value, conversationTagRow.GetProperty("conversationId").GetGuid());
+        Assert.Equal(tagId.Value, conversationTagRow.GetProperty("tagId").GetGuid());
     }
 
     [Fact]
@@ -359,6 +391,14 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
         }
 
         return lines;
+    }
+
+    private async Task<TagId> SeedTagAsync(SiteId siteId, string name)
+    {
+        var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
+        await using var db = fixture.CreateDbContext();
+        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        return tag.Id;
     }
 
     private async Task<int> CountAsync(string sql, Guid id)
