@@ -30,6 +30,13 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<ConversationNote> ConversationNotes => Set<ConversationNote>();
     public DbSet<Tag> Tags => Set<Tag>();
     internal DbSet<ConversationTagRecord> ConversationTags => Set<ConversationTagRecord>();
+    // `20-07`: EnabledModule has a real direct writer (EnabledModuleRepository); ModuleTask does not -
+    // it is reached only through Conversation's own "_moduleTasks" navigation
+    // (ConversationConfiguration), the identical "migration-scaffolding only" shape MessageArchives
+    // and ExportRequests above use, for the identical reason - nothing ever queries this DbSet on its
+    // own, only EF's own migration tooling needs it registered to generate the table.
+    public DbSet<EnabledModule> EnabledModules => Set<EnabledModule>();
+    internal DbSet<ModuleTask> ModuleTasks => Set<ModuleTask>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

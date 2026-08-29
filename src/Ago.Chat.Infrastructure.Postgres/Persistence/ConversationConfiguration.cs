@@ -65,6 +65,16 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
             .OnDelete(DeleteBehavior.Cascade);
         builder.Navigation("_messages").UsePropertyAccessMode(PropertyAccessMode.Field);
 
+        // `20-07`: the identical shape, one release later - ActiveModuleTask is computed from the same
+        // private-field navigation _moduleTasks reads, per ModuleTask.cs's own remarks on why this
+        // aggregate is the only place a module task is constructed or mutated.
+        builder.Ignore(c => c.ActiveModuleTask);
+        builder.HasMany<ModuleTask>("_moduleTasks")
+            .WithOne()
+            .HasForeignKey(t => t.ConversationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Navigation("_moduleTasks").UsePropertyAccessMode(PropertyAccessMode.Field);
+
         // In-memory-only facts (1-01) - nothing publishes them yet (outbox is Stage 2), so there is
         // nothing here for EF to persist.
         builder.Ignore(c => c.DomainEvents);

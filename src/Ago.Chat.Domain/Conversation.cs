@@ -15,6 +15,13 @@ public sealed class Conversation
     private readonly List<Message> _messages = [];
     private readonly List<IDomainEvent> _domainEvents = [];
 
+    /// <summary>`20-07`: every module task this conversation has ever held, open or closed - EF's own
+    /// navigation, materialized by reflection exactly like <see cref="_messages"/> (this type's own
+    /// remarks on the private parameterless constructor). Public access is through
+    /// <see cref="ActiveModuleTask"/>; nothing outside this aggregate needs the closed history today,
+    /// so there is no public "all tasks" accessor to keep in sync with an invariant nobody reads yet.</summary>
+    private readonly List<ModuleTask> _moduleTasks = [];
+
     public ConversationId Id { get; }
 
     public SiteId SiteId { get; }
@@ -80,6 +87,11 @@ public sealed class Conversation
     public IReadOnlyList<Message> Messages => _messages;
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
+
+    /// <summary>`20-07`/`adr/0065` decision 7: "at most one active task per conversation. While it is
+    /// active, input goes to the module." <see langword="null"/> for the overwhelming majority of
+    /// conversations, which never enter a module task at all.</summary>
+    public ModuleTask? ActiveModuleTask => _moduleTasks.FirstOrDefault(t => t.State == ModuleTaskState.Open);
 
     private Conversation(ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now)
     {
@@ -334,12 +346,22 @@ public sealed class Conversation
     /// skipped, mis-ordered or retried around. See <see cref="MessageAuthorKind.System"/>'s own
     /// remarks.</para>
     ///
-    /// <para>Deliberately no <c>attachmentId</c> and no <c>content</c> parameter: a scripted reply is
-    /// prose, and a parameter with no caller is a guess about the second one.</para>
+    /// <para>Deliberately no <c>attachmentId</c> parameter: nothing has ever needed a system-authored
+    /// message with an attachment.</para>
+    ///
+    /// <para><b>`20-07`: <paramref name="content"/></b>. `14-04`'s original remarks here said a
+    /// scripted reply is prose and a content parameter had no caller - that stopped being true the
+    /// moment a module task's step needed to reach the conversation as a message: it has no visitor or
+    /// operator principal behind it any more than an offline auto-reply does (there is no chat-side
+    /// person who "sent" a booking module's confirmation card), so it is <see
+    /// cref="MessageAuthorKind.System"/> too, and it carries the same kind/payload/actions shape every
+    /// other structured message does (`adr/0061`). <see cref="Body"/> stays mandatory regardless -
+    /// <c>RouteConversationToModuleHandler</c> derives it from <see cref="PrimitiveTextRenderer"/>, so
+    /// even a module step still renders on a channel with no UI.</para>
     /// </summary>
     public Message AddSystemMessage(
         MessageId messageId, MessageBody body, DateTimeOffset now, Guid? clientMessageId = null,
-        RetentionClass? retentionClass = null)
+        RetentionClass? retentionClass = null, MessageContent? content = null)
     {
         if (State == ConversationState.Closed)
         {
@@ -348,7 +370,68 @@ public sealed class Conversation
         }
 
         return AddMessage(
-            MessageAuthorKind.System, SystemAuthorId, messageId, body, null, clientMessageId, null, now, retentionClass);
+            MessageAuthorKind.System, SystemAuthorId, messageId, body, null, clientMessageId, content, now,
+            retentionClass);
+    }
+
+    /// <summary>
+    /// `20-07`/`adr/0065` decision 7: opens the conversation's one allowed active module task. Rejects a
+    /// second start while one is already open - the invariant the whole "at most one active task"
+    /// principle rests on, enforced here rather than trusted to a caller that checked
+    /// <see cref="ActiveModuleTask"/> first and then raced another writer to this same aggregate (the
+    /// identical "the aggregate is the only place that can actually enforce its own invariant" reasoning
+    /// <see cref="AssignTo"/>'s own remarks give).
+    ///
+    /// <para><paramref name="id"/> arrives already generated, matching <see cref="AddVisitorMessage"/>'s
+    /// own <c>messageId</c> parameter - Domain has no <see cref="Guid.NewGuid"/> of its own
+    /// (`CLAUDE.md` rule 2), so the caller (Application, via <c>IIdGenerator</c>) mints it first.</para>
+    /// </summary>
+    public ModuleTask StartModuleTask(
+        ModuleTaskId id, ModuleKey moduleKey, string externalTaskId, DateTimeOffset now,
+        MessageContentKind? stepKind, MessagePayload? stepPayload, IReadOnlyList<MessageAction> stepActions)
+    {
+        if (State == ConversationState.Closed)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot start a module task on closed conversation {Id.Value}.");
+        }
+
+        if (ActiveModuleTask is { } active)
+        {
+            throw new InvalidConversationStateException(
+                $"Conversation {Id.Value} already has an active module task ({active.ModuleKey}); "
+                + "only one may be active at a time.");
+        }
+
+        var task = new ModuleTask(id, Id, moduleKey, externalTaskId, now, stepKind, stepPayload, stepActions);
+        _moduleTasks.Add(task);
+        return task;
+    }
+
+    /// <summary>Advances the conversation's <see cref="ActiveModuleTask"/> to a new step - the module
+    /// answered a reply with more work left to do. Throws if there is no active task: a step can only
+    /// ever follow a start, and a caller reaching this without one has already lost track of the
+    /// conversation's own state.</summary>
+    public void RecordModuleStep(MessageContentKind kind, MessagePayload? payload, IReadOnlyList<MessageAction> actions)
+    {
+        var active = ActiveModuleTask ?? throw new InvalidConversationStateException(
+            $"Conversation {Id.Value} has no active module task to record a step on.");
+        active.RecordStep(kind, payload, actions);
+    }
+
+    /// <summary>
+    /// Closes the conversation's <see cref="ActiveModuleTask"/> - the module reported completion, or the
+    /// module proved unreachable and the caller is escalating to a human (backlog item's own "unreachable
+    /// module degrades honestly into the escape to an operator"). Both callers reach the identical method:
+    /// from this aggregate's own perspective, "the module stopped receiving input" is one fact regardless
+    /// of which of the two reasons produced it - the difference is only in what message, if any, the
+    /// caller adds alongside this call.
+    /// </summary>
+    public void CloseModuleTask(DateTimeOffset now)
+    {
+        var active = ActiveModuleTask ?? throw new InvalidConversationStateException(
+            $"Conversation {Id.Value} has no active module task to close.");
+        active.Close(now);
     }
 
     /// <summary>`14-04`: the <see cref="Message.AuthorId"/> every

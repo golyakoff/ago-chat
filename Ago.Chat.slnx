@@ -7,6 +7,7 @@
     <Project Path="src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Keycloak/Ago.Chat.Infrastructure.Keycloak.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.MaxBot/Ago.Chat.Infrastructure.MaxBot.csproj" />
+    <Project Path="src/Ago.Chat.Infrastructure.Modules/Ago.Chat.Infrastructure.Modules.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Telegram/Ago.Chat.Infrastructure.Telegram.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Vk/Ago.Chat.Infrastructure.Vk.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.YooKassa/Ago.Chat.Infrastructure.YooKassa.csproj" />

@@ -144,6 +144,12 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
+    <!-- `20-07`: guard 2's own source-level scan (ModuleKeyLiteralRule) - a plain syntax-tree walk over
+         each .cs file's own text, no semantic model / no Workspaces package needed. Pinned to 5.0.0.,
+         not the newest-at-write-time; matches what Microsoft.EntityFrameworkCore.Design 10.0.11 already
+         requires transitively (found by running the build - a lower pin here produced an NU1109
+         downgrade/NU1608 error against that transitive floor). -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />

@@ -23,6 +23,7 @@ using Ago.Chat.Application.UseCases.TagConversation;
 using Ago.Chat.Application.UseCases.UntagConversation;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
+using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
@@ -63,6 +64,7 @@ using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
+using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
@@ -75,6 +77,7 @@ using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.MaxBot;
+using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
@@ -82,6 +85,7 @@ using Ago.Chat.Infrastructure.Vk;
 using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Billing;
 using Ago.Chat.Module.Channels;
+using Ago.Chat.Module.Modules;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
@@ -375,6 +379,23 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<VkChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
+        // `20-07`/`adr/0065`: the module HTTP boundary - the same "registered everywhere, resolved
+        // where it matters" shape as the channel adapters above. Unlike MAX/Telegram, HttpModuleGateway's
+        // typed HttpClient carries no BaseAddress (its own remarks: a module's entry point is a
+        // per-site, per-module value from the registry, never a fixed one this deployment configures).
+        services.AddHttpClient<HttpModuleGateway>();
+        services.AddResiliencePipelineOptions(
+            ModuleResiliencePipelines.PipelineName, configuration, ConfigureModuleResilienceDefaults);
+        services.AddSingleton(sp => new ModuleResiliencePipelines(
+            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>()
+                .Get(ModuleResiliencePipelines.PipelineName)));
+        services.AddScoped<IModuleGateway>(sp => new ResilientModuleGateway(
+            sp.GetRequiredService<HttpModuleGateway>(), sp.GetRequiredService<ModuleResiliencePipelines>()));
+        services.AddScoped<EnableModuleForSiteHandler>();
+        // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
+        // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
+        services.AddScoped<RouteConversationToModuleHandler>();
+
         // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
         // above - PricePerSeatRub deliberately ships no code default (BillingOptions' own remarks:
         // "measure or stay silent" applies with more force to a figure that charges a real card), so
@@ -605,6 +626,36 @@ public sealed class ChatModule : IProductModule
         options.Retry = new ResilienceRetryOptions
         {
             MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromMilliseconds(200),
+        };
+        options.CircuitBreaker = new ResilienceCircuitBreakerOptions
+        {
+            FailureRatio = 0.5,
+            MinimumThroughput = 4,
+            SamplingDuration = TimeSpan.FromSeconds(30),
+            BreakDuration = TimeSpan.FromSeconds(10),
+        };
+        options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 8, MaxQueuedActions = 32 };
+    }
+
+    /// <summary>
+    /// `20-07`: starting points, not measured numbers - the identical caveat every resilience default
+    /// on this page carries. Close to <see cref="ConfigureChannelResilienceDefaults"/>'s own numbers for
+    /// the same reason those are close to the webhook dispatcher's: a module call is a request/response
+    /// HTTP boundary a human is waiting on at the other end (the visitor mid-conversation), the same
+    /// shape as a channel send, not a background job's own recurring charge. The backlog item's own
+    /// Done-when also asks for an ADR recording the transport decision together with a measured step
+    /// latency - not written as part of this change (out of this change's own explicit scope; see this
+    /// repository's own report for the honest status) - whenever it is, these thresholds are what that
+    /// measurement should be taken against, not a replacement for it.
+    /// </summary>
+    private static void ConfigureModuleResilienceDefaults(ResiliencePipelineOptions options)
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromSeconds(5) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 2,
             BackoffType = DelayBackoffType.Exponential,
             Delay = TimeSpan.FromMilliseconds(200),
         };

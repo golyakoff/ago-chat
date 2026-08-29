@@ -26,6 +26,16 @@ internal static class IdConverters
     public static readonly ValueConverter<ConversationNoteId, Guid> ConversationNote = new(id => id.Value, value => new ConversationNoteId(value));
     public static readonly ValueConverter<TagId, Guid> Tag = new(id => id.Value, value => new TagId(value));
 
+    // `20-07`
+    public static readonly ValueConverter<EnabledModuleId, Guid> EnabledModule = new(id => id.Value, value => new EnabledModuleId(value));
+    public static readonly ValueConverter<ModuleTaskId, Guid> ModuleTask = new(id => id.Value, value => new ModuleTaskId(value));
+
+    /// <summary>`20-07`: <see cref="ModuleKey"/> is a plain string wrapper (like <see cref="RetentionClass"/>),
+    /// not a strongly-typed id over a <see cref="Guid"/> - listed here anyway, alongside every other
+    /// value-object converter this file owns, rather than inline per configuration, since two entities
+    /// (<see cref="Domain.EnabledModule"/>, <see cref="Domain.ModuleTask"/>) both need it.</summary>
+    public static readonly ValueConverter<ModuleKey, string> ModuleKey = new(key => key.Value, value => new ModuleKey(value));
+
     public static readonly ValueConverter<OperatorId?, Guid?> NullableOperator = new(
         id => id.HasValue ? id.Value.Value : (Guid?)null,
         value => value.HasValue ? new OperatorId(value.Value) : (OperatorId?)null);

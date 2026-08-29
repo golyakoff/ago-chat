@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `20-07`: a project of its own because a module's own wire contract is a distinct external
+       technology - `naming-and-structure.md`'s "one project per external technology" rule, the same
+       reason Ago.Chat.Infrastructure.MaxBot/Telegram exist. Everything that knows the module HTTP
+       contract's own shape (its DTOs, its two routes, its JSON naming) lives here and nowhere above
+       it. Unlike MaxBot/Telegram, there is no single fixed base URL: every call's target
+       (`EnabledModuleEndpoint.EntryPoint`) is a per-site, per-module value read from the registry, so
+       the typed HttpClient registered for this project carries no BaseAddress - see
+       HttpModuleGateway's own remarks. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+</Project>

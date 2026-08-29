@@ -54,8 +54,19 @@
     </None>
   </ItemGroup>
 
+  <!-- `20-07`: ModuleTaskGatewayIntegrationTests' own in-process fake module server - a minimal
+       Kestrel host, not a separate real process the way FakeMax/FakeCrm are (this project is a plain
+       Microsoft.NET.Sdk class library, not Sdk.Web, and a FrameworkReference is enough to get
+       WebApplication/Kestrel without switching the whole project's SDK). Deliberately lighter than the
+       FakeMax/FakeCrm technique: the claim under test (reply-by-id parity, unreachable-module
+       degrade) needs a real HTTP boundary, not a real separate OS process this test can kill. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Modules\Ago.Chat.Infrastructure.Modules.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Worker\Ago.Chat.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Api\Ago.Chat.Api.csproj" />
     <!-- `6-05`: the dispatcher under test. -->

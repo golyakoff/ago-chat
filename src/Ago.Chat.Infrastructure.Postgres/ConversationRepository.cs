@@ -10,22 +10,26 @@ public sealed class ConversationRepository(AgoChatDbContext db) : IConversationR
     public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
         db.Conversations
             .Include("_messages")
+            .Include("_moduleTasks")
             .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
 
     public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
         db.Conversations
             .Include("_messages")
+            .Include("_moduleTasks")
             .FirstOrDefaultAsync(c => c.VisitorId == visitorId && c.State != ConversationState.Closed, cancellationToken);
 
     public async Task<IReadOnlyList<Conversation>> GetAssignedToOperatorAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
         await db.Conversations
             .Include("_messages")
+            .Include("_moduleTasks")
             .Where(c => c.OperatorId == operatorId && c.State == ConversationState.Assigned)
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Conversation>> GetWaitingForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
         await db.Conversations
             .Include("_messages")
+            .Include("_moduleTasks")
             .Where(c => c.SiteId == siteId && c.State == ConversationState.Waiting)
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(cancellationToken);
