@@ -79,6 +79,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
         services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
         services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();
+        // `13-02`/`13-03`/`13-04`: the billing subscription's own read/write, and the webhook applier's
+        // one-transaction multi-aggregate write - found missing here 2026-08-29 while landing `16-04`
+        // (both types existed, and GetBillingStatusHandler/ProcessYooKassaWebhookHandler were already
+        // registered depending on them, but nothing ever registered the ports themselves - a real,
+        // unnoticed regression because no existing test resolves the full DI graph, only handlers
+        // constructed directly against a fake).
+        services.AddScoped<IBillingSubscriptionRepository, BillingSubscriptionRepository>();
+        services.AddScoped<IBillingWebhookApplier, BillingWebhookApplier>();
         // `16-02`: the erase-request write - see IErasureRequestRepository's own remarks on why it is
         // its own port rather than a method on ISiteRepository/IConversationRepository.
         services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
