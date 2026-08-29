@@ -67,4 +67,64 @@ public class OperatorTests
 
         Assert.Equal(OperatorStatus.Offline, op.Status);
     }
+
+    // `13-03`: every operator created today is created within `13-01`'s own seat-limit check and
+    // therefore already fits - HoldsSeat defaults true, RemovedAt defaults null.
+    [Fact]
+    public void Constructor_WhenValid_DefaultsHoldsSeatTrueAndRemovedAtNull()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
+
+        Assert.True(op.HoldsSeat);
+        Assert.Null(op.RemovedAt);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ToggleSeat_SetsHoldsSeat(bool holdsSeat)
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
+
+        op.ToggleSeat(holdsSeat);
+
+        Assert.Equal(holdsSeat, op.HoldsSeat);
+    }
+
+    [Fact]
+    public void Remove_WhenNotAlreadyRemoved_StampsRemovedAtAndRaisesOperatorRemoved()
+    {
+        var id = new OperatorId(Guid.NewGuid());
+        var siteId = new SiteId(Guid.NewGuid());
+        var op = new Operator(id, siteId, OperatorStatus.Offline, capacity: 5);
+        var now = new DateTimeOffset(2026, 8, 29, 12, 0, 0, TimeSpan.Zero);
+
+        op.Remove(now);
+
+        Assert.Equal(now, op.RemovedAt);
+        var raised = Assert.Single(op.DomainEvents.OfType<OperatorRemoved>());
+        Assert.Equal(id, raised.OperatorId);
+        Assert.Equal(siteId, raised.SiteId);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void Remove_WhenAlreadyRemoved_Throws()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
+        op.Remove(new DateTimeOffset(2026, 8, 29, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Throws<InvalidOperationException>(() => op.Remove(new DateTimeOffset(2026, 8, 30, 12, 0, 0, TimeSpan.Zero)));
+    }
+
+    [Fact]
+    public void ClearDomainEvents_RemovesEverythingRaised()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
+        op.Remove(new DateTimeOffset(2026, 8, 29, 12, 0, 0, TimeSpan.Zero));
+
+        op.ClearDomainEvents();
+
+        Assert.Empty(op.DomainEvents);
+    }
 }

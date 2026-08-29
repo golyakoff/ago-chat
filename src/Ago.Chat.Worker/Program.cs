@@ -190,6 +190,20 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<DemoTenantExpiryJob>();
 
+// `13-03`: the recurring monthly re-charge, retry/lapse machinery, and the operator-removal
+// conversation release - see each type's own remarks.
+builder.Services
+    .AddOptions<SubscriptionRenewalJobOptions>()
+    .Bind(builder.Configuration.GetSection(SubscriptionRenewalJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<SubscriptionRenewalJob>();
+
+builder.Services
+    .AddOptions<OperatorRemovedConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorRemovedConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorRemovedConsumer>();
+
 builder.Services
     .AddOptions<AttachmentOrphanSweepJobOptions>()
     .Bind(builder.Configuration.GetSection(AttachmentOrphanSweepJobOptions.SectionName))

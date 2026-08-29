@@ -1,6 +1,8 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.CancelSubscription;
+using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Domain;
@@ -33,7 +35,25 @@ public static class BillingEndpoints
     {
         app.MapCreateCheckoutSessionEndpoint();
         app.MapYooKassaWebhookEndpoint();
+        app.MapCancelSubscriptionEndpoint();
+        app.MapChangeSubscriptionSeatsEndpoint();
     }
+
+    /// <summary>`13-03`: `decisions/0006`'s cancellation - `RequireOperatorIdentity` +
+    /// `Permission.SiteConfigure`, the identical gate the checkout endpoint above already uses for a
+    /// billing/tier decision.</summary>
+    public static void MapCancelSubscriptionEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/cancel", HandleCancelSubscriptionAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+    /// <summary>`13-03`: `decisions/0006`'s mid-cycle seat change - a single endpoint for both an
+    /// immediate, charged upgrade and a deferred, uncharged downgrade
+    /// (<see cref="ChangeSubscriptionSeatsHandler"/>'s own remarks on why one endpoint, not two).</summary>
+    public static void MapChangeSubscriptionSeatsEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/seats", HandleChangeSubscriptionSeatsAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
 
     /// <summary>Split out from <see cref="MapBillingEndpoints"/> as its own public extension method -
     /// not the usual "one `MapXEndpoints` per feature" shape every other Endpoints class in this
@@ -111,5 +131,39 @@ public static class BillingEndpoints
         return Results.Ok();
     }
 
+    private static async Task<IResult> HandleCancelSubscriptionAsync(
+        Guid siteId,
+        Guid subscriptionId,
+        CancelSubscriptionHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new CancelSubscription(user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId)),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleChangeSubscriptionSeatsAsync(
+        Guid siteId,
+        Guid subscriptionId,
+        ChangeSubscriptionSeatsRequest request,
+        ChangeSubscriptionSeatsHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new ChangeSubscriptionSeats(
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId), request.RequestedSeats),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
     public sealed record CreateCheckoutSessionRequest(int RequestedSeats);
+
+    public sealed record ChangeSubscriptionSeatsRequest(int RequestedSeats);
 }

@@ -239,4 +239,33 @@ public static class ConversationErrors
     /// one.</summary>
     public static Error SearchInvalidQuery(string reason) =>
         new("Conversation.SearchInvalidQuery", reason);
+
+    // `13-03`: same shared vocabulary, same reason - CancelSubscriptionHandler/ChangeSubscriptionSeatsHandler
+    // add their own codes here rather than a separate error class.
+    public static Error BillingSubscriptionNotFound(Guid subscriptionId) =>
+        new("Billing.SubscriptionNotFound", $"Billing subscription {subscriptionId} was not found for this site.");
+
+    /// <summary>The subscription named is not currently active (<c>Pending</c>, already
+    /// <c>Failed</c>/<c>Lapsed</c>) - there is nothing for a cancel or a seat change to act on.</summary>
+    public static Error BillingSubscriptionNotActive(string reason) =>
+        new("Billing.SubscriptionNotActive", reason);
+
+    /// <summary>A requested seat count that resolves to the exact same tier band and seat count the
+    /// subscription already charges for - neither an upgrade nor a downgrade, so there is nothing this
+    /// endpoint's own asymmetric policy (`decisions/0006`) has anything to say about.</summary>
+    public static Error BillingSeatCountUnchanged() =>
+        new("Billing.SeatCountUnchanged", "The requested seat count matches the subscription's current seat count.");
+
+    /// <summary>`13-03`: a site's `Permission.SiteManageOperators` holder tried to assign a seat beyond
+    /// the site's own current `seat_limit` - `402 Payment Required`, the identical reasoning
+    /// <see cref="OperatorInviteSeatLimitReached"/> already gives for the same underlying constraint on
+    /// a different write path.</summary>
+    public static Error OperatorSeatLimitReached(int seatLimit) =>
+        new("Operator.SeatLimitReached", $"This site has reached its seat limit of {seatLimit}.");
+
+    public static Error OperatorNotFound(Guid operatorId) =>
+        new("Operator.NotFound", $"Operator {operatorId} was not found for this site.");
+
+    public static Error OperatorAlreadyRemoved(Guid operatorId) =>
+        new("Operator.AlreadyRemoved", $"Operator {operatorId} has already been removed.");
 }

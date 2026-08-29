@@ -73,7 +73,15 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         var seatLimit = await LockSiteAndReadSeatLimitAsync(invite.SiteId, cancellationToken);
-        var operatorCount = await db.Operators.CountAsync(o => o.SiteId == invite.SiteId, cancellationToken);
+        // `13-03`: `AND removed_at IS NULL` added - a real, necessary fix to this already-shipped
+        // query, named explicitly in `13-03`'s own backlog rather than rediscovered as a surprise.
+        // Without it, a removed operator counted against this site's seat limit forever, since nothing
+        // before this item ever gave `operators` a row a real removal could set. `HoldsSeat` is
+        // deliberately not part of this filter - this count answers "how many operator rows does this
+        // site have", the input `13-01`'s own seat-limit check was always about, not "how many
+        // currently hold an assigned seat" (`GetSeatAssignmentSummaryHandler`'s own, different
+        // question).
+        var operatorCount = await db.Operators.CountAsync(o => o.SiteId == invite.SiteId && o.RemovedAt == null, cancellationToken);
         if (operatorCount >= seatLimit)
         {
             // Rolled back, nothing committed - the invite stays exactly as it was. `13-01`'s own

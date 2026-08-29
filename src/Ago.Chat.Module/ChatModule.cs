@@ -4,6 +4,8 @@ using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
+using Ago.Chat.Application.UseCases.CancelSubscription;
+using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
@@ -21,6 +23,7 @@ using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
@@ -30,6 +33,7 @@ using Ago.Chat.Application.UseCases.ListMyTenancies;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
+using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
@@ -37,6 +41,7 @@ using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
+using Ago.Chat.Application.UseCases.RemoveOperator;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -50,6 +55,7 @@ using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
+using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.MaxBot;
@@ -57,6 +63,7 @@ using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Infrastructure.YooKassa;
+using Ago.Chat.Module.Billing;
 using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Caching.Redis;
@@ -355,11 +362,28 @@ public sealed class ChatModule : IProductModule
             var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{options.ShopId}:{options.SecretKey}"));
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
         });
-        services.AddScoped<IYooKassaPaymentsClient>(sp => sp.GetRequiredService<YooKassaPaymentsApiClient>());
+        // `13-03`: BillingResiliencePipeline wraps only ChargeStoredPaymentMethodAsync
+        // (ResilientYooKassaPaymentsClient's own remarks on why CreatePaymentAsync stays unwrapped) -
+        // the same "named options group, constructed through a factory that resolves it" shape
+        // ChannelResiliencePipelines' own registration just above already establishes, for the
+        // identical "ChatModule runs inside every host" reason.
+        services.AddResiliencePipelineOptions(
+            BillingResiliencePipeline.PipelineName, configuration, ConfigureBillingResilienceDefaults);
+        services.AddSingleton(sp => new BillingResiliencePipeline(
+            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(BillingResiliencePipeline.PipelineName)));
+        services.AddScoped<IYooKassaPaymentsClient>(sp => new ResilientYooKassaPaymentsClient(
+            sp.GetRequiredService<YooKassaPaymentsApiClient>(), sp.GetRequiredService<BillingResiliencePipeline>()));
         services.AddSingleton<IYooKassaWebhookSignatureVerifier>(sp =>
             new YooKassaWebhookSignatureVerifier(sp.GetRequiredService<IOptions<YooKassaOptions>>().Value));
         services.AddScoped<CreateCheckoutSessionHandler>();
         services.AddScoped<ProcessYooKassaWebhookHandler>();
+        // `13-03`: the recurring-charge job's own multi-aggregate transaction, and the two write paths
+        // this item's own new billing endpoints need - see each type's own remarks.
+        services.AddScoped<ISubscriptionRenewalApplier, SubscriptionRenewalApplier>();
+        services.AddScoped<ProcessSubscriptionRenewalHandler>();
+        services.AddScoped<ISeatChangeApplier, SeatChangeApplier>();
+        services.AddScoped<CancelSubscriptionHandler>();
+        services.AddScoped<ChangeSubscriptionSeatsHandler>();
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
@@ -409,6 +433,11 @@ public sealed class ChatModule : IProductModule
         // entitlement check's one enforcement point - see each handler's own remarks.
         services.AddScoped<CreateOperatorInviteHandler>();
         services.AddScoped<RedeemOperatorInviteHandler>();
+        // `13-03`: the seat-assignment and operator-removal mechanism `13-01` named but did not build -
+        // see each handler's own remarks.
+        services.AddScoped<ToggleOperatorSeatHandler>();
+        services.AddScoped<RemoveOperatorHandler>();
+        services.AddScoped<GetSeatAssignmentSummaryHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
         // `12-01`'s owner policy), registered here for the same reason as everything else on this
         // page - ChatModule is where handler registration lives, and a host that never maps the route
@@ -497,6 +526,33 @@ public sealed class ChatModule : IProductModule
             BreakDuration = TimeSpan.FromSeconds(10),
         };
         options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 8, MaxQueuedActions = 32 };
+    }
+
+    /// <summary>
+    /// `13-03`: starting points, not measured numbers - the same caveat
+    /// <see cref="ConfigureChannelResilienceDefaults"/>'s own remarks carry, restated here rather than
+    /// simply reused because this boundary is a lower-frequency one (one background job's own recurring
+    /// charge, not every operator reply on every channel) and a longer timeout costs nothing a human is
+    /// waiting on - the bulkhead's own concurrency deliberately smaller too, since one Worker process
+    /// running one renewal job at a time has no comparable concurrency to bound.
+    /// </summary>
+    private static void ConfigureBillingResilienceDefaults(ResiliencePipelineOptions options)
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromSeconds(10) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromSeconds(1),
+        };
+        options.CircuitBreaker = new ResilienceCircuitBreakerOptions
+        {
+            FailureRatio = 0.5,
+            MinimumThroughput = 4,
+            SamplingDuration = TimeSpan.FromMinutes(1),
+            BreakDuration = TimeSpan.FromSeconds(30),
+        };
+        options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 2, MaxQueuedActions = 8 };
     }
 
     // `6-03`: a plain boolean predicate rather than throwing inside the lambda - `.Validate()` expects
