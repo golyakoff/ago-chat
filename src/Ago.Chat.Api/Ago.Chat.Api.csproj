@@ -22,6 +22,14 @@
          the MAX reference above already follows. Unlike MAX there is no webhook receiver here, so this
          is the only reason Ago.Chat.Api references this project at all. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Telegram\Ago.Chat.Infrastructure.Telegram.csproj" />
+    <!-- `14-08`: VkWebhookEndpoints reads VkCallbackEvent/VkInboundMessageParser directly (the webhook
+         receiver's own translation from VK's wire shape to ReceiveChannelMessage, and its own
+         VkApiClient.GetCallbackConfirmationCodeAsync call for the confirmation handshake) and
+         VkChannelEndpoints calls VkApiClient.GetGroupInfoAsync directly (this channel's own "validate
+         the token and discover the community id before ever writing a credential" step) - both
+         genuinely used here, not only transitively through Ago.Chat.Module, the same "explicit when
+         actually used" reasoning the MAX/Telegram references above already follow. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Vk\Ago.Chat.Infrastructure.Vk.csproj" />
     <!-- `13-02`: BillingEndpoints reads YooKassaWebhookParser/ParsedYooKassaWebhookEvent directly (the
          webhook receiver's own translation from ЮKassa's wire shape to ProcessYooKassaWebhook) - the
          same "explicit when actually used" reasoning the MAX/Telegram references above already

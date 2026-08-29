@@ -22,6 +22,13 @@ internal sealed class ChannelCredentialConfiguration : IEntityTypeConfiguration<
         builder.Property(c => c.Active).HasColumnName("active");
         builder.Property(c => c.CreatedAt).HasColumnName("created_at");
 
+        // `14-08`: nullable - MAX's and Telegram's own rows never populate it
+        // (ChannelCredential.ProviderAccountId's own remarks). No length bound tied to VK's own group_id
+        // shape (a plain positive integer as text): the same "opaque provider-owned string" treatment
+        // TokenCiphertext/WebhookSecretHash already get, rather than a channel-specific constraint on a
+        // channel-neutral column.
+        builder.Property(c => c.ProviderAccountId).HasColumnName("provider_account_id");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
 
         // `adr/0069`'s "one bot per tenant per channel" - the storage-level backstop for the check

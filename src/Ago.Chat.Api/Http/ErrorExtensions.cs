@@ -65,6 +65,9 @@ public static class ErrorExtensions
             // remarks).
             "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
             "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" => StatusCodes.Status429TooManyRequests,
+            // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
+            // own remarks.
+            "ChannelCredential.NotAvailable" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError,
         };
 

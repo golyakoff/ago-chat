@@ -61,7 +61,7 @@ public sealed class RegisterChannelCredentialHandler(
         var webhookSecretHash = SHA256.HashData(Encoding.UTF8.GetBytes(webhookSecret));
 
         var credential = Domain.ChannelCredential.Register(
-            id, command.SiteId, command.Kind, tokenCiphertext, webhookSecretHash, now);
+            id, command.SiteId, command.Kind, tokenCiphertext, webhookSecretHash, now, command.ProviderAccountId);
         await credentials.SaveAsync(credential, cancellationToken);
 
         return new RegisteredChannelCredential(id, command.Kind, webhookSecret, now);
