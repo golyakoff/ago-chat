@@ -374,6 +374,11 @@ app.MapMaxChannelEndpoints();
 // TelegramLongPollingService, is registered on Ago.Chat.Worker instead, the same "restart-tolerant
 // background work with no request to answer" reasoning MaxLongPollingService's own registration uses.
 app.MapTelegramChannelEndpoints();
+// `14-08`: the inbound receiver (VK's own and only production mechanism) and the console's own
+// connect/disconnect flow - see VkWebhookEndpoints' own remarks for why this host, not
+// Ago.Chat.Webhooks, matching MaxWebhookEndpoints' own precedent.
+app.MapVkWebhookEndpoints();
+app.MapVkChannelEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();

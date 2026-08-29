@@ -62,4 +62,28 @@ public class ChannelCredentialTests
 
         Assert.False(credential.MatchesWebhookSecret(string.Empty));
     }
+
+    /// <summary>`14-08`: MAX's/Telegram's own registrations never pass this parameter - the default
+    /// keeps their own call sites (and this file's own <see cref="Register"/> helper above) unchanged,
+    /// exactly as <see cref="Domain.ChannelCredential.Register"/>'s own remarks intend.</summary>
+    [Fact]
+    public void Register_WithNoProviderAccountId_LeavesItNull()
+    {
+        var credential = Register();
+
+        Assert.Null(credential.ProviderAccountId);
+    }
+
+    /// <summary>VK's own registration path (`Ago.Chat.Api`'s <c>VkChannelEndpoints</c>) always supplies
+    /// one - <see cref="Domain.ChannelCredential.ProviderAccountId"/>'s own remarks on why VK is the
+    /// first channel that needs it.</summary>
+    [Fact]
+    public void Register_WithAProviderAccountId_StoresIt()
+    {
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), SiteId, ChannelKind.Vk, [1, 2, 3], Hash("s"), Now,
+            providerAccountId: "987654");
+
+        Assert.Equal("987654", credential.ProviderAccountId);
+    }
 }

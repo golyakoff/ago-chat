@@ -121,6 +121,30 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
         await Assert.ThrowsAsync<DbUpdateException>(() => repository.SaveAsync(second, CancellationToken.None));
     }
 
+    /// <summary>`14-08`: the one column VK needs and MAX/Telegram never populate -
+    /// <c>ChannelCredential.ProviderAccountId</c>'s own remarks - round-tripped through a real Postgres
+    /// column, nullable, unlike every other column on this table.</summary>
+    [Fact]
+    public async Task SaveAsync_WithAProviderAccountId_RoundTripsIt()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedSite(siteId);
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Vk, [1], [1], Now, providerAccountId: "555555");
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new ChannelCredentialRepository(db);
+            await repository.SaveAsync(credential, CancellationToken.None);
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var readRepository = new ChannelCredentialRepository(readDb);
+        var loaded = await readRepository.GetByIdAsync(credential.Id, CancellationToken.None);
+
+        Assert.Equal("555555", loaded!.ProviderAccountId);
+    }
+
     /// <summary>The partial index's whole point: revoking the first credential must let a second,
     /// active one for the identical (site, kind) pair be saved without violating anything -
     /// `ChannelCredentialConfiguration`'s own remarks on why the index is filtered to `active`.</summary>

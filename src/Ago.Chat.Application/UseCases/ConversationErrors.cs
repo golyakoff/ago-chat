@@ -184,6 +184,16 @@ public static class ConversationErrors
     public static Error ChannelInvalidToken(string reason) =>
         new("ChannelCredential.InvalidToken", reason);
 
+    /// <summary>`14-08`: this deployment has not configured the public URL VK's Callback API would need
+    /// to reach it - unlike MAX (which degrades to a local long-poll loop when unconfigured) or Telegram
+    /// (which never needed a public URL at all), VK's webhook is this channel's only inbound mechanism,
+    /// so with no URL to hand VK there is genuinely nothing a connect attempt could complete. `503`, not
+    /// `400`: the caller's request is fine, this deployment is the thing not ready
+    /// (<c>DemoEndpoints</c>' own "a clear 'not enabled here' rather than a 404 that reads like a bug"
+    /// precedent, applied to the one channel that cannot silently fall back to polling).</summary>
+    public static Error ChannelNotAvailable(string reason) =>
+        new("ChannelCredential.NotAvailable", reason);
+
     // `13-01`: same shared vocabulary, same reason - CreateOperatorInviteHandler/RedeemOperatorInviteHandler
     // add their own codes here rather than a separate error class.
     public static Error OperatorInviteInvalidRole(string reason) =>

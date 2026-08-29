@@ -22,4 +22,8 @@ public enum ChannelKind
     Sms,
     Telegram,
     WhatsApp,
+
+    /// <summary>`14-08`: a VK (ВКонтакте) community's own direct messages (Сообщения сообщества) -
+    /// the third concrete adapter, after MAX and Telegram.</summary>
+    Vk,
 }

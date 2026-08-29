@@ -63,9 +63,24 @@ public sealed class ChannelCredential
 
     public DateTimeOffset CreatedAt { get; }
 
+    /// <summary>
+    /// `14-08`: the identifier, at the provider's own side, that pins the token to one specific
+    /// addressable account there - <see langword="null"/> for MAX and Telegram, whose bot tokens are
+    /// self-addressing (every call already carries the token, and the token alone tells the provider
+    /// which bot to act as). VK is the first channel where the token is not enough on its own: VK's
+    /// <c>messages.send</c> takes a separate <c>group_id</c> alongside a group access token
+    /// (confirmed against VK's own official SDK - see <c>Ago.Chat.Infrastructure.Vk.VkChannelAdapter</c>'s
+    /// own remarks), so that class's outbound call needs somewhere to keep it. Named generically rather
+    /// than <c>VkGroupId</c> for the identical reason
+    /// <see cref="TokenCiphertext"/> and <see cref="WebhookSecretHash"/> are not <c>MaxBotToken</c>: a
+    /// future channel with the same "token plus a second, less-secret identifier" shape (this item's own
+    /// report names none yet) reuses this column instead of adding its own.
+    /// </summary>
+    public string? ProviderAccountId { get; }
+
     private ChannelCredential(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
-        byte[] webhookSecretHash, bool active, DateTimeOffset createdAt)
+        byte[] webhookSecretHash, bool active, DateTimeOffset createdAt, string? providerAccountId)
     {
         Id = id;
         SiteId = siteId;
@@ -74,6 +89,7 @@ public sealed class ChannelCredential
         WebhookSecretHash = webhookSecretHash;
         Active = active;
         CreatedAt = createdAt;
+        ProviderAccountId = providerAccountId;
     }
 
     // EF Core materialization only (1-04's precedent) - never called by domain code.
@@ -85,11 +101,17 @@ public sealed class ChannelCredential
     /// Binds one shop-supplied token to one site's channel, for the first time. The caller (Application)
     /// has already checked that no active credential exists for this (site, kind) pair - see this type's
     /// own remarks on the unique-index backstop.
+    ///
+    /// <para><paramref name="providerAccountId"/> defaults to <see langword="null"/> so MAX's and
+    /// Telegram's own call sites, both written before this parameter existed, need no change - this
+    /// item's own "additive, not a breaking change to a shared shape" discipline
+    /// (`db-migration`'s own "additive-first" rule, applied here to a constructor rather than a
+    /// column).</para>
     /// </summary>
     public static ChannelCredential Register(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
-        byte[] webhookSecretHash, DateTimeOffset now) =>
-        new(id, siteId, kind, tokenCiphertext, webhookSecretHash, active: true, now);
+        byte[] webhookSecretHash, DateTimeOffset now, string? providerAccountId = null) =>
+        new(id, siteId, kind, tokenCiphertext, webhookSecretHash, active: true, now, providerAccountId);
 
     /// <summary>
     /// Constant-time comparison of a candidate webhook secret (as received on an inbound MAX request's

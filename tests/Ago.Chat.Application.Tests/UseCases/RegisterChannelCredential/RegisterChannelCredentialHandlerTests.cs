@@ -129,6 +129,25 @@ public class RegisterChannelCredentialHandlerTests
         Assert.Equal("ChannelCredential.AlreadyConnected", second.Error!.Value.Code);
     }
 
+    /// <summary>`14-08`: the one field only VK's own connect endpoint ever supplies - this handler
+    /// stays channel-neutral by simply forwarding it, the same "not a MAX-only fact" reasoning
+    /// <see cref="Application.UseCases.RegisterChannelCredential.RegisterChannelCredential"/>'s own
+    /// remarks state.</summary>
+    [Fact]
+    public async Task HandleAsync_WithAProviderAccountId_PersistsItOnTheCredential()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Vk, "community-token", ProviderAccountId: "555555"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = await fixture.Credentials.GetByIdAsync(result.Value.ChannelCredentialId, CancellationToken.None);
+        Assert.Equal("555555", saved!.ProviderAccountId);
+    }
+
     [Fact]
     public async Task HandleAsync_AfterTheExistingCredentialIsRevoked_AllowsRegisteringAReplacement()
     {

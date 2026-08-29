@@ -78,6 +78,7 @@ using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
+using Ago.Chat.Infrastructure.Vk;
 using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Billing;
 using Ago.Chat.Module.Channels;
@@ -346,6 +347,33 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<TelegramChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<TelegramChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+
+        // `14-08`: VK's own outbound client and adapter - the same "registered everywhere, resolved
+        // where it matters" shape as MAX/Telegram above. No VkLongPollingServiceOptions to bind: unlike
+        // either precedent, this channel has no polling loop at all (VkChannelAdapter's own remarks).
+        services
+            .AddOptions<VkBotApiOptions>()
+            .Bind(configuration.GetSection(VkBotApiOptions.SectionName))
+            .ValidateOnStart();
+        // A *named* client, not AddHttpClient&lt;VkApiClient&gt;() - that typed-client shape needs a
+        // constructor HttpClientFactory can build by resolving every parameter from DI, and
+        // VkApiClient's second parameter (the configured API version, a plain string) is not itself a
+        // DI service. Registering the client by name and constructing VkApiClient explicitly below is
+        // the standard escape hatch for a typed client that needs more than just an HttpClient.
+        services.AddHttpClient(nameof(VkApiClient), (sp, client) =>
+        {
+            var baseUrl = sp.GetRequiredService<IOptions<VkBotApiOptions>>().Value.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
+        });
+        services.AddSingleton(sp =>
+            new VkApiClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(VkApiClient)),
+                sp.GetRequiredService<IOptions<VkBotApiOptions>>().Value.ApiVersion));
+        // Singleton, not scoped - the identical reasoning MaxChannelAdapter's/TelegramChannelAdapter's
+        // own remarks give: the singleton InboundChannelAdapterRegistry can only ever hold adapters safe
+        // to keep for the process lifetime.
+        services.AddSingleton<VkChannelAdapter>();
+        services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
+            sp.GetRequiredService<VkChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
         // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
         // above - PricePerSeatRub deliberately ships no code default (BillingOptions' own remarks:
