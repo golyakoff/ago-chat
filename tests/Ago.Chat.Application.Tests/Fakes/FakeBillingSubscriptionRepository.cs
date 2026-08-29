@@ -24,6 +24,11 @@ public sealed class FakeBillingSubscriptionRepository : IBillingSubscriptionRepo
     public Task<BillingSubscription?> GetByIdAsync(BillingSubscriptionId id, CancellationToken cancellationToken) =>
         Task.FromResult(_all.Find(s => s.Id == id));
 
+    /// <summary>Mirrors <c>BillingSubscriptionRepository.GetLatestForSiteAsync</c>'s own ordering
+    /// exactly - most recently created row for the site, or <see langword="null"/>.</summary>
+    public Task<BillingSubscription?> GetLatestForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        Task.FromResult(_all.Where(s => s.SiteId == siteId).OrderByDescending(s => s.CreatedAt).FirstOrDefault());
+
     /// <summary>Mirrors <c>BillingSubscriptionRepository.ListDueForRenewalAsync</c>'s own predicate
     /// exactly - a fake that quietly used a different rule than the adapter would let a test pass
     /// against a condition production does not implement.</summary>

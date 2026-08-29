@@ -22,6 +22,17 @@ public sealed class BillingSubscriptionRepository(AgoChatDbContext db) : IBillin
     public Task<BillingSubscription?> GetByIdAsync(BillingSubscriptionId id, CancellationToken cancellationToken) =>
         db.BillingSubscriptions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
 
+    /// <summary>`13-04`: one row per site, most recent first - the port's own remarks on why "most
+    /// recent" is the right question. No index beyond the existing `site_id` FK is added for this -
+    /// this is a low-frequency, single-operator-driven console read, not a hot path, the same
+    /// "no new index until a real query plan asks for one" judgement this codebase already applies
+    /// elsewhere.</summary>
+    public Task<BillingSubscription?> GetLatestForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        db.BillingSubscriptions
+            .Where(s => s.SiteId == siteId)
+            .OrderByDescending(s => s.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public async Task<IReadOnlyList<BillingSubscriptionId>> ListDueForRenewalAsync(
         DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
     {

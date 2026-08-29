@@ -24,6 +24,22 @@ public interface IBillingSubscriptionRepository
     /// scope against (there is no operator in that call chain at all).</summary>
     Task<BillingSubscription?> GetByIdAsync(BillingSubscriptionId id, CancellationToken cancellationToken);
 
+    /// <summary>`13-04`: a real gap found while building the console billing screen, named here rather
+    /// than worked around - nothing before this let a caller ask "what subscription, if any, is this
+    /// site's own checkout/cancel/seat-change history currently sitting on", and the console cannot
+    /// show a tier, a seat count, or a pending-vs-confirmed state without an answer. The most recently
+    /// created row for the site, whatever its <see cref="BillingSubscriptionStatus"/> - not filtered to
+    /// <c>Succeeded</c>/<c>PastDue</c> - because a caller returning from ЮKassa's hosted checkout needs
+    /// to see its own just-created <c>Pending</c> row precisely to poll it honestly, the same "never the
+    /// redirect alone" discipline this row's own webhook-applied transition already established. At
+    /// most one row is ever genuinely live for ordinary use (a new checkout is only ever started when no
+    /// paid subscription already governs the site), so "most recent" and "the one that matters" agree in
+    /// every case this item's own Scope needs to handle; a caller several checkouts deep after repeated
+    /// lapses still gets the newest attempt, which is the one whose outcome is still undetermined.
+    /// <see langword="null"/> for a site that has never started a checkout at all (still on the free
+    /// tier by construction, `13-01`'s own default).</summary>
+    Task<BillingSubscription?> GetLatestForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
     /// <summary>`13-03`: the recurring-charge job's own candidate list - every row a `Succeeded`
     /// renewal or a `PastDue` retry is owed right now (<see cref="BillingSubscription.IsDueForRenewal"/>/
     /// <see cref="BillingSubscription.IsRetryDue"/>'s own predicates, expressed as one `WHERE` clause so
