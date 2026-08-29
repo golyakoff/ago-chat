@@ -89,7 +89,7 @@ public sealed class TracingEndToEndTests(ConnectionFanoutFixture fixture)
         var pipeline = new ChannelMessagePipeline(pipelineOptions, lifetime);
         var sequencer = new ConversationSequencer();
         var accumulator = new BatchAccumulator();
-        var batchWriter = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), NullLogger<MessageBatchWriter>.Instance);
+        var batchWriter = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
         var workerHost = new MessagePipelineWorkerHost(pipeline, sequencer, accumulator, pipelineOptions, NullLogger<MessagePipelineWorkerHost>.Instance);
         var flusherService = new BatchFlusherService(accumulator, batchWriter, new SystemClock(), pipelineOptions);
 

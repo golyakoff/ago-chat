@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260829093152_Stage13RepartitionMessagesByRetentionClass")]
+    partial class Stage13RepartitionMessagesByRetentionClass
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -809,47 +812,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("export_requests", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.MessageArchiveEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("ArchivedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("archived_at");
-
-                    b.Property<string>("ObjectKey")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("object_key");
-
-                    b.Property<DateOnly>("PeriodEnd")
-                        .HasColumnType("date")
-                        .HasColumnName("period_end");
-
-                    b.Property<DateOnly>("PeriodStart")
-                        .HasColumnType("date")
-                        .HasColumnName("period_start");
-
-                    b.Property<string>("RetentionClass")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("retention_class");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SiteId", "RetentionClass", "PeriodStart")
-                        .IsUnique()
-                        .HasDatabaseName("ux_message_archives_site_class_period");
-
-                    b.ToTable("message_archives", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.OperatorRoleRecord", b =>
                 {
                     b.Property<Guid>("OperatorId")
@@ -1096,15 +1058,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                 });
 
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.ExportRequestEntity", b =>
-                {
-                    b.HasOne("Ago.Chat.Domain.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.MessageArchiveEntity", b =>
                 {
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()

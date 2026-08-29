@@ -6,7 +6,9 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
+using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -196,6 +198,12 @@ public sealed class PlatformOwnerAsTenantTests(OperatorOidcFixture fixture)
         builder.Services.AddSingleton(new SiteExportOptions());
         builder.Services.AddScoped<RequestSiteExportHandler>();
         builder.Services.AddScoped<GetSiteExportStatusHandler>();
+        // `13-06`: SitesEndpoints now also maps the message-archive retrieval routes - same reasoning
+        // as the export registrations right above.
+        builder.Services.AddSingleton<IMessageArchiveRepository, MessageArchiveRepository>();
+        builder.Services.AddSingleton(new MessageArchiveOptions());
+        builder.Services.AddScoped<ListMessageArchivesHandler>();
+        builder.Services.AddScoped<GetMessageArchiveDownloadUrlHandler>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();

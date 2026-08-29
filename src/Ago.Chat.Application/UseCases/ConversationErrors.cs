@@ -223,6 +223,13 @@ public static class ConversationErrors
     public static Error ExportNotFound(Guid exportId) =>
         new("Export.NotFound", $"Export {exportId} was not found.");
 
+    /// <summary>`13-06`: the identical "wrong site is indistinguishable from no such id" cross-tenant
+    /// guard <see cref="ExportNotFound"/> already establishes, for a (retention class, period) key
+    /// instead of a generated id - <see cref="Application.Abstractions.IMessageArchiveRepository.GetAsync"/>
+    /// scopes by site, so an operator asking for another tenant's period gets this same code.</summary>
+    public static Error MessageArchiveNotFound(string retentionClass, DateOnly periodStart) =>
+        new("MessageArchive.NotFound", $"No archive for retention class '{retentionClass}', period {periodStart:yyyy-MM} was found.");
+
     /// <summary>Distinct code from <see cref="SiteRegistrationRateLimited"/> and the message send
     /// <c>RateLimited</c> above, the same reasoning each of those gives for its own distinct code - a
     /// client branching on `type` should be able to tell "you are exporting too often" apart from every

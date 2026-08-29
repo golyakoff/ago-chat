@@ -36,9 +36,12 @@ public class MessageUniqueSequenceTests(PostgresFixture fixture)
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
 
+        // `13-06`: retention_class joined created_at in the widened unique index - the same literal
+        // class both inserts so this still collides on all four columns, proving the constraint
+        // itself rather than a class mismatch.
         const string sql = """
-            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at)
-            values (@id, @conversationId, 1, 'Visitor', @authorId, 'dup', @now)
+            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class)
+            values (@id, @conversationId, 1, 'Visitor', @authorId, 'dup', @now, 'free')
             """;
 
         await using (var first = new NpgsqlCommand(sql, connection))

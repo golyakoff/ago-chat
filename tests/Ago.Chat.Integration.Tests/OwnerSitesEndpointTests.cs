@@ -257,13 +257,17 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         await InsertMessageAsync(conversationIds[0], visitorId, sequence: 2, createdAt: old);
     }
 
+    // `13-06`: messages is now PARTITION BY LIST (retention_class) then RANGE (created_at) -
+    // InsertMessageAsync below stamps 'free' explicitly, so every leaf this helper creates hangs off
+    // the `free` class partition.
     private async Task EnsurePartitionAsync(DateTimeOffset at)
     {
         var from = new DateTimeOffset(at.Year, at.Month, 1, 0, 0, 0, TimeSpan.Zero);
         var to = from.AddMonths(1);
+        var partitionName = MessagePartitionNames.ForMonth(RetentionClass.Free, from);
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new Npgsql.NpgsqlCommand($"""
-            CREATE TABLE IF NOT EXISTS messages_{from:yyyy_MM} PARTITION OF messages
+            CREATE TABLE IF NOT EXISTS {partitionName} PARTITION OF {MessagePartitionNames.ForClass(RetentionClass.Free)}
                 FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
             """, connection);
         await command.ExecuteNonQueryAsync();
@@ -274,8 +278,8 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
     {
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new Npgsql.NpgsqlCommand("""
-            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at)
-            values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt)
+            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class)
+            values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free')
             """, connection);
         command.Parameters.AddWithValue("id", Guid.NewGuid());
         command.Parameters.AddWithValue("conversationId", conversationId.Value);

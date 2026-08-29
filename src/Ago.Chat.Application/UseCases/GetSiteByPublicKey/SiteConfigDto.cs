@@ -31,7 +31,14 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// it is a public setting a tenant chose for their own widget, not a scripted answer the public key
 /// (not a secret) should never expose - the same distinction `SiteConfigDto`'s own remarks already
 /// draw between the two.
+/// `13-06`: <see cref="Tier"/> joins on the same "additive field on the existing cached DTO" terms -
+/// the message-write path (`MessageBatchWriter`) reads it to stamp `Message.RetentionClass`
+/// (`RetentionClass.FromTier`) without a per-message billing query, `adr/0031`'s own carve-out from
+/// `CLAUDE.md` rule 8 ("a stamp, not a gate" - nothing about whether a write may proceed depends on
+/// this value, only what gets recorded once it already has). Not put on the wire by the widget
+/// handshake, the same reasoning <see cref="OfflineAutoReply"/> already states: a tenant's billing tier
+/// is not something an anonymous visitor holding the public key should be able to read.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
-    OfflineAutoReplySettings OfflineAutoReply);
+    OfflineAutoReplySettings OfflineAutoReply, string Tier);

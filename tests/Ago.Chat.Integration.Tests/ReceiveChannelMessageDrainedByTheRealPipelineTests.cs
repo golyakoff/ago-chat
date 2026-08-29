@@ -61,7 +61,7 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
         var sequencer = new ConversationSequencer();
         var accumulator = new BatchAccumulator();
         var writer = new MessageBatchWriter(
-            fixture.DataSource, new SystemClock(), new UuidV7Generator(), NullLogger<MessageBatchWriter>.Instance);
+            fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
         var workerHost = new MessagePipelineWorkerHost(
             pipeline, sequencer, accumulator, Options.Create(pipelineOptions), NullLogger<MessagePipelineWorkerHost>.Instance);
         var flusher = new BatchFlusherService(accumulator, writer, new SystemClock(), Options.Create(pipelineOptions));

@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
 using Ago.Chat.Worker;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -80,11 +81,14 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
         }
     }
 
-    /// <summary>`15-04`'s own decision: `AlwaysConfirmedMessageArchiveGate` is the real default until
-    /// `13-06` ships - this proves the wiring genuinely drops under it, not just that the type
-    /// compiles.</summary>
+    /// <summary>`13-06` replaced `15-04`'s real-default gate (`AlwaysConfirmedMessageArchiveGate`) with
+    /// the object-storage-backed <c>MessageArchiveGate</c> (its own integration coverage lives in
+    /// `MessageArchiveEndToEndTests`) - `AlwaysConfirmedMessageArchiveGate` is kept only as a permissive
+    /// test fake now (that class's own remarks), so this test proves the same thing it always did -
+    /// the job's own wiring genuinely drops under a confirming gate, not just that the type compiles -
+    /// against whichever gate a caller hands it.</summary>
     [Fact]
-    public async Task PruneAsync_WithTheRealDefaultGate_DropsAPartitionPastTheHorizon()
+    public async Task PruneAsync_WithAConfirmingFakeGate_DropsAPartitionPastTheHorizon()
     {
         var partitionName = await CreatePartitionAsync(2001, 1);
         try
@@ -145,19 +149,24 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
     }
 
     private MessagePartitionPruneJob CreateJob(DateTimeOffset referenceNow, IMessageArchiveGate gate) =>
-        new(fixture.DataSource, gate, new FixedClock(referenceNow),
+        new(fixture.DataSource, gate, new FakeFileStorage(), new FixedClock(referenceNow),
             Options.Create(new MessagePartitionPruneJobOptions { RetentionHorizonMonths = RetentionHorizonMonths }),
             NullLogger<MessagePartitionPruneJob>.Instance);
 
+    // `13-06`: messages is now PARTITION BY LIST (retention_class) then RANGE (created_at) - every
+    // leaf this suite creates hangs off the `free` class partition (already created by this item's own
+    // migration), the same class every test in this file already implicitly meant before classes
+    // existed at all. MessagePartitionNames is the same helper MessagePartitionPruneQuery itself uses,
+    // so a name built here and one parsed back by ListPartitionsAsync can never drift apart.
     private async Task<string> CreatePartitionAsync(int year, int month)
     {
-        var name = $"messages_{year:0000}_{month:00}";
         var from = new DateOnly(year, month, 1);
         var to = from.AddMonths(1);
+        var name = MessagePartitionNames.ForMonth(RetentionClass.Free, new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         var sql = $"""
-            CREATE TABLE IF NOT EXISTS {name} PARTITION OF messages
+            CREATE TABLE IF NOT EXISTS {name} PARTITION OF {MessagePartitionNames.ForClass(RetentionClass.Free)}
                 FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
             """;
         await using var command = new NpgsqlCommand(sql, connection);

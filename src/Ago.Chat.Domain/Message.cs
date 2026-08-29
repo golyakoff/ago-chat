@@ -41,6 +41,21 @@ public sealed class Message
     /// </summary>
     public SiteId? SiteId { get; }
 
+    /// <summary>`13-06`/`adr/0031`: the immutable half of this table's partition key, stamped from
+    /// the owning <see cref="Conversation"/>'s site's <see cref="Site.Tier"/> at the moment this
+    /// message is constructed - see <see cref="RetentionClass"/>'s own remarks for why it is not
+    /// recomputed from anything read later. Unlike <see cref="SiteId"/> (nullable, absent on rows
+    /// older than the column), this is never null: `13-06`'s own migration backfills a value for
+    /// every existing row as part of its one-way rename/create/copy/drop (the physical column is
+    /// `NOT NULL` because Postgres requires the full partition key on every row, not an optional
+    /// one), and every row this aggregate constructs from here on always resolves one through
+    /// <see cref="Conversation.AddMessage"/>. The mapping from tier to class for a row written
+    /// before this column existed is a one-time approximation against whatever tier the site holds
+    /// *today*, not whatever it held when the message was actually sent - stated here because
+    /// nothing records the true historical value, the same honestly-named limitation
+    /// `adr/0031`'s own Scope section states for the migration.</summary>
+    public RetentionClass RetentionClass { get; }
+
     /// <summary>`5-07`: the client-generated id realtime.md's Client protocol section named as a
     /// design intent since `3-03` and left unwired - see <see cref="Conversation.AddMessage"/> for
     /// where it is actually used (retry-dedup, checked against every message already in memory).
@@ -90,7 +105,8 @@ public sealed class Message
         Guid? clientMessageId,
         MessageContent? content,
         DateTimeOffset now,
-        SiteId siteId)
+        SiteId siteId,
+        RetentionClass retentionClass)
     {
         Id = id;
         ConversationId = conversationId;
@@ -102,6 +118,7 @@ public sealed class Message
         ClientMessageId = clientMessageId;
         CreatedAt = now;
         SiteId = siteId;
+        RetentionClass = retentionClass;
 
         if (content is not null)
         {

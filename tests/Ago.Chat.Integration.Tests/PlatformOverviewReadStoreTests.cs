@@ -151,7 +151,10 @@ public sealed class PlatformOverviewReadStoreTests(PlatformOverviewFixture fixtu
     [Fact]
     public async Task TheRecentWindowPredicate_KeepsOlderMessagePartitionsOutOfThePlan()
     {
-        var oldPartition = $"messages_{fixture.Now.AddDays(-95):yyyy_MM}";
+        // `13-06`: messages_{yyyy_MM} became messages_free_{yyyy_MM} - PlatformOverviewFixture seeds
+        // every message through raw SQL stamped 'free' (its own SeedMessagesAsync remarks), so this is
+        // still the one partition name that must appear/disappear from the plan.
+        var oldPartition = $"messages_free_{fixture.Now.AddDays(-95):yyyy_MM}";
 
         var boundedPlan = await ExplainMessageScanAsync(withWindow: true);
         var unboundedPlan = await ExplainMessageScanAsync(withWindow: false);

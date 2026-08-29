@@ -21,7 +21,7 @@ namespace Ago.Chat.Application.Tests.UseCases.GetSiteByPublicKey;
 public class SiteConfigCacheRoundTripTests
 {
     private static SiteConfigDto Dto(OfflineAutoReplySettings autoReply, Locale locale = Locale.En) =>
-        new(Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply);
+        new(Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply, "free");
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;

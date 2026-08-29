@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Worker;
+﻿using Ago.Chat.Domain;
+using Ago.Chat.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -88,15 +89,18 @@ public sealed class MessageSearchIndexJobTests(PostgresFixture fixture)
             Options.Create(new MessageSearchIndexJobOptions { Interval = TimeSpan.FromMinutes(10) }),
             NullLogger<MessageSearchIndexJob>.Instance);
 
+    // `13-06`: messages is now two-level (LIST retention_class, then RANGE created_at) - every leaf
+    // this suite creates hangs off the `free` class partition, matching MessagePartitionPruneJobTests'
+    // own convention.
     private async Task<string> CreatePartitionAsync(int year, int month)
     {
-        var name = $"messages_{year:0000}_{month:00}";
         var from = new DateOnly(year, month, 1);
         var to = from.AddMonths(1);
+        var name = MessagePartitionNames.ForMonth(RetentionClass.Free, new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         var sql = $"""
-            CREATE TABLE IF NOT EXISTS {name} PARTITION OF messages
+            CREATE TABLE IF NOT EXISTS {name} PARTITION OF {MessagePartitionNames.ForClass(RetentionClass.Free)}
                 FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
             """;
         await using var command = new NpgsqlCommand(sql, connection);

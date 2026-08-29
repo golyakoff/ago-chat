@@ -131,8 +131,11 @@ public sealed class SendOfflineAutoReplyHandler(
         var now = clock.UtcNow;
         var messageId = new MessageId(idGenerator.NewId(now));
         // Never MessageBody's own throw path: OfflineAutoReplyRule caps a reply at 1000 characters and
-        // refuses an empty one, both well inside MessageBody's own bounds.
-        conversation.AddSystemMessage(messageId, new MessageBody(reply), now);
+        // refuses an empty one, both well inside MessageBody's own bounds. `13-06`: `site` above is
+        // already this handler's own cache-aside read of the tenant's config (the same read
+        // `GetSiteConfigByIdHandler`'s own remarks say this handler composes rather than duplicates),
+        // so stamping RetentionClass costs no second lookup.
+        conversation.AddSystemMessage(messageId, new MessageBody(reply), now, retentionClass: RetentionClass.FromTier(site.Tier));
 
         var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
         outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
