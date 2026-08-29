@@ -8,6 +8,7 @@ using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.SearchConversations;
+using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
@@ -55,6 +56,13 @@ public static class ConversationsEndpoints
         // their own conversation is a different action - ending a chat session client-side - not this
         // one; see CloseConversationHandler's own remarks).
         app.MapPost("/api/v1/conversations/{conversationId:guid}/close", HandleCloseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-02`: the same sub-resource shape as `/close` right above it - a write scoped to one
+        // already-identified conversation, not a query-parameter mode on the plural resource.
+        // Operator-only, same reason as `/close`: only the operator currently holding a conversation
+        // may hand it to someone else (TransferConversationHandler's own OperatorId comparison).
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/transfer", HandleTransferAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `5-15`: the same sub-resource shape as `/close` right above it. REST rather than a method on
@@ -144,6 +152,28 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new CloseConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+    }
+
+    /// <summary>`18-02`: the body carries the target, not the route - the same reasoning
+    /// <c>MarkConversationReadRequest</c> gives right above for a state being asserted rather than a
+    /// route-addressed resource, applied to "who this conversation should go to" instead of "how far
+    /// it has been read".</summary>
+    public sealed record TransferConversationRequest(Guid ToOperatorId);
+
+    private static async Task<IResult> HandleTransferAsync(
+        Guid conversationId,
+        TransferConversationRequest request,
+        TransferConversationHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new TransferConversation(
+                new ConversationId(conversationId), user.GetOperatorId(), new OperatorId(request.ToOperatorId), user.GetSiteId()),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();

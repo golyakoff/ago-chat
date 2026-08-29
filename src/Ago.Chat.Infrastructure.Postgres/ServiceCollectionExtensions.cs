@@ -57,6 +57,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
+        // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks
+        // for why it exists at all.
+        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
         // `6-03`
         services.AddScoped<IWebhookEndpointRepository, WebhookEndpointRepository>();
         services.AddScoped<IWebhookDeliveryRepository, WebhookDeliveryRepository>();

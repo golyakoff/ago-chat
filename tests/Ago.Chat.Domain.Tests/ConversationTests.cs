@@ -101,6 +101,66 @@ public class ConversationTests
         Assert.True(conversation.HoldsCapacityClaim);
     }
 
+    /// <summary>`18-02`: the whole point of a transfer over a release-then-reassign pair - the
+    /// conversation never passes back through <c>Waiting</c>, so a visitor reading realtime state
+    /// mid-transfer never sees the conversation drop out of <c>Assigned</c>.</summary>
+    [Fact]
+    public void TransferTo_WhenAssigned_MovesTheOperator_StaysAssigned_AndRaisesConversationTransferred()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.ClearDomainEvents();
+        var newOperator = new OperatorId(Guid.NewGuid());
+
+        conversation.TransferTo(newOperator, Now.AddMinutes(5));
+
+        Assert.Equal(ConversationState.Assigned, conversation.State);
+        Assert.Equal(newOperator, conversation.OperatorId);
+        var raised = Assert.Single(conversation.DomainEvents);
+        var transferred = Assert.IsType<ConversationTransferred>(raised);
+        Assert.Equal(conversation.Id, transferred.ConversationId);
+        Assert.Equal(OperatorId, transferred.FromOperatorId);
+        Assert.Equal(newOperator, transferred.ToOperatorId);
+        Assert.Equal(Now.AddMinutes(5), transferred.OccurredAt);
+    }
+
+    [Fact]
+    public void TransferTo_WhenWaiting_ThrowsInvalidConversationStateException()
+    {
+        var conversation = StartConversation();
+
+        Assert.Throws<InvalidConversationStateException>(() =>
+            conversation.TransferTo(new OperatorId(Guid.NewGuid()), Now));
+    }
+
+    [Fact]
+    public void TransferTo_WhenClosed_ThrowsInvalidConversationStateException()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.Close(Now);
+
+        Assert.Throws<InvalidConversationStateException>(() =>
+            conversation.TransferTo(new OperatorId(Guid.NewGuid()), Now));
+    }
+
+    /// <summary>The receipt moves with the conversation rather than being consumed - a transfer is a
+    /// handoff of the same slot, not a release-and-reclaim.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TransferTo_CarriesTheCapacityClaimFlagOverUnchanged(bool holdsCapacityClaim)
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now, holdsCapacityClaim);
+        var newOperator = new OperatorId(Guid.NewGuid());
+
+        var returned = conversation.TransferTo(newOperator, Now);
+
+        Assert.Equal(holdsCapacityClaim, returned);
+        Assert.Equal(holdsCapacityClaim, conversation.HoldsCapacityClaim);
+    }
+
     [Fact]
     public void Close_WhenTheAssignmentHoldsACapacityClaim_ConsumesItExactlyOnce()
     {

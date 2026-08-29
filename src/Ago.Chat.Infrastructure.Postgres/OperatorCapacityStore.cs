@@ -24,13 +24,48 @@ public sealed class OperatorCapacityStore(AgoChatDbContext db) : IOperatorCapaci
 {
     public async Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken)
     {
-        var rowsAffected = await db.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            UPDATE operators
-            SET active_chats = active_chats + 1
-            WHERE id = {operatorId.Value} AND active_chats < capacity
-            """,
-            cancellationToken);
+        int rowsAffected;
+        try
+        {
+            rowsAffected = await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                UPDATE operators
+                SET active_chats = active_chats + 1
+                WHERE id = {operatorId.Value} AND active_chats < capacity
+                """,
+                cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DeadlockDetected)
+        {
+            // `18-02`: this port's own doc comment on <see cref="OperatorCapacityContentionException"/>
+            // used to say "TryClaimAsync gets no retry - every call to it in production is inside a
+            // claimer's batch transaction" (`adr/0037`, point 5), and that stays true here: no retry is
+            // added. What changed is that a *second* kind of caller-owned transaction now exists -
+            // TransferConversationHandler's own (Ago.Chat.Application.UseCases.TransferConversation) -
+            // and unlike SkipLockedAssignmentClaimer/RedisLockAssignmentClaimer, it is a per-request
+            // Application handler that must never see a raw Npgsql exception (CLAUDE.md rule 2). Before
+            // this item, a 40P01 here propagated as PostgresException because the only two callers
+            // (both in Ago.Chat.Worker, a host) were allowed to know that; the moment
+            // Ago.Chat.Application got its first caller, that leak became a real dependency-rule
+            // violation, not a hypothetical one. Translating it here - the same port-boundary
+            // translation ReleaseAsync's caller-owned-transaction branch already does - fixes the leak
+            // for both callers at once, and changes nothing observable for the existing two: their own
+            // catch (Exception ex) when (ex is not OperationCanceledException) at ConversationAssignmentJob
+            // and each RunOnceAsync call site catches this exactly as it caught the raw
+            // PostgresException before, logs at the same level, and retries next tick.
+            //
+            // Attempts is always 1: a deadlock inside a caller-owned transaction has already aborted
+            // it, so - exactly as ReleaseAsync's own remarks explain - there is no statement-level
+            // retry to make here. The retry unit, if the caller wants one, is its own transaction.
+            //
+            // Deliberately not ChatMetrics.RecordCapacityReleaseDeadlock: that counter's own
+            // description names ReleaseAsync specifically, and a claim-side deadlock tagged onto it
+            // would misreport which statement Postgres actually aborted. A dedicated claim-deadlock
+            // instrument is real observability work this item leaves undone - Stage 7's own job
+            // (CLAUDE.md's roadmap references), not silently bolted onto an existing counter whose
+            // documented meaning would then be wrong.
+            throw new OperatorCapacityContentionException(operatorId, attempts: 1, ex);
+        }
 
         // `7-02`: nfr.md's "assignment attempts vs conflicts" - counted here, the single choke point
         // both IAssignmentClaimer implementations (SkipLockedAssignmentClaimer, RedisLockAssignmentClaimer)

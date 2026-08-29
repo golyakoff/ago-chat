@@ -144,6 +144,54 @@ public sealed class Conversation
     }
 
     /// <summary>
+    /// `18-02`: moves an already-<c>Assigned</c> conversation to a different operator without ever
+    /// passing back through <c>Waiting</c> - the visitor's own thread never sees the conversation
+    /// leave <c>Assigned</c>, unlike <see cref="ReleaseToQueue"/> immediately below, which is a
+    /// genuinely different operation (queue re-entry, not a handoff) and the reason this is a new
+    /// method rather than a "release then re-assign" pair of existing calls. <see cref="AssignTo"/>
+    /// is not reused either: it only accepts <see cref="ConversationState.Waiting"/>, by design (its
+    /// own type-level remarks), so an already-<c>Assigned</c> conversation is exactly the state it
+    /// refuses.
+    ///
+    /// <para><b>Who checks that the caller is really the current operator.</b> Deliberately not this
+    /// method - the same split <c>CloseConversationHandler</c>'s own remarks draw for
+    /// <see cref="Close"/>: "is this caller the one assigned to this conversation" is a cross-aggregate
+    /// permission-shaped fact (adr/0016), not an invariant only the aggregate can see, so
+    /// <c>TransferConversationHandler</c> compares <c>conversation.OperatorId</c> against the
+    /// command's own <c>FromOperatorId</c> before ever calling this. The alternative - taking
+    /// <c>from</c> as a parameter here and throwing on a mismatch, the shape
+    /// <see cref="MarkReadByOperator"/> uses - was not taken because <c>MarkReadByOperator</c>'s check
+    /// is the read-position invariant itself ("whose watermark is this"), while a transfer's source
+    /// check is "may this caller act at all", the same kind of question <c>Close</c> already answers
+    /// in its handler rather than its aggregate.</para>
+    ///
+    /// <para><see cref="HoldsCapacityClaim"/> is carried over unchanged, not consumed and reclaimed -
+    /// the whole point of a transfer is that the underlying capacity slot moves with the conversation,
+    /// from the departing operator's <c>active_chats</c> to the receiving one's. Whether that requires
+    /// a real <c>IOperatorCapacity</c> release-then-claim, or nothing at all because this conversation
+    /// was never capacity-tracked to begin with (a hand-picked assignment, `6-09`'s own asymmetry), is
+    /// exactly what the flag still says after this call - the handler reads it the same way
+    /// <c>CloseConversationHandler</c> reads <see cref="Close"/>'s return value.</para>
+    /// </summary>
+    /// <returns><see langword="true"/> if this conversation holds a capacity claim the caller must now
+    /// move, via <c>IOperatorCapacity</c>, from <see cref="OperatorId"/> (before this call) to
+    /// <paramref name="to"/>.</returns>
+    public bool TransferTo(OperatorId to, DateTimeOffset now)
+    {
+        if (State != ConversationState.Assigned)
+        {
+            throw new InvalidConversationStateException(
+                $"Cannot transfer conversation {Id.Value} from state {State}; only {ConversationState.Assigned} can be transferred.");
+        }
+
+        var from = OperatorId!.Value;
+        var holdsCapacityClaim = HoldsCapacityClaim;
+        OperatorId = to;
+        _domainEvents.Add(new ConversationTransferred(Id, from, to, now));
+        return holdsCapacityClaim;
+    }
+
+    /// <summary>
     /// `4-01`: the symmetric opposite of <see cref="AssignTo"/> - takes an `Assigned` conversation
     /// back to `Waiting` so `4-02`'s assignment engine can hand it to someone else. Two real callers
     /// exist in the roadmap for this, neither wired yet: `4-02`'s "claimed the row but no operator
