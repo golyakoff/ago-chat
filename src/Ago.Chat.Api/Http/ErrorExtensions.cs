@@ -40,7 +40,10 @@ public static class ErrorExtensions
                 or "CannedResponse.Invalid"
                 // `18-04`: the same "caller's mistake to fix" shape - an empty/oversized note body or
                 // tag name.
-                or "ConversationNote.Invalid" or "Tag.Invalid" => StatusCodes.Status400BadRequest,
+                or "ConversationNote.Invalid" or "Tag.Invalid"
+                // `18-08`: the same "the query itself was malformed" shape as
+                // Conversation.SearchInvalidQuery, for the analytics panel's own from/to.
+                or "Analytics.InvalidRange" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

@@ -3,6 +3,7 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
+using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
@@ -49,6 +50,14 @@ public static class ConversationsEndpoints
         // format, `date-and-time.md`); either or both absent means "let the handler default the
         // window" (`SearchConversationsHandler`'s own remarks on the bound decision).
         app.MapGet("/api/v1/conversations/search", HandleSearchAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-08`: the same sibling sub-resource shape as `/search` right above it - a compound read
+        // (an optional date range, aggregated across the site) over the plural `conversations`
+        // resource, not a point lookup or a write. `from`/`to` are ISO-8601 query parameters, the same
+        // convention `/search` already established; either or both absent means "let the handler
+        // default the window" (`GetOperatorAnalyticsForSiteHandler`'s own remarks).
+        app.MapGet("/api/v1/conversations/analytics", HandleGetAnalyticsAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `6-02`: api-design.md's "actions that are not CRUD become sub-resources" example, verbatim -
@@ -144,6 +153,21 @@ public static class ConversationsEndpoints
         var result = await handler.HandleAsync(
             new SearchConversations(
                 user.GetOperatorId(), user.GetSiteId(), phrase ?? string.Empty, from, to, beforeMessageId, pageSize ?? 20),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleGetAnalyticsAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        GetOperatorAnalyticsForSiteHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetOperatorAnalyticsForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);

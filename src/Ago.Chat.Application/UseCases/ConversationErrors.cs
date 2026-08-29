@@ -355,4 +355,12 @@ public static class ConversationErrors
     /// choice explicit rather than quietly creating a second label operators cannot tell apart.</summary>
     public static Error TagAlreadyExists(string name) =>
         new("Tag.AlreadyExists", $"A tag named '{name}' already exists for this site.");
+
+    // `18-08`: same shared vocabulary, same reason - GetOperatorAnalyticsForSiteHandler adds its own
+    // code here rather than a separate error class.
+    /// <summary>The caller's own <c>from</c>/<c>to</c> is not a real half-open range - <c>from</c> not
+    /// strictly before <c>to</c>. The same "the query itself was malformed" shape
+    /// <see cref="SearchInvalidQuery"/> already gives for `18-01`'s own range check.</summary>
+    public static Error AnalyticsInvalidRange(string reason) =>
+        new("Analytics.InvalidRange", reason);
 }

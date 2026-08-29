@@ -55,6 +55,8 @@ public static class ServiceCollectionExtensions
         // `12-02`: the cross-tenant operations read (IPlatformOverviewReadStore's own remarks on why
         // it is the only one and why it is safe).
         services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
+        // `18-08`: the console's own site-scoped "how am I doing" report.
+        services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks
