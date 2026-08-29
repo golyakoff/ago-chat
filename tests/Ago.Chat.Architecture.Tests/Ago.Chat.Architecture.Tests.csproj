@@ -9,6 +9,12 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="NetArchTest.Rules" />
+    <!-- `20-07`: guard 2 - the source-level scan for a string literal of a known module key. A
+         different technique from guard 1's IL scan (MessageOpacityRule/Mono.Cecil) on purpose - see
+         ModuleKeyLiteralRule's own remarks for why. Source-only (no compilation/semantic analysis
+         needed - a plain string literal token is enough), so only the Roslyn C# syntax package is
+         referenced, not Microsoft.CodeAnalysis.CSharp.Workspaces or a full compilation. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
@@ -27,6 +33,11 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Application\Ago.Chat.Application.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <!-- `20-07`: MessageOpacityTests' own EveryChatAssembly needs to reach this project's compiled
+         output too - it is the one project that translates untrusted wire bytes into this system's own
+         value objects, which makes it the most likely place a module's domain vocabulary would leak in
+         by accident. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Modules\Ago.Chat.Infrastructure.Modules.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
     <!--
       `8-08`: the four deployables. Until this item, no arch rule had anything to say about a host, so

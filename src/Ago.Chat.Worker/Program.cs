@@ -45,6 +45,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<OfflineAutoReplyConsumer>();
 
+// `20-07`: a fourth Competing consumer of MessageAccepted - see ModuleTaskConsumer's own remarks on
+// why this is a separate consumer rather than a fifth branch inside OfflineAutoReplyConsumer above.
+builder.Services
+    .AddOptions<ModuleTaskConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(ModuleTaskConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ModuleTaskConsumer>();
+
 // `14-02`: the outbound half of `14-01`'s port - see ChannelMessageDeliveryConsumer's own remarks.
 builder.Services
     .AddOptions<ChannelMessageDeliveryConsumerOptions>()

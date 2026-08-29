@@ -373,4 +373,18 @@ public static class ConversationErrors
     /// <see cref="SearchInvalidQuery"/> already gives for `18-01`'s own range check.</summary>
     public static Error AnalyticsInvalidRange(string reason) =>
         new("Analytics.InvalidRange", reason);
+
+    // `20-07`: same shared vocabulary, same reason - EnableModuleForSiteHandler adds its own codes
+    // here rather than a separate error class.
+    public static Error ModuleInvalid(string reason) =>
+        new("Module.Invalid", reason);
+
+    /// <summary>`20-07`'s own trigger-conflict rule: a trigger word registered here already opens a
+    /// *different* module enabled on this same site. The remedy is "pick a different trigger word", so
+    /// the message names the word and the module it already belongs to - never silently first-match-wins
+    /// at routing time, which is the failure this rejection exists to prevent at registration time
+    /// instead.</summary>
+    public static Error ModuleTriggerWordAlreadyRegistered(string word, string existingModuleKey) =>
+        new("Module.TriggerWordAlreadyRegistered",
+            $"Trigger word '{word}' is already registered to module '{existingModuleKey}' on this site.");
 }

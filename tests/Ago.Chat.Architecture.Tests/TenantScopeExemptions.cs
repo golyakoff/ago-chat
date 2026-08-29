@@ -216,6 +216,16 @@ internal static class TenantScopeExemptions
             + "above is in. There is also no principal to check a permission for: nobody asked for this renewal "
             + "attempt, a scheduled job did.",
 
+        ["Ago.Chat.Application.UseCases.RouteConversationToModule.RouteConversationToModuleHandler.HandleAsync"] =
+            "`20-07`, consumer side (Ago.Chat.Worker), the same category as SendOfflineAutoReplyHandler/"
+            + "DeliverChannelMessageHandler above. SiteId comes off the same MessageAccepted envelope those two "
+            + "handlers already read it from - a fact the triggering write established, not a claim to verify. "
+            + "There is also no principal to check a permission for: nobody asked for this routing decision, a "
+            + "broker delivery did, and the module task it starts/advances/closes and the message it writes are "
+            + "both scoped to the one Conversation the envelope names, exactly as SendOfflineAutoReplyHandler's "
+            + "own reply is. What the site id is used for is narrow and read-only: resolving which modules this "
+            + "site has enabled (IEnabledModuleReadStore.GetForSiteAsync) - nothing is read back to any caller.",
+
         // ---------------------------------------------------------------------------------------
         // The one deliberate cross-tenant read in the codebase.
         // ---------------------------------------------------------------------------------------
