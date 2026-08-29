@@ -12,6 +12,18 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// the handler ends up calling two separate `Site` methods with it (`Site.UpdateWidgetConfig` for
 /// color/position, `Site.UpdateLocale` for this field), because `Locale` is not part of `WidgetConfig`
 /// at the domain level (`SiteLocaleUpdated`'s own remarks).
+///
+/// `16-04`: <see cref="NoticeText"/>/<see cref="NoticeUrl"/> join as two more raw, unvalidated fields -
+/// unlike <see cref="Locale"/>, both stay part of `Ago.Chat.Domain.WidgetConfig` itself
+/// (`WidgetConfig`'s own remarks explain why), so they ride through the same
+/// `new WidgetConfig(...)`/`Site.UpdateWidgetConfig` call color and position already use, with no third
+/// `Site` method needed.
 /// </summary>
 public sealed record UpdateWidgetConfig(
-    SiteId SiteId, OperatorId RequestedBy, string? PrimaryColorHex, string Position, string Locale);
+    SiteId SiteId,
+    OperatorId RequestedBy,
+    string? PrimaryColorHex,
+    string Position,
+    string Locale,
+    string? NoticeText,
+    string? NoticeUrl);

@@ -72,6 +72,12 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property<Position>("_widgetPosition").HasColumnName("widget_position")
             .HasConversion(PositionConverter.Instance)
             .HasDefaultValue(Position.BottomRight);
+        // `16-04`: two more backing fields, same shape - no CHECK constraint, unlike widget_position/
+        // widget_locale above: free text and a URL are not a closed set SQL can enumerate, the same
+        // boundary `18-03`'s canned_responses comment already draws for its own free-text pair.
+        // WidgetConfig's own constructor is this value's only validation, same as CannedResponse's.
+        builder.Property<string?>("_widgetNoticeText").HasColumnName("widget_notice_text");
+        builder.Property<string?>("_widgetNoticeUrl").HasColumnName("widget_notice_url");
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

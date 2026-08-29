@@ -36,13 +36,17 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
                 new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
-                new UpdateWidgetConfig(siteId, operatorId, "#336699", nameof(Position.BottomLeft), nameof(Locale.Ru)),
+                new UpdateWidgetConfig(
+                    siteId, operatorId, "#336699", nameof(Position.BottomLeft), nameof(Locale.Ru),
+                    "We read what you send us.", "https://tenant.example/privacy"),
                 CancellationToken.None);
 
             Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
             Assert.Equal("#336699", result.Value.PrimaryColorHex);
             Assert.Equal(Position.BottomLeft, result.Value.Position);
             Assert.Equal(Locale.Ru, result.Value.Locale);
+            Assert.Equal("We read what you send us.", result.Value.NoticeText);
+            Assert.Equal("https://tenant.example/privacy", result.Value.NoticeUrl);
         }
 
         await using var verify = fixture.CreateDbContext();
@@ -50,6 +54,10 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
         Assert.Equal("#336699", siteRow.WidgetConfig.PrimaryColorHex);
         Assert.Equal(Position.BottomLeft, siteRow.WidgetConfig.Position);
         Assert.Equal(Locale.Ru, siteRow.Locale);
+        // `16-04`: proves the two new columns (widget_notice_text, widget_notice_url) round-trip
+        // through the real EF mapping against a real Postgres, not just through an in-memory fake.
+        Assert.Equal("We read what you send us.", siteRow.WidgetConfig.NoticeText);
+        Assert.Equal("https://tenant.example/privacy", siteRow.WidgetConfig.NoticeUrl);
 
         // `11-10`: two rows now, not one - UpdateWidgetConfigHandler enqueues one SiteSettingsChanged
         // envelope per Site method it calls (UpdateWidgetConfig, UpdateLocale), same transaction, same
@@ -77,7 +85,9 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
                 new SiteRepository(db), new PermissionChecker(db), new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(), new SystemClock());
             var updated = await updateHandler.HandleAsync(
-                new UpdateWidgetConfig(siteId, operatorId, "#abcdef", nameof(Position.BottomRight), nameof(Locale.Ru)),
+                new UpdateWidgetConfig(
+                    siteId, operatorId, "#abcdef", nameof(Position.BottomRight), nameof(Locale.Ru),
+                    "We read what you send us.", "https://tenant.example/privacy"),
                 CancellationToken.None);
             Assert.True(updated.IsSuccess);
         }
@@ -91,6 +101,8 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
         Assert.Equal("#abcdef", result.Value.PrimaryColorHex);
         Assert.Equal(Position.BottomRight, result.Value.Position);
         Assert.Equal(Locale.Ru, result.Value.Locale);
+        Assert.Equal("We read what you send us.", result.Value.NoticeText);
+        Assert.Equal("https://tenant.example/privacy", result.Value.NoticeUrl);
     }
 
     [Fact]
@@ -105,7 +117,9 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
                 new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
-                new UpdateWidgetConfig(siteId, operatorId, "#336699", nameof(Position.BottomLeft), nameof(Locale.Ru)),
+                new UpdateWidgetConfig(
+                    siteId, operatorId, "#336699", nameof(Position.BottomLeft), nameof(Locale.Ru),
+                    "We read what you send us.", "https://tenant.example/privacy"),
                 CancellationToken.None);
 
             Assert.True(result.IsFailure);
@@ -115,6 +129,8 @@ public class UpdateWidgetConfigOutboxTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         var siteRow = await verify.Sites.SingleAsync(s => s.Id == siteId, CancellationToken.None);
         Assert.Null(siteRow.WidgetConfig.PrimaryColorHex); // untouched - WidgetConfig.Default
+        Assert.Null(siteRow.WidgetConfig.NoticeText); // untouched - WidgetConfig.Default
+        Assert.Null(siteRow.WidgetConfig.NoticeUrl); // untouched - WidgetConfig.Default
         Assert.False(await verify.Set<OutboxMessage>().AnyAsync(o => o.PartitionKey == siteId.Value.ToString(), CancellationToken.None));
     }
 

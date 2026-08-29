@@ -20,8 +20,14 @@ namespace Ago.Chat.Application.Tests.UseCases.GetSiteByPublicKey;
 /// </summary>
 public class SiteConfigCacheRoundTripTests
 {
-    private static SiteConfigDto Dto(OfflineAutoReplySettings autoReply, Locale locale = Locale.En) =>
-        new(Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply, "free");
+    private static SiteConfigDto Dto(
+        OfflineAutoReplySettings autoReply,
+        Locale locale = Locale.En,
+        string? noticeText = "We read what you send us.",
+        string? noticeUrl = "https://tenant.example/privacy") =>
+        new(
+            Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply,
+            "free", noticeText, noticeUrl);
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;
@@ -69,6 +75,32 @@ public class SiteConfigCacheRoundTripTests
         Assert.Equal(dto.WidgetPrimaryColorHex, read.WidgetPrimaryColorHex);
         Assert.Equal(dto.WidgetPosition, read.WidgetPosition);
         Assert.Equal(dto.WidgetLocale, read.WidgetLocale);
+        Assert.Equal(dto.WidgetNoticeText, read.WidgetNoticeText);
+        Assert.Equal(dto.WidgetNoticeUrl, read.WidgetNoticeUrl);
+    }
+
+    // `16-04`: both fields are plain nullable strings with no validating constructor of their own at
+    // this DTO layer - so, like `Locale` above, they cannot reproduce `14-04`'s own struct/class bug
+    // directly - but asserted through a real round trip anyway, for the same reason: only a round trip
+    // through the actual (de)serializer is evidence, not the fact that the test compiles.
+    [Fact]
+    public void TheWidgetNoticeFields_SurviveTheCache()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled));
+
+        Assert.Equal("We read what you send us.", read.WidgetNoticeText);
+        Assert.Equal("https://tenant.example/privacy", read.WidgetNoticeUrl);
+    }
+
+    // `16-04`'s own default - a site with no notice configured must round-trip as `null`, not as an
+    // empty string a naive (de)serializer default could substitute.
+    [Fact]
+    public void ANullWidgetNotice_SurvivesTheCacheAsNull()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, noticeText: null, noticeUrl: null));
+
+        Assert.Null(read.WidgetNoticeText);
+        Assert.Null(read.WidgetNoticeUrl);
     }
 
     // `11-10`: `Locale` is a plain CLR enum, not a value object with a validating constructor - so it

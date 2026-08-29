@@ -68,6 +68,8 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
             Assert.Null(first.WidgetPrimaryColorHex);
             Assert.Equal(Position.BottomRight, first.WidgetPosition);
             Assert.Equal(Locale.En, first.WidgetLocale);
+            Assert.Null(first.WidgetNoticeText);
+            Assert.Null(first.WidgetNoticeUrl);
         }
 
         // The real chain: OutboxDispatcher (Ago.Chat.Worker) -> RabbitMQ -> SiteCacheInvalidationConsumer
@@ -104,7 +106,9 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
                     new UuidV7Generator(), new SystemClock());
 
                 var updated = await updateHandler.HandleAsync(
-                    new UpdateWidgetConfig(siteId, operatorId, "#ff8800", nameof(Position.BottomLeft), nameof(Locale.Ru)),
+                    new UpdateWidgetConfig(
+                        siteId, operatorId, "#ff8800", nameof(Position.BottomLeft), nameof(Locale.Ru),
+                        "We read what you send us.", "https://tenant.example/privacy"),
                     CancellationToken.None);
                 Assert.True(updated.IsSuccess, updated.IsFailure ? updated.Error!.Value.Message : null);
             }
@@ -113,13 +117,21 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
             // Done-when actually promises a caller sees, matching this suite's "assert observable
             // behaviour" convention (testing.md). `11-10`: the locale field rides the same cache
             // entry and the same invalidation chain, so it is asserted here rather than in a second,
-            // near-duplicate end-to-end test.
+            // near-duplicate end-to-end test. `16-04`: the two notice fields ride the identical chain -
+            // one more reason this test stays one test rather than four near-duplicates.
             var sawNewValue = await OutboxTestHelpers.WaitUntilAsync(async () =>
             {
                 await using var readDb = fixture.CreateDbContext();
                 var getSite = new GetSiteConfigByPublicKeyHandler(new SiteRepository(readDb), cache);
                 var read = await getSite.HandleAsync(new GetSiteConfigByPublicKey(publicKey), CancellationToken.None);
-                return read is { WidgetPrimaryColorHex: "#ff8800", WidgetPosition: Position.BottomLeft, WidgetLocale: Locale.Ru };
+                return read is
+                {
+                    WidgetPrimaryColorHex: "#ff8800",
+                    WidgetPosition: Position.BottomLeft,
+                    WidgetLocale: Locale.Ru,
+                    WidgetNoticeText: "We read what you send us.",
+                    WidgetNoticeUrl: "https://tenant.example/privacy",
+                };
             }, TimeSpan.FromSeconds(15));
 
             Assert.True(sawNewValue, "Timed out waiting for a fresh handshake read to see the updated widget config.");

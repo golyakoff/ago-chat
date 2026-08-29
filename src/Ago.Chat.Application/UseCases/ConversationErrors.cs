@@ -142,6 +142,19 @@ public static class ConversationErrors
     public static Error WidgetConfigInvalidLocale(string reason) =>
         new("WidgetConfig.InvalidLocale", reason);
 
+    /// <summary>`16-04`: whitespace-only or over-length notice text `WidgetConfig`'s own constructor
+    /// rejected - the same catch-and-translate split `WidgetConfigInvalidColor` already draws, kept as
+    /// its own code (not folded into that one) so a console or API caller can tell which field to
+    /// fix.</summary>
+    public static Error WidgetConfigInvalidNoticeText(string reason) =>
+        new("WidgetConfig.InvalidNoticeText", reason);
+
+    /// <summary>`16-04`: a notice URL that is not an absolute `https://` URL - `WidgetConfig`'s own
+    /// constructor rejected it (its own remarks explain why this reuses only the scheme-only reflex
+    /// `6-03`'s webhook validator applies, not its SSRF check).</summary>
+    public static Error WidgetConfigInvalidNoticeUrl(string reason) =>
+        new("WidgetConfig.InvalidNoticeUrl", reason);
+
     /// <summary>`14-04`: an offline auto-reply configuration `OfflineAutoReplyRule`/
     /// `OfflineAutoReplySettings` refused - an empty or oversized keyword or reply, too many rules, or
     /// an enabled configuration with no fallback text. One code rather than five, because every one of

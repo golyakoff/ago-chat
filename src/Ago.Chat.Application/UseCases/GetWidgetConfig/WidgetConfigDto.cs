@@ -14,5 +14,10 @@ namespace Ago.Chat.Application.UseCases.GetWidgetConfig;
 /// even though `Site.UpdateLocale` is its own domain method and raises its own event
 /// (`UpdateWidgetConfigHandler`'s own remarks explain why one HTTP call can still call two domain
 /// methods).
+///
+/// `16-04`: <see cref="NoticeText"/>/<see cref="NoticeUrl"/> join as two more additive fields, straight
+/// off `Ago.Chat.Domain.WidgetConfig` (unlike <see cref="Locale"/>, they need no second domain method to
+/// read from - `WidgetConfig`'s own remarks explain why they stay part of that type).
 /// </summary>
-public sealed record WidgetConfigDto(string? PrimaryColorHex, Position Position, Locale Locale);
+public sealed record WidgetConfigDto(
+    string? PrimaryColorHex, Position Position, Locale Locale, string? NoticeText, string? NoticeUrl);
