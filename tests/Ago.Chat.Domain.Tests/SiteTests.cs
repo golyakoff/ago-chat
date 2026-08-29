@@ -31,6 +31,11 @@ public class SiteTests
         Assert.Equal(WidgetConfig.Default, site.WidgetConfig);
         Assert.Null(site.WidgetConfig.PrimaryColorHex);
         Assert.Equal(Position.BottomRight, site.WidgetConfig.Position);
+        // `16-04`: every existing tenant, and every freshly created one, shows no processing notice -
+        // an AGO-authored default would be AGO asserting a legal position on the tenant's behalf, which
+        // this item must not do (WidgetConfig's own remarks).
+        Assert.Null(site.WidgetConfig.NoticeText);
+        Assert.Null(site.WidgetConfig.NoticeUrl);
     }
 
     // `11-01`: 11-01's own Done-when - Site.UpdateWidgetConfig rejects a malformed hex color. The
@@ -75,6 +80,94 @@ public class SiteTests
         site.UpdateWidgetConfig(new WidgetConfig(null, position), now);
 
         Assert.Equal(position, site.WidgetConfig.Position);
+    }
+
+    // `16-04`: 16-04's own Scope - the URL is validated `https://` only, the same reflex `6-03`
+    // applied to webhook endpoints (minus that validator's SSRF/private-range check, which does not
+    // apply here - WidgetConfig's own remarks explain why: this URL is only ever handed to a visitor's
+    // browser, never fetched by this server).
+    [Theory]
+    [InlineData("http://tenant.example/privacy")]
+    [InlineData("ftp://tenant.example/privacy")]
+    [InlineData("tenant.example/privacy")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateWidgetConfig_WhenNoticeUrlIsNotAbsoluteHttps_Throws(string malformedUrl)
+    {
+        Assert.Throws<ArgumentException>(() => new WidgetConfig(null, Position.BottomRight, null, malformedUrl));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenNoticeUrlIsValidHttps_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateWidgetConfig(
+            new WidgetConfig(null, Position.BottomRight, null, "https://tenant.example/privacy"), now);
+
+        Assert.Equal("https://tenant.example/privacy", site.WidgetConfig.NoticeUrl);
+    }
+
+    // `16-04`: whitespace-only text is rejected rather than silently stored - a tenant who meant "no
+    // notice" should leave the field null (WidgetConfig's own remarks: "leave it null to show no
+    // notice"), not save three spaces and have the widget render an empty-looking bar.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateWidgetConfig_WhenNoticeTextIsWhitespaceOnly_Throws(string malformedText)
+    {
+        Assert.Throws<ArgumentException>(() => new WidgetConfig(null, Position.BottomRight, malformedText, null));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenNoticeTextExceedsMaxLength_Throws()
+    {
+        var tooLong = new string('a', WidgetConfig.MaxNoticeTextLength + 1);
+
+        Assert.Throws<ArgumentException>(() => new WidgetConfig(null, Position.BottomRight, tooLong, null));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenNoticeTextAndUrlAreValid_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        const string text = "We use your messages to answer your questions. Read more about how we handle them.";
+
+        site.UpdateWidgetConfig(
+            new WidgetConfig(null, Position.BottomRight, text, "https://tenant.example/privacy"), now);
+
+        Assert.Equal(text, site.WidgetConfig.NoticeText);
+        Assert.Equal("https://tenant.example/privacy", site.WidgetConfig.NoticeUrl);
+    }
+
+    // `16-04`'s own Scope - "Both optional... a tenant that has not want a notice in the widget must be
+    // able to leave them empty." Text with no link, and a link with no text, are both legitimate.
+    [Fact]
+    public void UpdateWidgetConfig_WhenOnlyNoticeTextIsSet_AcceptsWithNullUrl()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, "We read what you send us.", null), now);
+
+        Assert.Equal("We read what you send us.", site.WidgetConfig.NoticeText);
+        Assert.Null(site.WidgetConfig.NoticeUrl);
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenOnlyNoticeUrlIsSet_AcceptsWithNullText()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateWidgetConfig(
+            new WidgetConfig(null, Position.BottomRight, null, "https://tenant.example/privacy"), now);
+
+        Assert.Null(site.WidgetConfig.NoticeText);
+        Assert.Equal("https://tenant.example/privacy", site.WidgetConfig.NoticeUrl);
     }
 
     [Fact]

@@ -21,6 +21,9 @@ namespace Ago.Chat.Api.WidgetConfig;
 /// `11-10`: `Locale` joins the request/response on the identical terms and crosses the wire the same
 /// way - its own PascalCase member name (`"En"`/`"Ru"`), independent of `LocaleConverter`'s lowercase
 /// storage choice.
+///
+/// `16-04`: `NoticeText`/`NoticeUrl` join as two more additive, nullable string fields - no enum
+/// conversion needed, they cross the wire exactly as `Ago.Chat.Domain.WidgetConfig` holds them.
 /// </summary>
 public static class WidgetConfigEndpoints
 {
@@ -53,16 +56,24 @@ public static class WidgetConfigEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new UpdateWidgetConfig(
-                new SiteId(siteId), user.GetOperatorId(), request.PrimaryColorHex, request.Position, request.Locale),
+                new SiteId(siteId),
+                user.GetOperatorId(),
+                request.PrimaryColorHex,
+                request.Position,
+                request.Locale,
+                request.NoticeText,
+                request.NoticeUrl),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
     }
 
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
-        new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString());
+        new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl);
 
-    public sealed record UpdateWidgetConfigRequest(string? PrimaryColorHex, string Position, string Locale);
+    public sealed record UpdateWidgetConfigRequest(
+        string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl);
 
-    public sealed record WidgetConfigResponse(string? PrimaryColorHex, string Position, string Locale);
+    public sealed record WidgetConfigResponse(
+        string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl);
 }

@@ -66,7 +66,19 @@ public sealed class UpdateWidgetConfigHandler(
         WidgetConfig config;
         try
         {
-            config = new WidgetConfig(command.PrimaryColorHex, position);
+            config = new WidgetConfig(command.PrimaryColorHex, position, command.NoticeText, command.NoticeUrl);
+        }
+        // `16-04`: `WidgetConfig`'s constructor throws with its own parameter name for each of the
+        // three things it validates - matched here on that name so a caller can tell which field to
+        // fix instead of one catch-all "InvalidColor" for every rejection. Falls through to the
+        // pre-existing color code for anything else, unchanged from before this item.
+        catch (ArgumentException ex) when (ex.ParamName == "noticeText")
+        {
+            return ConversationErrors.WidgetConfigInvalidNoticeText(ex.Message);
+        }
+        catch (ArgumentException ex) when (ex.ParamName == "noticeUrl")
+        {
+            return ConversationErrors.WidgetConfigInvalidNoticeUrl(ex.Message);
         }
         catch (ArgumentException ex)
         {
@@ -91,6 +103,6 @@ public sealed class UpdateWidgetConfigHandler(
 
         await sites.SaveAsync(site, cancellationToken);
 
-        return new WidgetConfigDto(config.PrimaryColorHex, config.Position, locale);
+        return new WidgetConfigDto(config.PrimaryColorHex, config.Position, locale, config.NoticeText, config.NoticeUrl);
     }
 }

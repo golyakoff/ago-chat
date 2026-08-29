@@ -98,7 +98,7 @@ public static class AuthEndpoints
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-                site.WidgetLocale.ToString()));
+                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl));
     }
 
     /// <summary>
@@ -197,7 +197,7 @@ public static class AuthEndpoints
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-            site.WidgetLocale.ToString()));
+            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl));
     }
 
     public sealed record VisitorSessionRequest(string PublicKey);
@@ -218,7 +218,22 @@ public static class AuthEndpoints
     /// value falls back to `"en"` silently, the same "courtesy re-check, never trust the wire value
     /// blindly" posture `ui/appearance.ts`'s `parseWidgetPosition` already takes for the sibling field
     /// beside it.
+    ///
+    /// `16-04`: <see cref="WidgetNoticeText"/>/<see cref="WidgetNoticeUrl"/> join as two more additive,
+    /// nullable fields - the tenant's own sentence about who processes what a visitor is about to
+    /// write, and where to read more, both `null` (rendering nothing) for every site that has not
+    /// configured one. `ago-widget`'s `ui/appearance.ts` re-validates both on receipt the same
+    /// "courtesy re-check, never trust the wire value blindly" way it already does for color and
+    /// position - a malformed or non-`https://` URL here (a wire value never trusted blindly, `WidgetConfig`'s
+    /// own server-side validation notwithstanding) falls back to rendering no link, never a thrown
+    /// exception on the host page.
     /// </summary>
     public sealed record VisitorSessionResponse(
-        string Token, Guid VisitorId, string? WidgetPrimaryColorHex, string WidgetPosition, string WidgetLocale);
+        string Token,
+        Guid VisitorId,
+        string? WidgetPrimaryColorHex,
+        string WidgetPosition,
+        string WidgetLocale,
+        string? WidgetNoticeText,
+        string? WidgetNoticeUrl);
 }

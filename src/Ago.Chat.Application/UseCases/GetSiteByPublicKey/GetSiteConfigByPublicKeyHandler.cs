@@ -41,6 +41,6 @@ public sealed class GetSiteConfigByPublicKeyHandler(ISiteRepository sites, ICach
         return SiteLookupResult.Of(new SiteConfigDto(
             site.Id.Value, site.PublicKey, site.AllowedOrigins,
             site.WidgetConfig.PrimaryColorHex, site.WidgetConfig.Position, site.Locale, site.OfflineAutoReply,
-            site.Tier));
+            site.Tier, site.WidgetConfig.NoticeText, site.WidgetConfig.NoticeUrl));
     }
 }

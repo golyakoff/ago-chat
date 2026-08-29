@@ -89,7 +89,13 @@ public sealed class Site
     private string? _widgetPrimaryColorHex;
     private Position _widgetPosition = Position.BottomRight;
 
-    public WidgetConfig WidgetConfig => new(_widgetPrimaryColorHex, _widgetPosition);
+    // `16-04`: two more flat backing fields on the same terms - the tenant's processing-notice text and
+    // link, each its own column (Stage16AddSiteWidgetNotice), no owned-type mapping introduced for two
+    // more callers of the same shape.
+    private string? _widgetNoticeText;
+    private string? _widgetNoticeUrl;
+
+    public WidgetConfig WidgetConfig => new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -189,10 +195,13 @@ public sealed class Site
         Tier = tier;
         SeatLimit = seatLimit;
         _allowedOrigins = [.. allowedOrigins];
-        // WidgetConfig.Default's own values (null color, BottomRight) - a freshly created Site never
-        // renders broken just because nobody has configured a widget appearance yet.
+        // WidgetConfig.Default's own values (null color, BottomRight, no notice) - a freshly created
+        // Site never renders broken, and shows no processing notice, just because nobody has configured
+        // a widget appearance yet.
         _widgetPrimaryColorHex = WidgetConfig.Default.PrimaryColorHex;
         _widgetPosition = WidgetConfig.Default.Position;
+        _widgetNoticeText = WidgetConfig.Default.NoticeText;
+        _widgetNoticeUrl = WidgetConfig.Default.NoticeUrl;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -215,6 +224,8 @@ public sealed class Site
     {
         _widgetPrimaryColorHex = config.PrimaryColorHex;
         _widgetPosition = config.Position;
+        _widgetNoticeText = config.NoticeText;
+        _widgetNoticeUrl = config.NoticeUrl;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

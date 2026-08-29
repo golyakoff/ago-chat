@@ -38,7 +38,13 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// this value, only what gets recorded once it already has). Not put on the wire by the widget
 /// handshake, the same reasoning <see cref="OfflineAutoReply"/> already states: a tenant's billing tier
 /// is not something an anonymous visitor holding the public key should be able to read.
+/// `16-04`: <see cref="WidgetNoticeText"/>/<see cref="WidgetNoticeUrl"/> join on exactly the same terms
+/// <see cref="WidgetLocale"/> did - additive fields on the existing cached DTO, populated identically by
+/// both loaders, and <b>put on the wire</b> by the handshake: this is the visitor-facing point of the
+/// whole item (a visitor must see the notice before typing anything), the opposite of
+/// <see cref="OfflineAutoReply"/>/<see cref="Tier"/>'s "never expose to the public key" reasoning.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
-    OfflineAutoReplySettings OfflineAutoReply, string Tier);
+    OfflineAutoReplySettings OfflineAutoReply, string Tier,
+    string? WidgetNoticeText, string? WidgetNoticeUrl);
