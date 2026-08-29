@@ -46,6 +46,16 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         // `CREATE TABLE ... PARTITION OF`.
         builder.Property(m => m.SiteId).HasColumnName("site_id").HasConversion(IdConverters.NullableSite);
 
+        // `13-06`/`adr/0031`: the immutable half of the two-level partition key. A plain `text`
+        // conversion, not `IdConverters` (this is not an id) - the same "wrap a string, convert with a
+        // one-line lambda pair" shape `MessageBodyConverter` establishes for a value type with no
+        // identity of its own. `NOT NULL`, unlike `SiteId` above: `13-06`'s own migration backfills
+        // every existing row as part of its rename/create/copy/drop (Postgres requires a value on
+        // every row of a `LIST`-partitioned table's partition-key column), so there is no
+        // "column added, old rows read null" window here the way there was for `SiteId`.
+        builder.Property(m => m.RetentionClass).HasColumnName("retention_class")
+            .HasConversion(rc => rc.Value, value => new RetentionClass(value));
+
         // `14-06`: the structured half, three nullable columns over Message's three private backing
         // fields - the same "computed property, EF pointed at the fields by name" shape
         // SiteConfiguration already uses for Site.WidgetConfig. The storage reasoning (text over
@@ -70,7 +80,14 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         // different partitions. The primary defence against a genuine duplicate sequence was always
         // the conversation aggregate's optimistic-concurrency load-mutate-save (xmin), not this
         // index - this stays the last line of defence, not the first.
-        builder.HasIndex(m => new { m.ConversationId, m.Sequence, m.CreatedAt }).IsUnique();
+        //
+        // `13-06`/`adr/0031`: widened once more, to `retention_class` - the same consequence
+        // `adr/0019` already argued was acceptable, applied a second time now that the partition key
+        // itself has grown a second column. Two racing inserts for the same (conversation_id,
+        // sequence) now also fail to collide here if they land in different *classes* as well as
+        // different months - stated because it is a real further weakening of the same backstop, not
+        // because it changes what actually prevents the race (Conversation's own xmin check, unchanged).
+        builder.HasIndex(m => new { m.ConversationId, m.Sequence, m.CreatedAt, m.RetentionClass }).IsUnique();
 
         // `5-07`: same adr/0019 shape (partition key `created_at` must be part of any unique
         // constraint on this table) applied to the new retry-dedup column - the in-memory check in
@@ -82,7 +99,9 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         // common `NULL` case - a caller that sent no clientMessageId at all - never collides with
         // itself; Postgres treats every `NULL` in a unique index as distinct already, but the filter
         // also keeps the index smaller by not indexing rows it will never need to check.
-        builder.HasIndex(m => new { m.ConversationId, m.ClientMessageId, m.CreatedAt })
+        //
+        // `13-06`: widened to `retention_class` for the identical reason the index above is.
+        builder.HasIndex(m => new { m.ConversationId, m.ClientMessageId, m.CreatedAt, m.RetentionClass })
             .IsUnique()
             .HasFilter("client_message_id IS NOT NULL");
     }

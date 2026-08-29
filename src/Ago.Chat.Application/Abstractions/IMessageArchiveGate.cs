@@ -2,23 +2,21 @@
 
 /// <summary>
 /// `15-04`/`adr/0031`'s drop precondition: a <c>messages</c> partition past its retention horizon must
-/// not be dropped until whatever it holds is confirmed recoverable some other way. `13-06` owns the
-/// real mechanism - one archive object per site per period, written to object storage before the drop -
-/// and is not built yet; this item only owns the pruning job that must call a check before every drop,
-/// per its own scope note ("the drop step must be structured so 13-06's not-yet-built archive-
-/// confirmation can gate it later"). Declared here, in Application.Abstractions, rather than resolved
-/// ad hoc in <c>Ago.Chat.Worker</c> - CLAUDE.md rule 2: a real implementation checks object storage, an
-/// external resource Application must not know the shape of, so the port belongs on this side of the
-/// boundary even though nothing behind it does I/O yet.
+/// not be dropped until whatever it holds is confirmed recoverable some other way. `13-06` built the
+/// real mechanism - <c>Ago.Chat.Infrastructure.Postgres.MessageArchiveGate</c>, backed by the
+/// <c>message_archives</c> manifest <c>Ago.Chat.Worker</c>'s <c>MessageArchiveJob</c> writes only after
+/// a real object-storage upload has already succeeded. `15-04`'s own stand-in
+/// (<see cref="AlwaysConfirmedMessageArchiveGate"/>) remains as a test fake. Declared here, in
+/// Application.Abstractions, rather than resolved ad hoc in <c>Ago.Chat.Worker</c> - CLAUDE.md rule 2: a
+/// real implementation checks object storage (indirectly, through the manifest table archiving already
+/// confirmed against), an external resource Application must not know the shape of, so the port belongs
+/// on this side of the boundary.
 ///
-/// <paramref name="partitionName"/> (on <see cref="IsArchivedAsync"/>) is the literal Postgres
-/// partition table name (e.g. <c>"messages_2026_01"</c>) rather than a decomposed (retention class,
-/// month) pair. Today's grid has one dimension; `13-06` widens it to two by renaming partitions to
-/// carry the class as well (`adr/0031`'s "PARTITION BY LIST (retention_class), each itself PARTITION BY
-/// RANGE (created_at)"). Passing the name whole means this port's *shape* does not need to change when
-/// that dimension lands - a real implementation reads whatever it needs out of the name (or, more
-/// likely, out of its own archive-manifest table keyed the same way), and this port stays exactly the
-/// "has this partition's data been archived" question it is today.
+/// <paramref name="partitionName"/> (on <see cref="IsArchivedAsync"/>) is the literal Postgres leaf
+/// partition table name (e.g. <c>"messages_free_2026_01"</c>) rather than a decomposed (retention
+/// class, month) pair - exactly as anticipated when this port was declared with one dimension and
+/// widened to two without changing shape: <see cref="Ago.Chat.Infrastructure.Postgres.MessageArchiveGate"/>
+/// reads what it needs straight out of the name (<c>MessagePartitionNames.TryParse</c>).
 /// </summary>
 public interface IMessageArchiveGate
 {

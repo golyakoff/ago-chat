@@ -81,6 +81,18 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
         // `16-03`: the export-request read/write - see IExportRequestRepository's own remarks.
         services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
+        // `13-06`: the archive manifest, and the real (object-storage-backed) gate that replaces
+        // `15-04`'s AlwaysConfirmedMessageArchiveGate stand-in - see IMessageArchiveRepository's and
+        // MessageArchiveGate's own remarks. Singleton, not Scoped like most repositories on this page:
+        // both classes hold no state beyond an injected NpgsqlDataSource (itself Singleton, a
+        // connection-pool factory rather than a live connection) and both are consumed directly by
+        // Ago.Chat.Worker's singleton BackgroundServices (MessageArchiveJob, MessagePartitionPruneJob)
+        // - a Scoped registration injected straight into a Singleton's constructor is the captive-
+        // dependency bug MessageBatchWriter's own remarks on GetSiteConfigByIdHandler already found and
+        // fixed once this same item; Singleton here avoids reintroducing it rather than working around
+        // it with a per-cycle scope the way that fix needed to.
+        services.AddSingleton<IMessageArchiveRepository, MessageArchiveRepository>();
+        services.AddSingleton<IMessageArchiveGate, MessageArchiveGate>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

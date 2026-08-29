@@ -1,10 +1,12 @@
 ﻿using System.Diagnostics;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
@@ -38,7 +40,7 @@ namespace Ago.Chat.Infrastructure.Postgres.Pipeline;
 /// of them actually landed.
 /// </summary>
 public sealed class MessageBatchWriter(
-    NpgsqlDataSource dataSource, IClock clock, IIdGenerator idGenerator, ILogger<MessageBatchWriter> logger)
+    NpgsqlDataSource dataSource, IClock clock, IIdGenerator idGenerator, ICache cache, ILogger<MessageBatchWriter> logger)
 {
     internal async Task FlushAsync(IReadOnlyList<InboundMessage> batch, CancellationToken cancellationToken)
     {
@@ -78,11 +80,36 @@ public sealed class MessageBatchWriter(
 
         var conversations = new ConversationRepository(db);
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+        // `13-06`: GetSiteConfigByIdHandler is Application-layer, registered Scoped in ChatModule
+        // (it wraps ISiteRepository, which wraps a DbContext) - MessageBatchWriter itself is a
+        // Singleton, the same "manage a short-lived AgoChatDbContext per flush rather than take one
+        // from DI" shape this method already uses for `conversations`/`outbox` just above (both are
+        // `new`'d against this flush's own `db`, never resolved from a container). Injecting the
+        // handler itself would be a captive-dependency bug (a Singleton permanently holding a Scoped
+        // service's first-ever DbContext); building it fresh, per flush, from this flush's own `db`
+        // plus the injected `ICache` (a real Singleton - `Ago.Platform.Caching.Redis`'s Redis client is
+        // stateless and thread-safe, unlike a DbContext) keeps every dependency at the lifetime it was
+        // actually registered with.
+        var getSiteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), cache);
         var pendingSuccesses = new List<(InboundMessage Item, int Sequence)>();
 
         foreach (var group in batch.GroupBy(i => i.Message.ConversationId))
         {
             var conversation = await conversations.GetByIdAsync(group.Key, cancellationToken);
+
+            // Resolved once per conversation, not once per message - the site's tier does not change
+            // mid-batch, and this is a cache-aside read (adr/0031's own carve-out from CLAUDE.md rule
+            // 8: a stamp, not a gate). A site whose config cannot be resolved at all - the site was
+            // deleted in the instant between the conversation loading and this read, the one race this
+            // handler cannot see coming - stamps RetentionClass.Free rather than failing the whole
+            // group: an impossible-in-practice edge case getting the safest (shortest-lived) class is
+            // preferable to an already-validated batch of sends failing on a lookup that has nothing
+            // to do with whether they are valid messages.
+            var retentionClass = conversation is null
+                ? (RetentionClass?)null
+                : RetentionClass.FromTier((await getSiteConfig.HandleAsync(
+                    new GetSiteConfigById(conversation.SiteId), cancellationToken))?.Tier ?? RetentionClass.Free.Value);
+
             foreach (var item in group)
             {
                 if (conversation is null)
@@ -131,10 +158,10 @@ public sealed class MessageBatchWriter(
                     var message = item.Message.AuthorKind == MessageAuthorKind.Visitor
                         ? conversation.AddVisitorMessage(
                             new VisitorId(item.Message.AuthorId), messageId, item.Message.Body, now,
-                            item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content)
+                            item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content, retentionClass)
                         : conversation.AddOperatorMessage(
                             new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now,
-                            item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content);
+                            item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content, retentionClass);
 
                     // `5-07`: a returned Message.Id that does not match the id just generated above
                     // means Conversation.AddMessage found an existing message with the same

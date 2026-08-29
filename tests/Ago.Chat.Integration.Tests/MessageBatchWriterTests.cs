@@ -90,6 +90,45 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
     }
 
+    /// <summary>
+    /// `13-06`/`adr/0031`'s own Done-when: "retention_class is stamped at write time and provably
+    /// never updated afterwards - including a test that changing a site's tier leaves existing rows
+    /// untouched." Drives the real production write path end to end (`MessageBatchWriter` ->
+    /// `GetSiteConfigByIdHandler` -> `RetentionClass.FromTier`) against a real Postgres, through the
+    /// same <see cref="NoOpCache"/> every other test in this file uses - a cache that never actually
+    /// caches means every send re-reads the site's *current* tier fresh, which is exactly what proves
+    /// the immutability is a property of `Message`/the write path, not an accident of a stale cache
+    /// entry masking a tier change that would otherwise have leaked backwards.
+    /// </summary>
+    [Fact]
+    public async Task FlushAsync_StampsRetentionClassFromTheSitesCurrentTier_AndNeverUpdatesAnAlreadyWrittenMessage()
+    {
+        var (siteId, visitorId, conversationId) = await SeedWaitingConversationWithSiteIdAsync();
+
+        var firstResult = await FlushOneAsync(conversationId, MessageAuthorKind.Visitor, visitorId, "written under free");
+        Assert.True(firstResult.IsSuccess);
+
+        // The tier change - the exact event adr/0031's Decision 2 says must move no existing row.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var site = await db.Sites.SingleAsync(s => s.Id == siteId);
+            site.ActivateSubscription(SubscriptionTierBands.Starter, seatLimit: 10, Now);
+            await db.SaveChangesAsync();
+        }
+
+        var secondResult = await FlushOneAsync(conversationId, MessageAuthorKind.Visitor, visitorId, "written under starter");
+        Assert.True(secondResult.IsSuccess);
+
+        await using var verify = fixture.CreateDbContext();
+        var firstMessage = await verify.Set<Message>().SingleAsync(m => m.ConversationId == conversationId && m.Sequence == firstResult.Value);
+        var secondMessage = await verify.Set<Message>().SingleAsync(m => m.ConversationId == conversationId && m.Sequence == secondResult.Value);
+
+        // The load-bearing assertion: the first message's class is still "free", stamped once at
+        // write time and never re-derived from the site's now-different tier.
+        Assert.Equal(RetentionClass.Free.Value, firstMessage.RetentionClass.Value);
+        Assert.Equal(SubscriptionTierBands.Starter, secondMessage.RetentionClass.Value);
+    }
+
     [Fact]
     public async Task FlushAsync_MultipleMessagesForTheSameConversationInOneBatch_AppliesThemInOrder_GapFreeSequence()
     {
@@ -228,7 +267,7 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
     }
 
     private MessageBatchWriter CreateWriter() =>
-        new(fixture.DataSource, new SystemClock(), new UuidV7Generator(), NullLogger<MessageBatchWriter>.Instance);
+        new(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
 
     private async Task<Result<int>> FlushOneAsync(
         ConversationId conversationId, MessageAuthorKind authorKind, Guid authorId, string body, AttachmentId? attachmentId = null)
@@ -264,6 +303,12 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
 
     private async Task<(Guid VisitorId, ConversationId ConversationId)> SeedWaitingConversationAsync()
     {
+        var (_, visitorId, conversationId) = await SeedWaitingConversationWithSiteIdAsync();
+        return (visitorId, conversationId);
+    }
+
+    private async Task<(SiteId SiteId, Guid VisitorId, ConversationId ConversationId)> SeedWaitingConversationWithSiteIdAsync()
+    {
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
         var conversationId = new ConversationId(Guid.NewGuid());
@@ -274,7 +319,7 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
         await db.SaveChangesAsync();
 
-        return (visitorId.Value, conversationId);
+        return (siteId, visitorId.Value, conversationId);
     }
 
     private async Task<(SiteId SiteId, Guid VisitorId, ConversationId ConversationId)> SeedAssignedConversationAsync()

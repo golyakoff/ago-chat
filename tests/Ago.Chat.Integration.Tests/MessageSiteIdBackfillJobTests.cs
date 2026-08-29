@@ -125,9 +125,12 @@ public sealed class MessageSiteIdBackfillJobTests(PostgresFixture fixture)
         var messageId = new MessageId(Guid.NewGuid());
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        // `13-06`: retention_class is NOT NULL now (the partition key's own second column) - 'free'
+        // here for the same reason every other far-past/legacy-row test in this file's neighbourhood
+        // picks it: it is what every pre-13-06 row was approximated to by this item's own migration.
         const string sql = """
-            INSERT INTO messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, site_id)
-            VALUES (@Id, @ConversationId, @Sequence, 'Visitor', @AuthorId, @Body, @CreatedAt, NULL)
+            INSERT INTO messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
+            VALUES (@Id, @ConversationId, @Sequence, 'Visitor', @AuthorId, @Body, @CreatedAt, 'free', NULL)
             """;
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("Id", messageId.Value);

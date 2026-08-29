@@ -212,10 +212,21 @@ public sealed class Conversation
     /// <summary>
     /// The visitor may write while waiting for an operator, or after one is assigned - just never
     /// after the conversation is closed.
+    ///
+    /// <para>`13-06`: <paramref name="retentionClass"/> arrives already resolved by the caller
+    /// (<c>MessageBatchWriter</c> reads the owning site's current <see cref="Site.Tier"/> through
+    /// `3-04`'s cache, per <see cref="RetentionClass"/>'s own remarks) - this aggregate has no I/O of
+    /// its own to resolve it and CLAUDE.md rule 2 forbids it reaching for any. Optional, defaulting
+    /// to <see cref="RetentionClass.Free"/>, for the same reason <paramref name="attachmentId"/>/
+    /// <paramref name="clientMessageId"/>/<paramref name="content"/> are: dozens of existing test call
+    /// sites construct a message with no opinion about retention at all, and forcing every one of
+    /// them to supply a class this item's own scope does not concern them with would be exactly the
+    /// unscoped blast radius <see cref="Site.Name"/>'s own remarks warn against repeating.</para>
     /// </summary>
     public Message AddVisitorMessage(
         VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
-        AttachmentId? attachmentId = null, Guid? clientMessageId = null, MessageContent? content = null)
+        AttachmentId? attachmentId = null, Guid? clientMessageId = null, MessageContent? content = null,
+        RetentionClass? retentionClass = null)
     {
         if (authorId != VisitorId)
         {
@@ -230,13 +241,15 @@ public sealed class Conversation
         }
 
         return AddMessage(
-            MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, clientMessageId, content, now);
+            MessageAuthorKind.Visitor, authorId.Value, messageId, body, attachmentId, clientMessageId, content, now,
+            retentionClass);
     }
 
     /// <summary>An operator may write only once assigned, and only to their own conversation.</summary>
     public Message AddOperatorMessage(
         OperatorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
-        AttachmentId? attachmentId = null, Guid? clientMessageId = null, MessageContent? content = null)
+        AttachmentId? attachmentId = null, Guid? clientMessageId = null, MessageContent? content = null,
+        RetentionClass? retentionClass = null)
     {
         // State first: with no operator assigned yet, "wrong state" is the true cause - checking
         // participant identity first would misreport it as "wrong operator" when there is no
@@ -255,7 +268,8 @@ public sealed class Conversation
         }
 
         return AddMessage(
-            MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, clientMessageId, content, now);
+            MessageAuthorKind.Operator, authorId.Value, messageId, body, attachmentId, clientMessageId, content, now,
+            retentionClass);
     }
 
     /// <summary>
@@ -276,7 +290,8 @@ public sealed class Conversation
     /// prose, and a parameter with no caller is a guess about the second one.</para>
     /// </summary>
     public Message AddSystemMessage(
-        MessageId messageId, MessageBody body, DateTimeOffset now, Guid? clientMessageId = null)
+        MessageId messageId, MessageBody body, DateTimeOffset now, Guid? clientMessageId = null,
+        RetentionClass? retentionClass = null)
     {
         if (State == ConversationState.Closed)
         {
@@ -285,7 +300,7 @@ public sealed class Conversation
         }
 
         return AddMessage(
-            MessageAuthorKind.System, SystemAuthorId, messageId, body, null, clientMessageId, null, now);
+            MessageAuthorKind.System, SystemAuthorId, messageId, body, null, clientMessageId, null, now, retentionClass);
     }
 
     /// <summary>`14-04`: the <see cref="Message.AuthorId"/> every
@@ -428,7 +443,8 @@ public sealed class Conversation
     /// </summary>
     private Message AddMessage(
         MessageAuthorKind authorKind, Guid authorId, MessageId messageId, MessageBody body,
-        AttachmentId? attachmentId, Guid? clientMessageId, MessageContent? content, DateTimeOffset now)
+        AttachmentId? attachmentId, Guid? clientMessageId, MessageContent? content, DateTimeOffset now,
+        RetentionClass? retentionClass)
     {
         if (clientMessageId is { } id)
         {
@@ -441,7 +457,8 @@ public sealed class Conversation
 
         LastSequence++;
         var message = new Message(
-            messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, content, now, SiteId);
+            messageId, Id, LastSequence, authorKind, authorId, body, attachmentId, clientMessageId, content, now,
+            SiteId, retentionClass ?? RetentionClass.Free);
         _messages.Add(message);
 
         // `14-06`: MessageAdded gains nothing. The integration event it maps to (MessageAccepted)

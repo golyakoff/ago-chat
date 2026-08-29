@@ -25,11 +25,13 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
+using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
+using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.ListMyTenancies;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
@@ -181,6 +183,12 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(SiteExportOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportOptions>>().Value);
+        // `13-06`: the identical shape, one setting, for the retention-archive download read.
+        services
+            .AddOptions<MessageArchiveOptions>()
+            .Bind(configuration.GetSection(MessageArchiveOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageArchiveOptions>>().Value);
 
         // `6-03`: bound here, not a host's own Program.cs - RegisterWebhookEndpointHandler is
         // registered for every host below, the same MessageSendRateLimitOptions/AttachmentOptions
@@ -478,6 +486,13 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RequestSiteExportHandler>();
         services.AddScoped<GetSiteExportStatusHandler>();
 
+        // `13-06`: the retrieval half of tenant retention archives - list what is available, then mint
+        // a download URL for one period. No request/write handler alongside these two (unlike the
+        // export pair above): the archive already exists by the time an operator could ask for it
+        // (ListMessageArchivesHandler's own remarks), so there is nothing to enqueue.
+        services.AddScoped<ListMessageArchivesHandler>();
+        services.AddScoped<GetMessageArchiveDownloadUrlHandler>();
+
         // `14-04`: the offline auto-reply's three handlers. The read/write pair backs `Ago.Chat.Api`'s
         // own settings endpoints (the same `site:configure` gate `11-01`'s pair uses); the third is
         // resolved per message by `Ago.Chat.Worker`'s OfflineAutoReplyConsumer. Registered here for
@@ -491,10 +506,11 @@ public sealed class ChatModule : IProductModule
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
         services.AddSingleton<OperatorPresencePublisher>();
 
-        // `15-04`: registered for every host, the same shape as everything else on this page, even
-        // though only Ago.Chat.Worker's MessagePartitionPruneJob resolves it today. AlwaysConfirmedMessageArchiveGate
-        // is the stand-in until `13-06` exists - see that class's and IMessageArchiveGate's own remarks.
-        services.AddSingleton<IMessageArchiveGate, AlwaysConfirmedMessageArchiveGate>();
+        // `15-04`'s own IMessageArchiveGate registration lived here as AlwaysConfirmedMessageArchiveGate
+        // (an Application-layer stand-in, no I/O) until `13-06` existed. The real, object-storage-backed
+        // MessageArchiveGate now lives in Ago.Chat.Infrastructure.Postgres and is registered by
+        // AddPostgresPersistence alongside every other Postgres-backed repository this Module composes -
+        // see that project's ServiceCollectionExtensions and MessageArchiveGate's own remarks.
     }
 
     /// <summary>

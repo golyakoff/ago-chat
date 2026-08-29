@@ -2,7 +2,9 @@
 using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
+using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -51,6 +53,18 @@ public static class SitesEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapGet("/api/v1/sites/{siteId:guid}/exports/{exportId:guid}", HandleGetExportStatusAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `13-06`: same siteId-from-the-route convention, same reasoning, as `/exports` above - a
+        // tenant's own archived retention periods, list then download-by-key. No POST/request route:
+        // unlike `/exports`, the archive already exists by the time an operator could ask for one
+        // (`ListMessageArchivesHandler`'s own remarks) - there is nothing to trigger.
+        app.MapGet("/api/v1/sites/{siteId:guid}/message-archives", HandleListMessageArchivesAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        app.MapGet(
+                "/api/v1/sites/{siteId:guid}/message-archives/{retentionClass}/{period}/download",
+                HandleGetMessageArchiveDownloadUrlAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -171,6 +185,54 @@ public static class SitesEndpoints
             item.ExportId, item.Status.ToString(), item.RequestedAt, item.CompletedAt, item.DownloadUrl, item.FailureReason));
     }
 
+    /// <summary>`13-06`: `GET /api/v1/sites/{siteId}/message-archives` - every retention period this
+    /// site currently has an archive object for, newest first.</summary>
+    private static async Task<IResult> HandleListMessageArchivesAsync(
+        Guid siteId, ListMessageArchivesHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new ListMessageArchives(new SiteId(siteId), user.GetOperatorId()), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(result.Value
+            .Select(r => new MessageArchiveResponse(r.RetentionClass.Value, r.PeriodStart, r.PeriodEnd, r.ArchivedAt))
+            .ToList());
+    }
+
+    /// <summary>`13-06`: `GET /api/v1/sites/{siteId}/message-archives/{retentionClass}/{period}/download` -
+    /// <paramref name="period"/> is `yyyy-MM` (the console's own natural rendering of a monthly
+    /// partition, and this route's one caller-facing shorthand for `DateOnly`'s otherwise-full-date
+    /// route-binding). A malformed period is a `400`, not a `404` - the request itself is
+    /// unparseable, which is a different fact from "no archive matches a period this request did
+    /// successfully parse."</summary>
+    private static async Task<IResult> HandleGetMessageArchiveDownloadUrlAsync(
+        Guid siteId, string retentionClass, string period, GetMessageArchiveDownloadUrlHandler handler,
+        HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        if (!DateOnly.TryParseExact($"{period}-01", "yyyy-MM-dd", out var periodStart))
+        {
+            return Results.Problem(
+                title: "Invalid period", detail: $"'{period}' is not a valid yyyy-MM period.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetMessageArchiveDownloadUrl(new SiteId(siteId), new RetentionClass(retentionClass), periodStart, user.GetOperatorId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(new MessageArchiveDownloadResponse(result.Value));
+    }
+
     public sealed record RegisterSiteRequest(string SiteName, string InitialAllowedOrigin);
 
     public sealed record RegisterSiteResponse(Guid SiteId, Guid OperatorId);
@@ -185,4 +247,8 @@ public static class SitesEndpoints
     /// </summary>
     public sealed record SiteExportStatusResponse(
         Guid ExportId, string Status, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt, Uri? DownloadUrl, string? FailureReason);
+
+    public sealed record MessageArchiveResponse(string RetentionClass, DateOnly PeriodStart, DateOnly PeriodEnd, DateTimeOffset ArchivedAt);
+
+    public sealed record MessageArchiveDownloadResponse(Uri DownloadUrl);
 }

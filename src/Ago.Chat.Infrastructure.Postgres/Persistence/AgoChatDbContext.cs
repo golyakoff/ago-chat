@@ -23,6 +23,8 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `16-03`: migration-scaffolding only - ExportRequestEntity's own remarks explain why nothing
     // ever queries this DbSet.
     internal DbSet<ExportRequestEntity> ExportRequests => Set<ExportRequestEntity>();
+    // `13-06`: migration-scaffolding only, the same shape - MessageArchiveEntity's own remarks.
+    internal DbSet<MessageArchiveEntity> MessageArchives => Set<MessageArchiveEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

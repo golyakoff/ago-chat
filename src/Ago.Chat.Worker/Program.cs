@@ -238,6 +238,21 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<MessagePartitionPruneJob>();
 
+// `13-06`/`adr/0031`: writes the per-(site, class, period) archive MessageArchiveGate looks for and
+// MessagePartitionPruneJob waits on. MessageArchiveJobOptions is bound both as IOptions<T>
+// (MessageArchiveJob itself) and as a plain singleton value (MessageArchiveWriter), the identical
+// shape SiteExportJobOptions/SiteExportArchiveWriter already establish just above for the same reason -
+// MessageArchiveJob deliberately shares MessagePartitionPruneJobOptions (already bound above) rather
+// than a second, independently-configurable horizon that could drift from the one the prune job
+// actually drops against (MessageArchiveJob's own remarks).
+builder.Services
+    .AddOptions<MessageArchiveJobOptions>()
+    .Bind(builder.Configuration.GetSection(MessageArchiveJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageArchiveJobOptions>>().Value);
+builder.Services.AddSingleton<MessageArchiveWriter>();
+builder.Services.AddHostedService<MessageArchiveJob>();
+
 // `16-02`: the account/conversation erasure jobs. SiteErasureJob reuses the same
 // IDemoIdentityProvisioner port DemoTenantExpiryJob already registers just below via
 // AddKeycloakDemoIdentities (its own DeleteAsync is already fully generic - see that interface's own

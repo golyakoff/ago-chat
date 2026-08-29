@@ -20,7 +20,7 @@ namespace Ago.Chat.Concurrency.Tests;
 public sealed class SynchronousMessagePipeline(NpgsqlDataSource dataSource) : IMessagePipeline
 {
     private readonly MessageBatchWriter _writer = new(
-        dataSource, new SystemClock(), new UuidV7Generator(), NullLogger<MessageBatchWriter>.Instance);
+        dataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
 
     public async Task<Result<int>> EnqueueAsync(PendingMessage message, CancellationToken cancellationToken)
     {

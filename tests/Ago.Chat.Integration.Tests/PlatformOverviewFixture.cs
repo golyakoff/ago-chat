@@ -173,8 +173,13 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
         foreach (var from in months)
         {
             var to = from.AddMonths(1);
+            // `13-06`: messages is now PARTITION BY LIST (retention_class) then RANGE (created_at) -
+            // every message this fixture seeds is written through Conversation.AddVisitorMessage with
+            // no retentionClass argument, which defaults to RetentionClass.Free (that method's own
+            // remarks), so every leaf this fixture needs hangs off the `free` class partition.
+            var partitionName = MessagePartitionNames.ForMonth(RetentionClass.Free, from);
             var sql = $"""
-                CREATE TABLE IF NOT EXISTS messages_{from:yyyy_MM} PARTITION OF messages
+                CREATE TABLE IF NOT EXISTS {partitionName} PARTITION OF {MessagePartitionNames.ForClass(RetentionClass.Free)}
                     FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
                 """;
             await using var command = new NpgsqlCommand(sql, connection);
@@ -244,8 +249,8 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
         {
             sequence++;
             await using var command = new NpgsqlCommand("""
-                insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at)
-                values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt)
+                insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class)
+                values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free')
                 """, connection);
             command.Parameters.AddWithValue("id", Guid.NewGuid());
             command.Parameters.AddWithValue("conversationId", conversationId.Value);
