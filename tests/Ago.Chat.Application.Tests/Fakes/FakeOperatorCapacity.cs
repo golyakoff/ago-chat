@@ -14,18 +14,46 @@ namespace Ago.Chat.Application.Tests.Fakes;
 public sealed class FakeOperatorCapacity : IOperatorCapacity
 {
     private readonly List<OperatorId> _releases = [];
+    private readonly List<OperatorId> _claims = [];
 
     public IReadOnlyList<OperatorId> Releases => _releases;
 
+    /// <summary>`18-02`: every operator <see cref="TryClaimAsync"/> was actually asked to claim for,
+    /// regardless of outcome - <c>TransferConversationHandlerTests</c>' own way to prove which operator
+    /// a transfer tried to charge, the same role <see cref="Releases"/> already plays for the other
+    /// side.</summary>
+    public IReadOnlyList<OperatorId> Claims => _claims;
+
     public bool NextClaimSucceeds { get; set; } = true;
+
+    /// <summary>`18-02`: the operators <see cref="TryClaimAsync"/> refuses regardless of
+    /// <see cref="NextClaimSucceeds"/> - a transfer target genuinely at capacity, distinct from the
+    /// global switch so a test can make one specific claim lose while every other capacity call in the
+    /// same scenario still succeeds.</summary>
+    public HashSet<OperatorId> ClaimFailsFor { get; } = [];
+
+    /// <summary>`18-02`: makes <see cref="TryClaimAsync"/> behave the way the real store does inside a
+    /// caller-owned transaction that loses a Postgres deadlock - the port's declared failure, never a
+    /// raw <c>PostgresException</c>. Distinct from <see cref="ReleaseAlwaysLosesToContention"/> so a
+    /// test can pin which of the transfer's two capacity calls is the one that fails this attempt.</summary>
+    public bool ClaimAlwaysLosesToContention { get; set; }
 
     /// <summary>`6-10`: makes <see cref="ReleaseAsync"/> behave the way the real store does when it has
     /// exhausted its bounded retry against a deadlocking <c>operators</c> row - the port's declared
     /// failure, never a raw <c>PostgresException</c>, which Application could not name anyway.</summary>
     public bool ReleaseAlwaysLosesToContention { get; set; }
 
-    public Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
-        Task.FromResult(NextClaimSucceeds);
+    public Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken)
+    {
+        _claims.Add(operatorId);
+        if (ClaimAlwaysLosesToContention)
+        {
+            return Task.FromException<bool>(
+                new OperatorCapacityContentionException(operatorId, attempts: 1, new InvalidOperationException("40P01")));
+        }
+
+        return Task.FromResult(NextClaimSucceeds && !ClaimFailsFor.Contains(operatorId));
+    }
 
     public Task ReleaseAsync(OperatorId operatorId, CancellationToken cancellationToken)
     {

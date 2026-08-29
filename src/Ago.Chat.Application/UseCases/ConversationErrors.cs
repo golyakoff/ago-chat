@@ -275,4 +275,43 @@ public static class ConversationErrors
 
     public static Error OperatorAlreadyRemoved(Guid operatorId) =>
         new("Operator.AlreadyRemoved", $"Operator {operatorId} has already been removed.");
+
+    // `18-02`: same shared vocabulary, same reason - TransferConversationHandler adds its own codes
+    // here rather than a separate error class.
+    /// <summary>
+    /// The named target does not resolve to an operator who can actually receive this conversation -
+    /// no such id on this site (<see cref="Domain.Permission"/>-scoped, so also the answer for a
+    /// different site's operator, the same info-hiding "wrong tenant reads like no row" shape
+    /// <c>AssignConversationHandler</c>'s own cross-tenant guard already uses), or a real row that
+    /// currently <see cref="Domain.Operator.HoldsSeat"/> is <see langword="false"/> for or
+    /// <see cref="Domain.Operator.RemovedAt"/> is set on. One code for all three: the caller's remedy
+    /// is identical ("name a different operator") regardless of which is true, and distinguishing them
+    /// on the wire would let a caller enumerate another tenant's roster by id, which
+    /// <see cref="OperatorNotFound"/>'s own existing shape already refuses to do.
+    /// </summary>
+    public static Error TransferTargetNotEligible(Guid operatorId) =>
+        new("Conversation.TransferTargetNotEligible", $"Operator {operatorId} cannot receive a transferred conversation.");
+
+    /// <summary>The target named genuinely has no room - <see cref="Application.Abstractions.IOperatorCapacity.TryClaimAsync"/>
+    /// lost the compare-and-set inside the transfer's own transaction. `402`-shaped in spirit but not
+    /// in code: unlike <see cref="OperatorSeatLimitReached"/>/<see cref="OperatorInviteSeatLimitReached"/>,
+    /// there is no purchase that fixes this - the remedy is "pick someone else, or wait", so this maps
+    /// to a `409` the same way <see cref="ConcurrencyConflict"/> does, not to `402`.</summary>
+    public static Error TransferTargetAtCapacity(Guid operatorId) =>
+        new("Conversation.TransferTargetAtCapacity", $"Operator {operatorId} has no capacity for another conversation right now.");
+
+    /// <summary>A transfer to the operator who already holds the conversation - not a state the domain
+    /// needs to reject (<see cref="Domain.Conversation.TransferTo"/> would just re-assign the same id
+    /// and raise a real event for nothing), but not a real request either. Checked before any
+    /// permission or capacity work, the cheapest possible rejection.</summary>
+    public static Error TransferTargetIsCurrentOperator() =>
+        new("Conversation.TransferTargetIsCurrentOperator", "A conversation cannot be transferred to the operator who already holds it.");
+
+    /// <summary>`18-02`'s own instance of `6-10`'s shape: the transfer's transaction lost a Postgres
+    /// deadlock against the assignment engine (or another transfer) on every attempt this handler was
+    /// willing to make. Unlike <c>CloseConversationHandler</c>'s own contention outcome, nothing here
+    /// ever committed - there is no leaked slot to accept, only a request that must be retried, which
+    /// is exactly what a `409` tells the caller to do.</summary>
+    public static Error TransferContended(Guid conversationId) =>
+        new("Conversation.TransferContended", $"Conversation {conversationId} could not be transferred because of write contention; retry the request.");
 }

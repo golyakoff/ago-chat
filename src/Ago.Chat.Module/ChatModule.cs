@@ -59,6 +59,7 @@ using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
+using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Infrastructure.MaxBot;
@@ -404,6 +405,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetSiteConfigByIdHandler>();
         services.AddScoped<CheckCorsOriginHandler>();
         services.AddScoped<AssignConversationHandler>();
+        // `18-02`: the same assignment machinery used a second way - see the handler's own remarks.
+        services.AddScoped<TransferConversationHandler>();
         // `4-06`: OperatorHub's own connect/disconnect wiring - see the handler's own remarks.
         services.AddScoped<SetOperatorPresenceHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();

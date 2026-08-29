@@ -171,6 +171,60 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
         await otherTransaction.RollbackAsync();
     }
 
+    /// <summary>
+    /// `18-02`: the identical arranged deadlock as
+    /// <see cref="ReleaseAsync_WhenADeadlockAbortsACallerOwnedTransaction_SurfacesTheContentionType_NeverANpgsqlError"/>
+    /// above, with <see cref="OperatorCapacityStore.TryClaimAsync"/> pinned as the victim instead of
+    /// <see cref="OperatorCapacityStore.ReleaseAsync"/> - proving the translation this item added to
+    /// <c>TryClaimAsync</c> (previously a bare no-op-on-deadlock statement that only ever ran inside a
+    /// claimer's own batch transaction, where the batch's own generic catch swallowed whatever
+    /// exception type reached it) now behaves exactly like <c>ReleaseAsync</c>'s existing
+    /// caller-owned-transaction branch: a real `40P01`, not a raw <c>PostgresException</c>, and
+    /// <c>Attempts == 1</c> because a deadlock inside a caller-owned transaction leaves nothing to
+    /// retry in place. <c>TransferConversationHandler</c> is the first caller for which this
+    /// distinction is actually observable, since it is the first that must not leak Npgsql to
+    /// <c>Ago.Chat.Application</c> (CLAUDE.md rule 2) rather than merely logging whatever came up a
+    /// level.
+    /// </summary>
+    [Fact]
+    public async Task TryClaimAsync_WhenADeadlockAbortsACallerOwnedTransaction_SurfacesTheContentionType_NeverANpgsqlError()
+    {
+        var (_, first) = await SeedOperatorAsync(capacity: 5);
+        var (_, second) = await SeedOperatorAsync(capacity: 5);
+
+        // The other side of the cycle: one transaction holding `first`, about to want `second`.
+        await using var other = await fixture.DataSource.OpenConnectionAsync();
+        var otherTransaction = await other.BeginTransactionAsync();
+        await ExecuteAsync(other, otherTransaction, "SET LOCAL deadlock_timeout = '30s'");
+        await ExecuteAsync(other, otherTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{first.Value}'");
+
+        // The claiming side: its own transaction, holding `second`, about to want `first` -
+        // TryClaimAsync's own UPDATE matches the row (fresh, capacity 5, active_chats 0), so it
+        // genuinely waits on it rather than finding nothing to lock.
+        await using var claiming = await fixture.DataSource.OpenConnectionAsync();
+        var claimingTransaction = await claiming.BeginTransactionAsync();
+        await ExecuteAsync(claiming, claimingTransaction, "SET LOCAL deadlock_timeout = '10ms'");
+        await ExecuteAsync(claiming, claimingTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{second.Value}'");
+
+        var otherBlocks = ExecuteAsync(other, otherTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{second.Value}'");
+        await WaitUntilWaitingAsync(other.ProcessID);
+
+        await using var db = new AgoChatDbContext(
+            new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(claiming).Options);
+        await db.Database.UseTransactionAsync(claimingTransaction);
+
+        var exception = await Assert.ThrowsAsync<OperatorCapacityContentionException>(
+            () => new OperatorCapacityStore(db).TryClaimAsync(first, CancellationToken.None));
+
+        Assert.Equal(first, exception.OperatorId);
+        Assert.Equal(1, exception.Attempts);
+        Assert.Equal(PostgresErrorCodes.DeadlockDetected, Assert.IsType<PostgresException>(exception.InnerException).SqlState);
+
+        await claimingTransaction.RollbackAsync();
+        await otherBlocks;
+        await otherTransaction.RollbackAsync();
+    }
+
     private static async Task ExecuteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string sql)
     {
         await using var command = new NpgsqlCommand(sql, connection, transaction);

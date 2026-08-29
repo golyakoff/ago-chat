@@ -18,17 +18,29 @@ public static class ErrorExtensions
         var statusCode = error.Code switch
         {
             "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound"
-                or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" or "Export.NotFound" => StatusCodes.Status404NotFound,
+                or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" or "Export.NotFound"
+                // `18-02`: deliberately the same 404 group as Conversation.NotFound, not its own
+                // bucket - ConversationErrors.TransferTargetNotEligible's own remarks on why a
+                // wrong-tenant or ineligible operator must read exactly like one that does not exist.
+                or "Conversation.TransferTargetNotEligible" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
                 or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken"
-                or "OperatorInvite.InvalidRole" or "Conversation.SearchInvalidQuery" => StatusCodes.Status400BadRequest,
+                or "OperatorInvite.InvalidRole" or "Conversation.SearchInvalidQuery"
+                // `18-02`: a real client mistake (naming the operator who already holds the
+                // conversation), not a conflict with anything concurrent - see the error's own remarks.
+                or "Conversation.TransferTargetIsCurrentOperator" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
-                or "OperatorInvite.AlreadyOperatorOnSite" => StatusCodes.Status409Conflict,
+                or "OperatorInvite.AlreadyOperatorOnSite"
+                // `18-02`: both genuinely 409-shaped - "retry the request", not "fix what you sent".
+                // TransferTargetAtCapacity is not 402 like OperatorInviteSeatLimitReached: there is no
+                // purchase that adds room to one specific operator right now (ConversationErrors'
+                // own remarks on why).
+                or "Conversation.TransferTargetAtCapacity" or "Conversation.TransferContended" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             "OperatorInvite.Expired" => StatusCodes.Status410Gone,
