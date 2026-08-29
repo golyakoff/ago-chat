@@ -8,6 +8,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
+using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
@@ -242,6 +243,10 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // SearchConversationsHandler parameter must resolve as a registered service.
         builder.Services.AddScoped<IConversationSearchStore, ConversationSearchStore>();
         builder.Services.AddScoped<SearchConversationsHandler>();
+        // `18-08`: same reason again - MapConversationsEndpoints now also maps GET .../analytics,
+        // whose GetOperatorAnalyticsForSiteHandler parameter must resolve as a registered service.
+        builder.Services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
+        builder.Services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
         // `18-02`: same reason again - MapConversationsEndpoints now also maps POST .../transfer,
         // whose TransferConversationHandler parameter must resolve as a registered service. Its own
         // dependencies (IOperatorRepository, IOperatorCapacity, IUnitOfWork) do not need registering

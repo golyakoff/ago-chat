@@ -31,6 +31,7 @@ using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
+using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
@@ -437,6 +438,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetAllConversationsForSiteHandler>();
         // `18-01`
         services.AddScoped<SearchConversationsHandler>();
+        // `18-08`: the console's own basic self-service report - see the handler's own remarks for
+        // why it shares GetAllConversationsForSiteHandler/SearchConversationsHandler's permission gate.
+        services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
         // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
         services.AddScoped<GetVisitorHistoryHandler>();
         services.AddScoped<DeleteAttachmentHandler>();
