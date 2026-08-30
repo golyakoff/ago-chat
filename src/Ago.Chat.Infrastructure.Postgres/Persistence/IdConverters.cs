@@ -28,6 +28,9 @@ internal static class IdConverters
     public static readonly ValueConverter<BillingWebhookEventId, Guid> BillingWebhookEvent = new(id => id.Value, value => new BillingWebhookEventId(value));
     public static readonly ValueConverter<ConversationNoteId, Guid> ConversationNote = new(id => id.Value, value => new ConversationNoteId(value));
     public static readonly ValueConverter<TagId, Guid> Tag = new(id => id.Value, value => new TagId(value));
+    // `14-14`
+    public static readonly ValueConverter<VisitorContactDetailId, Guid> VisitorContactDetail = new(
+        id => id.Value, value => new VisitorContactDetailId(value));
 
     // `20-07`
     public static readonly ValueConverter<EnabledModuleId, Guid> EnabledModule = new(id => id.Value, value => new EnabledModuleId(value));

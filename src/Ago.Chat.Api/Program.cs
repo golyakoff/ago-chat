@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.CannedResponses;
 using Ago.Chat.Api.ChannelIdentities;
+using Ago.Chat.Api.ContactDetails;
 using Ago.Chat.Api.Notes;
 using Ago.Chat.Api.Tags;
 using Ago.Chat.Api.Auth;
@@ -404,6 +405,9 @@ app.MapTagEndpoints();
 // VisitorPanel listing, and the operator-gated unlink. The platform owner's own unconditional unlink is
 // the separate MapOwnerChannelIdentityEndpoints call below, next to MapOwnerEndpoints.
 app.MapChannelIdentityEndpoints();
+// `14-14`/`adr/0079` section 6: unverified contact details - a separate, simpler surface beside
+// channel identities, never reaching IChannelIdentityRepository or DeliverChannelMessageHandler.
+app.MapContactDetailEndpoints();
 app.MapSitesEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();

@@ -39,6 +39,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // own, only EF's own migration tooling needs it registered to generate the table.
     public DbSet<EnabledModule> EnabledModules => Set<EnabledModule>();
     internal DbSet<ModuleTask> ModuleTasks => Set<ModuleTask>();
+    // `14-14`: VisitorContactDetail's own table - see its own remarks for why it is not folded into
+    // ChannelIdentities.
+    public DbSet<VisitorContactDetail> VisitorContactDetails => Set<VisitorContactDetail>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

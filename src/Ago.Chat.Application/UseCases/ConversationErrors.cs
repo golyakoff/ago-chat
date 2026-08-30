@@ -456,4 +456,24 @@ public static class ConversationErrors
     /// <see cref="WidgetConfigInvalidPosition"/> already draws for <c>Position</c>.</summary>
     public static Error ChannelLinkInvalidKind(string reason) =>
         new("ChannelLinkRequest.InvalidKind", $"'{reason}' is not a valid channel kind.");
+
+    // `14-14`: same shared vocabulary, same reason - RecordVisitorContactDetailHandler/
+    // DeleteVisitorContactDetailHandler add their own codes here rather than a separate error class.
+    /// <summary>No <see cref="Domain.VisitorContactDetail"/> matches the id named, or a real row that
+    /// belongs to a different visitor - the same "wrong tenant/visitor reads like no row" info-hiding
+    /// shape <see cref="ChannelIdentityNotFound"/> already establishes.</summary>
+    public static Error ContactDetailNotFound(Guid contactDetailId) =>
+        new("VisitorContactDetail.NotFound", $"Contact detail {contactDetailId} was not found.");
+
+    /// <summary>An empty or oversized value - <see cref="Domain.VisitorContactDetail.Record"/>'s own
+    /// invariant, translated at the Application boundary the same way <see cref="NoteInvalid"/>
+    /// translates <see cref="Domain.ConversationNote"/>'s.</summary>
+    public static Error ContactDetailInvalid(string reason) =>
+        new("VisitorContactDetail.Invalid", reason);
+
+    /// <summary>The wire value did not parse to a real <see cref="Domain.VisitorContactDetailKind"/>
+    /// member - the same "validate the enum, translate the miss at the Application boundary" split
+    /// <see cref="ChannelLinkInvalidKind"/> already draws for <see cref="Domain.ChannelKind"/>.</summary>
+    public static Error ContactDetailInvalidKind(string reason) =>
+        new("VisitorContactDetail.InvalidKind", $"'{reason}' is not a valid contact detail kind.");
 }
