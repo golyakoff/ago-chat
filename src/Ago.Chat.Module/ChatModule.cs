@@ -77,6 +77,7 @@ using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
+using Ago.Chat.Infrastructure.Avito;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
@@ -383,6 +384,30 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<VkChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<VkChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+
+        // `14-11`: Avito's own outbound client and adapter - the same "registered everywhere, resolved
+        // where it matters" shape as MAX/Telegram/VK above. No AvitoLongPollingServiceOptions to bind -
+        // unlike MAX/Telegram, this channel has no polling loop at all (AvitoChannelAdapter's own
+        // remarks), the same "webhook only" shape VK already established.
+        services
+            .AddOptions<AvitoApiOptions>()
+            .Bind(configuration.GetSection(AvitoApiOptions.SectionName))
+            .ValidateOnStart();
+        services.AddHttpClient<AvitoApiClient>((sp, client) =>
+        {
+            var baseUrl = sp.GetRequiredService<IOptions<AvitoApiOptions>>().Value.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
+        });
+        // Singleton, not scoped - the identical reasoning MaxChannelAdapter's/VkChannelAdapter's own
+        // remarks give: the singleton InboundChannelAdapterRegistry can only ever hold adapters safe to
+        // keep for the process lifetime. AvitoChannelAdapter takes IOptions<AvitoApiOptions> (not the
+        // plain value) so IOptionsMonitor-backed reloads of Channels:Avito:ClientId/ClientSecret are
+        // observed by the one caller (RefreshAndPersistAsync) that ever reads them, the same "no plain
+        // value snapshot for a value a token-refresh call reads live" reasoning that already applies
+        // to every other IOptions<T> registration on this page.
+        services.AddSingleton<AvitoChannelAdapter>();
+        services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
+            sp.GetRequiredService<AvitoChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
         // `14-10`: WhatsApp's own outbound client and adapter - the same "registered everywhere, resolved
         // where it matters" shape as MAX/Telegram/VK above. AppSecret/VerifyToken are left unbound-and-

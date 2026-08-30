@@ -149,6 +149,67 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
         Assert.Equal(providerAccountId, loaded!.ProviderAccountId);
     }
 
+    /// <summary>`14-11`: the one column Avito needs and no other channel populates -
+    /// <c>ChannelCredential.RefreshTokenCiphertext</c>'s own remarks - round-tripped through a real
+    /// Postgres column, nullable, the identical shape <see cref="SaveAsync_WithAProviderAccountId_RoundTripsIt"/>
+    /// already proves for <c>ProviderAccountId</c>.</summary>
+    [Fact]
+    public async Task SaveAsync_WithARefreshTokenCiphertext_RoundTripsIt()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedSite(siteId);
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Avito, [1], [1], Now,
+            providerAccountId: "94235311", refreshTokenCiphertext: [9, 9, 9]);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new ChannelCredentialRepository(db);
+            await repository.SaveAsync(credential, CancellationToken.None);
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var readRepository = new ChannelCredentialRepository(readDb);
+        var loaded = await readRepository.GetByIdAsync(credential.Id, CancellationToken.None);
+
+        Assert.Equal(new byte[] { 9, 9, 9 }, loaded!.RefreshTokenCiphertext);
+    }
+
+    /// <summary>`14-11`: <see cref="ChannelCredential.RotateOAuthTokens"/> round-trips through a real
+    /// update, not just an in-memory mutation - the same "the tracked entity, mutated in the same scope
+    /// it was loaded in, persists on SaveAsync" shape <see cref="Revoke_ThenSaveAsync_PersistsActiveAsFalse"/>
+    /// already proves for <c>Revoke</c>.</summary>
+    [Fact]
+    public async Task RotateOAuthTokens_ThenSaveAsync_PersistsBothNewCiphertexts()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedSite(siteId);
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Avito, [1], [1], Now,
+            providerAccountId: "94235311", refreshTokenCiphertext: [9, 9, 9]);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new ChannelCredentialRepository(db);
+            await repository.SaveAsync(credential, CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new ChannelCredentialRepository(db);
+            var loaded = await repository.GetByIdAsync(credential.Id, CancellationToken.None);
+            loaded!.RotateOAuthTokens([7, 7, 7], [8, 8, 8]);
+            await repository.SaveAsync(loaded, CancellationToken.None);
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var readRepository = new ChannelCredentialRepository(readDb);
+        var reloaded = await readRepository.GetByIdAsync(credential.Id, CancellationToken.None);
+
+        Assert.Equal(new byte[] { 7, 7, 7 }, reloaded!.TokenCiphertext);
+        Assert.Equal(new byte[] { 8, 8, 8 }, reloaded.RefreshTokenCiphertext);
+    }
+
     /// <summary>The partial index's whole point: revoking the first credential must let a second,
     /// active one for the identical (site, kind) pair be saved without violating anything -
     /// `ChannelCredentialConfiguration`'s own remarks on why the index is filtered to `active`.</summary>

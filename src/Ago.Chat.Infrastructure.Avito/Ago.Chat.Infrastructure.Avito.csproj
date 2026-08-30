@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `14-11`: a project of its own because Avito is a distinct external technology -
+       `naming-and-structure.md`'s "one project per external technology" rule, the same reason
+       Ago.Chat.Infrastructure.MaxBot/.Telegram/.Vk each exist. Everything that knows Avito's own HTTP
+       shape (its DTOs, its base URL, its Messenger API webhook/send/refresh envelopes) lives here and
+       nowhere above it - ChannelPortTests.NoProviderVocabulary_AppearsAboveInfrastructure is what makes
+       that a checked rule rather than a convention; this item adds "Avito" to that test's own forbidden
+       name-fragment list. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+</Project>

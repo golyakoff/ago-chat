@@ -9,9 +9,15 @@ namespace Ago.Chat.Application.UseCases.RegisterChannelCredential;
 /// channel-neutral by accepting it as an optional field rather than gaining a VK-only sibling command -
 /// the identical "a credential concept that will need the identical shape for a later channel's own key
 /// is not a MAX-only fact to begin with" reasoning `adr/0069` already applied to this whole type.
+///
+/// <para><paramref name="RefreshToken"/> is `14-11`'s own addition, the identical "optional, defaults to
+/// null, only one channel's own connect endpoint ever populates it" shape - see
+/// <see cref="Domain.ChannelCredential.RefreshTokenCiphertext"/>'s own remarks for why Avito's OAuth
+/// credential needs it where every other channel's static token does not.</para>
 /// </summary>
 public sealed record RegisterChannelCredential(
-    OperatorId RequestedBy, SiteId SiteId, ChannelKind Kind, string Token, string? ProviderAccountId = null);
+    OperatorId RequestedBy, SiteId SiteId, ChannelKind Kind, string Token, string? ProviderAccountId = null,
+    string? RefreshToken = null);
 
 /// <summary>
 /// <see cref="WebhookSecret"/> is the plaintext value AGO itself generated for this credential - not
