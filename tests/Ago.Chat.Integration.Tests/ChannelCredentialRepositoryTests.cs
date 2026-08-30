@@ -129,8 +129,12 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
     {
         var siteId = new SiteId(Guid.NewGuid());
         await SeedSite(siteId);
+        // `14-10`'s own ux_channel_credentials_kind_provideraccountid_active index made ProviderAccountId
+        // unique per (kind, active) across the whole table, not just this test's own row - a fresh value
+        // per run, not a shared literal, the same fix this item's own report names for VkWebhookEndpointsTests.
+        var providerAccountId = $"555{Guid.NewGuid():N}"[..10];
         var credential = ChannelCredential.Register(
-            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Vk, [1], [1], Now, providerAccountId: "555555");
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Vk, [1], [1], Now, providerAccountId: providerAccountId);
 
         await using (var db = fixture.CreateDbContext())
         {
@@ -142,7 +146,7 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
         var readRepository = new ChannelCredentialRepository(readDb);
         var loaded = await readRepository.GetByIdAsync(credential.Id, CancellationToken.None);
 
-        Assert.Equal("555555", loaded!.ProviderAccountId);
+        Assert.Equal(providerAccountId, loaded!.ProviderAccountId);
     }
 
     /// <summary>The partial index's whole point: revoking the first credential must let a second,
@@ -176,5 +180,76 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
 
         var active = await finalRepository.GetActiveAsync(siteId, ChannelKind.Max, CancellationToken.None);
         Assert.Equal(second.Id, active!.Id);
+    }
+
+    /// <summary>`14-10`: the lookup <c>WhatsAppWebhookEndpoints</c> resolves an inbound delivery's tenant
+    /// by - <c>IChannelCredentialRepository.GetActiveByProviderAccountIdAsync</c>'s own remarks on why
+    /// WhatsApp needs this where no other channel does (its webhook carries no per-tenant path segment).
+    /// Two sites both hold WhatsApp credentials here, with different `provider_account_id`s, to prove the
+    /// lookup does not simply return the first WhatsApp row it finds.</summary>
+    [Fact]
+    public async Task GetActiveByProviderAccountIdAsync_ReturnsTheCredentialForThatProviderAccountId()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var otherSiteId = new SiteId(Guid.NewGuid());
+        await SeedSite(siteId);
+        await SeedSite(otherSiteId);
+
+        var mine = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.WhatsApp, [1], [1], Now, providerAccountId: "111111111");
+        var theirs = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), otherSiteId, ChannelKind.WhatsApp, [2], [2], Now, providerAccountId: "222222222");
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new ChannelCredentialRepository(db);
+            await repository.SaveAsync(mine, CancellationToken.None);
+            await repository.SaveAsync(theirs, CancellationToken.None);
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var readRepository = new ChannelCredentialRepository(readDb);
+        var found = await readRepository.GetActiveByProviderAccountIdAsync(ChannelKind.WhatsApp, "111111111", CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal(mine.Id, found.Id);
+    }
+
+    [Fact]
+    public async Task GetActiveByProviderAccountIdAsync_ForAnUnregisteredId_ReturnsNull()
+    {
+        await using var db = fixture.CreateDbContext();
+        var repository = new ChannelCredentialRepository(db);
+
+        var found = await repository.GetActiveByProviderAccountIdAsync(
+            ChannelKind.WhatsApp, $"never-registered-{Guid.NewGuid():N}", CancellationToken.None);
+
+        Assert.Null(found);
+    }
+
+    /// <summary>`14-10`'s own storage-level backstop, the identical "index is the backstop, not the
+    /// primary mechanism" division <see cref="TwoActiveCredentialsForTheSameSiteAndChannel_ViolatesTheUniqueIndex"/>
+    /// already proves for the `(site_id, kind)` index - here for `(kind, provider_account_id)`: two
+    /// *different* sites registering the identical `phone_number_id` must be refused by the database,
+    /// since nothing else in this schema would catch a shop's site pasting in another shop's number (or
+    /// a re-registration bug) before it silently misrouted a visitor's conversation.</summary>
+    [Fact]
+    public async Task TwoActiveCredentialsWithTheSameProviderAccountId_ViolatesTheNewUniqueIndex()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var otherSiteId = new SiteId(Guid.NewGuid());
+        await SeedSite(siteId);
+        await SeedSite(otherSiteId);
+
+        var first = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.WhatsApp, [1], [1], Now, providerAccountId: "333333333");
+        var second = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), otherSiteId, ChannelKind.WhatsApp, [2], [2], Now, providerAccountId: "333333333");
+
+        await using var db = fixture.CreateDbContext();
+        var repository = new ChannelCredentialRepository(db);
+        await repository.SaveAsync(first, CancellationToken.None);
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => repository.SaveAsync(second, CancellationToken.None));
     }
 }

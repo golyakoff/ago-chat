@@ -196,6 +196,10 @@ public class MaxChannelAdapterResilienceTests
         public Task<IReadOnlyList<ChannelCredential>> GetAllActiveAsync(ChannelKind kind, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<ChannelCredential?> GetActiveByProviderAccountIdAsync(
+            ChannelKind kind, string providerAccountId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task SaveAsync(ChannelCredential credential, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

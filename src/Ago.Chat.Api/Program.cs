@@ -379,6 +379,12 @@ app.MapTelegramChannelEndpoints();
 // Ago.Chat.Webhooks, matching MaxWebhookEndpoints' own precedent.
 app.MapVkWebhookEndpoints();
 app.MapVkChannelEndpoints();
+// `14-10`: the inbound receiver (WhatsApp's own and only production mechanism - a single, App-wide
+// route, not one per credential; WhatsAppWebhookEndpoints' own remarks explain why) and the console's
+// own connect/disconnect flow - matching MaxWebhookEndpoints'/VkWebhookEndpoints' own precedent for
+// living in this host rather than Ago.Chat.Webhooks.
+app.MapWhatsAppWebhookEndpoints();
+app.MapWhatsAppChannelEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();

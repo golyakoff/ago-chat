@@ -1,6 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
-using Ago.Chat.Infrastructure.Vk;
+using Ago.Chat.Infrastructure.WhatsApp;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -12,95 +12,80 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Ago.Chat.Integration.Tests;
 
 /// <summary>
-/// `14-08`: <see cref="VkChannelAdapter.SendAsync"/>'s own routing/resolution logic - the parts specific
-/// to this adapter rather than the generic resilience wrapping around it
-/// (<see cref="ResilientInboundChannelAdapterTests"/>'s own scope) or VK's real HTTP error shape
-/// (<see cref="VkApiClientTests"/>'s own scope). Uses the same minimal fake-repository technique
-/// <see cref="MaxChannelAdapterResilienceTests"/> already establishes - the thing under test is this
-/// class's own credential/group-id resolution, not the repository layer
-/// (<see cref="ChannelCredentialRepositoryTests"/> proves that separately, against a real Postgres).
+/// `14-10`: <see cref="WhatsAppChannelAdapter.SendAsync"/>'s own routing/resolution logic - the parts
+/// specific to this adapter rather than the generic resilience wrapping around it
+/// (<see cref="ResilientInboundChannelAdapterTests"/>'s own scope) or WhatsApp's real HTTP error shape
+/// (<see cref="WhatsAppApiClientTests"/>'s own scope). Uses the identical minimal fake-repository
+/// technique <see cref="VkChannelAdapterTests"/> already establishes.
 /// </summary>
-public sealed class VkChannelAdapterTests
+public sealed class WhatsAppChannelAdapterTests
 {
+    private const string PhoneNumberId = "106540352242922";
     private static readonly ConversationId ConversationId = new(Guid.NewGuid());
     private static readonly SiteId SiteId = new(Guid.NewGuid());
 
-    private static OutboundChannelMessage Reply(Guid messageId, string recipient = "194525157") => new(
-        ChannelKind.Vk, new ExternalChannelAddress(recipient), ConversationId, new MessageId(messageId),
+    private static OutboundChannelMessage Reply(Guid messageId, string recipient = "16505551234") => new(
+        ChannelKind.WhatsApp, new ExternalChannelAddress(recipient), ConversationId, new MessageId(messageId),
         new MessageBody("an operator's answer"));
 
     [Fact]
-    public async Task SendAsync_WhenVkAnswers_ReturnsSentWithTheProviderMessageId()
+    public async Task SendAsync_WhenWhatsAppAnswers_ReturnsSentWithTheProviderMessageId()
     {
-        await using var fakeVk = await BuildFakeVkHostAsync(() => Results.Json(new { response = 555 }));
-        var adapter = BuildAdapter(fakeVk.BaseUrl, providerAccountId: "1");
+        await using var fakeWhatsApp = await BuildFakeWhatsAppHostAsync(() => Results.Json(
+            new { messages = new[] { new { id = "wamid.abc123" } } }));
+        var adapter = BuildAdapter(fakeWhatsApp.BaseUrl, providerAccountId: PhoneNumberId);
 
         var outcome = await adapter.SendAsync(Reply(Guid.NewGuid()), CancellationToken.None);
 
         Assert.True(outcome.Delivered);
-        Assert.Equal("555", outcome.ProviderMessageId);
+        Assert.Equal("wamid.abc123", outcome.ProviderMessageId);
     }
 
     [Fact]
     public async Task SendAsync_WhenNoActiveCredentialExists_ReturnsRefused()
     {
-        await using var fakeVk = await BuildFakeVkHostAsync(() => Results.Json(new { response = 1 }));
-        var adapter = BuildAdapter(fakeVk.BaseUrl, providerAccountId: "1", hasActiveCredential: false);
+        await using var fakeWhatsApp = await BuildFakeWhatsAppHostAsync(() => Results.Json(new { messages = Array.Empty<object>() }));
+        var adapter = BuildAdapter(fakeWhatsApp.BaseUrl, providerAccountId: PhoneNumberId, hasActiveCredential: false);
 
         var outcome = await adapter.SendAsync(Reply(Guid.NewGuid()), CancellationToken.None);
 
         Assert.False(outcome.Delivered);
-        Assert.Contains("No active VK community", outcome.FailureReason);
+        Assert.Contains("No active WhatsApp number", outcome.FailureReason);
     }
 
     [Fact]
     public async Task SendAsync_WhenTheCredentialHasNoProviderAccountId_Throws()
     {
-        await using var fakeVk = await BuildFakeVkHostAsync(() => Results.Json(new { response = 1 }));
-        var adapter = BuildAdapter(fakeVk.BaseUrl, providerAccountId: null);
+        await using var fakeWhatsApp = await BuildFakeWhatsAppHostAsync(() => Results.Json(new { messages = Array.Empty<object>() }));
+        var adapter = BuildAdapter(fakeWhatsApp.BaseUrl, providerAccountId: null);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => adapter.SendAsync(Reply(Guid.NewGuid()), CancellationToken.None));
     }
 
-    [Fact]
-    public async Task SendAsync_WithANonNumericRecipient_ReturnsRefused()
-    {
-        await using var fakeVk = await BuildFakeVkHostAsync(() => Results.Json(new { response = 1 }));
-        var adapter = BuildAdapter(fakeVk.BaseUrl, providerAccountId: "1");
+    // No "empty recipient" test the way VkChannelAdapterTests' own non-numeric-recipient test exists -
+    // WhatsAppChannelAdapter's own remarks explain why: Domain.ExternalChannelAddress already refuses an
+    // empty value at construction (proven by that type's own Ago.Chat.Domain.Tests coverage), so there is
+    // no reachable state left in this adapter for a test here to exercise.
 
-        var outcome = await adapter.SendAsync(Reply(Guid.NewGuid(), recipient: "not-a-vk-peer-id"), CancellationToken.None);
+    /// <summary>`131047` surfaced through the whole adapter, not just <see cref="WhatsAppApiClient"/> in
+    /// isolation - proving the 24-hour-window refusal reaches an operator as an ordinary
+    /// <see cref="ChannelSendOutcome.Refused"/>, the exact claim <see cref="WhatsAppChannelAdapter"/>'s own
+    /// remarks make about respecting the constraint without building template machinery.</summary>
+    [Fact]
+    public async Task SendAsync_WhenWhatsAppRefusesOutsideThe24HourWindow_ReturnsRefused()
+    {
+        await using var fakeWhatsApp = await BuildFakeWhatsAppHostAsync(() => Results.Json(
+            new { error = new { message = "more than 24 hours have passed since the recipient last replied", type = "OAuthException", code = 131047 } },
+            statusCode: 400));
+        var adapter = BuildAdapter(fakeWhatsApp.BaseUrl, providerAccountId: PhoneNumberId);
+
+        var outcome = await adapter.SendAsync(Reply(Guid.NewGuid()), CancellationToken.None);
 
         Assert.False(outcome.Delivered);
-        Assert.Contains("not a VK peer id", outcome.FailureReason);
+        Assert.Contains("131047", outcome.FailureReason);
     }
 
-    /// <summary>VK's own idempotency key for <c>messages.send</c> - <see cref="VkChannelAdapter"/>'s own
-    /// remarks on why this must be derived deterministically from <see cref="OutboundChannelMessage.MessageId"/>:
-    /// a resilience-pipeline retry of the identical message must reach VK with the identical
-    /// <c>random_id</c>, or VK's own deduplication does nothing and a retried send becomes a second,
-    /// visible message.</summary>
-    [Fact]
-    public async Task SendAsync_CalledTwiceWithTheSameMessageId_SendsTheIdenticalRandomIdBothTimes()
-    {
-        var capturedRandomIds = new List<string?>();
-        await using var fakeVk = await BuildFakeVkHostAsync(async httpContext =>
-        {
-            var form = await httpContext.Request.ReadFormAsync();
-            capturedRandomIds.Add(form["random_id"]);
-            return Results.Json(new { response = 1 });
-        });
-        var adapter = BuildAdapter(fakeVk.BaseUrl, providerAccountId: "1");
-        var messageId = Guid.NewGuid();
-
-        await adapter.SendAsync(Reply(messageId), CancellationToken.None);
-        await adapter.SendAsync(Reply(messageId), CancellationToken.None);
-
-        Assert.Equal(2, capturedRandomIds.Count);
-        Assert.Equal(capturedRandomIds[0], capturedRandomIds[1]);
-        Assert.False(string.IsNullOrEmpty(capturedRandomIds[0]));
-    }
-
-    private static VkChannelAdapter BuildAdapter(string vkBaseUrl, string? providerAccountId, bool hasActiveCredential = true)
+    private static WhatsAppChannelAdapter BuildAdapter(string whatsAppBaseUrl, string? providerAccountId, bool hasActiveCredential = true)
     {
         var services = new ServiceCollection();
         services.AddScoped<IConversationRepository>(_ => new FixedConversationRepository());
@@ -108,30 +93,27 @@ public sealed class VkChannelAdapterTests
         services.AddScoped<IChannelCredentialCipher>(_ => new PassthroughCipher());
         var provider = services.BuildServiceProvider();
 
-        var httpClient = new HttpClient { BaseAddress = new Uri(vkBaseUrl), Timeout = TimeSpan.FromSeconds(30) };
-        var apiClient = new VkApiClient(httpClient, "5.199");
+        var httpClient = new HttpClient { BaseAddress = new Uri(whatsAppBaseUrl), Timeout = TimeSpan.FromSeconds(30) };
+        var apiClient = new WhatsAppApiClient(httpClient);
 
-        return new VkChannelAdapter(apiClient, provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<VkChannelAdapter>.Instance);
+        return new WhatsAppChannelAdapter(apiClient, provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<WhatsAppChannelAdapter>.Instance);
     }
 
-    private sealed record FakeVkHost(WebApplication App, string BaseUrl) : IAsyncDisposable
+    private sealed record FakeWhatsAppHost(WebApplication App, string BaseUrl) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync() => await App.DisposeAsync();
     }
 
-    private static async Task<FakeVkHost> BuildFakeVkHostAsync(Func<IResult> respond) =>
-        await BuildFakeVkHostAsync(_ => Task.FromResult(respond()));
-
-    private static async Task<FakeVkHost> BuildFakeVkHostAsync(Func<HttpContext, Task<IResult>> respond)
+    private static async Task<FakeWhatsAppHost> BuildFakeWhatsAppHostAsync(Func<IResult> respond)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         var app = builder.Build();
-        app.MapPost("/messages.send", respond);
+        app.MapPost($"/{PhoneNumberId}/messages", respond);
 
         await app.StartAsync();
         var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses;
-        return new FakeVkHost(app, addresses.First() + "/");
+        return new FakeWhatsAppHost(app, addresses.First() + "/");
     }
 
     private sealed class FixedConversationRepository : IConversationRepository

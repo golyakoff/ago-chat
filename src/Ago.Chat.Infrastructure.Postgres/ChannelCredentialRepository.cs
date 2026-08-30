@@ -19,6 +19,11 @@ public sealed class ChannelCredentialRepository(AgoChatDbContext db) : IChannelC
     public async Task<IReadOnlyList<ChannelCredential>> GetAllActiveAsync(ChannelKind kind, CancellationToken cancellationToken) =>
         await db.ChannelCredentials.Where(c => c.Kind == kind && c.Active).ToListAsync(cancellationToken);
 
+    public Task<ChannelCredential?> GetActiveByProviderAccountIdAsync(
+        ChannelKind kind, string providerAccountId, CancellationToken cancellationToken) =>
+        db.ChannelCredentials.FirstOrDefaultAsync(
+            c => c.Kind == kind && c.Active && c.ProviderAccountId == providerAccountId, cancellationToken);
+
     public async Task SaveAsync(ChannelCredential credential, CancellationToken cancellationToken)
     {
         if (db.Entry(credential).State == EntityState.Detached)

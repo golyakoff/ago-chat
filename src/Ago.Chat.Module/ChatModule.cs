@@ -82,6 +82,7 @@ using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Infrastructure.Vk;
+using Ago.Chat.Infrastructure.WhatsApp;
 using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Billing;
 using Ago.Chat.Module.Channels;
@@ -378,6 +379,29 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<VkChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<VkChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+
+        // `14-10`: WhatsApp's own outbound client and adapter - the same "registered everywhere, resolved
+        // where it matters" shape as MAX/Telegram/VK above. AppSecret/VerifyToken are left unbound-and-
+        // unvalidated-on-start deliberately (WhatsAppBotApiOptions' own remarks: a deployment that has not
+        // configured Channels:WhatsApp at all must still start) - WhatsAppChannelEndpoints/
+        // WhatsAppWebhookEndpoints each refuse at the point of use instead.
+        services
+            .AddOptions<WhatsAppBotApiOptions>()
+            .Bind(configuration.GetSection(WhatsAppBotApiOptions.SectionName));
+        services.AddHttpClient(nameof(WhatsAppApiClient), (sp, client) =>
+        {
+            var whatsAppOptions = sp.GetRequiredService<IOptions<WhatsAppBotApiOptions>>().Value;
+            var baseUrl = $"{whatsAppOptions.BaseUrl.TrimEnd('/')}/{whatsAppOptions.ApiVersion}/";
+            client.BaseAddress = new Uri(baseUrl);
+        });
+        services.AddSingleton(sp =>
+            new WhatsAppApiClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(WhatsAppApiClient))));
+        // Singleton, not scoped - the identical reasoning MaxChannelAdapter's/TelegramChannelAdapter's/
+        // VkChannelAdapter's own remarks give: the singleton InboundChannelAdapterRegistry can only ever
+        // hold adapters safe to keep for the process lifetime.
+        services.AddSingleton<WhatsAppChannelAdapter>();
+        services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
+            sp.GetRequiredService<WhatsAppChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
         // `20-07`/`adr/0065`: the module HTTP boundary - the same "registered everywhere, resolved
         // where it matters" shape as the channel adapters above. Unlike MAX/Telegram, HttpModuleGateway's

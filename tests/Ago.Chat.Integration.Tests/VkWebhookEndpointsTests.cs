@@ -235,10 +235,29 @@ public sealed class VkWebhookEndpointsTests(PostgresFixture fixture)
         return (string?)await command.ExecuteScalarAsync();
     }
 
+    /// <summary>
+    /// The stored <c>ProviderAccountId</c> is a fresh value per call, not the shared <see cref="GroupId"/>
+    /// constant every test's own JSON payload uses - `14-10`'s own
+    /// <c>ux_channel_credentials_kind_provideraccountid_active</c> index made that column unique per
+    /// (kind, active) across the whole table, and <see cref="PostgresFixture"/>'s own remarks describe one
+    /// container shared across every test in this class with no truncation between them, so a literal
+    /// reused across every test method here would collide. Safe to decouple from <see cref="GroupId"/>
+    /// because nothing under test ever compares the two: <c>VkWebhookEndpoints</c> resolves the credential
+    /// from the URL's own <c>{credentialId}</c> segment, and the confirmation handler calls
+    /// <c>GetCallbackConfirmationCodeAsync</c> with <em>the stored</em> <c>ProviderAccountId</c>, never the
+    /// request payload's own <c>group_id</c> field.
+    /// </summary>
     private async Task<(SiteId SiteId, ChannelCredentialId CredentialId)> SeedActiveCredentialAsync()
     {
         var siteId = new SiteId(Guid.NewGuid());
         var credentialId = new ChannelCredentialId(Guid.NewGuid());
+        // A numeric string, not a hex-derived one - VkWebhookEndpoints' own confirmation handler
+        // long.TryParse's this value, so a generated id containing a hex letter (a-f) would make every
+        // confirmation request throw, found live while fixing this exact test's own collision with
+        // `14-10`'s new unique index (this file's own earlier fix used $"555{Guid.NewGuid():N}"[..10],
+        // which happened to pass locally by chance the first time and then failed consistently once a
+        // GUID containing a letter in its first seven hex digits came up).
+        var providerAccountId = (Math.Abs(BitConverter.ToInt64(Guid.NewGuid().ToByteArray(), 0))).ToString();
 
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
@@ -247,7 +266,7 @@ public sealed class VkWebhookEndpointsTests(PostgresFixture fixture)
         var webhookSecretHash = SHA256.HashData(Encoding.UTF8.GetBytes(CorrectSecret));
         var credential = ChannelCredential.Register(
             credentialId, siteId, ChannelKind.Vk, Cipher.Encrypt(PlaintextToken), webhookSecretHash, Now,
-            providerAccountId: GroupId.ToString());
+            providerAccountId: providerAccountId);
 
         var repository = new ChannelCredentialRepository(db);
         await repository.SaveAsync(credential, CancellationToken.None);

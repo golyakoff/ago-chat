@@ -91,6 +91,9 @@
     <!-- `14-08`: VkInboundMessageParserTests/VkWebhookEndpointsTests' own real HTTP boundary - the same
          reasoning as the MAX/Telegram references above. -->
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Vk\Ago.Chat.Infrastructure.Vk.csproj" />
+    <!-- `14-10`: WhatsAppInboundMessageParserTests/WhatsAppWebhookEndpointsTests' own real HTTP boundary -
+         the same reasoning as the MAX/Telegram/VK references above. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.WhatsApp\Ago.Chat.Infrastructure.WhatsApp.csproj" />
     <!-- `13-02`: YooKassaPaymentsApiClientTests/YooKassaWebhookEndpointTests' own real HTTP boundary -
          the same reasoning as the MAX/Telegram references above. -->
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.YooKassa\Ago.Chat.Infrastructure.YooKassa.csproj" />
