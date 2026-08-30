@@ -41,6 +41,14 @@ namespace Ago.Chat.Domain;
 /// never shows it back" decision. No Application handler this item ships ever calls
 /// <c>IChannelCredentialCipher.Decrypt</c> for a read path; the only caller is the outbound send inside
 /// <c>Ago.Chat.Infrastructure.MaxBot</c>.</para>
+///
+/// <para><b>`14-11` update: a third secret, sharing <see cref="TokenCiphertext"/>'s own treatment, not
+/// <see cref="WebhookSecretHash"/>'s.</b> <see cref="RefreshTokenCiphertext"/> is reversible for the
+/// identical reason <see cref="TokenCiphertext"/> is: AGO must present Avito's refresh token back to
+/// Avito's own <c>/token</c> endpoint to mint a new access token, so a one-way hash cannot hold it
+/// either. It is <see langword="null"/> for every channel but Avito - see its own remarks for why this
+/// item's OAuth-shaped credential needed a value none of MAX/Telegram/VK/WhatsApp's static tokens
+/// did.</para>
 /// </summary>
 public sealed class ChannelCredential
 {
@@ -52,8 +60,10 @@ public sealed class ChannelCredential
 
     /// <summary>AES-256-GCM ciphertext over the provider token - opaque bytes to Domain, the same
     /// "Domain never sees the key or the algorithm's own parameters" shape
-    /// <see cref="WebhookEndpoint.SecretCiphertext"/> uses.</summary>
-    public byte[] TokenCiphertext { get; } = [];
+    /// <see cref="WebhookEndpoint.SecretCiphertext"/> uses. Privately settable as of `14-11` - see
+    /// <see cref="RotateOAuthTokens"/> for the one case a stored token is ever replaced rather than
+    /// only ever written once at <see cref="Register"/> time.</summary>
+    public byte[] TokenCiphertext { get; private set; } = [];
 
     /// <summary>SHA-256 of the webhook secret AGO generated and handed to the provider at registration
     /// - see this type's own remarks for why this is a hash and not a ciphertext.</summary>
@@ -84,9 +94,23 @@ public sealed class ChannelCredential
     /// </summary>
     public string? ProviderAccountId { get; }
 
+    /// <summary>
+    /// `14-11`: a second reversible secret, alongside <see cref="TokenCiphertext"/> - <see
+    /// langword="null"/> for MAX/Telegram/VK/WhatsApp, every one of which stores a single credential
+    /// that AGO reproduces byte-for-byte forever once issued. Avito is the first channel whose token is
+    /// not that: it hands AGO a real OAuth 2 authorization-code access token that expires in 24 hours
+    /// (`expires_in: 86400`, confirmed against Avito's own published OpenAPI schema - <c>AvitoDtos.cs</c>'s
+    /// own citation), alongside a refresh token AGO must exchange for a fresh pair before or when the
+    /// access token stops working. Named generically, not <c>AvitoRefreshToken</c>, for the identical
+    /// reason <see cref="ProviderAccountId"/> is not <c>VkGroupId</c>: a future channel with the same
+    /// "short-lived token plus a refresh credential" shape reuses this column instead of adding its own.
+    /// </summary>
+    public byte[]? RefreshTokenCiphertext { get; private set; }
+
     private ChannelCredential(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
-        byte[] webhookSecretHash, bool active, DateTimeOffset createdAt, string? providerAccountId)
+        byte[] webhookSecretHash, bool active, DateTimeOffset createdAt, string? providerAccountId,
+        byte[]? refreshTokenCiphertext)
     {
         Id = id;
         SiteId = siteId;
@@ -96,6 +120,7 @@ public sealed class ChannelCredential
         Active = active;
         CreatedAt = createdAt;
         ProviderAccountId = providerAccountId;
+        RefreshTokenCiphertext = refreshTokenCiphertext;
     }
 
     // EF Core materialization only (1-04's precedent) - never called by domain code.
@@ -113,11 +138,17 @@ public sealed class ChannelCredential
     /// item's own "additive, not a breaking change to a shared shape" discipline
     /// (`db-migration`'s own "additive-first" rule, applied here to a constructor rather than a
     /// column).</para>
+    ///
+    /// <para><paramref name="refreshTokenCiphertext"/> is `14-11`'s own addition, defaulting to
+    /// <see langword="null"/> for the identical reason - only Avito's own connect endpoint ever supplies
+    /// it (<see cref="RefreshTokenCiphertext"/>'s own remarks).</para>
     /// </summary>
     public static ChannelCredential Register(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
-        byte[] webhookSecretHash, DateTimeOffset now, string? providerAccountId = null) =>
-        new(id, siteId, kind, tokenCiphertext, webhookSecretHash, active: true, now, providerAccountId);
+        byte[] webhookSecretHash, DateTimeOffset now, string? providerAccountId = null,
+        byte[]? refreshTokenCiphertext = null) =>
+        new(id, siteId, kind, tokenCiphertext, webhookSecretHash, active: true, now, providerAccountId,
+            refreshTokenCiphertext);
 
     /// <summary>
     /// Constant-time comparison of a candidate webhook secret (as received on an inbound MAX request's
@@ -130,6 +161,38 @@ public sealed class ChannelCredential
     {
         var candidateHash = SHA256.HashData(Encoding.UTF8.GetBytes(candidateSecret));
         return CryptographicOperations.FixedTimeEquals(candidateHash, WebhookSecretHash);
+    }
+
+    /// <summary>
+    /// `14-11`: replaces both OAuth secrets with a freshly refreshed pair - the one mutation this type
+    /// gains beyond <see cref="Revoke"/>, and it exists only because Avito's own token lifecycle forces
+    /// it (<see cref="RefreshTokenCiphertext"/>'s own remarks: a 24-hour access token with a rotating
+    /// refresh token, unlike every other channel's single durable secret). Called by
+    /// <c>Ago.Chat.Infrastructure.Avito.AvitoChannelAdapter</c> after a reactive refresh (a send that
+    /// failed with Avito's own "token expired" response), never proactively - there is no background
+    /// job that refreshes a token nobody is about to use.
+    ///
+    /// <para>Requires an active credential and an existing refresh token - refreshing a revoked or
+    /// never-OAuth credential is a caller bug, not a recoverable state, the same "should not happen,
+    /// thrown rather than silently accepted" treatment this file's own remarks give a missing
+    /// <see cref="ProviderAccountId"/> elsewhere in this codebase.</para>
+    /// </summary>
+    public void RotateOAuthTokens(byte[] newTokenCiphertext, byte[] newRefreshTokenCiphertext)
+    {
+        if (!Active)
+        {
+            throw new InvalidChannelCredentialStateException(
+                $"Channel credential {Id.Value} is revoked and cannot have its OAuth tokens rotated.");
+        }
+
+        if (RefreshTokenCiphertext is null)
+        {
+            throw new InvalidOperationException(
+                $"Channel credential {Id.Value} was never registered with a refresh token and cannot be rotated.");
+        }
+
+        TokenCiphertext = newTokenCiphertext;
+        RefreshTokenCiphertext = newRefreshTokenCiphertext;
     }
 
     /// <summary>

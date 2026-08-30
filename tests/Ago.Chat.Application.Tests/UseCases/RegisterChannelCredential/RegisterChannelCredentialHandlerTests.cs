@@ -148,6 +148,63 @@ public class RegisterChannelCredentialHandlerTests
         Assert.Equal("555555", saved!.ProviderAccountId);
     }
 
+    /// <summary>`14-11`: the one field only Avito's own connect endpoint ever supplies - the identical
+    /// "stays channel-neutral by simply forwarding it" reasoning
+    /// <see cref="HandleAsync_WithAProviderAccountId_PersistsItOnTheCredential"/> already proves for
+    /// <c>ProviderAccountId</c>.</summary>
+    [Fact]
+    public async Task HandleAsync_WithARefreshToken_EncryptsAndPersistsIt()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Avito, "avito-access-token", ProviderAccountId: "94235311",
+                RefreshToken: "avito-refresh-token"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = await fixture.Credentials.GetByIdAsync(result.Value.ChannelCredentialId, CancellationToken.None);
+        // Went through IChannelCredentialCipher.Encrypt - the identical treatment TokenCiphertext
+        // already gets (Domain.ChannelCredential's own remarks on why this is reversible, not a hash).
+        // FakeChannelCredentialCipher is a passthrough (UTF-8 bytes, not a real transform), so what this
+        // proves is that the handler actually calls Encrypt and stores the result, round-trippable via
+        // the same cipher - not that the bytes differ from plaintext, which a real AES-256-GCM cipher
+        // (Ago.Chat.Infrastructure.Postgres.ChannelCredentialCipher) already proves for TokenCiphertext
+        // via a real key elsewhere.
+        Assert.NotNull(saved!.RefreshTokenCiphertext);
+        Assert.Equal("avito-refresh-token", System.Text.Encoding.UTF8.GetString(saved.RefreshTokenCiphertext));
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithNoRefreshToken_LeavesItNull()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Max, "shop-bot-token"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = await fixture.Credentials.GetByIdAsync(result.Value.ChannelCredentialId, CancellationToken.None);
+        Assert.Null(saved!.RefreshTokenCiphertext);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheRefreshTokenIsEmpty_ReturnsInvalidToken()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Avito, "avito-access-token", RefreshToken: "   "),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.InvalidToken", result.Error!.Value.Code);
+    }
+
     [Fact]
     public async Task HandleAsync_AfterTheExistingCredentialIsRevoked_AllowsRegisteringAReplacement()
     {

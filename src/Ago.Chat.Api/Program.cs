@@ -380,6 +380,11 @@ app.MapTelegramChannelEndpoints();
 // Ago.Chat.Webhooks, matching MaxWebhookEndpoints' own precedent.
 app.MapVkWebhookEndpoints();
 app.MapVkChannelEndpoints();
+// `14-11`: the inbound receiver and the console's own connect/disconnect flow, the identical
+// "this host, not Ago.Chat.Webhooks" reasoning MaxWebhookEndpoints'/VkWebhookEndpoints' own remarks
+// give - Avito's own delivery, like MAX's/VK's, is request-shaped, not third-party-latency-shaped.
+app.MapAvitoWebhookEndpoints();
+app.MapAvitoChannelEndpoints();
 // `14-10`: the inbound receiver (WhatsApp's own and only production mechanism - a single, App-wide
 // route, not one per credential; WhatsAppWebhookEndpoints' own remarks explain why) and the console's
 // own connect/disconnect flow - matching MaxWebhookEndpoints'/VkWebhookEndpoints' own precedent for

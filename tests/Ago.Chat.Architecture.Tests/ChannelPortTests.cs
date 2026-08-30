@@ -55,7 +55,7 @@ public class ChannelPortTests
     [Fact]
     public void NoProviderVocabulary_AppearsAboveInfrastructure()
     {
-        string[] providerWords = ["Max", "Telegram", "WhatsApp", "Twilio", "Viber", "Vk", "Smpp"];
+        string[] providerWords = ["Max", "Telegram", "WhatsApp", "Twilio", "Viber", "Vk", "Smpp", "Avito"];
 
         foreach (var assembly in new[]
                  {
