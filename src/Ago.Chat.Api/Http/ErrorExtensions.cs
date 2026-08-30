@@ -64,10 +64,14 @@ public static class ErrorExtensions
             // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own
             // remarks).
             "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
-            "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" => StatusCodes.Status429TooManyRequests,
-            // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
+            // `19-01`: its own distinct rate-limit code, same 429 group - ConversationErrors.ReplyDraftRateLimited's
             // own remarks.
-            "ChannelCredential.NotAvailable" => StatusCodes.Status503ServiceUnavailable,
+            "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "ReplyDraft.RateLimited"
+                => StatusCodes.Status429TooManyRequests,
+            // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
+            // own remarks. `19-01`: ReplyDraft.Unavailable is the identical shape - the LLM provider is
+            // unreachable, not anything the caller did wrong.
+            "ChannelCredential.NotAvailable" or "ReplyDraft.Unavailable" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError,
         };
 

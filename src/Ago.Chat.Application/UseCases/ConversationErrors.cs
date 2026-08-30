@@ -387,4 +387,22 @@ public static class ConversationErrors
     public static Error ModuleTriggerWordAlreadyRegistered(string word, string existingModuleKey) =>
         new("Module.TriggerWordAlreadyRegistered",
             $"Trigger word '{word}' is already registered to module '{existingModuleKey}' on this site.");
+
+    // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
+    // here rather than a separate error class.
+    /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of
+    /// those gives for its own - a client branching on `type` should be able to tell "you asked for
+    /// too many AI drafts" apart from a message-send or export rate limit without parsing the message
+    /// text. `ReplyDraftRateLimitOptions`'s own remarks on why this cap exists and is checked before
+    /// any provider call is made.</summary>
+    public static Error ReplyDraftRateLimited(TimeSpan retryAfter) =>
+        new("ReplyDraft.RateLimited", $"Too many reply-draft requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
+    /// <summary>The provider was unreachable, timed out, or refused after every retry the resilience
+    /// pipeline allows (`ResilientReplyDraftGenerator`'s own remarks) - `resilience.md`'s "no fallback
+    /// content" rule applied honestly: there is nothing sensible to draft in its place, so this maps
+    /// to `503` in `Ago.Chat.Api`'s `ErrorExtensions`, the same "this deployment, not the caller, is
+    /// not ready" shape <c>ChannelNotAvailable</c> already uses.</summary>
+    public static Error ReplyDraftUnavailable(string reason) =>
+        new("ReplyDraft.Unavailable", reason);
 }

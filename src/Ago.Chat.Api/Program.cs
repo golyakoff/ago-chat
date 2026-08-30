@@ -17,6 +17,7 @@ using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.OperatorInvites;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Api.Realtime;
+using Ago.Chat.Api.ReplyDraft;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.OfflineAutoReply;
@@ -401,6 +402,9 @@ app.MapOwnerEndpoints();
 // (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
 // why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.
 app.MapBillingEndpoints();
+// `19-01`: operator-only "Suggest a reply" - see ReplyDraftEndpoints' own remarks for why it is
+// mapped directly rather than under any shared dual-scheme group.
+app.MapReplyDraftEndpoints();
 app.MapHub<VisitorHub>("/hubs/visitor");
 app.MapHub<OperatorHub>("/hubs/operator");
 

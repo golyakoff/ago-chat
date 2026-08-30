@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `19-01`: a project of its own because YandexGPT is a distinct external technology -
+       `naming-and-structure.md`'s "one project per external technology" rule, the same reason
+       Ago.Chat.Infrastructure.YooKassa/MaxBot/Telegram/Vk exist. Everything that knows YandexGPT's own
+       HTTP shape (its request/response JSON, its Api-Key auth header, its folder-scoped model URI)
+       lives here and nowhere above it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+</Project>

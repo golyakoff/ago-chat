@@ -24,6 +24,7 @@ using Ago.Chat.Application.UseCases.UntagConversation;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
+using Ago.Chat.Application.UseCases.GenerateReplyDraft;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
@@ -82,11 +83,13 @@ using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Infrastructure.Vk;
+using Ago.Chat.Infrastructure.YandexGpt;
 using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Billing;
 using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Modules;
 using Ago.Chat.Module.Pipeline;
+using Ago.Chat.Module.ReplyDraft;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Messaging.RabbitMq;
@@ -95,6 +98,7 @@ using Ago.Platform.Resilience;
 using Ago.Platform.Storage.S3;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
 
@@ -458,6 +462,53 @@ public sealed class ChatModule : IProductModule
         // `13-04`: the console billing screen's own bootstrap read - GetBillingStatus's own remarks.
         services.AddScoped<GetBillingStatusHandler>();
 
+        // `19-01`: bound here, not a host's own Program.cs - GenerateReplyDraftHandler is registered
+        // for every host below, the same "plain value, not IOptions<T>" shape MessageSendRateLimitOptions/
+        // AttachmentRateLimitOptions above already establish.
+        services
+            .AddOptions<ReplyDraftOptions>()
+            .Bind(configuration.GetSection(ReplyDraftOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ReplyDraftOptions>>().Value);
+        services
+            .AddOptions<ReplyDraftRateLimitOptions>()
+            .Bind(configuration.GetSection(ReplyDraftRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ReplyDraftRateLimitOptions>>().Value);
+
+        // `19-01`/`adr/0078`: our own fixed YandexGPT application credentials - see YandexGptOptions'
+        // own remarks for the contrast with a per-tenant secret shape, the identical
+        // "non-empty strings, .ValidateOnStart()" discipline YooKassaOptions above already follows.
+        services
+            .AddOptions<YandexGptOptions>()
+            .Bind(configuration.GetSection(YandexGptOptions.SectionName))
+            .Validate(o => !string.IsNullOrWhiteSpace(o.ApiKey), "ReplyDraft:YandexGpt:ApiKey must be set.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.FolderId), "ReplyDraft:YandexGpt:FolderId must be set.")
+            .ValidateOnStart();
+        services.AddHttpClient<YandexGptReplyDraftClient>((sp, client) =>
+        {
+            var opts = sp.GetRequiredService<IOptions<YandexGptOptions>>().Value;
+            var baseUrl = opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/";
+            client.BaseAddress = new Uri(baseUrl);
+            // Yandex Cloud's own documented static-key scheme, not Bearer - set once here, at the
+            // composition root, the same "ChatModule builds the HttpClient, the client class stays
+            // thin" split YooKassaPaymentsApiClient's own remarks describe for its Basic-auth header.
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Api-Key", opts.ApiKey);
+        });
+        // `19-01`: ReplyDraftResiliencePipeline wraps the whole call, unlike BillingResiliencePipeline
+        // (which leaves CreatePaymentAsync unwrapped) - see ResilientReplyDraftGenerator's own remarks
+        // on why an interactive, human-waiting HTTP request still gets a pipeline here, and on why its
+        // own degrade-to-Unavailable happens inside the decorator rather than propagating.
+        services.AddResiliencePipelineOptions(
+            ReplyDraftResiliencePipeline.PipelineName, configuration, ConfigureReplyDraftResilienceDefaults);
+        services.AddSingleton(sp => new ReplyDraftResiliencePipeline(
+            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(ReplyDraftResiliencePipeline.PipelineName)));
+        services.AddScoped<IReplyDraftGenerator>(sp => new ResilientReplyDraftGenerator(
+            sp.GetRequiredService<YandexGptReplyDraftClient>(),
+            sp.GetRequiredService<ReplyDraftResiliencePipeline>(),
+            sp.GetRequiredService<ILogger<ResilientReplyDraftGenerator>>()));
+        services.AddScoped<GenerateReplyDraftHandler>();
+
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
         services.AddScoped<SendOperatorMessageHandler>();
@@ -694,6 +745,33 @@ public sealed class ChatModule : IProductModule
             BreakDuration = TimeSpan.FromSeconds(30),
         };
         options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 2, MaxQueuedActions = 8 };
+    }
+
+    /// <summary>
+    /// `19-01`: starting points, not measured numbers - the same caveat every other resilience default
+    /// on this page carries. A shorter timeout and fewer retries than `ConfigureBillingResilienceDefaults`
+    /// (an operator is watching a "Suggest a reply" button, unlike a background renewal job) but closer
+    /// to `ConfigureChannelResilienceDefaults`'s own shape - a real human waiting on one HTTP response,
+    /// same as a channel send. The bulkhead stays small: a reply draft is a low-frequency, one-at-a-time
+    /// interaction per operator, not a fan-out send.
+    /// </summary>
+    private static void ConfigureReplyDraftResilienceDefaults(ResiliencePipelineOptions options)
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromSeconds(8) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 2,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromMilliseconds(300),
+        };
+        options.CircuitBreaker = new ResilienceCircuitBreakerOptions
+        {
+            FailureRatio = 0.5,
+            MinimumThroughput = 4,
+            SamplingDuration = TimeSpan.FromSeconds(30),
+            BreakDuration = TimeSpan.FromSeconds(15),
+        };
+        options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 4, MaxQueuedActions = 16 };
     }
 
     // `6-03`: a plain boolean predicate rather than throwing inside the lambda - `.Validate()` expects

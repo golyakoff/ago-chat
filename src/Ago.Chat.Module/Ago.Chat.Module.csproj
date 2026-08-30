@@ -42,6 +42,10 @@
          same "host-agnostic port, wired in the one place every host loads" reasoning as MAX/Telegram
          above. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.YooKassa\Ago.Chat.Infrastructure.YooKassa.csproj" />
+    <!-- `19-01`: YandexGptReplyDraftClient/ReplyDraftProviderRefusedException are registered/referenced
+         here, the same "host-agnostic port, wired in the one place every host loads" reasoning as
+         MAX/Telegram/ЮKassa above. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.YandexGpt\Ago.Chat.Infrastructure.YandexGpt.csproj" />
     <!-- `20-07`: HttpModuleGateway is registered here, the same "host-agnostic port, wired in the one
          place every host loads" reasoning as MAX/Telegram/ЮKassa above - the module HTTP boundary can
          be reached from whichever host runs RouteConversationToModuleHandler (Ago.Chat.Worker's own

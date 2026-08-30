@@ -26,7 +26,7 @@ public sealed class FakeConversationReadStore : IConversationReadStore
             .Where(m => beforeSequence is null || m.Sequence < beforeSequence)
             .OrderByDescending(m => m.Sequence)
             .Take(pageSize)
-            .Select(m => new MessageHistoryItem(m.Id, m.Sequence, m.AuthorKind, m.AuthorId, m.Body.Value, m.CreatedAt))
+            .Select(ToHistoryItem)
             .ToList();
 
         var nextCursor = items.Count == pageSize ? items[^1].Sequence : (int?)null;
@@ -40,11 +40,21 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         IReadOnlyList<MessageHistoryItem> items = conversation.Messages
             .Where(m => m.Sequence > afterSequence)
             .OrderBy(m => m.Sequence)
-            .Select(m => new MessageHistoryItem(m.Id, m.Sequence, m.AuthorKind, m.AuthorId, m.Body.Value, m.CreatedAt))
+            .Select(ToHistoryItem)
             .ToList();
 
         return Task.FromResult(items);
     }
+
+    /// <summary>`19-01`: fills <see cref="MessageHistoryItem.ContentKind"/>/<see cref="MessageHistoryItem.Payload"/>
+    /// from the seeded aggregate's own `14-06` <see cref="Message.Content"/> - previously always left
+    /// `null` here regardless of what a test seeded, which made this fake silently unable to prove a
+    /// handler's own "skip a structured message" behaviour. Additive only: a message with no
+    /// <see cref="Message.Content"/> still maps to `null` exactly as before, so every existing caller
+    /// of this fake is unaffected.</summary>
+    private static MessageHistoryItem ToHistoryItem(Message m) => new(
+        m.Id, m.Sequence, m.AuthorKind, m.AuthorId, m.Body.Value, m.CreatedAt,
+        ContentKind: m.Content?.Kind.Value, Payload: m.Content?.Payload?.Value);
 
     /// <summary>`5-08`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive)
     /// over whatever this fake was seeded with for the requested site - good enough to test a
