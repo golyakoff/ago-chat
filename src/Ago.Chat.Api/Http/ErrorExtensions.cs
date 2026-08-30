@@ -50,7 +50,12 @@ public static class ErrorExtensions
                 // `18-10`: a wire value that did not parse to a real, recordable ConversationOutcome -
                 // the caller's own mistake to fix, the same shape as the CannedResponse/Tag/Note
                 // validation codes right above it.
-                or "Conversation.OutcomeInvalid" => StatusCodes.Status400BadRequest,
+                or "Conversation.OutcomeInvalid"
+                // `18-14`: the same "the query itself was malformed" shape again, for the
+                // module-flow report's own from/to (ConversationErrors.ModuleFlowInvalidRange's own
+                // remarks on why it is a distinct code from Analytics.InvalidRange rather than a
+                // third reuse).
+                or "ModuleFlow.InvalidRange" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
