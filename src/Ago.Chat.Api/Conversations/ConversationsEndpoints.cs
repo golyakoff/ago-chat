@@ -3,12 +3,15 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
+using Ago.Chat.Application.UseCases.GetConversationOutcome;
+using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.SearchConversations;
+using Ago.Chat.Application.UseCases.SetConversationOutcome;
 using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -60,6 +63,12 @@ public static class ConversationsEndpoints
         app.MapGet("/api/v1/conversations/analytics", HandleGetAnalyticsAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
+        // `18-10`: same sibling sub-resource shape as `/analytics` right above it - a second, separate
+        // report over the plural `conversations` resource (`IConversionReportReadStore`'s own remarks
+        // on why this is its own read store rather than a fourth method alongside `/analytics`'s).
+        app.MapGet("/api/v1/conversations/conversion-report", HandleGetConversionReportAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
         // `6-02`: api-design.md's "actions that are not CRUD become sub-resources" example, verbatim -
         // operator-only like `/queue` and `/all` above, for the identical reason (a visitor closing
         // their own conversation is a different action - ending a chat session client-side - not this
@@ -78,6 +87,16 @@ public static class ConversationsEndpoints
         // `OperatorHub` - see this file's `HandleMarkReadAsync` for the argument, which is not the
         // obvious one.
         app.MapPost("/api/v1/conversations/{conversationId:guid}/read", HandleMarkReadAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-10`: the same sub-resource shape as `/close`/`/read` above, applied to what a conversation
+        // led to - `PUT`, not `POST`, because the body carries the state being asserted ("this
+        // conversation's outcome is now X"), the identical reasoning `MarkConversationReadRequest`'s own
+        // doc comment gives for a state-asserting body over a route-addressed sub-action. `GET` alongside
+        // it is the conversation detail panel's own read (`GetConversationOutcomeHandler`'s own remarks).
+        app.MapPut("/api/v1/conversations/{conversationId:guid}/outcome", HandleSetOutcomeAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+        app.MapGet("/api/v1/conversations/{conversationId:guid}/outcome", HandleGetOutcomeAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `16-02`: the same sub-resource shape as `/close`/`/read` above - erasure is Admin-scoped
@@ -173,6 +192,24 @@ public static class ConversationsEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
+    /// <summary>`18-10`: same `from`/`to` query-parameter contract as `/analytics` right above -
+    /// either or both absent means "let the handler default the window"
+    /// (`GetConversionReportForSiteHandler.DefaultWindowDays`).</summary>
+    private static async Task<IResult> HandleGetConversionReportAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        GetConversionReportForSiteHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetConversionReportForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
     private static async Task<IResult> HandleCloseAsync(
         Guid conversationId, CloseConversationHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
@@ -239,6 +276,39 @@ public static class ConversationsEndpoints
         // became. It also makes the no-op case honest: an already-read conversation returns the count
         // as it actually stands rather than an assumed zero.
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`18-10`: the outcome-setting control's body - a raw string, translated and validated
+    /// inside `SetConversationOutcomeHandler` (that command's own remarks explain the split).</summary>
+    public sealed record SetConversationOutcomeRequest(string? Outcome);
+
+    private static async Task<IResult> HandleSetOutcomeAsync(
+        Guid conversationId,
+        SetConversationOutcomeRequest request,
+        SetConversationOutcomeHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new SetConversationOutcome(
+                new ConversationId(conversationId), user.GetSiteId(), user.GetOperatorId(), request.Outcome ?? string.Empty),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+    }
+
+    private static async Task<IResult> HandleGetOutcomeAsync(
+        Guid conversationId, GetConversationOutcomeHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetConversationOutcome(new ConversationId(conversationId), user.GetSiteId(), user.GetOperatorId()),
+            cancellationToken);
+
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new ConversationOutcomeResponse(result.Value));
     }
 
     /// <summary>`16-02`: stamps `conversations.erasure_requested_at` and returns immediately - the

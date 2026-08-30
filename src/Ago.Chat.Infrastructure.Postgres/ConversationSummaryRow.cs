@@ -10,4 +10,6 @@
 /// <c>IConversationReadStore</c>.
 /// </summary>
 internal sealed record ConversationSummaryRow(
-    Guid Id, Guid VisitorId, Guid? OperatorId, string State, DateTime CreatedAt, int OperatorUnreadCount);
+    Guid Id, Guid VisitorId, Guid? OperatorId, string State, DateTime CreatedAt, int OperatorUnreadCount,
+    // `18-10`: additive - both call sites (`ByIdSql`/`AllForSiteSql`) now select `outcome` too.
+    string Outcome = "Unset");

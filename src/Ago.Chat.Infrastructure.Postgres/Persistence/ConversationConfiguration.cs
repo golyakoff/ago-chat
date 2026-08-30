@@ -8,7 +8,16 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
 {
     public void Configure(EntityTypeBuilder<Conversation> builder)
     {
-        builder.ToTable("conversations");
+        // `18-10`: the CHECK constraint backstops ConversationOutcome's own closed-vocabulary design at
+        // the storage level - the same "anything enforcing a guarantee gets a constraint, not just
+        // application code" reasoning SiteConfiguration's own widget_position/widget_locale constraints
+        // already state, applied here since ConversationOutcome is a small, deliberately closed enum
+        // for the identical reason those two are.
+        builder.ToTable("conversations", t =>
+        {
+            t.HasCheckConstraint(
+                "ck_conversations_outcome", "outcome IN ('Unset', 'Converted', 'NotConverted', 'FollowUpNeeded')");
+        });
         builder.HasKey(c => c.Id);
         builder.Property(c => c.Id).HasColumnName("id").HasConversion(IdConverters.Conversation).ValueGeneratedNever();
         builder.Property(c => c.SiteId).HasColumnName("site_id").HasConversion(IdConverters.Site);
@@ -21,6 +30,17 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         // `18-07`: nullable - null for every conversation that predates this column, and for every
         // conversation still open. See Conversation.ClosedAt's own remarks.
         builder.Property(c => c.ClosedAt).HasColumnName("closed_at");
+
+        // `18-10`: non-nullable with a database default, not nullable-with-null-meaning-Unset the way
+        // ClosedAt is nullable-with-null-meaning-"still open" right above it - Unset is a real,
+        // queryable member of the enum (Conversation.Outcome's own remarks: "the default... until an
+        // operator explicitly changes it"), not the absence of a row's opinion the way a null ClosedAt
+        // is. The default backfills every row written before this migration - the demo tenants included -
+        // to the same honest "nobody has recorded one" value new rows start at, with no separate backfill
+        // migration pretending historical conversations were ever asked.
+        builder.Property(c => c.Outcome).HasColumnName("outcome").HasConversion<string>()
+            .IsRequired().HasDefaultValue(ConversationOutcome.Unset);
+
         builder.Property(c => c.VisitorUnreadCount).HasColumnName("visitor_unread_count");
         builder.Property(c => c.OperatorUnreadCount).HasColumnName("operator_unread_count");
 

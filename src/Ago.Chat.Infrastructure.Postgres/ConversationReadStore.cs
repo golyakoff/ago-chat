@@ -61,7 +61,7 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // `GetHistoryAsync`'s own `@BeforeSequence is null or ...` clause already uses on this file.
     private const string AllForSiteSql = """
         select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
-               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount"
+               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount", outcome as "Outcome"
         from conversations c
         where site_id = @SiteId
           and (@BeforeId is null or id < @BeforeId)
@@ -105,7 +105,7 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // than GetAllForSiteAsync with an extra filter bolted on.
     private const string ByIdSql = """
         select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
-               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount"
+               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount", outcome as "Outcome"
         from conversations
         where id = @ConversationId and site_id = @SiteId
         """;
@@ -192,7 +192,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.OperatorId is { } operatorId ? new OperatorId(operatorId) : null,
         r.State,
         new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
-        r.OperatorUnreadCount);
+        r.OperatorUnreadCount,
+        r.Outcome);
 
     private static VisitorHistoryItem ToVisitorHistoryItem(VisitorHistoryRow r) => new(
         new ConversationId(r.Id),

@@ -47,6 +47,16 @@ public sealed class Conversation
     /// </summary>
     public DateTimeOffset? ClosedAt { get; private set; }
 
+    /// <summary>
+    /// `18-10`: what an operator has recorded this conversation as having led to -
+    /// <see cref="ConversationOutcome.Unset"/> for every conversation until one explicitly calls
+    /// <see cref="SetOutcome"/>. Independent of <see cref="State"/> on purpose: an operator may know
+    /// the outcome before or after <see cref="Close"/>, and this item does not make recording one a
+    /// precondition of closing (the backlog item's own Scope: forcing it is a UX-friction decision this
+    /// item explicitly declines to make unilaterally).
+    /// </summary>
+    public ConversationOutcome Outcome { get; private set; }
+
     /// <summary>Messages the visitor has not yet seen - i.e. authored by the operator.</summary>
     public int VisitorUnreadCount { get; private set; }
 
@@ -267,6 +277,39 @@ public sealed class Conversation
         ClosedAt = now;
         _domainEvents.Add(new ConversationClosed(Id, now));
         return claimConsumed;
+    }
+
+    /// <summary>
+    /// `18-10`: an operator records what this conversation actually led to. No state check against
+    /// <see cref="State"/> - unlike every write above this one, this is deliberately callable whether
+    /// the conversation is <c>Waiting</c>, <c>Assigned</c> or <c>Closed</c> (<see cref="Outcome"/>'s
+    /// own remarks on why it is independent of close).
+    ///
+    /// <para><b>Rejects <see cref="ConversationOutcome.Unset"/>.</b> That member exists to be the
+    /// column's own default, not a value an operator can pick - allowing it back in as an explicit
+    /// target would open a "revert to no outcome recorded" path this item's own Scope never asked for
+    /// and the console never offers a control for. An operator who wants to change their mind picks a
+    /// different real value instead; <see cref="ArgumentOutOfRangeException"/> here is a caller bug
+    /// (the Application-layer boundary is where an unrecognised wire value gets turned into a proper
+    /// <c>Result</c> failure - <c>SetConversationOutcomeHandler</c>'s own remarks, the same
+    /// validate-then-translate split <c>UpdateWidgetConfigHandler</c> already draws for
+    /// <c>Locale</c>/<c>Position</c>), not a business rejection this method needs to report as one.</para>
+    ///
+    /// <para><b>No domain event.</b> Nothing downstream reacts to a conversation's outcome changing -
+    /// there is no consumer, no webhook, no capacity claim tied to it, the identical "no domain event:
+    /// nothing downstream reacts" reasoning <see cref="IncrementUnreadCount"/>'s own remarks already
+    /// give for a different scalar field on this same aggregate. If a real consumer ever needs to know,
+    /// that is new scope with its own event, not something to add speculatively here.</para>
+    /// </summary>
+    public void SetOutcome(ConversationOutcome outcome)
+    {
+        if (outcome == ConversationOutcome.Unset)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(outcome), outcome, "An operator can record Converted, NotConverted or FollowUpNeeded - never revert a conversation back to Unset.");
+        }
+
+        Outcome = outcome;
     }
 
     /// <summary>

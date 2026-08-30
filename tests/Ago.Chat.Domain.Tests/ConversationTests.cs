@@ -727,6 +727,81 @@ public class ConversationTests
     }
 
     [Fact]
+    public void Outcome_OnANewConversation_DefaultsToUnset()
+    {
+        var conversation = StartConversation();
+
+        Assert.Equal(ConversationOutcome.Unset, conversation.Outcome);
+    }
+
+    [Theory]
+    [InlineData(ConversationOutcome.Converted)]
+    [InlineData(ConversationOutcome.NotConverted)]
+    [InlineData(ConversationOutcome.FollowUpNeeded)]
+    public void SetOutcome_ToARealValue_RecordsIt(ConversationOutcome outcome)
+    {
+        var conversation = StartConversation();
+
+        conversation.SetOutcome(outcome);
+
+        Assert.Equal(outcome, conversation.Outcome);
+    }
+
+    [Fact]
+    public void SetOutcome_ToUnset_Throws()
+    {
+        var conversation = StartConversation();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => conversation.SetOutcome(ConversationOutcome.Unset));
+    }
+
+    [Fact]
+    public void SetOutcome_IsIndependentOfState_SettableWhileWaiting()
+    {
+        var conversation = StartConversation();
+
+        conversation.SetOutcome(ConversationOutcome.FollowUpNeeded);
+
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Equal(ConversationOutcome.FollowUpNeeded, conversation.Outcome);
+    }
+
+    [Fact]
+    public void SetOutcome_AfterClose_StillWorks()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.Close(Now.AddMinutes(5));
+
+        conversation.SetOutcome(ConversationOutcome.Converted);
+
+        Assert.Equal(ConversationState.Closed, conversation.State);
+        Assert.Equal(ConversationOutcome.Converted, conversation.Outcome);
+    }
+
+    [Fact]
+    public void SetOutcome_CalledTwice_TheSecondCallOverwritesTheFirst()
+    {
+        var conversation = StartConversation();
+        conversation.SetOutcome(ConversationOutcome.FollowUpNeeded);
+
+        conversation.SetOutcome(ConversationOutcome.Converted);
+
+        Assert.Equal(ConversationOutcome.Converted, conversation.Outcome);
+    }
+
+    [Fact]
+    public void SetOutcome_RaisesNoDomainEvent()
+    {
+        var conversation = StartConversation();
+        conversation.ClearDomainEvents();
+
+        conversation.SetOutcome(ConversationOutcome.Converted);
+
+        Assert.Empty(conversation.DomainEvents);
+    }
+
+    [Fact]
     public void ClearDomainEvents_RemovesEverythingRaisedSoFar()
     {
         var conversation = StartConversation();

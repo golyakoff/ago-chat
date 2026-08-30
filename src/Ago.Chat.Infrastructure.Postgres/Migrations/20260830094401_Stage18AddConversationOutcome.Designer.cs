@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260830094401_Stage18AddConversationOutcome")]
+    partial class Stage18AddConversationOutcome
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -208,10 +211,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("text")
                         .HasColumnName("provider_account_id");
 
-                    b.Property<byte[]>("RefreshTokenCiphertext")
-                        .HasColumnType("bytea")
-                        .HasColumnName("refresh_token_ciphertext");
-
                     b.Property<Guid>("SiteId")
                         .HasColumnType("uuid")
                         .HasColumnName("site_id");
@@ -227,11 +226,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnName("webhook_secret_hash");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Kind", "ProviderAccountId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_channel_credentials_kind_provideraccountid_active")
-                        .HasFilter("active AND provider_account_id IS NOT NULL");
 
                     b.HasIndex("SiteId", "Kind")
                         .IsUnique()
