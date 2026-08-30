@@ -13,7 +13,8 @@ public class ListChannelIdentitiesForVisitorHandlerTests
 
     private sealed record Fixture(
         Application.UseCases.ListChannelIdentitiesForVisitor.ListChannelIdentitiesForVisitorHandler Handler,
-        FakeChannelIdentityRepository Identities);
+        FakeChannelIdentityRepository Identities,
+        FakeVisitorRepository Visitors);
 
     private static Fixture CreateFixture(bool permitted = true, bool assigned = true)
     {
@@ -27,6 +28,7 @@ public class ListChannelIdentitiesForVisitorHandlerTests
         conversations.Seed(conversation);
 
         var identities = new FakeChannelIdentityRepository();
+        var visitors = new FakeVisitorRepository();
         var permissions = new FakePermissionChecker();
         if (permitted)
         {
@@ -34,8 +36,8 @@ public class ListChannelIdentitiesForVisitorHandlerTests
         }
 
         var handler = new Application.UseCases.ListChannelIdentitiesForVisitor.ListChannelIdentitiesForVisitorHandler(
-            conversations, identities, permissions);
-        return new Fixture(handler, identities);
+            conversations, identities, visitors, permissions);
+        return new Fixture(handler, identities, visitors);
     }
 
     private static Application.UseCases.ListChannelIdentitiesForVisitor.ListChannelIdentitiesForVisitor Query() =>
@@ -61,6 +63,32 @@ public class ListChannelIdentitiesForVisitorHandlerTests
         var summary = Assert.Single(result.Value);
         Assert.Equal(active.Id.Value, summary.ChannelIdentityId);
         Assert.Equal(ChannelKind.Telegram, summary.Kind);
+        Assert.False(summary.IsPreferred);
+    }
+
+    /// <summary>`14-13`: the visitor's preference flows through to the one row it names - `adr/0079`
+    /// decision 5's own reasoning, made falsifiable for the read side rather than only the write side.</summary>
+    [Fact]
+    public async Task HandleAsync_MarksThePreferredIdentity_AsPreferred()
+    {
+        var fixture = CreateFixture();
+        var preferred = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Telegram,
+            new ExternalChannelAddress("tg-user-1"), VisitorId, Now);
+        await fixture.Identities.SaveAsync(preferred, CancellationToken.None);
+        var other = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Sms,
+            new ExternalChannelAddress("+15550001111"), VisitorId, Now);
+        await fixture.Identities.SaveAsync(other, CancellationToken.None);
+        var visitor = new Visitor(VisitorId, SiteId, Now);
+        visitor.SetPreferredChannelIdentity(preferred.Id);
+        await fixture.Visitors.SaveAsync(visitor, CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(Query(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.Single(s => s.ChannelIdentityId == preferred.Id.Value).IsPreferred);
+        Assert.False(result.Value.Single(s => s.ChannelIdentityId == other.Id.Value).IsPreferred);
     }
 
     [Fact]

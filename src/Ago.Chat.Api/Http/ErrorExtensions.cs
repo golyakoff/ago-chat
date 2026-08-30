@@ -32,7 +32,12 @@ public static class ErrorExtensions
                 // `14-14`: the identical "wrong visitor reads like no such row" shape - a contact
                 // detail id belonging to a different visitor is indistinguishable from one that never
                 // existed (DeleteVisitorContactDetailHandler's own remarks).
-                or "VisitorContactDetail.NotFound" => StatusCodes.Status404NotFound,
+                or "VisitorContactDetail.NotFound"
+                // `14-13`: the same info-hiding shape once more - naming a real id that exists but is
+                // not eligible (someone else's identity, or unlinked) must read exactly like naming one
+                // that never existed at all, ConversationErrors.ChannelIdentityNotEligibleForPreference's
+                // own remarks.
+                or "ChannelIdentity.NotEligibleForPreference" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"

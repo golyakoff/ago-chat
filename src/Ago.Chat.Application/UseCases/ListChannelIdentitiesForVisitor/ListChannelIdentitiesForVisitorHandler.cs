@@ -14,7 +14,10 @@ namespace Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
 /// (`GetVisitorHistoryHandler`'s own remarks name the identical boundary for its own panel).
 /// </summary>
 public sealed class ListChannelIdentitiesForVisitorHandler(
-    IConversationRepository conversations, IChannelIdentityRepository identities, IPermissionChecker permissions)
+    IConversationRepository conversations,
+    IChannelIdentityRepository identities,
+    IVisitorRepository visitors,
+    IPermissionChecker permissions)
 {
     public async Task<Result<IReadOnlyList<ChannelIdentitySummary>>> HandleAsync(
         ListChannelIdentitiesForVisitor query, CancellationToken cancellationToken)
@@ -38,8 +41,15 @@ public sealed class ListChannelIdentitiesForVisitorHandler(
         }
 
         var active = await identities.ListActiveForVisitorAsync(conversation.VisitorId, cancellationToken);
+
+        // `14-13`: read separately from the visitor row - this panel already had no reason to load
+        // Visitor before this item, and the preference is the only field on it this read needs.
+        var visitor = await visitors.GetByIdAsync(conversation.VisitorId, cancellationToken);
+        var preferredId = visitor?.PreferredChannelIdentityId;
+
         IReadOnlyList<ChannelIdentitySummary> summaries = active
-            .Select(i => new ChannelIdentitySummary(i.Id.Value, i.Kind, i.Address.Value, i.FirstSeenAt, i.LastSeenAt))
+            .Select(i => new ChannelIdentitySummary(
+                i.Id.Value, i.Kind, i.Address.Value, i.FirstSeenAt, i.LastSeenAt, i.Id == preferredId))
             .ToList();
         return Result<IReadOnlyList<ChannelIdentitySummary>>.Success(summaries);
     }
