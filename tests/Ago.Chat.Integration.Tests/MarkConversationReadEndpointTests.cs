@@ -7,6 +7,7 @@ using Ago.Chat.Api.Conversations;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
+using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
@@ -250,6 +251,16 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // whose GetOperatorAnalyticsForSiteHandler parameter must resolve as a registered service.
         builder.Services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
         builder.Services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
+        // `18-14`: same reason again - MapConversationsEndpoints now also maps
+        // GET .../module-flow-report, whose GetModuleFlowReportForSiteHandler parameter must
+        // resolve as a registered service. No test in this file exercises that route, so the
+        // configured module key's actual value is irrelevant here - unlike ChatModule's own
+        // production registration, this test host binds no ModuleFlowReport:* configuration at all,
+        // so the plain value is constructed directly rather than through IOptions<T> (which would
+        // otherwise need a matching config section this host never loads).
+        builder.Services.AddScoped<IModuleFlowReadStore, ModuleFlowReadStore>();
+        builder.Services.AddSingleton(new ModuleFlowReportOptions { ModuleKey = "test-module" });
+        builder.Services.AddScoped<GetModuleFlowReportForSiteHandler>();
         // `18-02`: same reason again - MapConversationsEndpoints now also maps POST .../transfer,
         // whose TransferConversationHandler parameter must resolve as a registered service. Its own
         // dependencies (IOperatorRepository, IOperatorCapacity, IUnitOfWork) do not need registering

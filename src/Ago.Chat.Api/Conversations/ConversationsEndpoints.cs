@@ -2,6 +2,7 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
+using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
@@ -67,6 +68,15 @@ public static class ConversationsEndpoints
         // report over the plural `conversations` resource (`IConversionReportReadStore`'s own remarks
         // on why this is its own read store rather than a fourth method alongside `/analytics`'s).
         app.MapGet("/api/v1/conversations/conversion-report", HandleGetConversionReportAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-14`: the same sibling sub-resource shape as `/analytics`/`/conversion-report` above - a
+        // compound read (an optional date range, aggregated across the site) over a different table
+        // (`module_tasks`, not `conversations`/`messages`) and a materially different honesty caveat
+        // (`IModuleFlowReadStore`'s own remarks) - deliberately its own sub-resource rather than a
+        // field folded into either of those two reports' responses, so a reader cannot apply one
+        // report's caveat to another's numbers by mistake.
+        app.MapGet("/api/v1/conversations/module-flow-report", HandleGetModuleFlowReportAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `6-02`: api-design.md's "actions that are not CRUD become sub-resources" example, verbatim -
@@ -205,6 +215,24 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new GetConversionReportForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`18-14`: same `from`/`to` query-parameter contract as `/analytics`/`/conversion-report`
+    /// above - either or both absent means "let the handler default the window"
+    /// (`GetModuleFlowReportForSiteHandler.DefaultWindowDays`).</summary>
+    private static async Task<IResult> HandleGetModuleFlowReportAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        GetModuleFlowReportForSiteHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetModuleFlowReportForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);

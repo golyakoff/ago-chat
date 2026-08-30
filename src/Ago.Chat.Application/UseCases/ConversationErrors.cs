@@ -391,6 +391,18 @@ public static class ConversationErrors
     // is no client-observable difference between "this report's range was malformed" and "that report's
     // range was malformed"; both mean the same thing and want the same remedy, so one code serves both.
 
+    // `18-14`: same shared vocabulary, same reason - GetModuleFlowReportForSiteHandler adds its own
+    // code here rather than a separate error class. A distinct code from Analytics.InvalidRange above
+    // rather than reuse (unlike `18-10`'s own conversion report right above, which does reuse it) -
+    // `IModuleFlowReadStore` is a read-store over a genuinely different table (`module_tasks`, not
+    // `conversations`), with its own materially different honesty caveat, so this report's own range
+    // failure gets its own code rather than folding into a code named after a different report.
+    /// <summary>The caller's own <c>from</c>/<c>to</c> is not a real half-open range - <c>from</c> not
+    /// strictly before <c>to</c>. The same "the query itself was malformed" shape
+    /// <see cref="AnalyticsInvalidRange"/> already gives for `18-08`'s own range check.</summary>
+    public static Error ModuleFlowInvalidRange(string reason) =>
+        new("ModuleFlow.InvalidRange", reason);
+
     // `20-07`: same shared vocabulary, same reason - EnableModuleForSiteHandler adds its own codes
     // here rather than a separate error class.
     public static Error ModuleInvalid(string reason) =>

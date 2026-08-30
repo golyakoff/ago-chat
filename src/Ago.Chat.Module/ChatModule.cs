@@ -4,6 +4,7 @@ using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
+using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
@@ -77,6 +78,7 @@ using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Avito;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Modules;
@@ -449,6 +451,19 @@ public sealed class ChatModule : IProductModule
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();
 
+        // `18-14`: which module key the chat-to-booking conversion report means - a config value, never
+        // a literal (ModuleFlowReportOptions' own remarks on why). No `.Validate()` predicate checking
+        // mere non-emptiness would catch a value with the wrong charset/length, so the predicate below
+        // constructs a real Domain.ModuleKey from the bound value and rejects anything that throws -
+        // the same "run the real construction, don't half-reimplement its rules" shape
+        // IsValidBase64Aes256Key below already sets for the two cipher-key options.
+        services
+            .AddOptions<ModuleFlowReportOptions>()
+            .Bind(configuration.GetSection(ModuleFlowReportOptions.SectionName))
+            .Validate(IsValidModuleKey, "ModuleFlowReport:ModuleKey must be a valid, non-empty module key.")
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ModuleFlowReportOptions>>().Value);
+
         // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
         // above - PricePerSeatRub deliberately ships no code default (BillingOptions' own remarks:
         // "measure or stay silent" applies with more force to a figure that charges a real card), so
@@ -590,6 +605,10 @@ public sealed class ChatModule : IProductModule
         // `18-08`: the console's own basic self-service report - see the handler's own remarks for
         // why it shares GetAllConversationsForSiteHandler/SearchConversationsHandler's permission gate.
         services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
+        // `18-14`: the console's own chat-to-booking conversion report - its own read-store and its
+        // own permission gate call (GetModuleFlowReportForSiteHandler's own remarks), sharing
+        // ModuleFlowReportOptions bound above rather than a second binding site.
+        services.AddScoped<GetModuleFlowReportForSiteHandler>();
         // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
         services.AddScoped<GetVisitorHistoryHandler>();
         services.AddScoped<DeleteAttachmentHandler>();
@@ -848,6 +867,22 @@ public sealed class ChatModule : IProductModule
             return Convert.FromBase64String(options.CredentialEncryptionKey).Length == 32;
         }
         catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    // `18-14`: ModuleFlowReportOptions' own predicate - constructs a real Domain.ModuleKey from the
+    // bound config value and rejects anything that throws, the same "run the real construction rather
+    // than half-reimplement its rules" shape the two base64-key checks above already set.
+    private static bool IsValidModuleKey(ModuleFlowReportOptions options)
+    {
+        try
+        {
+            _ = new ModuleKey(options.ModuleKey);
+            return true;
+        }
+        catch (ArgumentException)
         {
             return false;
         }

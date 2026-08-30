@@ -60,6 +60,10 @@ public static class ServiceCollectionExtensions
         // `18-10`: the site owner's own conversion report, a sibling read store rather than a fourth
         // method on IOperatorAnalyticsReadStore - see that interface's own remarks for why.
         services.AddScoped<IConversionReportReadStore, ConversionReportReadStore>();
+        // `18-14`: the chat-to-booking conversion report - its own read-store over `module_tasks`, a
+        // different table again from either `18-10`'s conversion report or `18-08`'s analytics
+        // (IModuleFlowReadStore's own remarks on why).
+        services.AddScoped<IModuleFlowReadStore, ModuleFlowReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks
