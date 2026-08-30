@@ -1,5 +1,4 @@
 ﻿using Ago.Chat.Application.Abstractions;
-using Ago.Chat.Application.UseCases.CreateTag;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -11,7 +10,7 @@ namespace Ago.Chat.Application.UseCases.GetConversationTags;
 public sealed class GetConversationTagsHandler(
     IConversationReadStore readStore, ITagRepository tags, IPermissionChecker permissions)
 {
-    public async Task<Result<IReadOnlyList<TagDto>>> HandleAsync(
+    public async Task<Result<IReadOnlyList<ConversationTagDto>>> HandleAsync(
         GetConversationTags query, CancellationToken cancellationToken)
     {
         var allowed = await permissions.HasPermissionAsync(
@@ -29,7 +28,7 @@ public sealed class GetConversationTagsHandler(
 
         var items = await tags.GetForConversationAsync(query.ConversationId, cancellationToken);
 
-        return Result<IReadOnlyList<TagDto>>.Success(
-            items.Select(t => new TagDto(t.Id.Value, t.Name, t.CreatedAt)).ToList());
+        return Result<IReadOnlyList<ConversationTagDto>>.Success(
+            items.Select(t => new ConversationTagDto(t.Tag.Id.Value, t.Tag.Name, t.Tag.CreatedAt, t.Source.ToString())).ToList());
     }
 }

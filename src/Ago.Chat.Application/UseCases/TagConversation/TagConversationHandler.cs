@@ -31,7 +31,9 @@ public sealed class TagConversationHandler(
             return ConversationErrors.TagNotFound(command.TagId.Value);
         }
 
-        await tags.AddToConversationAsync(command.ConversationId, command.TagId, cancellationToken);
+        // `19-02`: an operator's own explicit action - always TagSource.Operator, never Ai
+        // (ITagRepository.AddToConversationAsync's own remarks on why this is never defaulted).
+        await tags.AddToConversationAsync(command.ConversationId, command.TagId, TagSource.Operator, cancellationToken);
 
         return Result.Success();
     }

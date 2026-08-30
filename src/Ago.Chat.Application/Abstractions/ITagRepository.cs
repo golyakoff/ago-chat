@@ -44,14 +44,27 @@ public interface ITagRepository
     /// conversation and the tag through their own site-scoped lookups before calling this, so a third
     /// repetition of the same check here would be dead weight, not defence in depth (the write itself
     /// cannot land on the wrong tenant's row - both ids it joins are already proven to belong to the
-    /// caller's site).</summary>
-    Task AddToConversationAsync(ConversationId conversationId, TagId tagId, CancellationToken cancellationToken);
+    /// caller's site).
+    ///
+    /// <para><paramref name="source"/>: `19-02`'s own addition - <see cref="TagConversationHandler"/>
+    /// always passes <see cref="TagSource.Operator"/>, `CategorizeConversationHandler` always passes
+    /// <see cref="TagSource.Ai"/>. Not optional/defaulted: an implicit default here is exactly the kind
+    /// of silent-fallback shape that could make an AI write look operator-applied by a missed
+    /// parameter, so every caller states it.</para></summary>
+    Task AddToConversationAsync(
+        ConversationId conversationId, TagId tagId, TagSource source, CancellationToken cancellationToken);
 
     /// <summary>Idempotent the same way - removing a tag that was never applied, or already removed,
     /// is a no-op.</summary>
     Task RemoveFromConversationAsync(ConversationId conversationId, TagId tagId, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<Tag>> GetForConversationAsync(ConversationId conversationId, CancellationToken cancellationToken);
+    /// <summary>`19-02`: returns each tag's own <see cref="TagSource"/> alongside it, unlike
+    /// <see cref="GetAllForSiteAsync"/> (a site's vocabulary has no per-conversation "who applied it" -
+    /// that only exists on the join row this method reads). Its only caller
+    /// (<c>GetConversationTagsHandler</c>) is what turns this into the console's own "AI tagged" badge -
+    /// the Done-when this method's own shape exists for.</summary>
+    Task<IReadOnlyList<ConversationTagEntry>> GetForConversationAsync(
+        ConversationId conversationId, CancellationToken cancellationToken);
 
     /// <summary>Every conversation id currently carrying this tag - `GetOperatorQueueHandler`'s own
     /// in-memory filter over the small, bounded waiting/assigned lists it already loads
@@ -69,3 +82,11 @@ public interface ITagRepository
     // Npgsql), never through this Application-layer port. The tag *definitions* table (`tags`) is
     // reached a different way too - see TagConfiguration's own cascade remarks.
 }
+
+/// <summary>`19-02`: one row of <see cref="ITagRepository.GetForConversationAsync"/> - a
+/// <see cref="Tag"/> paired with the <see cref="TagSource"/> its own join row carries for *this*
+/// conversation. Not a field on <see cref="Tag"/> itself: a tag's source is a property of one
+/// conversation's association with it, not of the tag definition (the same vocabulary tag can be
+/// operator-applied on one conversation and AI-applied on another), so it belongs on this pairing
+/// rather than on the shared, site-scoped aggregate.</summary>
+public sealed record ConversationTagEntry(Tag Tag, TagSource Source);

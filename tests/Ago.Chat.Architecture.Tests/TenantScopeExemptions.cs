@@ -151,6 +151,19 @@ internal static class TenantScopeExemptions
             + "would have protected against - reaching another tenant's row - is already ruled out "
             + "structurally: IConversationRepository.GetByIdAsync loads exactly the row named by the "
             + "ConversationId the scan produced, and Conversation.Close() only ever mutates that one aggregate.",
+        ["Ago.Chat.Application.UseCases.CategorizeConversation.CategorizeConversationHandler.HandleAsync"] =
+            "`19-02`, worker side (Ago.Chat.Worker), the same category as AutoCloseConversationHandler right "
+            + "above: the only input is a (ConversationId, SiteId) pair that ConversationCategorizationJob's own "
+            + "candidate scan (ConversationCategorizationQuery) already restricted to Closed, still-untagged "
+            + "conversations within their lookback window, a fact the scan itself established by reading "
+            + "conversations.state/closed_at and the absence of any conversation_tags row, not a claim to verify. "
+            + "There is also no principal to check a permission for: nobody asked for this categorization, a "
+            + "scheduled sweep did. What the SiteId is actually used for is narrow and matches the scan's own "
+            + "pairing: loading exactly that site's own tag vocabulary (ITagRepository.GetAllForSiteAsync) to "
+            + "build the candidate list a caller cannot influence, and every write "
+            + "(ITagRepository.AddToConversationAsync) lands only on the one ConversationId the scan produced - "
+            + "reaching another tenant's row is ruled out the identical structural way "
+            + "AutoCloseConversationHandler's own remarks describe for IConversationRepository.GetByIdAsync.",
         ["Ago.Chat.Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler.HandleAsync"] =
             "The claims transformation's own lookup - it is what *produces* the OperatorId/SiteId claims every "
             + "gated handler then trusts, so it cannot itself depend on them. Keyed by the `sub` of an "
