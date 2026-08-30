@@ -38,6 +38,9 @@
     <!-- `14-08`: VkChannelAdapter/VkApiClient are registered here, the same reasoning as the
          MAX/Telegram references above. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Vk\Ago.Chat.Infrastructure.Vk.csproj" />
+    <!-- `14-10`: WhatsAppChannelAdapter/WhatsAppApiClient are registered here, the same reasoning as the
+         MAX/Telegram/VK references above. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.WhatsApp\Ago.Chat.Infrastructure.WhatsApp.csproj" />
     <!-- `13-02`: YooKassaPaymentsApiClient/YooKassaWebhookSignatureVerifier are registered here, the
          same "host-agnostic port, wired in the one place every host loads" reasoning as MAX/Telegram
          above. -->

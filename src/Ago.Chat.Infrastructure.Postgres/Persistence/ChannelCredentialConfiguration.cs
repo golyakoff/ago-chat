@@ -42,5 +42,22 @@ internal sealed class ChannelCredentialConfiguration : IEntityTypeConfiguration<
             .IsUnique()
             .HasFilter("active")
             .HasDatabaseName("ux_channel_credentials_site_kind_active");
+
+        // `14-10`: the storage-level backstop for a guarantee no channel needed until WhatsApp -
+        // IChannelCredentialRepository.GetActiveByProviderAccountIdAsync's own remarks explain why
+        // WhatsApp's inbound routing depends on ProviderAccountId being attributable to exactly one
+        // tenant (Meta's own phone_number_id is globally unique by construction, but nothing in this
+        // schema enforced that before this item - a second site registering the identical id, by
+        // mistake or by a provider-side reassignment this system does not control, would silently make
+        // an inbound delivery route to whichever row this system's own lookup happened to find first).
+        // Partial (Active only, ProviderAccountId not null) for the identical reason
+        // ux_channel_credentials_site_kind_active is partial: a revoked credential must never block a
+        // legitimate re-registration of the same number, and MAX's/Telegram's own rows (ProviderAccountId
+        // always null) must never collide with each other under a plain unique index on a column most
+        // rows leave unset.
+        builder.HasIndex(c => new { c.Kind, c.ProviderAccountId })
+            .IsUnique()
+            .HasFilter("active AND provider_account_id IS NOT NULL")
+            .HasDatabaseName("ux_channel_credentials_kind_provideraccountid_active");
     }
 }
