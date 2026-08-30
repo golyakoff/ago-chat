@@ -60,6 +60,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// rows, not one zeroed total row</b>: `GROUPING SETS` still groups actual input rows, and there is
 /// nothing to group when `in_window` is empty. <see cref="GetSiteAnalyticsAsync"/> substitutes the
 /// honest zero bucket in that case rather than letting an empty result read as a query failure.</item>
+/// <item>`18-13`: <c>AverageDurationSeconds</c> is one more `avg(...)` on the same pass over
+/// <c>detail</c>, not a second query - `created_at`/`closed_at` ride along from `in_window` through
+/// `detail` for exactly this, the same "add the raw columns the new aggregate needs to the CTE that
+/// already selects the row" shape the first-response columns already establish. `filter (where
+/// closed_at is not null)` is the same "nothing to average yet" discipline
+/// <c>AverageFirstResponseSeconds</c> already applies to its own null case: a conversation still open
+/// contributes nothing to the average, rather than being treated as zero seconds or as "now minus
+/// created" - either of which would keep changing the historical average every time the report re-runs
+/// for the exact same window, purely because time passed.</item>
 /// </list>
 /// </summary>
 public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IOperatorAnalyticsReadStore
@@ -76,7 +85,8 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
 
     private const string SiteAnalyticsSql = """
         with in_window as (
-            select c.id, c.site_id, c.visitor_id, c.state, c.operator_id as assigned_operator_id
+            select c.id, c.site_id, c.visitor_id, c.state, c.operator_id as assigned_operator_id,
+                c.created_at, c.closed_at
             from conversations c
             where c.site_id = @SiteId
               and c.created_at >= @From
@@ -89,7 +99,9 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 coalesce(ch.kind, @WidgetLabel) as channel_label,
                 ms.first_visitor_at,
                 ms.first_operator_at,
-                coalesce(ms.first_operator_id, iw.assigned_operator_id) as attributed_operator_id
+                coalesce(ms.first_operator_id, iw.assigned_operator_id) as attributed_operator_id,
+                iw.created_at,
+                iw.closed_at
             from in_window iw
             left join lateral (
                 select ci.kind
@@ -116,6 +128,9 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             (avg(extract(epoch from (first_operator_at - first_visitor_at)))
                 filter (where first_operator_at is not null and first_visitor_at is not null))::double precision
                 as "AverageFirstResponseSeconds",
+            (avg(extract(epoch from (closed_at - created_at)))
+                filter (where closed_at is not null))::double precision
+                as "AverageDurationSeconds",
             grouping(attributed_operator_id) as "OperatorGrouping"
         from detail
         group by grouping sets ((), (channel_label), (attributed_operator_id))
@@ -149,7 +164,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
         // set exists).
         var overallRow = rows.SingleOrDefault(r => r.Channel is null && r.OperatorGrouping == 1);
         var overall = overallRow is null
-            ? new OperatorAnalyticsBucket(0, null, 0)
+            ? new OperatorAnalyticsBucket(0, null, null, 0)
             : ToBucket(overallRow);
 
         var byChannel = rows
@@ -171,5 +186,5 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
     }
 
     private static OperatorAnalyticsBucket ToBucket(OperatorAnalyticsRow row) =>
-        new(row.ConversationCount, row.AverageFirstResponseSeconds, row.MissedCount);
+        new(row.ConversationCount, row.AverageFirstResponseSeconds, row.AverageDurationSeconds, row.MissedCount);
 }
