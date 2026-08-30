@@ -87,7 +87,7 @@ public static class TagEndpoints
 
         return result.IsFailure
             ? result.Error!.Value.ToProblem(httpContext)
-            : Results.Ok(new TagsResponse([.. result.Value.Select(ToDto)]));
+            : Results.Ok(new ConversationTagsResponse([.. result.Value.Select(ToConversationTagDto)]));
     }
 
     private static async Task<IResult> HandleApplyAsync(
@@ -114,6 +114,13 @@ public static class TagEndpoints
 
     private static TagResponseDto ToDto(Ago.Chat.Application.UseCases.CreateTag.TagDto t) => new(t.Id, t.Name, t.CreatedAt);
 
+    /// <summary>`19-02`: <see cref="ConversationTagDto.Source"/> passed straight through - already the
+    /// CLR member name of <see cref="Domain.TagSource"/> (<c>ConversationTagDto</c>'s own remarks), so
+    /// there is no second mapping step here for this endpoint's own console consumer to disagree with.
+    /// </summary>
+    private static ConversationTagResponseDto ToConversationTagDto(ConversationTagDto t) =>
+        new(t.Id, t.Name, t.CreatedAt, t.Source);
+
     /// <summary>Nullable only because a client can omit it - the handler decides an empty/oversized
     /// name is an error.</summary>
     public sealed record TagRequest(string? Name);
@@ -121,4 +128,11 @@ public static class TagEndpoints
     public sealed record TagResponseDto(Guid Id, string Name, DateTimeOffset CreatedAt);
 
     public sealed record TagsResponse(IReadOnlyList<TagResponseDto> Tags);
+
+    /// <summary>`19-02`: the one response shape that carries <see cref="Source"/> - see
+    /// <see cref="ConversationTagDto"/>'s own remarks for why this does not also apply to
+    /// <see cref="TagResponseDto"/>/<see cref="TagsResponse"/> (the vocabulary endpoints).</summary>
+    public sealed record ConversationTagResponseDto(Guid Id, string Name, DateTimeOffset CreatedAt, string Source);
+
+    public sealed record ConversationTagsResponse(IReadOnlyList<ConversationTagResponseDto> Tags);
 }

@@ -58,6 +58,60 @@ public class ChannelIdentityTests
         Assert.NotEqual(bySms.Id, byMax.Id);
         Assert.Equal(bySms.VisitorId, byMax.VisitorId);
     }
+
+    [Fact]
+    public void Link_StartsActive()
+    {
+        var identity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), ChannelKind.Sms,
+            new ExternalChannelAddress("+70000000000"), new VisitorId(Guid.NewGuid()), Now);
+
+        Assert.True(identity.Active);
+        Assert.Null(identity.UnlinkedAt);
+    }
+
+    /// <summary>`14-12`/`adr/0079` decision 4 - the same shape <c>ChannelCredential.Revoke</c> already
+    /// established, mirrored exactly.</summary>
+    [Fact]
+    public void Unlink_FlipsActiveToFalseAndStampsUnlinkedAt()
+    {
+        var identity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), ChannelKind.Sms,
+            new ExternalChannelAddress("+70000000000"), new VisitorId(Guid.NewGuid()), Now);
+        var unlinkedAt = Now.AddHours(2);
+
+        identity.Unlink(unlinkedAt);
+
+        Assert.False(identity.Active);
+        Assert.Equal(unlinkedAt, identity.UnlinkedAt);
+    }
+
+    [Fact]
+    public void Unlink_WhenAlreadyUnlinked_Throws()
+    {
+        var identity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), ChannelKind.Sms,
+            new ExternalChannelAddress("+70000000000"), new VisitorId(Guid.NewGuid()), Now);
+        identity.Unlink(Now.AddHours(1));
+
+        Assert.Throws<InvalidChannelIdentityStateException>(() => identity.Unlink(Now.AddHours(2)));
+    }
+
+    /// <summary>`14-12`: unlinking never mutates <see cref="ChannelIdentity.VisitorId"/> - the fact of
+    /// who this address <em>used to</em> resolve to stays on the row, only <see cref="ChannelIdentity.Active"/>
+    /// changes.</summary>
+    [Fact]
+    public void Unlink_LeavesVisitorIdUnchanged()
+    {
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var identity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), ChannelKind.Sms,
+            new ExternalChannelAddress("+70000000000"), visitorId, Now);
+
+        identity.Unlink(Now.AddHours(1));
+
+        Assert.Equal(visitorId, identity.VisitorId);
+    }
 }
 
 public class ExternalChannelAddressTests

@@ -247,6 +247,10 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean")
+                        .HasColumnName("active");
+
                     b.Property<string>("Address")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -271,6 +275,10 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("site_id");
 
+                    b.Property<DateTimeOffset?>("UnlinkedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unlinked_at");
+
                     b.Property<Guid>("VisitorId")
                         .HasColumnType("uuid")
                         .HasColumnName("visitor_id");
@@ -282,7 +290,8 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.HasIndex("SiteId", "Kind", "Address")
                         .IsUnique()
-                        .HasDatabaseName("ux_channel_identities_site_kind_address");
+                        .HasDatabaseName("ux_channel_identities_site_kind_address_active")
+                        .HasFilter("active");
 
                     b.ToTable("channel_identities", (string)null);
                 });
@@ -710,6 +719,57 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("operator_invites", (string)null);
                 });
 
+            modelBuilder.Entity("Ago.Chat.Domain.PendingChannelLinkRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<byte[]>("CodeHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("code_hash");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("consumed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("RequestedByOperatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by_operator_id");
+
+                    b.Property<Guid>("SiteId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("site_id");
+
+                    b.Property<Guid>("VisitorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("visitor_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VisitorId");
+
+                    b.HasIndex("SiteId", "Kind", "CodeHash")
+                        .HasDatabaseName("ix_pending_channel_link_requests_site_kind_code_hash");
+
+                    b.ToTable("pending_channel_link_requests", (string)null);
+                });
+
             modelBuilder.Entity("Ago.Chat.Domain.Site", b =>
                 {
                     b.Property<Guid>("Id")
@@ -985,12 +1045,22 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tag_id");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Operator")
+                        .HasColumnName("source");
+
                     b.HasKey("ConversationId", "TagId");
 
                     b.HasIndex("TagId")
                         .HasDatabaseName("ix_conversation_tags_tag_id");
 
-                    b.ToTable("conversation_tags", (string)null);
+                    b.ToTable("conversation_tags", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_conversation_tags_source", "source IN ('Operator', 'Ai')");
+                        });
                 });
 
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.ExportRequestEntity", b =>
@@ -1321,6 +1391,21 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Ago.Chat.Domain.PendingChannelLinkRequest", b =>
+                {
+                    b.HasOne("Ago.Chat.Domain.Site", null)
+                        .WithMany()
+                        .HasForeignKey("SiteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Ago.Chat.Domain.Visitor", null)
+                        .WithMany()
+                        .HasForeignKey("VisitorId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

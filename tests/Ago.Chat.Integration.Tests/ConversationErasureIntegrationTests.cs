@@ -186,7 +186,7 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
     private async Task TagConversationAsync(ConversationId conversationId, TagId tagId)
     {
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).AddToConversationAsync(conversationId, tagId, CancellationToken.None);
+        await new TagRepository(db).AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
     }
 
     private async Task SeedNoteAsync(ConversationId conversationId, OperatorId authorId, string body)

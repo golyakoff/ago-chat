@@ -269,6 +269,11 @@ public sealed class AvitoWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         builder.Services.AddScoped<IVisitorRepository, VisitorRepository>();
         builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
+        // `14-12`: ReceiveChannelMessageHandler's own new constructor dependency - every hand-rolled
+        // test host that registers that handler directly (bypassing ChatModule.ConfigureServices) needs
+        // this too, the identical registration ServiceCollectionExtensions.cs's own production wiring
+        // uses.
+        builder.Services.AddScoped<IPendingChannelLinkRequestRepository, PendingChannelLinkRequestRepository>();
         builder.Services.AddScoped<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new MessageSendRateLimitOptions());
         builder.Services.AddSingleton<IMessagePipeline>(_ => new SynchronousMessagePipeline(fixture.DataSource));

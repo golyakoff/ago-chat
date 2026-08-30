@@ -29,14 +29,27 @@ internal sealed class ChannelIdentityConfiguration : IEntityTypeConfiguration<Ch
         builder.Property(c => c.FirstSeenAt).HasColumnName("first_seen_at");
         builder.Property(c => c.LastSeenAt).HasColumnName("last_seen_at");
 
+        // `14-12`: ChannelCredential.Active/ChannelCredentialConfiguration's own precedent, mirrored
+        // exactly - see ChannelIdentity's own remarks.
+        builder.Property(c => c.Active).HasColumnName("active");
+        builder.Property(c => c.UnlinkedAt).HasColumnName("unlinked_at");
+
         // The lookup key IChannelIdentityRepository.FindAsync asks on, and the storage-level backstop
         // for "one external address is one visitor per site per channel" - the same "the index is the
         // backstop, not the primary mechanism" division adr/0019 draws for messages. Two processes
         // racing the very first inbound message from the same number cannot both create an identity;
         // one insert is refused, and its retry resolves the winner's row.
+        //
+        // `14-12`: now a *partial* unique index (Active only), not a plain one -
+        // ux_channel_credentials_site_kind_active's own precedent, for the identical reason: an unlinked
+        // identity must never block a fresh link of the same external address later (ChannelIdentity's
+        // own remarks on why the unique index had to move for this item to be representable at all - a
+        // plain unique index would make the second Link's INSERT fail against the first, now-inactive
+        // row still occupying the same key).
         builder.HasIndex(c => new { c.SiteId, c.Kind, c.Address })
             .IsUnique()
-            .HasDatabaseName("ux_channel_identities_site_kind_address");
+            .HasFilter("active")
+            .HasDatabaseName("ux_channel_identities_site_kind_address_active");
 
         // `18-07`: `AutoCloseInactiveConversationsQuery`'s own remarks (`18-06`) claimed there was no
         // index on `channel_identities.visitor_id`. Checked while wiring this item's own gating call

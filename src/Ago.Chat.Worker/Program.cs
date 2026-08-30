@@ -53,6 +53,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ModuleTaskConsumer>();
 
+// `14-12`/`adr/0079`: a fifth Competing consumer of MessageAccepted - see LinkIdentityCommandConsumer's
+// own remarks on why this is a separate consumer rather than a branch inside ModuleTaskConsumer above.
+builder.Services
+    .AddOptions<LinkIdentityCommandConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(LinkIdentityCommandConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<LinkIdentityCommandConsumer>();
+
 // `14-02`: the outbound half of `14-01`'s port - see ChannelMessageDeliveryConsumer's own remarks.
 builder.Services
     .AddOptions<ChannelMessageDeliveryConsumerOptions>()
@@ -166,6 +174,16 @@ builder.Services
     .Bind(builder.Configuration.GetSection(AutoCloseInactiveConversationsJobOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddHostedService<AutoCloseInactiveConversationsJob>();
+
+// `19-02`/`adr/0078`'s kind 2: assigns each recently-closed, still-untagged conversation zero or more
+// of its own site's existing tags - CategorizeConversationHandler (registered in ChatModule) is what
+// this job actually calls, resolved per candidate from a fresh scope (the job's own remarks explain
+// why).
+builder.Services
+    .AddOptions<ConversationCategorizationJobOptions>()
+    .Bind(builder.Configuration.GetSection(ConversationCategorizationJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ConversationCategorizationJob>();
 
 builder.Services
     .AddOptions<SiteCacheInvalidationConsumerOptions>()

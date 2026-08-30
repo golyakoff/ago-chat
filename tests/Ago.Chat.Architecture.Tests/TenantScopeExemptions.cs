@@ -151,6 +151,19 @@ internal static class TenantScopeExemptions
             + "would have protected against - reaching another tenant's row - is already ruled out "
             + "structurally: IConversationRepository.GetByIdAsync loads exactly the row named by the "
             + "ConversationId the scan produced, and Conversation.Close() only ever mutates that one aggregate.",
+        ["Ago.Chat.Application.UseCases.CategorizeConversation.CategorizeConversationHandler.HandleAsync"] =
+            "`19-02`, worker side (Ago.Chat.Worker), the same category as AutoCloseConversationHandler right "
+            + "above: the only input is a (ConversationId, SiteId) pair that ConversationCategorizationJob's own "
+            + "candidate scan (ConversationCategorizationQuery) already restricted to Closed, still-untagged "
+            + "conversations within their lookback window, a fact the scan itself established by reading "
+            + "conversations.state/closed_at and the absence of any conversation_tags row, not a claim to verify. "
+            + "There is also no principal to check a permission for: nobody asked for this categorization, a "
+            + "scheduled sweep did. What the SiteId is actually used for is narrow and matches the scan's own "
+            + "pairing: loading exactly that site's own tag vocabulary (ITagRepository.GetAllForSiteAsync) to "
+            + "build the candidate list a caller cannot influence, and every write "
+            + "(ITagRepository.AddToConversationAsync) lands only on the one ConversationId the scan produced - "
+            + "reaching another tenant's row is ruled out the identical structural way "
+            + "AutoCloseConversationHandler's own remarks describe for IConversationRepository.GetByIdAsync.",
         ["Ago.Chat.Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler.HandleAsync"] =
             "The claims transformation's own lookup - it is what *produces* the OperatorId/SiteId claims every "
             + "gated handler then trusts, so it cannot itself depend on them. Keyed by the `sub` of an "
@@ -226,8 +239,19 @@ internal static class TenantScopeExemptions
             + "own reply is. What the site id is used for is narrow and read-only: resolving which modules this "
             + "site has enabled (IEnabledModuleReadStore.GetForSiteAsync) - nothing is read back to any caller.",
 
+        ["Ago.Chat.Application.UseCases.HandleLinkIdentityCommand.HandleLinkIdentityCommandHandler.HandleAsync"] =
+            "`14-12`, consumer side (Ago.Chat.Worker), the same category as SendOfflineAutoReplyHandler/"
+            + "RouteConversationToModuleHandler above. SiteId comes off the same MessageAccepted envelope those two "
+            + "handlers already read it from - a fact the triggering write established, not a claim to verify. "
+            + "There is also no principal to check a permission for: nobody asked for this, a broker delivery did, "
+            + "and both the PendingChannelLinkRequest it creates and the reply message it writes are scoped to the "
+            + "one Conversation the envelope names, exactly as SendOfflineAutoReplyHandler's own reply is. What the "
+            + "site id is used for is narrow: stamping it onto the new pending-request row so a later confirmation "
+            + "can only ever match it against messages arriving on that same site (PendingChannelLinkRequest's own "
+            + "cross-site-isolation remarks) - nothing is read back to any caller.",
+
         // ---------------------------------------------------------------------------------------
-        // The one deliberate cross-tenant read in the codebase.
+        // The two deliberate cross-tenant/owner-only surfaces in the codebase.
         // ---------------------------------------------------------------------------------------
         ["Ago.Chat.Application.UseCases.ListSitesForOwner.ListSitesForOwnerHandler.HandleAsync"] =
             "`12-02`'s platform-owner overview - the single query in ago-chat that reads across every tenant, and "
@@ -237,5 +261,16 @@ internal static class TenantScopeExemptions
             + "authorizing fact is a Keycloak realm role (adr/0032) and Ago.Chat.Application has no port that sees "
             + "claims, so re-checking here would be a second, weaker copy of the same rule. Read-only; no owner "
             + "write surface exists.",
+        ["Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner.UnlinkChannelIdentityAsOwnerHandler.HandleAsync"] =
+            "`14-12`, the platform owner's own first write surface - see the handler's own remarks for why it is a "
+            + "deliberately separate class from UnlinkChannelIdentityHandler rather than a nullable-OperatorId "
+            + "branch on it. Unlike ListSitesForOwnerHandler above, this one does take a SiteId, but it is never "
+            + "checked through IPermissionChecker: the whole access-control story is the RequirePlatformOwner policy "
+            + "on the owner-scoped route that resolves it (the same single-gate shape that entry's own remarks "
+            + "describe), and Ago.Chat.Application still has no port that can see a Keycloak realm-role claim, so a "
+            + "permission check here would again be a second, weaker copy of a rule the policy already decided. The "
+            + "SiteId is used only as a structural cross-check against the loaded ChannelIdentity's own real site - "
+            + "refusing a caller who named the wrong site in the URL, never a claim this handler trusts to scope a "
+            + "query.",
     };
 }

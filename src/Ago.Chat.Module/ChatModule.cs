@@ -2,10 +2,12 @@
 using System.Net.Http.Headers;
 using System.Text;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
+using Ago.Chat.Application.UseCases.CategorizeConversation;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
@@ -43,6 +45,8 @@ using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
+using Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
@@ -59,6 +63,7 @@ using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.RemoveOperator;
+using Ago.Chat.Application.UseCases.RequestChannelLinkFromConsole;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -75,6 +80,8 @@ using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.TransferConversation;
+using Ago.Chat.Application.UseCases.UnlinkChannelIdentity;
+using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
@@ -90,6 +97,7 @@ using Ago.Chat.Infrastructure.WhatsApp;
 using Ago.Chat.Infrastructure.YandexGpt;
 using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Billing;
+using Ago.Chat.Module.Categorization;
 using Ago.Chat.Module.Channels;
 using Ago.Chat.Module.Modules;
 using Ago.Chat.Module.Pipeline;
@@ -262,6 +270,26 @@ public sealed class ChatModule : IProductModule
         // channel the visitor was reached by. See DeliverChannelMessageHandler's own remarks for why it
         // is driven off MessageAccepted rather than the send path.
         services.AddScoped<DeliverChannelMessageHandler>();
+
+        // `14-12`/`adr/0079`: verified channel-identity linking and unlinking - bound here, with
+        // OperatorInviteOptions right below, the same shape. Both originators
+        // (RequestChannelLinkFromConsoleHandler, HandleLinkIdentityCommandHandler) share this one
+        // options group (PendingChannelLinkRequestOptions' own remarks on why).
+        services
+            .AddOptions<PendingChannelLinkRequestOptions>()
+            .Bind(configuration.GetSection(PendingChannelLinkRequestOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<PendingChannelLinkRequestOptions>>().Value);
+        services.AddScoped<RequestChannelLinkFromConsoleHandler>();
+        // Resolved by Ago.Chat.Worker's own LinkIdentityCommandConsumer, off MessageAccepted - the
+        // identical shape RouteConversationToModuleHandler/SendOfflineAutoReplyHandler already establish.
+        services.AddScoped<HandleLinkIdentityCommandHandler>();
+        services.AddScoped<UnlinkChannelIdentityHandler>();
+        // Resolved only by Ago.Chat.Api's own owner-scoped route - the identical "registered here like
+        // every other handler, resolved by exactly one host" shape ListSitesForOwnerHandler's own
+        // remarks describe for itself.
+        services.AddScoped<UnlinkChannelIdentityAsOwnerHandler>();
+        services.AddScoped<ListChannelIdentitiesForVisitorHandler>();
 
         // `14-02`/`adr/0069`: bound here, with WebhookSecretCipherOptions right above it - the same
         // fail-fast-on-a-missing-key discipline, a different named section and a different key.
@@ -573,6 +601,46 @@ public sealed class ChatModule : IProductModule
             sp.GetRequiredService<ILogger<ResilientReplyDraftGenerator>>()));
         services.AddScoped<GenerateReplyDraftHandler>();
 
+        // `19-02`: registered here too - CategorizeConversationHandler is reached only from
+        // `Ago.Chat.Worker.ConversationCategorizationJob` (this feature has no operator-facing endpoint
+        // at all), but ChatModule's own DI wiring runs identically for every host regardless of which
+        // job or endpoint actually calls a given handler, the same "bound here, not a host's own
+        // Program.cs" convention the ReplyDraft block just above already establishes.
+        services
+            .AddOptions<CategorizationOptions>()
+            .Bind(configuration.GetSection(CategorizationOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<CategorizationOptions>>().Value);
+
+        // `19-02`/`adr/0078`: our own fixed YandexGPT application credentials for this feature - its
+        // own section, not a second binding of `YandexGptOptions` (`CategorizationYandexGptOptions`'s
+        // own remarks explain why).
+        services
+            .AddOptions<CategorizationYandexGptOptions>()
+            .Bind(configuration.GetSection(CategorizationYandexGptOptions.SectionName))
+            .Validate(o => !string.IsNullOrWhiteSpace(o.ApiKey), "ConversationCategorization:YandexGpt:ApiKey must be set.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.FolderId), "ConversationCategorization:YandexGpt:FolderId must be set.")
+            .ValidateOnStart();
+        services.AddHttpClient<YandexGptConversationCategorizerClient>((sp, client) =>
+        {
+            var opts = sp.GetRequiredService<IOptions<CategorizationYandexGptOptions>>().Value;
+            var baseUrl = opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/";
+            client.BaseAddress = new Uri(baseUrl);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Api-Key", opts.ApiKey);
+        });
+        // `19-02`: CategorizationResiliencePipeline wraps the whole call - see
+        // ResilientConversationCategorizer's own remarks on why an unattended batch job still gets a
+        // pipeline (so one bad tick cannot hammer a down provider once per candidate conversation).
+        services.AddResiliencePipelineOptions(
+            CategorizationResiliencePipeline.PipelineName, configuration, ConfigureCategorizationResilienceDefaults);
+        services.AddSingleton(sp => new CategorizationResiliencePipeline(
+            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(CategorizationResiliencePipeline.PipelineName)));
+        services.AddScoped<IConversationCategorizer>(sp => new ResilientConversationCategorizer(
+            sp.GetRequiredService<YandexGptConversationCategorizerClient>(),
+            sp.GetRequiredService<CategorizationResiliencePipeline>(),
+            sp.GetRequiredService<ILogger<ResilientConversationCategorizer>>()));
+        services.AddScoped<CategorizeConversationHandler>();
+
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();
         services.AddScoped<SendOperatorMessageHandler>();
@@ -840,6 +908,37 @@ public sealed class ChatModule : IProductModule
             BreakDuration = TimeSpan.FromSeconds(15),
         };
         options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 4, MaxQueuedActions = 16 };
+    }
+
+    /// <summary>
+    /// `19-02`: starting points, not measured numbers - the same caveat every other resilience default
+    /// on this page carries. Closer to `ConfigureBillingResilienceDefaults`'s own shape than to
+    /// `ConfigureReplyDraftResilienceDefaults`'s: this call runs from an unattended
+    /// `Ago.Chat.Worker.ConversationCategorizationJob` tick, not behind an operator's own button, so a
+    /// longer timeout and more retry budget cost nothing an operator would notice - the same
+    /// "recurring background job, not a human waiting" reasoning `BillingResiliencePipeline`'s own
+    /// remarks give for `SubscriptionRenewalJob`. The circuit breaker still matters more here than for
+    /// billing: one tick can call the provider once per candidate conversation in its own batch, so a
+    /// down provider without a breaker would mean `ConversationCategorizationJobOptions.BatchSize`
+    /// consecutive timeouts every cycle rather than a handful before the breaker opens.
+    /// </summary>
+    private static void ConfigureCategorizationResilienceDefaults(ResiliencePipelineOptions options)
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromSeconds(10) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromSeconds(1),
+        };
+        options.CircuitBreaker = new ResilienceCircuitBreakerOptions
+        {
+            FailureRatio = 0.5,
+            MinimumThroughput = 4,
+            SamplingDuration = TimeSpan.FromMinutes(1),
+            BreakDuration = TimeSpan.FromSeconds(30),
+        };
+        options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 2, MaxQueuedActions = 8 };
     }
 
     // `6-03`: a plain boolean predicate rather than throwing inside the lambda - `.Validate()` expects
