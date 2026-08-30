@@ -33,7 +33,10 @@ using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
+using Ago.Chat.Application.UseCases.GetConversationOutcome;
+using Ago.Chat.Application.UseCases.SetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
@@ -577,36 +580,45 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ReplyDraftRateLimitOptions>>().Value);
 
         // `19-01`/`adr/0078`: our own fixed YandexGPT application credentials - see YandexGptOptions'
-        // own remarks for the contrast with a per-tenant secret shape, the identical
-        // "non-empty strings, .ValidateOnStart()" discipline YooKassaOptions above already follows.
+        // own remarks for the contrast with a per-tenant secret shape. No `.Validate()`/
+        // `.ValidateOnStart()` here, deliberately - a missing ApiKey/FolderId used to fail every host's
+        // own startup outright, which took the rest of that host down for a feature no environment yet
+        // has real credentials for. Reply-draft assist is now an optional capability, decided below by
+        // which IReplyDraftGenerator gets registered - the same "degrade one feature, not the process"
+        // choice `UnconfiguredReplyDraftGenerator`'s own remarks describe in full.
         services
             .AddOptions<YandexGptOptions>()
-            .Bind(configuration.GetSection(YandexGptOptions.SectionName))
-            .Validate(o => !string.IsNullOrWhiteSpace(o.ApiKey), "ReplyDraft:YandexGpt:ApiKey must be set.")
-            .Validate(o => !string.IsNullOrWhiteSpace(o.FolderId), "ReplyDraft:YandexGpt:FolderId must be set.")
-            .ValidateOnStart();
-        services.AddHttpClient<YandexGptReplyDraftClient>((sp, client) =>
+            .Bind(configuration.GetSection(YandexGptOptions.SectionName));
+        var yandexGptOptions = configuration.GetSection(YandexGptOptions.SectionName).Get<YandexGptOptions>() ?? new();
+        if (!string.IsNullOrWhiteSpace(yandexGptOptions.ApiKey) && !string.IsNullOrWhiteSpace(yandexGptOptions.FolderId))
         {
-            var opts = sp.GetRequiredService<IOptions<YandexGptOptions>>().Value;
-            var baseUrl = opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/";
-            client.BaseAddress = new Uri(baseUrl);
-            // Yandex Cloud's own documented static-key scheme, not Bearer - set once here, at the
-            // composition root, the same "ChatModule builds the HttpClient, the client class stays
-            // thin" split YooKassaPaymentsApiClient's own remarks describe for its Basic-auth header.
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Api-Key", opts.ApiKey);
-        });
-        // `19-01`: ReplyDraftResiliencePipeline wraps the whole call, unlike BillingResiliencePipeline
-        // (which leaves CreatePaymentAsync unwrapped) - see ResilientReplyDraftGenerator's own remarks
-        // on why an interactive, human-waiting HTTP request still gets a pipeline here, and on why its
-        // own degrade-to-Unavailable happens inside the decorator rather than propagating.
-        services.AddResiliencePipelineOptions(
-            ReplyDraftResiliencePipeline.PipelineName, configuration, ConfigureReplyDraftResilienceDefaults);
-        services.AddSingleton(sp => new ReplyDraftResiliencePipeline(
-            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(ReplyDraftResiliencePipeline.PipelineName)));
-        services.AddScoped<IReplyDraftGenerator>(sp => new ResilientReplyDraftGenerator(
-            sp.GetRequiredService<YandexGptReplyDraftClient>(),
-            sp.GetRequiredService<ReplyDraftResiliencePipeline>(),
-            sp.GetRequiredService<ILogger<ResilientReplyDraftGenerator>>()));
+            services.AddHttpClient<YandexGptReplyDraftClient>((sp, client) =>
+            {
+                var opts = sp.GetRequiredService<IOptions<YandexGptOptions>>().Value;
+                var baseUrl = opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/";
+                client.BaseAddress = new Uri(baseUrl);
+                // Yandex Cloud's own documented static-key scheme, not Bearer - set once here, at the
+                // composition root, the same "ChatModule builds the HttpClient, the client class stays
+                // thin" split YooKassaPaymentsApiClient's own remarks describe for its Basic-auth header.
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Api-Key", opts.ApiKey);
+            });
+            // `19-01`: ReplyDraftResiliencePipeline wraps the whole call, unlike BillingResiliencePipeline
+            // (which leaves CreatePaymentAsync unwrapped) - see ResilientReplyDraftGenerator's own remarks
+            // on why an interactive, human-waiting HTTP request still gets a pipeline here, and on why its
+            // own degrade-to-Unavailable happens inside the decorator rather than propagating.
+            services.AddResiliencePipelineOptions(
+                ReplyDraftResiliencePipeline.PipelineName, configuration, ConfigureReplyDraftResilienceDefaults);
+            services.AddSingleton(sp => new ReplyDraftResiliencePipeline(
+                sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(ReplyDraftResiliencePipeline.PipelineName)));
+            services.AddScoped<IReplyDraftGenerator>(sp => new ResilientReplyDraftGenerator(
+                sp.GetRequiredService<YandexGptReplyDraftClient>(),
+                sp.GetRequiredService<ReplyDraftResiliencePipeline>(),
+                sp.GetRequiredService<ILogger<ResilientReplyDraftGenerator>>()));
+        }
+        else
+        {
+            services.AddScoped<IReplyDraftGenerator, UnconfiguredReplyDraftGenerator>();
+        }
         services.AddScoped<GenerateReplyDraftHandler>();
 
         // `19-02`: registered here too - CategorizeConversationHandler is reached only from
@@ -622,31 +634,40 @@ public sealed class ChatModule : IProductModule
 
         // `19-02`/`adr/0078`: our own fixed YandexGPT application credentials for this feature - its
         // own section, not a second binding of `YandexGptOptions` (`CategorizationYandexGptOptions`'s
-        // own remarks explain why).
+        // own remarks explain why). No `.Validate()`/`.ValidateOnStart()` - the identical "optional
+        // capability, decided by which port implementation gets registered" choice the ReplyDraft block
+        // above makes, for the same reason (`UnconfiguredConversationCategorizer`'s own remarks).
         services
             .AddOptions<CategorizationYandexGptOptions>()
-            .Bind(configuration.GetSection(CategorizationYandexGptOptions.SectionName))
-            .Validate(o => !string.IsNullOrWhiteSpace(o.ApiKey), "ConversationCategorization:YandexGpt:ApiKey must be set.")
-            .Validate(o => !string.IsNullOrWhiteSpace(o.FolderId), "ConversationCategorization:YandexGpt:FolderId must be set.")
-            .ValidateOnStart();
-        services.AddHttpClient<YandexGptConversationCategorizerClient>((sp, client) =>
+            .Bind(configuration.GetSection(CategorizationYandexGptOptions.SectionName));
+        var categorizationYandexGptOptions =
+            configuration.GetSection(CategorizationYandexGptOptions.SectionName).Get<CategorizationYandexGptOptions>() ?? new();
+        if (!string.IsNullOrWhiteSpace(categorizationYandexGptOptions.ApiKey)
+            && !string.IsNullOrWhiteSpace(categorizationYandexGptOptions.FolderId))
         {
-            var opts = sp.GetRequiredService<IOptions<CategorizationYandexGptOptions>>().Value;
-            var baseUrl = opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/";
-            client.BaseAddress = new Uri(baseUrl);
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Api-Key", opts.ApiKey);
-        });
-        // `19-02`: CategorizationResiliencePipeline wraps the whole call - see
-        // ResilientConversationCategorizer's own remarks on why an unattended batch job still gets a
-        // pipeline (so one bad tick cannot hammer a down provider once per candidate conversation).
-        services.AddResiliencePipelineOptions(
-            CategorizationResiliencePipeline.PipelineName, configuration, ConfigureCategorizationResilienceDefaults);
-        services.AddSingleton(sp => new CategorizationResiliencePipeline(
-            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(CategorizationResiliencePipeline.PipelineName)));
-        services.AddScoped<IConversationCategorizer>(sp => new ResilientConversationCategorizer(
-            sp.GetRequiredService<YandexGptConversationCategorizerClient>(),
-            sp.GetRequiredService<CategorizationResiliencePipeline>(),
-            sp.GetRequiredService<ILogger<ResilientConversationCategorizer>>()));
+            services.AddHttpClient<YandexGptConversationCategorizerClient>((sp, client) =>
+            {
+                var opts = sp.GetRequiredService<IOptions<CategorizationYandexGptOptions>>().Value;
+                var baseUrl = opts.BaseUrl.EndsWith('/') ? opts.BaseUrl : opts.BaseUrl + "/";
+                client.BaseAddress = new Uri(baseUrl);
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Api-Key", opts.ApiKey);
+            });
+            // `19-02`: CategorizationResiliencePipeline wraps the whole call - see
+            // ResilientConversationCategorizer's own remarks on why an unattended batch job still gets a
+            // pipeline (so one bad tick cannot hammer a down provider once per candidate conversation).
+            services.AddResiliencePipelineOptions(
+                CategorizationResiliencePipeline.PipelineName, configuration, ConfigureCategorizationResilienceDefaults);
+            services.AddSingleton(sp => new CategorizationResiliencePipeline(
+                sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(CategorizationResiliencePipeline.PipelineName)));
+            services.AddScoped<IConversationCategorizer>(sp => new ResilientConversationCategorizer(
+                sp.GetRequiredService<YandexGptConversationCategorizerClient>(),
+                sp.GetRequiredService<CategorizationResiliencePipeline>(),
+                sp.GetRequiredService<ILogger<ResilientConversationCategorizer>>()));
+        }
+        else
+        {
+            services.AddScoped<IConversationCategorizer, UnconfiguredConversationCategorizer>();
+        }
         services.AddScoped<CategorizeConversationHandler>();
 
         services.AddScoped<StartConversationHandler>();
@@ -681,6 +702,12 @@ public sealed class ChatModule : IProductModule
         // `18-08`: the console's own basic self-service report - see the handler's own remarks for
         // why it shares GetAllConversationsForSiteHandler/SearchConversationsHandler's permission gate.
         services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
+        // `18-10`: the outcome/conversion report - found missing here while landing `18-11` (its own
+        // GetTagBreakdownReportForSiteHandler registration, right below, is what surfaced the gap by
+        // comparison). The read-store (ConversionReportReadStore) was registered by `18-10` in
+        // ServiceCollectionExtensions.cs; only this handler registration was missing, so the
+        // `/conversion-report` endpoint's DI resolution failed on every request until now.
+        services.AddScoped<GetConversionReportForSiteHandler>();
         // `18-14`: the console's own chat-to-booking conversion report - its own read-store and its
         // own permission gate call (GetModuleFlowReportForSiteHandler's own remarks), sharing
         // ModuleFlowReportOptions bound above rather than a second binding site.
@@ -745,6 +772,12 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RequestSiteErasureHandler>();
         services.AddScoped<RequestConversationErasureHandler>();
         services.AddScoped<GetConversationByIdHandler>();
+        // `18-10`: found missing here the same way `GetConversionReportForSiteHandler` was - these two
+        // outcome handlers (SetConversationOutcomeEndpoints' own actual read/write actions, not the
+        // site-wide report) were never registered either, so `/outcome` (GET and POST) both crash-
+        // looped the host at startup for the identical "handler | UNKNOWN" reason.
+        services.AddScoped<SetConversationOutcomeHandler>();
+        services.AddScoped<GetConversationOutcomeHandler>();
 
         // `16-03`: the export-request write and the completion-poll read, the same "registered for
         // every host, only Ago.Chat.Api maps routes for them today" shape as the erasure pair right
