@@ -34,7 +34,7 @@ public sealed class StartConversationHandler(
         }
 
         var conversationId = new ConversationId(idGenerator.NewId(now));
-        var conversation = Conversation.Start(conversationId, command.SiteId, command.VisitorId, now);
+        var conversation = Conversation.Start(conversationId, command.SiteId, command.VisitorId, now, command.Source);
         await conversations.SaveAsync(conversation, cancellationToken);
 
         return new StartConversationResult(conversation.Id, IsNew: true);

@@ -81,13 +81,39 @@ public sealed class VisitorHub(
     /// created (<c>IsNew</c>): a sequence remembered from a previous conversation means nothing here,
     /// there is nothing to have missed.
     /// </summary>
-    public async Task<VisitorJoinResult> JoinAsync(int? lastKnownSequence = null)
+    public Task<VisitorJoinResult> JoinAsync(int? lastKnownSequence = null) =>
+        JoinCoreAsync(lastKnownSequence, source: null);
+
+    /// <summary>
+    /// `18-12`: the widget's own real join call - identical to <see cref="JoinAsync"/> plus the traffic
+    /// source the widget read from the browser at the moment it actually opened a connection
+    /// (`document.referrer`'s host, and whichever UTM query parameters the landing page's URL carried).
+    ///
+    /// <para><b>A second method, not four more parameters on <see cref="JoinAsync"/>.</b> The same
+    /// arity rule <see cref="SendStructuredMessageAsync"/>'s own doc comment states and <c>5-19</c>
+    /// found live: a hub method's parameter list is a contract with clients already embedded on other
+    /// people's sites, and growing an existing method's list broke every deployed caller at once,
+    /// silently, the day that was tried for structured content. <see cref="JoinAsync"/> stays exactly
+    /// as it was; this is the new capability's own method, the same split that item settled on.</para>
+    ///
+    /// <para>All four traffic-source parameters bind through <see cref="TrafficSource"/>'s own
+    /// constructor, which is where the "empty/whitespace becomes null, everything else is trimmed and
+    /// bounded" normalization actually lives (that type's own remarks) - this hub method does nothing
+    /// more than translate wire strings into that value object, the same "thin wrapper, no business
+    /// logic" shape every other hub method here already follows for a domain value type
+    /// (<c>attachmentId is {{ }} a ? new AttachmentId(a) : null</c> right below, for one).</para>
+    /// </summary>
+    public Task<VisitorJoinResult> JoinWithTrafficSourceAsync(
+        int? lastKnownSequence, string? referrerHost, string? utmSource, string? utmMedium, string? utmCampaign) =>
+        JoinCoreAsync(lastKnownSequence, new TrafficSource(referrerHost, utmSource, utmMedium, utmCampaign));
+
+    private async Task<VisitorJoinResult> JoinCoreAsync(int? lastKnownSequence, TrafficSource? source)
     {
         var siteId = Context.User!.GetSiteId();
         var visitorId = Context.User!.GetVisitorId();
 
         var started = await startConversation.HandleAsync(
-            new StartConversation(siteId, visitorId), Context.ConnectionAborted);
+            new StartConversation(siteId, visitorId, source), Context.ConnectionAborted);
         var conversationId = started.Value.ConversationId;
 
         if (lastKnownSequence is { } afterSequence && !started.Value.IsNew)

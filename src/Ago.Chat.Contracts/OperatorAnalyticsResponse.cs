@@ -6,12 +6,20 @@
 /// the handler defaulted them, the same "the bound is visible, not silent" shape
 /// `SearchConversationsResponse.SearchedFrom`/`SearchedTo` already establishes for `18-01`.
 /// </summary>
+/// <param name="ByReferrer">`18-12`: one entry per referrer host, plus a <c>"Direct"</c> entry for every
+/// conversation whose visitor carried none - this is what the browser reported (`document.referrer`'s
+/// host), never a verified fact; the console's own copy says so.</param>
+/// <param name="ByCampaign">`18-12`: one entry per `utm_campaign` value actually seen on a landing URL -
+/// never a "no campaign" row, matching <see cref="ByOperator"/>'s own "nobody assigned" exclusion.
+/// Equally unverified - a client-supplied query parameter, not a confirmed fact.</param>
 public sealed record OperatorAnalyticsResponse(
     DateTimeOffset From,
     DateTimeOffset To,
     OperatorAnalyticsBucketDto Overall,
     IReadOnlyList<OperatorAnalyticsChannelBucketDto> ByChannel,
-    IReadOnlyList<OperatorAnalyticsOperatorBucketDto> ByOperator);
+    IReadOnlyList<OperatorAnalyticsOperatorBucketDto> ByOperator,
+    IReadOnlyList<OperatorAnalyticsReferrerBucketDto> ByReferrer,
+    IReadOnlyList<OperatorAnalyticsCampaignBucketDto> ByCampaign);
 
 /// <param name="AverageFirstResponseSeconds"><see langword="null"/> when nothing in this bucket ever
 /// received an operator reply - see <c>IOperatorAnalyticsReadStore</c>'s own remarks for the exact
@@ -40,3 +48,11 @@ public sealed record OperatorAnalyticsChannelBucketDto(string Channel, OperatorA
 /// column already sets on the console side.
 /// </summary>
 public sealed record OperatorAnalyticsOperatorBucketDto(Guid OperatorId, OperatorAnalyticsBucketDto Bucket);
+
+/// <summary>`18-12`: one referrer host's bucket - see <see cref="OperatorAnalyticsResponse.ByReferrer"/>.
+/// </summary>
+public sealed record OperatorAnalyticsReferrerBucketDto(string ReferrerHost, OperatorAnalyticsBucketDto Bucket);
+
+/// <summary>`18-12`: one UTM campaign's bucket - see <see cref="OperatorAnalyticsResponse.ByCampaign"/>.
+/// </summary>
+public sealed record OperatorAnalyticsCampaignBucketDto(string UtmCampaign, OperatorAnalyticsBucketDto Bucket);

@@ -74,6 +74,19 @@ namespace Ago.Chat.Application.Abstractions;
 /// <see cref="OperatorAnalyticsResult.ByOperator"/> entirely, the same "no data to attribute, name the
 /// gap rather than invent a placeholder" precedent the channel tiebreak above already sets.</para>
 ///
+/// <para><b>`18-12`: traffic source, two more grouping sets over the same window.</b> Referrer host and
+/// UTM campaign are <see cref="Domain.Conversation.Source"/>'s own two most reportable fields - see that
+/// type's remarks for what "traffic source" means here and why it is unverified. Two separate groupings,
+/// not one combined dimension: they answer different questions ("which sites send us conversations" vs.
+/// "which of our own campaigns work"), and a single conversation can carry both a real referrer and a
+/// real campaign at once, so forcing a precedence between them would hide whichever one lost. Referrer
+/// host gets a real <c>"Direct"</c> fallback for "no referrer at all" - a common, answerable case, the
+/// same reasoning the `Widget` channel fallback above already gives; UTM campaign gets no such fallback -
+/// "no campaign tag" is not a business question worth naming, so a conversation with none is excluded
+/// from <see cref="OperatorAnalyticsResult.ByCampaign"/> entirely, the identical "no data to attribute,
+/// name the gap rather than invent a placeholder" precedent <see cref="OperatorAnalyticsResult.ByOperator"/>'s
+/// own "nobody assigned" exclusion already sets.</para>
+///
 /// <para><b>`18-13`: average conversation duration.</b> <see cref="OperatorAnalyticsBucket.AverageDurationSeconds"/>
 /// is the mean of <c>ClosedAt - CreatedAt</c> over every closed conversation in the bucket - a different
 /// question from first-response time ("how fast did someone pick this up" vs. "how long does it

@@ -128,6 +128,8 @@ public class GetOperatorAnalyticsForSiteHandlerTests
                 new OperatorAnalyticsChannelBucket("Widget", new OperatorAnalyticsBucket(3, 30.0, 200.0, 0)),
                 new OperatorAnalyticsChannelBucket("Sms", new OperatorAnalyticsBucket(2, 60.0, 400.0, 1)),
             ],
+            [],
+            [],
             []));
 
         var result = await handler.HandleAsync(
@@ -165,7 +167,9 @@ public class GetOperatorAnalyticsForSiteHandlerTests
             [
                 new OperatorAnalyticsOperatorBucket(operatorA, new OperatorAnalyticsBucket(1, 60.0, 180.0, 0)),
                 new OperatorAnalyticsOperatorBucket(operatorB, new OperatorAnalyticsBucket(1, 30.0, null, 1)),
-            ]));
+            ],
+            [],
+            []));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
@@ -182,5 +186,43 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         Assert.Equal(1, b.Bucket.ConversationCount);
         Assert.Null(b.Bucket.AverageDurationSeconds);
         Assert.Equal(1, b.Bucket.MissedCount);
+    }
+
+    /// <summary>`18-12`: the handler's own half of the traffic-source addition - a pure pass-through of
+    /// whatever <see cref="IOperatorAnalyticsReadStore"/> already grouped, the same "the port owns the
+    /// definitions, the handler only shapes the wire response" split every other bucket list here
+    /// already proves. The grouping-set SQL itself (the "Direct" fallback, the "no campaign" exclusion)
+    /// is <c>OperatorAnalyticsReadStoreTests</c>' job, against a real Postgres.</summary>
+    [Fact]
+    public async Task HandleAsync_MapsThePerReferrerAndPerCampaignBucketsFromTheStore()
+    {
+        var (handler, store) = CreateFixture();
+        store.Seed(new OperatorAnalyticsResult(
+            new OperatorAnalyticsBucket(3, 45.0, 250.0, 0),
+            [],
+            [],
+            [
+                new OperatorAnalyticsReferrerBucket("Direct", new OperatorAnalyticsBucket(2, 40.0, 200.0, 0)),
+                new OperatorAnalyticsReferrerBucket("google.com", new OperatorAnalyticsBucket(1, 60.0, 300.0, 0)),
+            ],
+            [
+                new OperatorAnalyticsCampaignBucket("summer_sale", new OperatorAnalyticsBucket(1, 60.0, 300.0, 0)),
+            ]));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.ByReferrer.Count);
+        var direct = result.Value.ByReferrer.Single(r => r.ReferrerHost == "Direct");
+        Assert.Equal(2, direct.Bucket.ConversationCount);
+        var google = result.Value.ByReferrer.Single(r => r.ReferrerHost == "google.com");
+        Assert.Equal(1, google.Bucket.ConversationCount);
+
+        Assert.Single(result.Value.ByCampaign);
+        var campaign = result.Value.ByCampaign.Single();
+        Assert.Equal("summer_sale", campaign.UtmCampaign);
+        Assert.Equal(1, campaign.Bucket.ConversationCount);
     }
 }
