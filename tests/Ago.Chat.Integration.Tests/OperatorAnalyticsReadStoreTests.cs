@@ -304,6 +304,129 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         Assert.Null(a.Bucket.AverageFirstResponseSeconds);
     }
 
+    /// <summary>
+    /// `18-13`'s own Done-when, and the one behaviour worth a real fails-before proof: a still-open
+    /// conversation must contribute nothing to <c>AverageDurationSeconds</c>, in <em>every</em> bucket
+    /// the query already computes - not merely the overall total. Four conversations, two operators, two
+    /// channels:
+    /// </summary>
+    /// <list type="bullet">
+    /// <item>D1 Widget/operator A: answered in 10s, closed 100s after it started - duration 100s.</item>
+    /// <item>D2 Sms/operator B: answered in 20s, closed 300s after it started - duration 300s.</item>
+    /// <item>D3 Widget/operator A: answered in 30s, closed 300s after it started - duration 300s.</item>
+    /// <item>D-open Widget/operator A: answered in 15s, never closed - <b>excluded</b> from every
+    /// duration average below, though it still counts toward <c>ConversationCount</c> in every bucket it
+    /// belongs to (the same "not missed, because it is not Closed" reasoning
+    /// <see cref="GetSiteAnalyticsAsync_ComputesOverallAndPerChannelNumbers_MatchingHandCalculatedGroundTruth"/>'s
+    /// own #5 already establishes - this item does not change what "missed" means, only adds a duration
+    /// number beside it).</item>
+    /// </list>
+    /// <para>Ground truth, computed by hand: Overall duration average over {100, 300, 300} = 233.33s
+    /// (D-open contributes nothing). Widget = {D1, D3, D-open} - count 3, duration average over {100,
+    /// 300} = 200s. Sms = {D2} - count 1, duration average 300s. Operator A = {D1, D3, D-open} - count 3,
+    /// duration average over {100, 300} = 200s. Operator B = {D2} - count 1, duration average 300s. If
+    /// D-open's <c>null</c> <c>ClosedAt</c> were instead treated as zero seconds, Widget's and operator
+    /// A's averages would read 133.33s, not 200s - a real, catchable difference, which is what makes this
+    /// scenario an actual fails-before proof rather than a query that merely runs.</para>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_ComputesAverageDurationSeconds_ExcludingStillOpenConversations_InEveryBucket()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorB, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        // D1: Widget/A, response 10s, closed at +100s.
+        await SeedConversationWithDurationAsync(
+            siteId, channel: null, operatorA, offsetDays: -5, responseSeconds: 10, closeAfterSeconds: 100);
+        // D2: Sms/B, response 20s, closed at +300s.
+        await SeedConversationWithDurationAsync(
+            siteId, ChannelKind.Sms, operatorB, offsetDays: -4, responseSeconds: 20, closeAfterSeconds: 300);
+        // D3: Widget/A, response 30s, closed at +300s.
+        await SeedConversationWithDurationAsync(
+            siteId, channel: null, operatorA, offsetDays: -3, responseSeconds: 30, closeAfterSeconds: 300);
+        // D-open: Widget/A, response 15s, never closed.
+        await SeedConversationWithDurationAsync(
+            siteId, channel: null, operatorA, offsetDays: -2, responseSeconds: 15, closeAfterSeconds: null);
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(4, result.Overall.ConversationCount);
+        AssertClose(233.333333, result.Overall.AverageDurationSeconds!.Value);
+
+        var widget = result.ByChannel.Single(c => c.Channel == "Widget");
+        Assert.Equal(3, widget.Bucket.ConversationCount);
+        AssertClose(200.0, widget.Bucket.AverageDurationSeconds!.Value);
+
+        var sms = result.ByChannel.Single(c => c.Channel == "Sms");
+        Assert.Equal(1, sms.Bucket.ConversationCount);
+        AssertClose(300.0, sms.Bucket.AverageDurationSeconds!.Value);
+
+        var a = result.ByOperator.Single(o => o.Operator == operatorA);
+        Assert.Equal(3, a.Bucket.ConversationCount);
+        AssertClose(200.0, a.Bucket.AverageDurationSeconds!.Value);
+
+        var b = result.ByOperator.Single(o => o.Operator == operatorB);
+        Assert.Equal(1, b.Bucket.ConversationCount);
+        AssertClose(300.0, b.Bucket.AverageDurationSeconds!.Value);
+    }
+
+    /// <summary>Builds one conversation, visitor-message then assigned-to-and-answered-by
+    /// <paramref name="operatorId"/>, optionally closed <paramref name="closeAfterSeconds"/> after it
+    /// started - <see langword="null"/> leaves it open (`Waiting`/`Assigned`, never `Closed`), the shape
+    /// `18-13`'s own still-open-exclusion proof needs and none of the other seed helpers in this file
+    /// already give (`SeedSingleAnsweredConversationAsync` never closes; `SeedMissedConversationAsync`
+    /// closes but never answers).</summary>
+    private async Task SeedConversationWithDurationAsync(
+        SiteId siteId, ChannelKind? channel, OperatorId operatorId, int offsetDays, int responseSeconds,
+        int? closeAfterSeconds)
+    {
+        await EnsurePartitionsAsync([offsetDays]);
+
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var createdAt = Now.AddDays(offsetDays);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            if (channel is { } kind)
+            {
+                db.ChannelIdentities.Add(ChannelIdentity.Link(
+                    new ChannelIdentityId(Guid.NewGuid()), siteId, kind,
+                    new ExternalChannelAddress($"addr-{Guid.NewGuid():N}"), visitorId, createdAt));
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, createdAt);
+        conversation.AddVisitorMessage(
+            visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), createdAt);
+        conversation.AssignTo(operatorId, createdAt);
+        conversation.AddOperatorMessage(
+            operatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi, how can I help"),
+            createdAt.AddSeconds(responseSeconds));
+        if (closeAfterSeconds is { } seconds)
+        {
+            conversation.Close(createdAt.AddSeconds(seconds));
+        }
+
+        await using var writeDb = fixture.CreateDbContext();
+        writeDb.Conversations.Add(conversation);
+        await writeDb.SaveChangesAsync();
+    }
+
     /// <summary>`17-01`'s own bar, applied to the per-operator dimension: two sites, each with its own
     /// operator, and one site's analytics must never surface the other site's operator at all - not even
     /// as an empty/zeroed row, since the operator genuinely does not exist in the other site's data.

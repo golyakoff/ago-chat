@@ -17,8 +17,12 @@ public sealed record OperatorAnalyticsResponse(
 /// received an operator reply - see <c>IOperatorAnalyticsReadStore</c>'s own remarks for the exact
 /// definition and why a missed conversation is excluded from the average rather than inflating
 /// it.</param>
+/// <param name="AverageDurationSeconds">`18-13`: how long a conversation in this bucket takes from
+/// start to close, averaged. <see langword="null"/> when nothing in this bucket has closed yet - a
+/// conversation still open is excluded from the average entirely, not counted as zero seconds or as
+/// "still running" time (<c>IOperatorAnalyticsReadStore</c>'s own remarks, `ago-chat`).</param>
 public sealed record OperatorAnalyticsBucketDto(
-    long ConversationCount, double? AverageFirstResponseSeconds, long MissedCount);
+    long ConversationCount, double? AverageFirstResponseSeconds, double? AverageDurationSeconds, long MissedCount);
 
 /// <param name="Channel">One of `Max`/`Sms`/`Telegram`/`WhatsApp` (<c>Ago.Chat.Domain.ChannelKind</c>'s
 /// own member names) or the literal <c>"Widget"</c> for a visitor with no external channel identity at

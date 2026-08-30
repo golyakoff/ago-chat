@@ -10,7 +10,7 @@ namespace Ago.Chat.Application.Tests.Fakes;
 /// handler.</summary>
 public sealed class FakeOperatorAnalyticsReadStore : IOperatorAnalyticsReadStore
 {
-    private OperatorAnalyticsResult _result = new(new OperatorAnalyticsBucket(0, null, 0), [], []);
+    private OperatorAnalyticsResult _result = new(new OperatorAnalyticsBucket(0, null, null, 0), [], []);
 
     public SiteId? LastSiteId { get; private set; }
 

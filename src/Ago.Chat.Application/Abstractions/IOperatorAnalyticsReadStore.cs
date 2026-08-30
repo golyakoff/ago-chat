@@ -74,6 +74,14 @@ namespace Ago.Chat.Application.Abstractions;
 /// <see cref="OperatorAnalyticsResult.ByOperator"/> entirely, the same "no data to attribute, name the
 /// gap rather than invent a placeholder" precedent the channel tiebreak above already sets.</para>
 ///
+/// <para><b>`18-13`: average conversation duration.</b> <see cref="OperatorAnalyticsBucket.AverageDurationSeconds"/>
+/// is the mean of <c>ClosedAt - CreatedAt</c> over every closed conversation in the bucket - a different
+/// question from first-response time ("how fast did someone pick this up" vs. "how long does it
+/// actually take to resolve"), computed in the same pass over <c>detail</c> rather than a second query.
+/// A conversation with no <c>ClosedAt</c> (still open) contributes nothing to the average, the identical
+/// `filter (where ...)` discipline the first-response average already applies to its own "nothing to
+/// average yet" case - never zero, never "now minus created".</para>
+///
 /// <para><b>Not a caching concern</b> (`CLAUDE.md` rule 8, `caching.md`). Nothing this query returns
 /// feeds a write, a compare-and-set, or a capacity check anywhere in the system - it is pure
 /// observability for a human reading a panel, the same category `12-02`'s owner overview occupies. No

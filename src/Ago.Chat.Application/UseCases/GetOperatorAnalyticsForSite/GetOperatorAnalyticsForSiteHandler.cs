@@ -13,6 +13,8 @@ namespace Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 /// to an operator" means, the transfer case, the missed-conversation fallback) lives at
 /// <c>IOperatorAnalyticsReadStore</c>, not here, the same "the port owns the definitions, the handler
 /// only shapes the wire response" split this file's existing per-channel mapping already establishes.
+/// `18-13` adds one more field, average conversation duration, to <see cref="ToDto"/>'s existing
+/// mapping - the same pass-through, no new decision made here either.
 ///
 /// <para><b>Gated on <see cref="Permission.SiteConfigure"/>, not <see cref="Permission.ConversationRead"/>
 /// - the same call `GetAllConversationsForSiteHandler` and `18-01`'s <c>SearchConversationsHandler</c>
@@ -62,5 +64,5 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
     }
 
     private static OperatorAnalyticsBucketDto ToDto(OperatorAnalyticsBucket bucket) => new(
-        bucket.ConversationCount, bucket.AverageFirstResponseSeconds, bucket.MissedCount);
+        bucket.ConversationCount, bucket.AverageFirstResponseSeconds, bucket.AverageDurationSeconds, bucket.MissedCount);
 }

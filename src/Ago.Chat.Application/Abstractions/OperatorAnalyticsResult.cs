@@ -33,12 +33,19 @@ public sealed record OperatorAnalyticsResult(
 /// bucket ever received an operator reply - never zero, and never a value inflated by the conversations
 /// that make up <paramref name="MissedCount"/> (those are excluded from the average entirely, not
 /// counted as some large number).</param>
+/// <param name="AverageDurationSeconds">`18-13`: how long a conversation in this bucket takes from
+/// <c>CreatedAt</c> to <c>ClosedAt</c>, averaged. <see langword="null"/> when nothing in this bucket has
+/// closed yet - the same "nothing to average yet" rule <paramref name="AverageFirstResponseSeconds"/>
+/// already applies to its own null case. A conversation still open contributes nothing to this average;
+/// it is not treated as zero seconds, and not as "now minus created" either - that would make the
+/// average keep drifting for the exact same historical window purely because time passed since the
+/// report last ran.</param>
 /// <param name="MissedCount">Conversations that were <c>Closed</c> with no operator message ever sent
 /// in them. A conversation still <c>Waiting</c>/<c>Assigned</c> with no reply yet is not "missed" by
 /// this definition - it has not been given the chance to be, and counting it would conflate "closed
 /// with nobody home" with "thirty seconds old".</param>
 public sealed record OperatorAnalyticsBucket(
-    long ConversationCount, double? AverageFirstResponseSeconds, long MissedCount);
+    long ConversationCount, double? AverageFirstResponseSeconds, double? AverageDurationSeconds, long MissedCount);
 
 /// <param name="Channel">The CLR member name of <see cref="Domain.ChannelKind"/> the conversation's
 /// visitor was first reached through, or the literal <c>"Widget"</c> for a visitor with no

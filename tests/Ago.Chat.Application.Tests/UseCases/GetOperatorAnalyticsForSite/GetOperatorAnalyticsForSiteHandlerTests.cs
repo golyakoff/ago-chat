@@ -123,10 +123,10 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     {
         var (handler, store) = CreateFixture();
         store.Seed(new OperatorAnalyticsResult(
-            new OperatorAnalyticsBucket(ConversationCount: 5, AverageFirstResponseSeconds: 42.5, MissedCount: 1),
+            new OperatorAnalyticsBucket(ConversationCount: 5, AverageFirstResponseSeconds: 42.5, AverageDurationSeconds: 300.0, MissedCount: 1),
             [
-                new OperatorAnalyticsChannelBucket("Widget", new OperatorAnalyticsBucket(3, 30.0, 0)),
-                new OperatorAnalyticsChannelBucket("Sms", new OperatorAnalyticsBucket(2, 60.0, 1)),
+                new OperatorAnalyticsChannelBucket("Widget", new OperatorAnalyticsBucket(3, 30.0, 200.0, 0)),
+                new OperatorAnalyticsChannelBucket("Sms", new OperatorAnalyticsBucket(2, 60.0, 400.0, 1)),
             ],
             []));
 
@@ -137,11 +137,13 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(5, result.Value.Overall.ConversationCount);
         Assert.Equal(42.5, result.Value.Overall.AverageFirstResponseSeconds);
+        Assert.Equal(300.0, result.Value.Overall.AverageDurationSeconds);
         Assert.Equal(1, result.Value.Overall.MissedCount);
         Assert.Equal(2, result.Value.ByChannel.Count);
         var widget = result.Value.ByChannel.Single(c => c.Channel == "Widget");
         Assert.Equal(3, widget.Bucket.ConversationCount);
         Assert.Equal(30.0, widget.Bucket.AverageFirstResponseSeconds);
+        Assert.Equal(200.0, widget.Bucket.AverageDurationSeconds);
         Assert.Equal(0, widget.Bucket.MissedCount);
     }
 
@@ -158,11 +160,11 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         var operatorA = new OperatorId(Guid.NewGuid());
         var operatorB = new OperatorId(Guid.NewGuid());
         store.Seed(new OperatorAnalyticsResult(
-            new OperatorAnalyticsBucket(2, 45.0, 0),
+            new OperatorAnalyticsBucket(2, 45.0, 250.0, 0),
             [],
             [
-                new OperatorAnalyticsOperatorBucket(operatorA, new OperatorAnalyticsBucket(1, 60.0, 0)),
-                new OperatorAnalyticsOperatorBucket(operatorB, new OperatorAnalyticsBucket(1, 30.0, 1)),
+                new OperatorAnalyticsOperatorBucket(operatorA, new OperatorAnalyticsBucket(1, 60.0, 180.0, 0)),
+                new OperatorAnalyticsOperatorBucket(operatorB, new OperatorAnalyticsBucket(1, 30.0, null, 1)),
             ]));
 
         var result = await handler.HandleAsync(
@@ -174,9 +176,11 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         var a = result.Value.ByOperator.Single(o => o.OperatorId == operatorA.Value);
         Assert.Equal(1, a.Bucket.ConversationCount);
         Assert.Equal(60.0, a.Bucket.AverageFirstResponseSeconds);
+        Assert.Equal(180.0, a.Bucket.AverageDurationSeconds);
         Assert.Equal(0, a.Bucket.MissedCount);
         var b = result.Value.ByOperator.Single(o => o.OperatorId == operatorB.Value);
         Assert.Equal(1, b.Bucket.ConversationCount);
+        Assert.Null(b.Bucket.AverageDurationSeconds);
         Assert.Equal(1, b.Bucket.MissedCount);
     }
 }
