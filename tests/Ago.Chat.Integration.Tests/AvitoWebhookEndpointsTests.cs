@@ -43,7 +43,14 @@ public sealed class AvitoWebhookEndpointsTests(PostgresFixture fixture)
 {
     private const string CorrectSecret = "correct-webhook-secret";
     private const string PlaintextToken = "test-avito-access-token-not-a-real-secret";
-    private const long WebhookOwnerUserId = 94235311;
+
+    // `14-10`'s own ux_channel_credentials_kind_provideraccountid_active index made ProviderAccountId
+    // unique per (kind, active) across the whole table, not just this test class's own rows - xUnit
+    // constructs a fresh AvitoWebhookEndpointsTests per [Fact] (this class's own remarks below), so a
+    // shared `const` here collided across every one of this file's own tests once that index started
+    // enforcing it. A fresh value per instance, the same fix `ChannelCredentialRepositoryTests` already
+    // applies for the identical reason.
+    private readonly long WebhookOwnerUserId = Random.Shared.NextInt64(10_000_000, 99_999_999);
 
     private static readonly DateTimeOffset Now = new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
 
@@ -170,13 +177,13 @@ public sealed class AvitoWebhookEndpointsTests(PostgresFixture fixture)
         Assert.Null(await ReadMessageBodyAsync(siteId));
     }
 
-    private static async Task<HttpResponseMessage> PostMessageAsync(
+    private async Task<HttpResponseMessage> PostMessageAsync(
         HttpClient client, ChannelCredentialId credentialId, string secret, long authorId, string chatId, string text) =>
         await client.PostAsync(
             $"webhooks/avito/{credentialId.Value}?{AvitoWebhookEndpoints.SecretQueryParamName}={Uri.EscapeDataString(secret)}",
             JsonBody(MessagePayload(authorId, chatId, text)));
 
-    private static object MessagePayload(long authorId, string chatId, string text, string chatType = "u2i") => new
+    private object MessagePayload(long authorId, string chatId, string text, string chatType = "u2i") => new
     {
         id = "env-1",
         version = "v1.1",
