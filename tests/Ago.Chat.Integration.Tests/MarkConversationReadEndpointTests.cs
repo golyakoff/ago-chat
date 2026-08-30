@@ -13,6 +13,7 @@ using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
@@ -273,6 +274,11 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<GetConversionReportForSiteHandler>();
         builder.Services.AddScoped<SetConversationOutcomeHandler>();
         builder.Services.AddScoped<GetConversationOutcomeHandler>();
+        // `18-11`: same reason again - MapConversationsEndpoints now also maps
+        // GET .../tag-breakdown-report, whose GetTagBreakdownReportForSiteHandler parameter must
+        // resolve as a registered service.
+        builder.Services.AddScoped<ITagBreakdownReadStore, TagBreakdownReadStore>();
+        builder.Services.AddScoped<GetTagBreakdownReportForSiteHandler>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
