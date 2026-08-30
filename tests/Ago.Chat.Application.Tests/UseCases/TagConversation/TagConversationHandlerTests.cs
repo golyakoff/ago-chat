@@ -43,7 +43,10 @@ public class TagConversationHandlerTests
 
         Assert.True(result.IsSuccess);
         var applied = Assert.Single(await fixture.Tags.GetForConversationAsync(fixture.ConversationId, CancellationToken.None));
-        Assert.Equal(fixture.TagId, applied.Id);
+        Assert.Equal(fixture.TagId, applied.Tag.Id);
+        // `19-02`: an operator's own action always writes TagSource.Operator, never Ai -
+        // TagConversationHandler's own remarks on why this is never defaulted.
+        Assert.Equal(TagSource.Operator, applied.Source);
     }
 
     [Fact]

@@ -53,7 +53,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         var tagId = await SeedTagAsync(siteId, "priority");
         await using (var db = fixture.CreateDbContext())
         {
-            await new TagRepository(db).AddToConversationAsync(conversationId, tagId, CancellationToken.None);
+            await new TagRepository(db).AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
             await new NoteRepository(db).SaveAsync(
                 ConversationNote.Write(new ConversationNoteId(Guid.NewGuid()), conversationId, adminOperatorId, "erasure test note", Now),
                 CancellationToken.None);
