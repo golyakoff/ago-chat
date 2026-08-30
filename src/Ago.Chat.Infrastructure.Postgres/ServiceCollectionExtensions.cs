@@ -57,6 +57,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         // `18-08`: the console's own site-scoped "how am I doing" report.
         services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
+        // `18-10`: the site owner's own conversion report, a sibling read store rather than a fourth
+        // method on IOperatorAnalyticsReadStore - see that interface's own remarks for why.
+        services.AddScoped<IConversionReportReadStore, ConversionReportReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks

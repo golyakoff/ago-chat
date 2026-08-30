@@ -42,8 +42,15 @@ public static class ErrorExtensions
                 // tag name.
                 or "ConversationNote.Invalid" or "Tag.Invalid"
                 // `18-08`: the same "the query itself was malformed" shape as
-                // Conversation.SearchInvalidQuery, for the analytics panel's own from/to.
-                or "Analytics.InvalidRange" => StatusCodes.Status400BadRequest,
+                // Conversation.SearchInvalidQuery, for the analytics panel's own from/to - `18-10`'s
+                // conversion report reuses this exact code for its own identical check
+                // (ConversationErrors.AnalyticsInvalidRange's own remarks on why it does not get a
+                // second one).
+                or "Analytics.InvalidRange"
+                // `18-10`: a wire value that did not parse to a real, recordable ConversationOutcome -
+                // the caller's own mistake to fix, the same shape as the CannedResponse/Tag/Note
+                // validation codes right above it.
+                or "Conversation.OutcomeInvalid" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

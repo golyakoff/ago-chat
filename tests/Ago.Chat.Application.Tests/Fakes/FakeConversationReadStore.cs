@@ -68,7 +68,8 @@ public sealed class FakeConversationReadStore : IConversationReadStore
             .OrderByDescending(c => c.Id.Value)
             .Take(pageSize)
             .Select(c => new ConversationSummaryItem(
-                c.Id, c.VisitorId, c.OperatorId, c.State.ToString(), c.CreatedAt, c.OperatorUnreadCount))
+                c.Id, c.VisitorId, c.OperatorId, c.State.ToString(), c.CreatedAt, c.OperatorUnreadCount,
+                c.Outcome.ToString()))
             .ToList();
 
         var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
@@ -87,7 +88,7 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 
         return Task.FromResult<ConversationSummaryItem?>(new ConversationSummaryItem(
             conversation.Id, conversation.VisitorId, conversation.OperatorId, conversation.State.ToString(),
-            conversation.CreatedAt, conversation.OperatorUnreadCount));
+            conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.Outcome.ToString()));
     }
 
     /// <summary>`18-07`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive,

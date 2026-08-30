@@ -374,6 +374,23 @@ public static class ConversationErrors
     public static Error AnalyticsInvalidRange(string reason) =>
         new("Analytics.InvalidRange", reason);
 
+    // `18-10`: same shared vocabulary, same reason - SetConversationOutcomeHandler/
+    // GetConversionReportForSiteHandler add their own codes here rather than a separate error class.
+    /// <summary>The wire value did not parse to a real <see cref="Domain.ConversationOutcome"/> member,
+    /// or parsed to <see cref="Domain.ConversationOutcome.Unset"/> - the same "validate the enum,
+    /// translate the miss at the Application boundary" split <see cref="WidgetConfigInvalidLocale"/>
+    /// already draws for <c>Locale</c>. <see cref="Domain.Conversation.SetOutcome"/>'s own
+    /// <see cref="ArgumentOutOfRangeException"/> for <c>Unset</c> is a caller bug at that layer
+    /// precisely because this check is meant to catch it first.</summary>
+    public static Error OutcomeInvalid(string reason) =>
+        new("Conversation.OutcomeInvalid", reason);
+
+    // Note: the conversion report's own `from >= to` check reuses AnalyticsInvalidRange directly
+    // (`GetConversionReportForSiteHandler`) rather than a second, near-identical code - unlike
+    // `AttachmentDelete`-vs-`ConversationErase` and this file's other deliberately-split codes, there
+    // is no client-observable difference between "this report's range was malformed" and "that report's
+    // range was malformed"; both mean the same thing and want the same remedy, so one code serves both.
+
     // `20-07`: same shared vocabulary, same reason - EnableModuleForSiteHandler adds its own codes
     // here rather than a separate error class.
     public static Error ModuleInvalid(string reason) =>

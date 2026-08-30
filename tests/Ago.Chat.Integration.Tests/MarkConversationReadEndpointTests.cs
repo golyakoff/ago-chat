@@ -8,12 +8,15 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
+using Ago.Chat.Application.UseCases.GetConversationOutcome;
+using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.SearchConversations;
+using Ago.Chat.Application.UseCases.SetConversationOutcome;
 using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -253,6 +256,12 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // here - no test in this file exercises /transfer, and minimal API's endpoint-metadata
         // inference only needs the handler type itself recognized as a service, not constructible.
         builder.Services.AddScoped<TransferConversationHandler>();
+        // `18-10`: same reason again - MapConversationsEndpoints now also maps GET .../conversion-report
+        // and GET/PUT .../outcome, whose three handlers' parameters must resolve as registered services.
+        builder.Services.AddScoped<IConversionReportReadStore, ConversionReportReadStore>();
+        builder.Services.AddScoped<GetConversionReportForSiteHandler>();
+        builder.Services.AddScoped<SetConversationOutcomeHandler>();
+        builder.Services.AddScoped<GetConversationOutcomeHandler>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
