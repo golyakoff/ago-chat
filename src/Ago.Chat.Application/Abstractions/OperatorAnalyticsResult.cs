@@ -11,8 +11,14 @@
 /// <param name="ByChannel">One entry per channel that had at least one conversation in the window -
 /// never a zero-filled row for a channel nobody used (<see cref="IOperatorAnalyticsReadStore"/>'s own
 /// remarks on why the query does not manufacture one).</param>
+/// <param name="ByOperator">`18-09`: one entry per operator this window's conversations attribute to -
+/// see <see cref="IOperatorAnalyticsReadStore"/>'s remarks for exactly what "attribute to" means and
+/// why. Never a zero-filled row for an operator with nothing attributed to them, the same "no
+/// manufactured row" rule <see cref="ByChannel"/> already holds.</param>
 public sealed record OperatorAnalyticsResult(
-    OperatorAnalyticsBucket Overall, IReadOnlyList<OperatorAnalyticsChannelBucket> ByChannel);
+    OperatorAnalyticsBucket Overall,
+    IReadOnlyList<OperatorAnalyticsChannelBucket> ByChannel,
+    IReadOnlyList<OperatorAnalyticsOperatorBucket> ByOperator);
 
 /// <summary>
 /// One bucket's worth of the three numbers this item exists to compute. See
@@ -40,3 +46,7 @@ public sealed record OperatorAnalyticsBucket(
 /// deliberately has no <c>Widget</c> member (see that type's own remarks), so this is a read-time label,
 /// not a domain value.</param>
 public sealed record OperatorAnalyticsChannelBucket(string Channel, OperatorAnalyticsBucket Bucket);
+
+/// <summary>`18-09`: one operator's bucket - see <see cref="IOperatorAnalyticsReadStore"/> for exactly
+/// which conversations attribute to <paramref name="Operator"/> and why.</summary>
+public sealed record OperatorAnalyticsOperatorBucket(Domain.OperatorId Operator, OperatorAnalyticsBucket Bucket);

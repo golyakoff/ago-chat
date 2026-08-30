@@ -7,7 +7,12 @@ namespace Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 
 /// <summary>
 /// `18-08`: the console's own basic self-service report - conversation volume, average first-response
-/// time and missed-conversation count, per channel and overall, for one site over one window.
+/// time and missed-conversation count, per channel and overall, for one site over one window. `18-09`
+/// adds the same three numbers per operator - a pure pass-through of
+/// <see cref="Abstractions.OperatorAnalyticsResult.ByOperator"/>; every real decision (what "attribute
+/// to an operator" means, the transfer case, the missed-conversation fallback) lives at
+/// <c>IOperatorAnalyticsReadStore</c>, not here, the same "the port owns the definitions, the handler
+/// only shapes the wire response" split this file's existing per-channel mapping already establishes.
 ///
 /// <para><b>Gated on <see cref="Permission.SiteConfigure"/>, not <see cref="Permission.ConversationRead"/>
 /// - the same call `GetAllConversationsForSiteHandler` and `18-01`'s <c>SearchConversationsHandler</c>
@@ -52,7 +57,8 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
             from,
             to,
             ToDto(result.Overall),
-            result.ByChannel.Select(c => new OperatorAnalyticsChannelBucketDto(c.Channel, ToDto(c.Bucket))).ToList());
+            result.ByChannel.Select(c => new OperatorAnalyticsChannelBucketDto(c.Channel, ToDto(c.Bucket))).ToList(),
+            result.ByOperator.Select(o => new OperatorAnalyticsOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList());
     }
 
     private static OperatorAnalyticsBucketDto ToDto(OperatorAnalyticsBucket bucket) => new(

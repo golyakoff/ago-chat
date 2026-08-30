@@ -127,7 +127,8 @@ public class GetOperatorAnalyticsForSiteHandlerTests
             [
                 new OperatorAnalyticsChannelBucket("Widget", new OperatorAnalyticsBucket(3, 30.0, 0)),
                 new OperatorAnalyticsChannelBucket("Sms", new OperatorAnalyticsBucket(2, 60.0, 1)),
-            ]));
+            ],
+            []));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
@@ -142,5 +143,40 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         Assert.Equal(3, widget.Bucket.ConversationCount);
         Assert.Equal(30.0, widget.Bucket.AverageFirstResponseSeconds);
         Assert.Equal(0, widget.Bucket.MissedCount);
+    }
+
+    /// <summary>`18-09`: the handler's own half of the per-operator addition - a pure pass-through of
+    /// whatever <see cref="IOperatorAnalyticsReadStore"/> already attributed, proven the same way the
+    /// per-channel mapping above already is. The attribution decision itself (first responder, missed
+    /// falls back to whoever was assigned) is `OperatorAnalyticsReadStoreTests`' job, against a real
+    /// Postgres - this test only proves the handler does not drop or reshuffle what the store returns.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_MapsThePerOperatorBucketsFromTheStore()
+    {
+        var (handler, store) = CreateFixture();
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        store.Seed(new OperatorAnalyticsResult(
+            new OperatorAnalyticsBucket(2, 45.0, 0),
+            [],
+            [
+                new OperatorAnalyticsOperatorBucket(operatorA, new OperatorAnalyticsBucket(1, 60.0, 0)),
+                new OperatorAnalyticsOperatorBucket(operatorB, new OperatorAnalyticsBucket(1, 30.0, 1)),
+            ]));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.ByOperator.Count);
+        var a = result.Value.ByOperator.Single(o => o.OperatorId == operatorA.Value);
+        Assert.Equal(1, a.Bucket.ConversationCount);
+        Assert.Equal(60.0, a.Bucket.AverageFirstResponseSeconds);
+        Assert.Equal(0, a.Bucket.MissedCount);
+        var b = result.Value.ByOperator.Single(o => o.OperatorId == operatorB.Value);
+        Assert.Equal(1, b.Bucket.ConversationCount);
+        Assert.Equal(1, b.Bucket.MissedCount);
     }
 }
