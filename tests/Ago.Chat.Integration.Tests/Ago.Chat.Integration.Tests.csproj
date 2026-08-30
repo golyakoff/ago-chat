@@ -94,6 +94,7 @@
     <!-- `13-02`: YooKassaPaymentsApiClientTests/YooKassaWebhookEndpointTests' own real HTTP boundary -
          the same reasoning as the MAX/Telegram references above. -->
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.YooKassa\Ago.Chat.Infrastructure.YooKassa.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.YandexGpt\Ago.Chat.Infrastructure.YandexGpt.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
   </ItemGroup>
 
