@@ -1,4 +1,4 @@
-using Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Application.Abstractions;
 
 namespace Ago.Chat.Module.Categorization;
 
