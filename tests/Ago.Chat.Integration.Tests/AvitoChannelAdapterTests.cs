@@ -215,6 +215,14 @@ public sealed class AvitoChannelAdapterTests
         public Task<IReadOnlyList<ChannelCredential>> GetAllActiveAsync(ChannelKind kind, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        // `14-10`'s own addition to the port - unused here, the same "not this channel's own routing
+        // shape" reason `GetAllActiveAsync` above is unsupported: Avito routes per-credential (a
+        // `{credentialId}` path segment), never by provider account id the way WhatsApp's App-wide
+        // webhook must.
+        public Task<ChannelCredential?> GetActiveByProviderAccountIdAsync(
+            ChannelKind kind, string providerAccountId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task SaveAsync(ChannelCredential credential, CancellationToken cancellationToken)
         {
             _credential = credential;

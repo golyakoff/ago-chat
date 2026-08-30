@@ -158,9 +158,16 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
     {
         var siteId = new SiteId(Guid.NewGuid());
         await SeedSite(siteId);
+        // `14-10`'s own ux_channel_credentials_kind_provideraccountid_active index made ProviderAccountId
+        // unique per (kind, active) across the whole table - a fresh value per run, not a shared literal,
+        // the same fix `SaveAsync_WithAProviderAccountId_RoundTripsIt` above already applies. Numeric-only
+        // (not a GUID-hex slice), matching AvitoChannelAdapter's own long.TryParse(ProviderAccountId, ...)
+        // - a hex-derived value can legitimately contain letters, which was already found once this
+        // session breaking VK's own long.TryParse confirmation-handshake path the identical way.
+        var providerAccountId = Random.Shared.NextInt64(10_000_000, 99_999_999).ToString();
         var credential = ChannelCredential.Register(
             new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Avito, [1], [1], Now,
-            providerAccountId: "94235311", refreshTokenCiphertext: [9, 9, 9]);
+            providerAccountId: providerAccountId, refreshTokenCiphertext: [9, 9, 9]);
 
         await using (var db = fixture.CreateDbContext())
         {
@@ -184,9 +191,13 @@ public class ChannelCredentialRepositoryTests(PostgresFixture fixture)
     {
         var siteId = new SiteId(Guid.NewGuid());
         await SeedSite(siteId);
+        // Fresh, numeric-only value per run - see `SaveAsync_WithARefreshTokenCiphertext_RoundTripsIt`'s
+        // own remarks above for why (the unique index, and the long.TryParse landmine a hex-derived value
+        // would set).
+        var providerAccountId = Random.Shared.NextInt64(10_000_000, 99_999_999).ToString();
         var credential = ChannelCredential.Register(
             new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Avito, [1], [1], Now,
-            providerAccountId: "94235311", refreshTokenCiphertext: [9, 9, 9]);
+            providerAccountId: providerAccountId, refreshTokenCiphertext: [9, 9, 9]);
 
         await using (var db = fixture.CreateDbContext())
         {
