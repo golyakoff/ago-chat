@@ -48,17 +48,21 @@ public sealed class TagRepository(AgoChatDbContext db) : ITagRepository
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task AddToConversationAsync(ConversationId conversationId, TagId tagId, CancellationToken cancellationToken)
+    public async Task AddToConversationAsync(
+        ConversationId conversationId, TagId tagId, TagSource source, CancellationToken cancellationToken)
     {
         // Raw SQL, not `db.ConversationTags.Add(...)` + SaveChangesAsync - AddToConversationAsync's
         // own contract is idempotent (ITagRepository's remarks), and EF's Add would throw on the
         // composite-PK conflict a second call produces. `ON CONFLICT DO NOTHING` is the direct,
         // one-statement expression of "idempotent" rather than a catch-and-ignore around a thrown
-        // DbUpdateException.
+        // DbUpdateException. `19-02`: ON CONFLICT DO NOTHING also means a stale AI candidate that lost
+        // a race against an operator's own concurrent TagConversation call never overwrites the
+        // operator's row with Source='Ai' - the first writer's source wins, which is the correct
+        // "operator's own judgment is never silently relabelled" outcome either way round.
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"""
-            insert into conversation_tags (conversation_id, tag_id)
-            values ({conversationId.Value}, {tagId.Value})
+            insert into conversation_tags (conversation_id, tag_id, source)
+            values ({conversationId.Value}, {tagId.Value}, {source.ToString()})
             on conflict (conversation_id, tag_id) do nothing
             """,
             cancellationToken);
@@ -70,12 +74,13 @@ public sealed class TagRepository(AgoChatDbContext db) : ITagRepository
             $"delete from conversation_tags where conversation_id = {conversationId.Value} and tag_id = {tagId.Value}",
             cancellationToken);
 
-    public async Task<IReadOnlyList<Tag>> GetForConversationAsync(
+    public async Task<IReadOnlyList<ConversationTagEntry>> GetForConversationAsync(
         ConversationId conversationId, CancellationToken cancellationToken) =>
         await db.ConversationTags
             .Where(x => x.ConversationId == conversationId)
-            .Join(db.Tags, x => x.TagId, t => t.Id, (x, t) => t)
-            .OrderBy(t => t.Name)
+            .Join(db.Tags, x => x.TagId, t => t.Id, (x, t) => new { Tag = t, x.Source })
+            .OrderBy(x => x.Tag.Name)
+            .Select(x => new ConversationTagEntry(x.Tag, x.Source))
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlySet<ConversationId>> GetConversationIdsForTagAsync(

@@ -6,12 +6,14 @@ namespace Ago.Chat.Application.Tests.Fakes;
 public sealed class FakeTagRepository : ITagRepository
 {
     private readonly Dictionary<TagId, Tag> _byId = [];
-    private readonly HashSet<(ConversationId ConversationId, TagId TagId)> _associations = [];
+    private readonly Dictionary<(ConversationId ConversationId, TagId TagId), TagSource> _associations = [];
 
     public void Seed(Tag tag) => _byId[tag.Id] = tag;
 
-    public void SeedAssociation(ConversationId conversationId, TagId tagId) =>
-        _associations.Add((conversationId, tagId));
+    /// <summary>Defaults to <see cref="TagSource.Operator"/> - every existing caller of this fake seeds
+    /// an operator-applied association, unchanged by `19-02`'s own addition below.</summary>
+    public void SeedAssociation(ConversationId conversationId, TagId tagId, TagSource source = TagSource.Operator) =>
+        _associations[(conversationId, tagId)] = source;
 
     public Task<Tag?> GetByIdAsync(TagId id, SiteId siteId, CancellationToken cancellationToken)
     {
@@ -41,13 +43,25 @@ public sealed class FakeTagRepository : ITagRepository
     public Task DeleteAsync(Tag tag, CancellationToken cancellationToken)
     {
         _byId.Remove(tag.Id);
-        _associations.RemoveWhere(a => a.TagId == tag.Id);
+        foreach (var key in _associations.Keys.Where(a => a.TagId == tag.Id).ToList())
+        {
+            _associations.Remove(key);
+        }
+
         return Task.CompletedTask;
     }
 
-    public Task AddToConversationAsync(ConversationId conversationId, TagId tagId, CancellationToken cancellationToken)
+    public Task AddToConversationAsync(
+        ConversationId conversationId, TagId tagId, TagSource source, CancellationToken cancellationToken)
     {
-        _associations.Add((conversationId, tagId));
+        // `19-02`: mirrors the real adapter's own ON CONFLICT DO NOTHING - a second write for an
+        // already-associated pair never overwrites the first writer's source (TagRepository's own
+        // remarks on why that is the correct outcome either way round).
+        if (!_associations.ContainsKey((conversationId, tagId)))
+        {
+            _associations[(conversationId, tagId)] = source;
+        }
+
         return Task.CompletedTask;
     }
 
@@ -57,16 +71,17 @@ public sealed class FakeTagRepository : ITagRepository
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<Tag>> GetForConversationAsync(ConversationId conversationId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<Tag>>(_associations
-            .Where(a => a.ConversationId == conversationId)
-            .Select(a => _byId[a.TagId])
-            .OrderBy(t => t.Name)
+    public Task<IReadOnlyList<ConversationTagEntry>> GetForConversationAsync(
+        ConversationId conversationId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ConversationTagEntry>>(_associations
+            .Where(a => a.Key.ConversationId == conversationId)
+            .Select(a => new ConversationTagEntry(_byId[a.Key.TagId], a.Value))
+            .OrderBy(e => e.Tag.Name)
             .ToList());
 
     public Task<IReadOnlySet<ConversationId>> GetConversationIdsForTagAsync(
         TagId tagId, SiteId siteId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlySet<ConversationId>>(_associations
+        Task.FromResult<IReadOnlySet<ConversationId>>(_associations.Keys
             .Where(a => a.TagId == tagId && _byId.GetValueOrDefault(a.TagId)?.SiteId == siteId)
             .Select(a => a.ConversationId)
             .ToHashSet());

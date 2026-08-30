@@ -175,6 +175,16 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<AutoCloseInactiveConversationsJob>();
 
+// `19-02`/`adr/0078`'s kind 2: assigns each recently-closed, still-untagged conversation zero or more
+// of its own site's existing tags - CategorizeConversationHandler (registered in ChatModule) is what
+// this job actually calls, resolved per candidate from a fresh scope (the job's own remarks explain
+// why).
+builder.Services
+    .AddOptions<ConversationCategorizationJobOptions>()
+    .Bind(builder.Configuration.GetSection(ConversationCategorizationJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ConversationCategorizationJob>();
+
 builder.Services
     .AddOptions<SiteCacheInvalidationConsumerOptions>()
     .Bind(builder.Configuration.GetSection(SiteCacheInvalidationConsumerOptions.SectionName))
