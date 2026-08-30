@@ -73,8 +73,14 @@ public sealed class ChannelCredential
     /// own remarks), so that class's outbound call needs somewhere to keep it. Named generically rather
     /// than <c>VkGroupId</c> for the identical reason
     /// <see cref="TokenCiphertext"/> and <see cref="WebhookSecretHash"/> are not <c>MaxBotToken</c>: a
-    /// future channel with the same "token plus a second, less-secret identifier" shape (this item's own
-    /// report names none yet) reuses this column instead of adding its own.
+    /// future channel with the same "token plus a second, less-secret identifier" shape reuses this
+    /// column instead of adding its own - `14-10`'s WhatsApp adapter is exactly that future channel,
+    /// storing Meta's own <c>phone_number_id</c> here (confirming VK's own prediction that this column
+    /// would be reused rather than staying a VK-only field), and additionally the value
+    /// <c>WhatsAppWebhookEndpoints</c> resolves an inbound delivery's tenant <em>by</em> - the one
+    /// genuinely new use of this column, since WhatsApp's own webhook carries no per-tenant path segment
+    /// the way every other channel's does (<c>Ago.Chat.Infrastructure.WhatsApp.WhatsAppBotApiOptions</c>'
+    /// own remarks).
     /// </summary>
     public string? ProviderAccountId { get; }
 
