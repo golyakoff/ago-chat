@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Application.Tests.Fakes;
+﻿using System.Security.Cryptography;
+using System.Text;
+using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -32,13 +34,17 @@ public class ReceiveChannelMessageHandlerTests
         FakeChannelIdentityRepository Identities,
         FakeVisitorRepository Visitors,
         FakeConversationRepository Conversations,
-        FakeApplyingMessagePipeline Pipeline);
+        FakeApplyingMessagePipeline Pipeline,
+        FakePendingChannelLinkRequestRepository PendingLinks,
+        FakeClock Clock,
+        FakeIdGenerator IdGenerator);
 
     private static Harness CreateHandler()
     {
         var identities = new FakeChannelIdentityRepository();
         var visitors = new FakeVisitorRepository();
         var conversations = new FakeConversationRepository();
+        var pendingLinks = new FakePendingChannelLinkRequestRepository();
         var clock = new FakeClock(Now);
         var idGenerator = new FakeIdGenerator();
         var pipeline = new FakeApplyingMessagePipeline(conversations, clock, idGenerator);
@@ -46,19 +52,195 @@ public class ReceiveChannelMessageHandlerTests
         var handler = new ReceiveChannelMessageHandler(
             identities,
             visitors,
+            pendingLinks,
             new StartConversationHandler(visitors, conversations, clock, idGenerator),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             clock,
             idGenerator);
 
-        return new Harness(handler, identities, visitors, conversations, pipeline);
+        return new Harness(handler, identities, visitors, conversations, pipeline, pendingLinks, clock, idGenerator);
     }
 
     private static Application.UseCases.ReceiveChannelMessage.ReceiveChannelMessage Inbound(
         SiteId siteId, ChannelKind kind = ChannelKind.Sms, string sender = "+70000000000",
         string externalMessageId = "provider-1", string body = "hello") =>
         new(siteId, kind, new ExternalChannelAddress(sender), new ExternalMessageId(externalMessageId), body);
+
+    private static byte[] Hash(string code) => SHA256.HashData(Encoding.UTF8.GetBytes(code));
+
+    private static PendingChannelLinkRequest SeedLivePendingLink(
+        Harness harness, SiteId siteId, VisitorId visitorId, ChannelKind kind, string code,
+        TimeSpan? validFor = null)
+    {
+        var request = PendingChannelLinkRequest.Request(
+            new PendingChannelLinkRequestId(Guid.NewGuid()), siteId, visitorId, kind, Hash(code),
+            requestedByOperatorId: null, harness.Clock.UtcNow, validFor ?? TimeSpan.FromMinutes(15));
+        harness.PendingLinks.Stage(request);
+        return request;
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // `14-12`/`adr/0079`: the verified-link confirmation branch
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>The item's own headline case: an inbound address with no existing identity whose body
+    /// exactly matches a live pending code links to that request's own, already-existing visitor -
+    /// never mints a new one.</summary>
+    [Fact]
+    public async Task AMessageMatchingALivePendingCode_LinksToThePendingRequestsVisitor_NotANewOne()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+        var existingVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(existingVisitorId, site, Now), CancellationToken.None);
+        SeedLivePendingLink(harness, site, existingVisitorId, ChannelKind.Telegram, "482913");
+
+        var result = await harness.Handler.HandleAsync(
+            Inbound(site, ChannelKind.Telegram, sender: "tg-user-1", body: "482913"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(existingVisitorId, result.Value.VisitorId);
+        Assert.False(result.Value.VisitorWasNew);
+        var identity = Assert.Single(harness.Identities.All);
+        Assert.Equal(existingVisitorId, identity.VisitorId);
+        Assert.Equal("tg-user-1", identity.Address.Value);
+    }
+
+    [Fact]
+    public async Task AMessageMatchingALivePendingCode_ConsumesTheRequest()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+        var existingVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(existingVisitorId, site, Now), CancellationToken.None);
+        var pending = SeedLivePendingLink(harness, site, existingVisitorId, ChannelKind.Telegram, "482913");
+
+        await harness.Handler.HandleAsync(
+            Inbound(site, ChannelKind.Telegram, sender: "tg-user-1", body: "482913"), CancellationToken.None);
+
+        Assert.NotNull(pending.ConsumedAt);
+    }
+
+    /// <summary>
+    /// The highest-value fails-before for this item: an ordinary message whose body merely resembles a
+    /// code (a wrong value) must fall through to exactly the same "no match -> mint a new visitor" path
+    /// every other unrecognised message already takes - never silently swallowed, never an error.
+    /// </summary>
+    [Fact]
+    public async Task AMessageWithAWrongCode_FallsThroughToTheOrdinaryNewVisitorPath()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+        var existingVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(existingVisitorId, site, Now), CancellationToken.None);
+        SeedLivePendingLink(harness, site, existingVisitorId, ChannelKind.Telegram, "482913");
+
+        var result = await harness.Handler.HandleAsync(
+            Inbound(site, ChannelKind.Telegram, sender: "tg-user-1", body: "000000"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.VisitorWasNew);
+        Assert.NotEqual(existingVisitorId, result.Value.VisitorId);
+    }
+
+    /// <summary>The second half of the same fails-before: a message matching a code's exact text after
+    /// that code has expired is treated identically to a wrong code, not specially reported.</summary>
+    [Fact]
+    public async Task AMessageMatchingAnExpiredCode_FallsThroughToTheOrdinaryNewVisitorPath()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+        var existingVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(existingVisitorId, site, Now), CancellationToken.None);
+        SeedLivePendingLink(harness, site, existingVisitorId, ChannelKind.Telegram, "482913", TimeSpan.FromMinutes(15));
+        harness.Clock.UtcNow = Now.AddMinutes(16);
+
+        var result = await harness.Handler.HandleAsync(
+            Inbound(site, ChannelKind.Telegram, sender: "tg-user-1", body: "482913"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.VisitorWasNew);
+        Assert.NotEqual(existingVisitorId, result.Value.VisitorId);
+    }
+
+    /// <summary>Cross-site isolation (`14-12`'s own Done-when): a pending code for one site must never
+    /// match an inbound message on another site, even with the identical code value by coincidence.</summary>
+    [Fact]
+    public async Task AMessageMatchingACodeMintedForADifferentSite_FallsThroughToTheOrdinaryNewVisitorPath()
+    {
+        var siteA = new SiteId(Guid.NewGuid());
+        var siteB = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+        var visitorOnSiteA = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(visitorOnSiteA, siteA, Now), CancellationToken.None);
+        SeedLivePendingLink(harness, siteA, visitorOnSiteA, ChannelKind.Telegram, "482913");
+
+        var result = await harness.Handler.HandleAsync(
+            Inbound(siteB, ChannelKind.Telegram, sender: "tg-user-1", body: "482913"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.VisitorWasNew);
+        Assert.NotEqual(visitorOnSiteA, result.Value.VisitorId);
+    }
+
+    /// <summary>The same isolation, for channel kind rather than site - a code minted for a Telegram
+    /// link must never confirm over a different channel.</summary>
+    [Fact]
+    public async Task AMessageMatchingACodeMintedForADifferentChannelKind_FallsThroughToTheOrdinaryNewVisitorPath()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+        var existingVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(existingVisitorId, site, Now), CancellationToken.None);
+        SeedLivePendingLink(harness, site, existingVisitorId, ChannelKind.Telegram, "482913");
+
+        var result = await harness.Handler.HandleAsync(
+            Inbound(site, ChannelKind.Vk, sender: "vk-user-1", body: "482913"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.VisitorWasNew);
+        Assert.NotEqual(existingVisitorId, result.Value.VisitorId);
+    }
+
+    /// <summary>
+    /// The collision case `14-12`'s own backlog names: a claimed address already linked to a different
+    /// visitor is refused, not merged - and, per <c>ReceiveChannelMessageHandler</c>'s own remarks,
+    /// refused as a structural consequence of the confirmation branch's own precondition (this address
+    /// already has an identity, so the branch never runs), never a second check bolted on. Proven here
+    /// by seeding a colliding identity and asserting no mutation happens to either row.
+    /// </summary>
+    [Fact]
+    public async Task AnAddressAlreadyLinkedToADifferentVisitor_IsUnaffectedByALiveCodeItHappensToMatch()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var harness = CreateHandler();
+
+        var existingOwnerVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(existingOwnerVisitorId, site, Now), CancellationToken.None);
+        var collidingIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), site, ChannelKind.Telegram,
+            new ExternalChannelAddress("tg-user-1"), existingOwnerVisitorId, Now);
+        await harness.Identities.SaveAsync(collidingIdentity, CancellationToken.None);
+
+        var pendingTargetVisitorId = new VisitorId(Guid.NewGuid());
+        await harness.Visitors.SaveAsync(new Visitor(pendingTargetVisitorId, site, Now), CancellationToken.None);
+        var pending = SeedLivePendingLink(harness, site, pendingTargetVisitorId, ChannelKind.Telegram, "482913");
+
+        var result = await harness.Handler.HandleAsync(
+            Inbound(site, ChannelKind.Telegram, sender: "tg-user-1", body: "482913"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        // Refused: the message is delivered as the existing owner's own ordinary message, never
+        // re-pointed at the pending request's target visitor.
+        Assert.Equal(existingOwnerVisitorId, result.Value.VisitorId);
+        Assert.False(result.Value.VisitorWasNew);
+        // No mutation: still exactly the one identity that existed before, still owned by the same
+        // visitor, and the pending request is untouched.
+        var identity = Assert.Single(harness.Identities.All);
+        Assert.Equal(existingOwnerVisitorId, identity.VisitorId);
+        Assert.Null(pending.ConsumedAt);
+    }
 
     // -----------------------------------------------------------------------------------------
     // Resolution
@@ -257,7 +439,7 @@ public class ReceiveChannelMessageHandlerTests
         var idGenerator = new FakeIdGenerator();
         var pipeline = new FakeApplyingMessagePipeline(conversations, clock, idGenerator);
         var handler = new ReceiveChannelMessageHandler(
-            identities, visitors,
+            identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(visitors, conversations, clock, idGenerator),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
@@ -296,7 +478,7 @@ public class ReceiveChannelMessageHandlerTests
         var clock = new FakeClock(Now);
         var idGenerator = new FakeIdGenerator();
         var handler = new ReceiveChannelMessageHandler(
-            identities, visitors,
+            identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(visitors, conversations, clock, idGenerator),
             new SendVisitorMessageHandler(
                 conversations,

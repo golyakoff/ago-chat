@@ -36,6 +36,20 @@
 /// this codebase's own standing rule (see <c>Conversation.MarkReadByOperator</c>'s remarks on the
 /// absent visitor-side twin) is that a write path with no reader is not built on speculation. `14-02`'s
 /// first real adapter is where a consumer, if one is genuinely needed, will show up.</para>
+///
+/// <para><b>`14-12`: the first mutation beyond <see cref="Touch"/>, exactly as this type's own remarks
+/// above predicted three items ago ("a verified link is one UPDATE... the many-to-one edge is only
+/// ever created by evidence, never by inference").</b> <see cref="Active"/>/<see cref="UnlinkedAt"/> and
+/// <see cref="Unlink"/> mirror <see cref="ChannelCredential.Active"/>/<see cref="ChannelCredential.Revoke"/>
+/// exactly - the identical "terminal, never a hard delete" shape, for the identical reason: "this number
+/// stopped being this visitor" is a fact worth keeping, not erasing (this type's own remarks, point (2)
+/// above). <see cref="Link"/> still mints exactly one visitor per new address by default; `14-12`'s real
+/// addition is that a caller (<c>ReceiveChannelMessageHandler</c>'s new confirmation branch) may now pass
+/// an <em>already-existing</em> <see cref="VisitorId"/> instead of a freshly-minted one, when - and only
+/// when - a verified pending link request says so. The unique index on (site, kind, address) is now
+/// partial (<c>ChannelIdentityConfiguration</c>'s own remarks) for the identical reason
+/// <c>ux_channel_credentials_site_kind_active</c> is: an unlinked identity must never block a fresh link
+/// of the same external address to a different (or the same) visitor later.</para>
 /// </summary>
 public sealed class ChannelIdentity
 {
@@ -52,16 +66,31 @@ public sealed class ChannelIdentity
     public ExternalChannelAddress Address { get; }
 
     /// <summary>The AGO Chat identity this external address resolves to. Settable only through
-    /// construction today - see this type's own remarks on why no re-link method exists yet.</summary>
+    /// construction - `14-12` still never re-points an existing row at a different visitor; a "wrong
+    /// link" is corrected by <see cref="Unlink"/> plus a brand-new row (<see cref="Link"/> again),
+    /// never by mutating this field, so the history of who this address believed it was pointing to at
+    /// any moment stays intact.</summary>
     public VisitorId VisitorId { get; }
 
     public DateTimeOffset FirstSeenAt { get; }
 
     public DateTimeOffset LastSeenAt { get; private set; }
 
+    /// <summary>`14-12`: mirrors <see cref="ChannelCredential.Active"/> exactly. <see langword="true"/>
+    /// from <see cref="Link"/> until <see cref="Unlink"/>. Every reader that decides routing, preference
+    /// or "which channel is this" must filter to this flag - <c>ChannelIdentityRepository.FindAsync"/>
+    /// and <c>FindMostRecentForVisitorAsync</c>, and <c>OperatorAnalyticsReadStore</c>'s own channel
+    /// tiebreak - or an unlinked identity keeps silently affecting a decision it no longer should.</summary>
+    public bool Active { get; private set; } = true;
+
+    /// <summary><see langword="null"/> until <see cref="Unlink"/> - a boolean flag alone would lose
+    /// *when* the state changed, the same reason <see cref="OperatorInvite.RedeemedAt"/> exists
+    /// alongside that type's own boolean-shaped <see cref="OperatorInvite.IsRedeemed"/>.</summary>
+    public DateTimeOffset? UnlinkedAt { get; private set; }
+
     private ChannelIdentity(
         ChannelIdentityId id, SiteId siteId, ChannelKind kind, ExternalChannelAddress address,
-        VisitorId visitorId, DateTimeOffset now)
+        VisitorId visitorId, DateTimeOffset now, bool active, DateTimeOffset? unlinkedAt)
     {
         Id = id;
         SiteId = siteId;
@@ -70,6 +99,8 @@ public sealed class ChannelIdentity
         VisitorId = visitorId;
         FirstSeenAt = now;
         LastSeenAt = now;
+        Active = active;
+        UnlinkedAt = unlinkedAt;
     }
 
     // EF Core materialization only - every field is overwritten via reflection immediately after
@@ -82,12 +113,16 @@ public sealed class ChannelIdentity
     /// Binds one external address to one <see cref="Visitor"/>, for the first time. Named <c>Link</c>
     /// rather than <c>Create</c> because the interesting act is the binding, not the row: the caller
     /// has already decided <em>which</em> visitor, and that decision - see this type's remarks - is the
-    /// one with consequences.
+    /// one with consequences. `14-12`: the caller may be handing this either a freshly-minted
+    /// <see cref="VisitorId"/> (the ordinary "brand-new address" path, unchanged since `14-01`) or an
+    /// existing one a verified pending link request named - this method itself does not need to know
+    /// which, because by the time it is called the caller has already decided, and that decision is the
+    /// one with consequences (this type's own remarks, again).
     /// </summary>
     public static ChannelIdentity Link(
         ChannelIdentityId id, SiteId siteId, ChannelKind kind, ExternalChannelAddress address,
         VisitorId visitorId, DateTimeOffset now) =>
-        new(id, siteId, kind, address, visitorId, now);
+        new(id, siteId, kind, address, visitorId, now, active: true, unlinkedAt: null);
 
     /// <summary>Records that this address was heard from again - the mirror of
     /// <see cref="Visitor.Touch"/>, and the reason a resolve-or-create writes even on the resolve
@@ -95,5 +130,24 @@ public sealed class ChannelIdentity
     public void Touch(DateTimeOffset now)
     {
         LastSeenAt = now;
+    }
+
+    /// <summary>
+    /// `14-12`: terminal, never a hard delete - <see cref="ChannelCredential.Revoke"/>'s own shape,
+    /// including the identical "already revoked/unlinked is a caller bug, not a recoverable state"
+    /// treatment. The caller (<c>UnlinkChannelIdentityHandler</c>/<c>UnlinkChannelIdentityAsOwnerHandler</c>)
+    /// has already checked <see cref="Active"/> before calling this, the same "handler pre-checks,
+    /// aggregate throws only on a genuine race" split <see cref="OperatorInvite.Redeem"/>'s own remarks
+    /// describe.
+    /// </summary>
+    public void Unlink(DateTimeOffset now)
+    {
+        if (!Active)
+        {
+            throw new InvalidChannelIdentityStateException($"Channel identity {Id.Value} is already unlinked.");
+        }
+
+        Active = false;
+        UnlinkedAt = now;
     }
 }

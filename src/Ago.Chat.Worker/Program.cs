@@ -53,6 +53,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ModuleTaskConsumer>();
 
+// `14-12`/`adr/0079`: a fifth Competing consumer of MessageAccepted - see LinkIdentityCommandConsumer's
+// own remarks on why this is a separate consumer rather than a branch inside ModuleTaskConsumer above.
+builder.Services
+    .AddOptions<LinkIdentityCommandConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(LinkIdentityCommandConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<LinkIdentityCommandConsumer>();
+
 // `14-02`: the outbound half of `14-01`'s port - see ChannelMessageDeliveryConsumer's own remarks.
 builder.Services
     .AddOptions<ChannelMessageDeliveryConsumerOptions>()

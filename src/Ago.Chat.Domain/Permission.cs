@@ -99,5 +99,18 @@ public readonly record struct Permission(string Value)
     // configuration change, not a per-conversation action.
     public static readonly Permission ConversationTag = new("conversation:tag");
 
+    // `14-12`/`adr/0079`: dedicated, granted to no role by default - the same "resource:action,
+    // granular by design" vocabulary every permission above already follows (this file's own remarks on
+    // ConversationClose/AttachmentDelete). Unlinking is a materially different, more consequential act
+    // than reading or writing a conversation's own messages (it changes which future messages resolve
+    // to which visitor), so it earns its own permission rather than reusing ChannelManage - a tenant
+    // that trusts an operator to connect/disconnect a whole channel's bot credential is not necessarily
+    // trusting the same operator to sever one visitor's own verified identity link. The site owner's own
+    // unconditional ability to unlink reaches through the platform-owner mechanism instead
+    // (`UnlinkChannelIdentityAsOwnerHandler`'s own remarks) - entirely outside this permission, the same
+    // "outside the model, not a hole in it" shape `authorization.md` documents for every owner-only
+    // action.
+    public static readonly Permission ChannelIdentityUnlink = new("channel_identity:unlink");
+
     public override string ToString() => Value;
 }

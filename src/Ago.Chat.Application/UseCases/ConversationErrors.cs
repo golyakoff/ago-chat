@@ -417,6 +417,13 @@ public static class ConversationErrors
         new("Module.TriggerWordAlreadyRegistered",
             $"Trigger word '{word}' is already registered to module '{existingModuleKey}' on this site.");
 
+    /// <summary>`14-12`/`docs/conventions/text-commands.md`: a trigger word collides with Chat's own
+    /// closed, product-level command vocabulary (<see cref="Domain.ReservedChatCommands"/>) - refused
+    /// regardless of what any other module on this site has registered, since this word will never mean
+    /// a module trigger on any site.</summary>
+    public static Error ModuleTriggerWordReserved(string word) =>
+        new("Module.TriggerWordReserved", $"Trigger word '{word}' is reserved for a built-in AGO Chat command.");
+
     // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of
@@ -434,4 +441,19 @@ public static class ConversationErrors
     /// not ready" shape <c>ChannelNotAvailable</c> already uses.</summary>
     public static Error ReplyDraftUnavailable(string reason) =>
         new("ReplyDraft.Unavailable", reason);
+
+    // `14-12`: same shared vocabulary, same reason - RequestChannelLinkFromConsoleHandler/
+    // HandleLinkIdentityCommandHandler/UnlinkChannelIdentityHandler add their own codes here rather
+    // than a separate error class.
+    /// <summary>No <see cref="Domain.ChannelIdentity"/> matches the id named, or a real row that
+    /// belongs to a different site - the same "wrong tenant reads like no row" info-hiding shape
+    /// <see cref="OperatorNotFound"/> already establishes.</summary>
+    public static Error ChannelIdentityNotFound(Guid channelIdentityId) =>
+        new("ChannelIdentity.NotFound", $"Channel identity {channelIdentityId} was not found.");
+
+    /// <summary>The wire value did not parse to a real <see cref="Domain.ChannelKind"/> member - the
+    /// same "validate the enum, translate the miss at the Application boundary" split
+    /// <see cref="WidgetConfigInvalidPosition"/> already draws for <c>Position</c>.</summary>
+    public static Error ChannelLinkInvalidKind(string reason) =>
+        new("ChannelLinkRequest.InvalidKind", $"'{reason}' is not a valid channel kind.");
 }

@@ -464,6 +464,62 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         Assert.Equal(operatorB, resultB.ByOperator.Single().Operator);
     }
 
+    /// <summary>
+    /// `14-12`/`adr/0079` decision 4: an unlinked <see cref="ChannelIdentity"/> must not keep winning
+    /// this tiebreak - proven against a real Postgres, seeding a visitor whose <em>only</em>
+    /// <see cref="ChannelIdentity"/> row has already been <see cref="ChannelIdentity.Unlink"/>ed before the
+    /// conversation is even started. With the unlinked row excluded, <c>ch</c>'s own lateral join finds
+    /// nothing for this visitor, so the conversation must fall back to the honest "Widget" label - the
+    /// same fallback a visitor with no channel identity at all already gets - rather than an unlinked
+    /// channel silently continuing to win the tiebreak forever.
+    /// </summary>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_AnUnlinkedChannelIdentity_IsExcludedFromTheChannelTiebreak()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        await EnsurePartitionsAsync([-3]);
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var createdAt = Now.AddDays(-3);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5));
+            var identity = ChannelIdentity.Link(
+                new ChannelIdentityId(Guid.NewGuid()), siteId, ChannelKind.Sms,
+                new ExternalChannelAddress($"addr-{Guid.NewGuid():N}"), visitorId, createdAt);
+            identity.Unlink(createdAt.AddMinutes(1));
+            db.ChannelIdentities.Add(identity);
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, createdAt);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
+        conversation.AssignTo(operatorId, createdAt);
+        conversation.AddOperatorMessage(
+            operatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt.AddSeconds(20));
+
+        await using (var writeDb = fixture.CreateDbContext())
+        {
+            writeDb.Conversations.Add(conversation);
+            await writeDb.SaveChangesAsync();
+        }
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(1, result.Overall.ConversationCount);
+        var widget = Assert.Single(result.ByChannel);
+        Assert.Equal("Widget", widget.Channel);
+        Assert.Equal(1, widget.Bucket.ConversationCount);
+    }
+
     /// <summary>Builds one conversation, visitor-message then assigned-to-and-answered-by
     /// <paramref name="operatorId"/> - the shared shape every per-operator test above needs, factored
     /// out once three call sites wanted the identical scenario with only the operator and timing

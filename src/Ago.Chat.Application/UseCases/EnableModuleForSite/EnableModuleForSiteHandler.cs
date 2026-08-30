@@ -59,6 +59,18 @@ public sealed class EnableModuleForSiteHandler(
             return ConversationErrors.ModuleInvalid("A module entry point must be an absolute http(s) URL.");
         }
 
+        // `14-12`/`docs/conventions/text-commands.md`: refused once, here, rather than left to be
+        // discovered as a runtime precedence question between two vocabularies - see
+        // ReservedChatCommands' own remarks for why this codebase treats that as the wrong place to
+        // resolve a collision at all. Checked ahead of the per-site overlap loop below: a reserved word
+        // is refused regardless of whether any other module on this site happens to have registered it
+        // too.
+        var reservedConflict = command.TriggerWords.FirstOrDefault(ReservedChatCommands.IsReserved);
+        if (reservedConflict is not null)
+        {
+            return ConversationErrors.ModuleTriggerWordReserved(reservedConflict);
+        }
+
         var existingOnSite = await moduleReadStore.GetForSiteAsync(command.SiteId, cancellationToken);
 
         foreach (var existing in existingOnSite)

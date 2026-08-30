@@ -25,7 +25,10 @@ public static class ErrorExtensions
                 or "Conversation.TransferTargetNotEligible"
                 // `18-04`: same "wrong tenant reads like no such row" info-hiding shape - a tag id
                 // from a different site is indistinguishable from one that never existed.
-                or "Tag.NotFound" => StatusCodes.Status404NotFound,
+                or "Tag.NotFound"
+                // `14-12`: the identical "wrong tenant reads like no such row" shape - a channel
+                // identity id from a different site is indistinguishable from one that never existed.
+                or "ChannelIdentity.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
@@ -55,7 +58,10 @@ public static class ErrorExtensions
                 // module-flow report's own from/to (ConversationErrors.ModuleFlowInvalidRange's own
                 // remarks on why it is a distinct code from Analytics.InvalidRange rather than a
                 // third reuse).
-                or "ModuleFlow.InvalidRange" => StatusCodes.Status400BadRequest,
+                or "ModuleFlow.InvalidRange"
+                // `14-12`: the same "the query itself was malformed" shape - a channel-kind string that
+                // does not parse to a real Domain.ChannelKind member.
+                or "ChannelLinkRequest.InvalidKind" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

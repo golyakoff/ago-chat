@@ -85,6 +85,7 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
             var handler = new ReceiveChannelMessageHandler(
                 identities,
                 visitors,
+                new PendingChannelLinkRequestRepository(db),
                 new StartConversationHandler(visitors, conversations, clock, idGenerator),
                 new SendVisitorMessageHandler(
                     conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
