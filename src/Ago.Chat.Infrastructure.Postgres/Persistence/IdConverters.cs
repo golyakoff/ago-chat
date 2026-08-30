@@ -60,4 +60,10 @@ internal static class IdConverters
     public static readonly ValueConverter<SiteId?, Guid?> NullableSite = new(
         id => id.HasValue ? id.Value.Value : (Guid?)null,
         value => value.HasValue ? new SiteId(value.Value) : (SiteId?)null);
+
+    /// <summary>`14-13`: <see cref="Visitor.PreferredChannelIdentityId"/> - null until an operator sets
+    /// one, the same "no value for every row" shape <see cref="NullableOperator"/> already establishes.</summary>
+    public static readonly ValueConverter<ChannelIdentityId?, Guid?> NullableChannelIdentity = new(
+        id => id.HasValue ? id.Value.Value : (Guid?)null,
+        value => value.HasValue ? new ChannelIdentityId(value.Value) : (ChannelIdentityId?)null);
 }

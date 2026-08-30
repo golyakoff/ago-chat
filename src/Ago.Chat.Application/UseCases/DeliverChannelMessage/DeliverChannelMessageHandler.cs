@@ -29,10 +29,26 @@ namespace Ago.Chat.Application.UseCases.DeliverChannelMessage;
 /// its own (unlike <c>SendOfflineAutoReplyHandler</c>, which stages a reply and needs
 /// <c>IInboxChecker</c> to keep that write and its outbox row atomic) - there is nothing here for an
 /// inbox row to protect.</para>
+///
+/// <para><b>`14-13`/`adr/0079` decision 5: the preference is checked first, read-time-tolerant rather
+/// than write-time-cleaned.</b> When <see cref="Visitor.PreferredChannelIdentityId"/> is set, this
+/// handler loads that exact row by id and uses it only while it is still
+/// <see cref="ChannelIdentity.Active"/> - unset, or naming an identity that has since been unlinked,
+/// falls through to the unchanged <see cref="IChannelIdentityRepository.FindMostRecentForVisitorAsync"/>
+/// rule below, exactly the wording `adr/0079` itself uses ("falls back... when unset or stale").
+/// <c>UnlinkChannelIdentityHandler</c>/<c>UnlinkChannelIdentityAsOwnerHandler</c> deliberately do
+/// <em>not</em> reach into <see cref="Visitor"/> to null out a preference that pointed at the identity
+/// they just unlinked - doing so would put two aggregates (<see cref="ChannelIdentity"/> and
+/// <see cref="Visitor"/>) in one transaction for a guarantee this read-time check already provides for
+/// free (<see cref="ChannelIdentity"/>'s own remarks on why loading a second aggregate "for no gain" is
+/// the shape this codebase avoids). A stale <see cref="Visitor.PreferredChannelIdentityId"/> is
+/// harmless: it is never trusted without this same <see cref="ChannelIdentity.Active"/> check, here or
+/// anywhere else.</para>
 /// </summary>
 public sealed class DeliverChannelMessageHandler(
     IConversationRepository conversations,
     IChannelIdentityRepository identities,
+    IVisitorRepository visitors,
     IInboundChannelAdapterRegistry adapters)
 {
     public async Task<DeliverChannelMessageOutcome> HandleAsync(
@@ -54,7 +70,8 @@ public sealed class DeliverChannelMessageHandler(
             return DeliverChannelMessageOutcome.NoLinkedChannel;
         }
 
-        var identity = await identities.FindMostRecentForVisitorAsync(conversation.VisitorId, cancellationToken);
+        var identity = await ResolvePreferredIdentityAsync(conversation.VisitorId, cancellationToken)
+            ?? await identities.FindMostRecentForVisitorAsync(conversation.VisitorId, cancellationToken);
         if (identity is null)
         {
             return DeliverChannelMessageOutcome.NoLinkedChannel;
@@ -86,5 +103,29 @@ public sealed class DeliverChannelMessageHandler(
             cancellationToken);
 
         return outcome.Delivered ? DeliverChannelMessageOutcome.Delivered : DeliverChannelMessageOutcome.Refused;
+    }
+
+    /// <summary>`14-13`: <see langword="null"/> whenever there is no explicit preference to honour -
+    /// unset, or naming a row that either does not resolve at all or is no longer
+    /// <see cref="ChannelIdentity.Active"/> - so the caller's own <c>??</c> falls through to the
+    /// unchanged most-recent rule. Never throws on a missing <see cref="Visitor"/>: that is
+    /// <see cref="DeliverChannelMessageHandler"/>'s own "should not happen" case elsewhere in this file,
+    /// and this method's contract is "give me a usable preferred identity or nothing", not "prove the
+    /// visitor exists".</summary>
+    private async Task<ChannelIdentity?> ResolvePreferredIdentityAsync(VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var visitor = await visitors.GetByIdAsync(visitorId, cancellationToken);
+        if (visitor?.PreferredChannelIdentityId is not { } preferredId)
+        {
+            return null;
+        }
+
+        var preferred = await identities.GetByIdAsync(preferredId, cancellationToken);
+
+        // Active, and still this same visitor's own row - the latter is never expected to fail given
+        // SetPreferredChannelIdentityHandler's own write-time check, but costs nothing to confirm here
+        // rather than trusting a foreign-key value blindly, the same "the row itself disagrees with the
+        // wire field" defensive posture this handler's own loop guard already uses further down.
+        return preferred is { Active: true } && preferred.VisitorId == visitorId ? preferred : null;
     }
 }

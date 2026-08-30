@@ -77,6 +77,7 @@ using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
+using Ago.Chat.Application.UseCases.SetPreferredChannelIdentity;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.TransferConversation;
@@ -293,6 +294,9 @@ public sealed class ChatModule : IProductModule
         // remarks describe for itself.
         services.AddScoped<UnlinkChannelIdentityAsOwnerHandler>();
         services.AddScoped<ListChannelIdentitiesForVisitorHandler>();
+        // `14-13`/`adr/0079` decision 5: the preferred-reply-channel write path - see the handler's own
+        // remarks for why it is gated on ConversationSend rather than a channel-management permission.
+        services.AddScoped<SetPreferredChannelIdentityHandler>();
 
         // `14-02`/`adr/0069`: bound here, with WebhookSecretCipherOptions right above it - the same
         // fail-fast-on-a-missing-key discipline, a different named section and a different key.

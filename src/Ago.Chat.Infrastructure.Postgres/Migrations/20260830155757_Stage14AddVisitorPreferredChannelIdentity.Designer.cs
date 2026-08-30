@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260830155757_Stage14AddVisitorPreferredChannelIdentity")]
+    partial class Stage14AddVisitorPreferredChannelIdentity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -943,44 +946,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("visitors", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Domain.VisitorContactDetail", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("Kind")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("kind");
-
-                    b.Property<DateTimeOffset>("RecordedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("recorded_at");
-
-                    b.Property<Guid>("RecordedByOperatorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("recorded_by_operator_id");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
-                        .HasColumnName("value");
-
-                    b.Property<Guid>("VisitorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("visitor_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("VisitorId", "RecordedAt")
-                        .HasDatabaseName("ix_visitor_contact_details_visitor");
-
-                    b.ToTable("visitor_contact_details", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Domain.WebhookDelivery", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1472,15 +1437,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.VisitorContactDetail", b =>
-                {
-                    b.HasOne("Ago.Chat.Domain.Visitor", null)
-                        .WithMany()
-                        .HasForeignKey("VisitorId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

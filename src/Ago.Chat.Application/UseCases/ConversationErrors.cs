@@ -476,4 +476,18 @@ public static class ConversationErrors
     /// <see cref="ChannelLinkInvalidKind"/> already draws for <see cref="Domain.ChannelKind"/>.</summary>
     public static Error ContactDetailInvalidKind(string reason) =>
         new("VisitorContactDetail.InvalidKind", $"'{reason}' is not a valid contact detail kind.");
+
+    // `14-13`/`adr/0079` decision 5: same shared vocabulary, same reason - SetPreferredChannelIdentityHandler
+    // adds its own code here rather than a separate error class.
+    /// <summary>The named id does not resolve to one of *this visitor's own*, currently
+    /// <see cref="Domain.ChannelIdentity.Active"/> identities - it does not exist at all, belongs to a
+    /// different site, belongs to a different visitor, or has since been unlinked. One code for all
+    /// four, the same "the caller's remedy is identical regardless of which is true, and distinguishing
+    /// them on the wire would let a caller enumerate facts about another visitor's identities" reasoning
+    /// <see cref="TransferTargetNotEligible"/> already gives for its own three-reasons-one-code
+    /// shape.</summary>
+    public static Error ChannelIdentityNotEligibleForPreference(Guid channelIdentityId) =>
+        new(
+            "ChannelIdentity.NotEligibleForPreference",
+            $"Channel identity {channelIdentityId} is not one of this visitor's own active identities.");
 }
