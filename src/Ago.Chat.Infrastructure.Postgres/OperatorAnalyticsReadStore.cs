@@ -22,7 +22,9 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// caller's half-open range first - the same "bound before you join" discipline
 /// <see cref="PlatformOverviewReadStore"/>'s own remarks give for <c>messages</c>'s partitioning, applied
 /// here to <c>conversations</c> (an unpartitioned, `site_id`-indexed table, so the bound's job here is
-/// answering the caller's actual question - "this window" - not pruning partitions).</item>
+/// answering the caller's actual question - "this window" - not pruning partitions). `18-09` adds
+/// <c>c.operator_id</c> to this CTE's own projection - the conversation's <em>currently assigned</em>
+/// operator, needed only as the missed-conversation fallback the <c>detail</c> CTE computes below.</item>
 /// <item>Two `LEFT JOIN LATERAL`s per conversation, not two separate aggregate CTEs joined back in:
 /// <c>ch</c> resolves the visitor's earliest-linked <c>channel_identities</c> row (the tiebreak
 /// <see cref="IOperatorAnalyticsReadStore"/>'s own remarks state and justify), and <c>ms</c> resolves
@@ -30,17 +32,34 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// filtered by `conversation_id` - the same index (`IX_messages_conversation_id_sequence`) every other
 /// per-conversation message read in this codebase already uses. `ON TRUE` is load-bearing: it is what
 /// makes both joins outer or true LEFT JOINs behave like one - a conversation with no channel identity
-/// or no messages yet still produces exactly one `detail` row, not zero.</item>
-/// <item>The outer `GROUP BY GROUPING SETS ((), (channel_label))` computes the site-wide total and
-/// every channel's bucket in one pass over `detail`, rather than one query for the total and a second,
-/// separately-filtered one per channel - the same reason `PlatformOverviewReadStore` computes every
-/// signal for a page of sites in one query instead of N+1. The total row comes back with
-/// <c>channel_label = NULL</c> (Postgres's own grouping-set behaviour for a column outside the active
-/// set), which <see cref="GetSiteAnalyticsAsync"/> uses to split the total from the per-channel rows -
-/// <b>and this is also why a site with zero conversations in the window returns zero rows, not one
-/// zeroed total row</b>: `GROUPING SETS` still groups actual input rows, and there is nothing to group
-/// when `in_window` is empty. <see cref="GetSiteAnalyticsAsync"/> substitutes the honest zero bucket in
-/// that case rather than letting an empty result read as a query failure.</item>
+/// or no messages yet still produces exactly one `detail` row, not zero. `18-09` adds one more column to
+/// <c>ms</c>: <c>first_operator_id</c>, the <c>author_id</c> of the earliest operator-authored message,
+/// pulled from the same single pass over `messages` via <c>array_agg(... order by created_at)
+/// filter (...)  [1]</c> rather than a second correlated subquery re-reading the same rows.</item>
+/// <item><c>attributed_operator_id</c>, `18-09`'s own addition and the answer to the backlog item's
+/// stated ambiguity: <c>coalesce(first_operator_id, assigned_operator_id)</c>. See
+/// <see cref="IOperatorAnalyticsReadStore"/>'s remarks for the full reasoning; in one line, a conversation
+/// that got a reply attributes to whoever gave it, even after a `18-02` transfer moves
+/// <c>assigned_operator_id</c> elsewhere, and only a conversation nobody ever answered falls back to
+/// whoever was holding it when it closed.</item>
+/// <item>The outer `GROUP BY GROUPING SETS ((), (channel_label), (attributed_operator_id))` computes the
+/// site-wide total, every channel's bucket, and every operator's bucket in one pass over `detail`,
+/// rather than three separately-filtered queries - the same reason `PlatformOverviewReadStore` computes
+/// every signal for a page of sites in one query instead of N+1. The total row comes back with both
+/// <c>channel_label</c> and <c>attributed_operator_id</c> as `NULL` (Postgres's own grouping-set
+/// behaviour for a column outside the active set) - <b>and so does the per-operator grouping set's own
+/// "nobody was ever assigned" bucket</b>, a real `NULL` this time, not a structural one, so the two are
+/// genuinely indistinguishable by column value alone. `grouping(attributed_operator_id)` (`1` when the
+/// column is outside the active set, `0` when it is genuinely being grouped on, `NULL` value or not) is
+/// the disambiguator <see cref="GetSiteAnalyticsAsync"/> reads to tell them apart - the total row has
+/// `grouping = 1`; the "never assigned to anyone" bucket has `grouping = 0` and is dropped, the same
+/// "nothing to attribute this to" gap this class already names for a widget visitor's channel, except
+/// here there is no honest label to fall back to, so the row is excluded from
+/// <see cref="OperatorAnalyticsResult.ByOperator"/> entirely rather than reported under a manufactured
+/// placeholder operator. <b>This is also why a site with zero conversations in the window returns zero
+/// rows, not one zeroed total row</b>: `GROUPING SETS` still groups actual input rows, and there is
+/// nothing to group when `in_window` is empty. <see cref="GetSiteAnalyticsAsync"/> substitutes the
+/// honest zero bucket in that case rather than letting an empty result read as a query failure.</item>
 /// </list>
 /// </summary>
 public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IOperatorAnalyticsReadStore
@@ -57,7 +76,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
 
     private const string SiteAnalyticsSql = """
         with in_window as (
-            select c.id, c.site_id, c.visitor_id, c.state
+            select c.id, c.site_id, c.visitor_id, c.state, c.operator_id as assigned_operator_id
             from conversations c
             where c.site_id = @SiteId
               and c.created_at >= @From
@@ -69,7 +88,8 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 iw.state,
                 coalesce(ch.kind, @WidgetLabel) as channel_label,
                 ms.first_visitor_at,
-                ms.first_operator_at
+                ms.first_operator_at,
+                coalesce(ms.first_operator_id, iw.assigned_operator_id) as attributed_operator_id
             from in_window iw
             left join lateral (
                 select ci.kind
@@ -81,20 +101,24 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             left join lateral (
                 select
                     min(m.created_at) filter (where m.author_kind = @VisitorAuthorKind) as first_visitor_at,
-                    min(m.created_at) filter (where m.author_kind = @OperatorAuthorKind) as first_operator_at
+                    min(m.created_at) filter (where m.author_kind = @OperatorAuthorKind) as first_operator_at,
+                    (array_agg(m.author_id order by m.created_at)
+                        filter (where m.author_kind = @OperatorAuthorKind))[1] as first_operator_id
                 from messages m
                 where m.conversation_id = iw.id
             ) ms on true
         )
         select
             channel_label as "Channel",
+            attributed_operator_id as "OperatorId",
             count(*) as "ConversationCount",
             count(*) filter (where state = @ClosedState and first_operator_at is null) as "MissedCount",
             (avg(extract(epoch from (first_operator_at - first_visitor_at)))
                 filter (where first_operator_at is not null and first_visitor_at is not null))::double precision
-                as "AverageFirstResponseSeconds"
+                as "AverageFirstResponseSeconds",
+            grouping(attributed_operator_id) as "OperatorGrouping"
         from detail
-        group by grouping sets ((), (channel_label))
+        group by grouping sets ((), (channel_label), (attributed_operator_id))
         """;
 
     public async Task<OperatorAnalyticsResult> GetSiteAnalyticsAsync(
@@ -119,7 +143,11 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
         // No row at all means no conversation in the window (the class doc comment's own remarks on
         // why GROUPING SETS cannot produce a zeroed total from zero input rows) - the honest answer is
         // an explicit zero bucket, not an empty response the caller would have to special-case.
-        var overallRow = rows.SingleOrDefault(r => r.Channel is null);
+        // `grouping(attributed_operator_id) == 1` is what tells this row apart from the per-operator
+        // grouping set's own "nobody was ever assigned" bucket (the class doc comment's own remarks on
+        // why `Channel is null` alone no longer uniquely identifies the total row once a third grouping
+        // set exists).
+        var overallRow = rows.SingleOrDefault(r => r.Channel is null && r.OperatorGrouping == 1);
         var overall = overallRow is null
             ? new OperatorAnalyticsBucket(0, null, 0)
             : ToBucket(overallRow);
@@ -130,7 +158,16 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             .OrderBy(c => c.Channel, StringComparer.Ordinal)
             .ToList();
 
-        return new OperatorAnalyticsResult(overall, byChannel);
+        // `OperatorGrouping == 0` selects the per-operator grouping set's own rows; `OperatorId is not
+        // null` then drops that set's "nobody was ever assigned" bucket - there is no operator to report
+        // it under (the class doc comment's own remarks on why this is an exclusion, not a placeholder).
+        var byOperator = rows
+            .Where(r => r.OperatorGrouping == 0 && r.OperatorId is not null)
+            .Select(r => new OperatorAnalyticsOperatorBucket(new OperatorId(r.OperatorId!.Value), ToBucket(r)))
+            .OrderBy(o => o.Operator.Value)
+            .ToList();
+
+        return new OperatorAnalyticsResult(overall, byChannel, byOperator);
     }
 
     private static OperatorAnalyticsBucket ToBucket(OperatorAnalyticsRow row) =>

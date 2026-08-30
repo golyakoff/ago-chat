@@ -142,6 +142,233 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         Assert.DoesNotContain(resultA.ByChannel, c => c.Channel == "Telegram");
     }
 
+    /// <summary>
+    /// `18-09`'s own Done-when: real seeded data spanning multiple operators, checked against numbers
+    /// worked out by hand, not against "the query looks right." Three conversations, two operators:
+    /// </summary>
+    /// <list type="bullet">
+    /// <item>Operator A answers conversation #A1 in 40s.</item>
+    /// <item>Operator A answers conversation #A2 in 80s (average over {40, 80} = 60s).</item>
+    /// <item>Operator B answers conversation #B1 in 20s.</item>
+    /// </list>
+    /// <para>Ground truth: A = {#A1, #A2} - count 2, missed 0, average 60s. B = {#B1} - count 1, missed
+    /// 0, average 20s. Neither total includes the other operator's conversations.</para>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_ComputesPerOperatorNumbers_MatchingHandCalculatedGroundTruth()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorB, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        await SeedAnsweredByAsync(siteId, operatorA, offsetDays: -5, responseSeconds: 40);
+        await SeedAnsweredByAsync(siteId, operatorA, offsetDays: -4, responseSeconds: 80);
+        await SeedAnsweredByAsync(siteId, operatorB, offsetDays: -3, responseSeconds: 20);
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(2, result.ByOperator.Count);
+        var a = result.ByOperator.Single(o => o.Operator == operatorA);
+        Assert.Equal(2, a.Bucket.ConversationCount);
+        Assert.Equal(0, a.Bucket.MissedCount);
+        AssertClose(60.0, a.Bucket.AverageFirstResponseSeconds);
+        var b = result.ByOperator.Single(o => o.Operator == operatorB);
+        Assert.Equal(1, b.Bucket.ConversationCount);
+        Assert.Equal(0, b.Bucket.MissedCount);
+        AssertClose(20.0, b.Bucket.AverageFirstResponseSeconds);
+    }
+
+    /// <summary>
+    /// `18-09`'s central Done-when: the transfer-attribution decision, proven against a real transfer,
+    /// not left implicit. Operator A is assigned, answers once (40s), and the conversation is then
+    /// `TransferTo`'d to operator B - who never sends a message at all. <see cref="Conversation.OperatorId"/>
+    /// (the currently-assigned operator, `conversations.operator_id`) is B by the time this is saved;
+    /// <c>IOperatorAnalyticsReadStore</c>'s own remarks say attribution follows whoever answered first,
+    /// never whoever holds the conversation now - so this conversation must land in A's bucket, and B
+    /// must not appear in <see cref="OperatorAnalyticsResult.ByOperator"/> at all (B has no conversation
+    /// of their own in this scenario, and this transferred one is not one of them either).
+    /// </summary>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_AttributesATransferredConversation_ToWhoeverAnsweredFirst_NotWhoeverItWasTransferredTo()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorB, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        await EnsurePartitionsAsync([-2]);
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var createdAt = Now.AddDays(-2);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, createdAt);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
+        conversation.AssignTo(operatorA, createdAt);
+        conversation.AddOperatorMessage(
+            operatorA, new MessageId(Guid.NewGuid()), new MessageBody("hi, this is A"), createdAt.AddSeconds(40));
+        // `18-02`: hand the conversation to B without B ever sending a message - the write model's own
+        // `operator_id` now points at B, while the answering operator (A) stays fixed in message history.
+        conversation.TransferTo(operatorB, createdAt.AddSeconds(50));
+
+        await using var writeDb = fixture.CreateDbContext();
+        writeDb.Conversations.Add(conversation);
+        await writeDb.SaveChangesAsync();
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        var operatorBuckets = result.ByOperator.ToDictionary(o => o.Operator);
+        Assert.True(operatorBuckets.ContainsKey(operatorA), "The transferred conversation must attribute to A, who answered it.");
+        Assert.Equal(1, operatorBuckets[operatorA].Bucket.ConversationCount);
+        AssertClose(40.0, operatorBuckets[operatorA].Bucket.AverageFirstResponseSeconds);
+        Assert.False(
+            operatorBuckets.ContainsKey(operatorB),
+            "B never answered anything and only holds this conversation because of the transfer - it must not attribute to B.");
+    }
+
+    /// <summary>
+    /// `18-09`: the missed-conversation fallback named in <c>IOperatorAnalyticsReadStore</c>'s own
+    /// remarks - a conversation nobody ever answered has no "operator who replied," so attribution falls
+    /// back to whoever was assigned when it closed. Operator A is assigned, never replies, and the
+    /// conversation is closed - `Close()` does not clear `Conversation.OperatorId`, so A is still the
+    /// assigned operator of record. This must show up as one of A's conversations and A's one missed
+    /// conversation, even though A's `AverageFirstResponseSeconds` stays `null` (nothing to average).
+    /// </summary>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_AttributesAMissedConversation_ToTheOperatorItWasAssignedToWhenClosed()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        var operatorA = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        await EnsurePartitionsAsync([-2]);
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var createdAt = Now.AddDays(-2);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, createdAt);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("anyone?"), createdAt);
+        conversation.AssignTo(operatorA, createdAt);
+        conversation.Close(createdAt.AddSeconds(30));
+
+        await using var writeDb = fixture.CreateDbContext();
+        writeDb.Conversations.Add(conversation);
+        await writeDb.SaveChangesAsync();
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        var a = result.ByOperator.Single(o => o.Operator == operatorA);
+        Assert.Equal(1, a.Bucket.ConversationCount);
+        Assert.Equal(1, a.Bucket.MissedCount);
+        Assert.Null(a.Bucket.AverageFirstResponseSeconds);
+    }
+
+    /// <summary>`17-01`'s own bar, applied to the per-operator dimension: two sites, each with its own
+    /// operator, and one site's analytics must never surface the other site's operator at all - not even
+    /// as an empty/zeroed row, since the operator genuinely does not exist in the other site's data.
+    /// </summary>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_NeverReturnsAnotherSitesOperators()
+    {
+        var siteA = new SiteId(Guid.NewGuid());
+        var siteB = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteA, $"site_{siteA.Value:N}", []));
+            db.Sites.Add(new Site(siteB, $"site_{siteB.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteA, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorB, siteB, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        await SeedAnsweredByAsync(siteA, operatorA, offsetDays: -2, responseSeconds: 15);
+        await SeedAnsweredByAsync(siteB, operatorB, offsetDays: -2, responseSeconds: 25);
+
+        var resultA = await Store.GetSiteAnalyticsAsync(siteA, From, To, CancellationToken.None);
+        var resultB = await Store.GetSiteAnalyticsAsync(siteB, From, To, CancellationToken.None);
+
+        Assert.Single(resultA.ByOperator);
+        Assert.Equal(operatorA, resultA.ByOperator.Single().Operator);
+        Assert.Single(resultB.ByOperator);
+        Assert.Equal(operatorB, resultB.ByOperator.Single().Operator);
+    }
+
+    /// <summary>Builds one conversation, visitor-message then assigned-to-and-answered-by
+    /// <paramref name="operatorId"/> - the shared shape every per-operator test above needs, factored
+    /// out once three call sites wanted the identical scenario with only the operator and timing
+    /// varying.</summary>
+    private async Task SeedAnsweredByAsync(SiteId siteId, OperatorId operatorId, int offsetDays, int responseSeconds)
+    {
+        await EnsurePartitionsAsync([offsetDays]);
+
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var createdAt = Now.AddDays(offsetDays);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, createdAt);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), createdAt);
+        conversation.AssignTo(operatorId, createdAt);
+        conversation.AddOperatorMessage(
+            operatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt.AddSeconds(responseSeconds));
+
+        await using var writeDb = fixture.CreateDbContext();
+        writeDb.Conversations.Add(conversation);
+        await writeDb.SaveChangesAsync();
+    }
+
     private static void AssertClose(double expected, double? actual)
     {
         Assert.NotNull(actual);
