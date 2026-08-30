@@ -10,7 +10,8 @@ public sealed record OperatorAnalyticsResponse(
     DateTimeOffset From,
     DateTimeOffset To,
     OperatorAnalyticsBucketDto Overall,
-    IReadOnlyList<OperatorAnalyticsChannelBucketDto> ByChannel);
+    IReadOnlyList<OperatorAnalyticsChannelBucketDto> ByChannel,
+    IReadOnlyList<OperatorAnalyticsOperatorBucketDto> ByOperator);
 
 /// <param name="AverageFirstResponseSeconds"><see langword="null"/> when nothing in this bucket ever
 /// received an operator reply - see <c>IOperatorAnalyticsReadStore</c>'s own remarks for the exact
@@ -23,3 +24,15 @@ public sealed record OperatorAnalyticsBucketDto(
 /// own member names) or the literal <c>"Widget"</c> for a visitor with no external channel identity at
 /// all.</param>
 public sealed record OperatorAnalyticsChannelBucketDto(string Channel, OperatorAnalyticsBucketDto Bucket);
+
+/// <summary>
+/// `18-09`: one operator's bucket. <see cref="OperatorId"/> is the operator this window's numbers
+/// attribute to - the one who replied first, or (only for a conversation nobody ever replied to) the
+/// one holding it when it closed unanswered; see <c>IOperatorAnalyticsReadStore</c>'s own remarks
+/// (`ago-chat`) for the full reasoning, including why a conversation transferred after being answered
+/// still credits whoever answered it, never whoever it was transferred to. The console has no operator
+/// display name to render - <c>Ago.Chat.Domain.Operator</c> carries none today - so this is the raw id,
+/// the same "no name, so the id itself" precedent `AdminConversationsPage`'s own assigned-operator
+/// column already sets on the console side.
+/// </summary>
+public sealed record OperatorAnalyticsOperatorBucketDto(Guid OperatorId, OperatorAnalyticsBucketDto Bucket);
