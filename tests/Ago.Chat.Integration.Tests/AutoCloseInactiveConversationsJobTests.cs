@@ -153,6 +153,7 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
         var receiveChannelMessage = new ReceiveChannelMessageHandler(
             new ChannelIdentityRepository(db),
             new VisitorRepository(db),
+            new PendingChannelLinkRequestRepository(db),
             new StartConversationHandler(new VisitorRepository(db), new ConversationRepository(db), new SystemClock(), new UuidV7Generator()),
             new SendVisitorMessageHandler(
                 new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),

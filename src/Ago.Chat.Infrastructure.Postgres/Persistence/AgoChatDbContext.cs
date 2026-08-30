@@ -15,6 +15,8 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
     public DbSet<ChannelIdentity> ChannelIdentities => Set<ChannelIdentity>();
     public DbSet<ChannelCredential> ChannelCredentials => Set<ChannelCredential>();
+    // `14-12`
+    public DbSet<PendingChannelLinkRequest> PendingChannelLinkRequests => Set<PendingChannelLinkRequest>();
     public DbSet<OperatorInvite> OperatorInvites => Set<OperatorInvite>();
     public DbSet<BillingSubscription> BillingSubscriptions => Set<BillingSubscription>();
     public DbSet<BillingWebhookEvent> BillingWebhookEvents => Set<BillingWebhookEvent>();

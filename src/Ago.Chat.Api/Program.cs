@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.CannedResponses;
+using Ago.Chat.Api.ChannelIdentities;
 using Ago.Chat.Api.Notes;
 using Ago.Chat.Api.Tags;
 using Ago.Chat.Api.Auth;
@@ -399,6 +400,10 @@ app.MapCannedResponseEndpoints();
 // `18-04`
 app.MapNoteEndpoints();
 app.MapTagEndpoints();
+// `14-12`: verified channel-identity linking/unlinking - the console-initiated link request, the
+// VisitorPanel listing, and the operator-gated unlink. The platform owner's own unconditional unlink is
+// the separate MapOwnerChannelIdentityEndpoints call below, next to MapOwnerEndpoints.
+app.MapChannelIdentityEndpoints();
 app.MapSitesEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();
@@ -409,6 +414,10 @@ app.MapDemoEndpoints();
 // `12-02`: the platform owner's cross-tenant read - the only route here not scoped to one site,
 // and the only one carrying `12-01`'s RequirePlatformOwner policy (OwnerSitesEndpoints' remarks).
 app.MapOwnerEndpoints();
+// `14-12`: the platform owner's first write/action surface - see OwnerChannelIdentityEndpoints' own
+// remarks for why this is a separate route from ChannelIdentityEndpoints' operator-gated unlink above,
+// even though both ultimately call Domain.ChannelIdentity.Unlink.
+app.MapOwnerChannelIdentityEndpoints();
 // `13-02`: checkout-session creation (operator-authenticated) and the ЮKassa webhook receiver
 // (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
 // why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.

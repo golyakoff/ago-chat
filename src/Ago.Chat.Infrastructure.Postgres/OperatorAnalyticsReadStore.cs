@@ -36,6 +36,14 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// <c>ms</c>: <c>first_operator_id</c>, the <c>author_id</c> of the earliest operator-authored message,
 /// pulled from the same single pass over `messages` via <c>array_agg(... order by created_at)
 /// filter (...)  [1]</c> rather than a second correlated subquery re-reading the same rows.</item>
+/// <item><c>ch</c>'s own <c>where</c> now also requires <c>ci.active</c> (`14-12`) - an unlinked
+/// <see cref="ChannelIdentity"/> must not keep winning this tiebreak once
+/// <see cref="ChannelIdentity.Unlink"/> has run, the same "excluded from routing/preference/lookup"
+/// (`adr/0079` decision 4) the write side already enforces in
+/// <see cref="Application.Abstractions.IChannelIdentityRepository.FindMostRecentForVisitorAsync"/>. This
+/// item deliberately does not also reconcile this tiebreak's own "earliest identity" rule with that
+/// method's "most recent" rule - `adr/0079`'s own remarks name that a real, separate follow-up once a
+/// preferred channel can exist, not something bundled into `14-12`.</item>
 /// <item><c>attributed_operator_id</c>, `18-09`'s own addition and the answer to the backlog item's
 /// stated ambiguity: <c>coalesce(first_operator_id, assigned_operator_id)</c>. See
 /// <see cref="IOperatorAnalyticsReadStore"/>'s remarks for the full reasoning; in one line, a conversation
@@ -106,7 +114,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             left join lateral (
                 select ci.kind
                 from channel_identities ci
-                where ci.site_id = iw.site_id and ci.visitor_id = iw.visitor_id
+                where ci.site_id = iw.site_id and ci.visitor_id = iw.visitor_id and ci.active
                 order by ci.first_seen_at asc
                 limit 1
             ) ch on true

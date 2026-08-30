@@ -2,6 +2,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
@@ -43,6 +44,8 @@ using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
+using Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
@@ -59,6 +62,7 @@ using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.RemoveOperator;
+using Ago.Chat.Application.UseCases.RequestChannelLinkFromConsole;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -75,6 +79,8 @@ using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.TransferConversation;
+using Ago.Chat.Application.UseCases.UnlinkChannelIdentity;
+using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
@@ -262,6 +268,26 @@ public sealed class ChatModule : IProductModule
         // channel the visitor was reached by. See DeliverChannelMessageHandler's own remarks for why it
         // is driven off MessageAccepted rather than the send path.
         services.AddScoped<DeliverChannelMessageHandler>();
+
+        // `14-12`/`adr/0079`: verified channel-identity linking and unlinking - bound here, with
+        // OperatorInviteOptions right below, the same shape. Both originators
+        // (RequestChannelLinkFromConsoleHandler, HandleLinkIdentityCommandHandler) share this one
+        // options group (PendingChannelLinkRequestOptions' own remarks on why).
+        services
+            .AddOptions<PendingChannelLinkRequestOptions>()
+            .Bind(configuration.GetSection(PendingChannelLinkRequestOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<PendingChannelLinkRequestOptions>>().Value);
+        services.AddScoped<RequestChannelLinkFromConsoleHandler>();
+        // Resolved by Ago.Chat.Worker's own LinkIdentityCommandConsumer, off MessageAccepted - the
+        // identical shape RouteConversationToModuleHandler/SendOfflineAutoReplyHandler already establish.
+        services.AddScoped<HandleLinkIdentityCommandHandler>();
+        services.AddScoped<UnlinkChannelIdentityHandler>();
+        // Resolved only by Ago.Chat.Api's own owner-scoped route - the identical "registered here like
+        // every other handler, resolved by exactly one host" shape ListSitesForOwnerHandler's own
+        // remarks describe for itself.
+        services.AddScoped<UnlinkChannelIdentityAsOwnerHandler>();
+        services.AddScoped<ListChannelIdentitiesForVisitorHandler>();
 
         // `14-02`/`adr/0069`: bound here, with WebhookSecretCipherOptions right above it - the same
         // fail-fast-on-a-missing-key discipline, a different named section and a different key.

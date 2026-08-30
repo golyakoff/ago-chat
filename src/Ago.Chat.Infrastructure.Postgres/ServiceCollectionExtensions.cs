@@ -40,6 +40,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         // `14-01`
         services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
+        // `14-12`: the pending-link-request aggregate's own port, and its code generator - the same
+        // "singleton, holds no state beyond the platform's own CSPRNG" shape
+        // IOperatorInviteCodeGenerator/IWebhookSecretGenerator already use.
+        services.AddScoped<IPendingChannelLinkRequestRepository, PendingChannelLinkRequestRepository>();
+        services.AddSingleton<IPendingChannelLinkCodeGenerator, PendingChannelLinkCodeGenerator>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         // `10-02`
         services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();

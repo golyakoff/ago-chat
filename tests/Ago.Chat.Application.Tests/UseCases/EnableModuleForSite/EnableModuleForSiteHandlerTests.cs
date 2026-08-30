@@ -123,6 +123,34 @@ public class EnableModuleForSiteHandlerTests
         Assert.True(result.IsSuccess);
     }
 
+    /// <summary>`14-12`/`docs/conventions/text-commands.md`: a site registering a module trigger word
+    /// that collides with Chat's own closed command vocabulary is refused, at registration time - the
+    /// registration-time collision guard that document's own "Adding a new command" section asks every
+    /// reserved word to be proven by. Checked ahead of the per-site overlap loop, so this is refused even
+    /// when it is the very first module this site has ever enabled.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenATriggerWordCollidesWithAReservedChatCommand_IsRejected()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command("identity-helper", "/linkidentity"), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.TriggerWordReserved", result.Error!.Value.Code);
+        Assert.Empty(fixture.Modules.All);
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheReservedWordCheckIsCaseInsensitiveAndSlashTolerant()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command("identity-helper", "LinkIdentity"), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.TriggerWordReserved", result.Error!.Value.Code);
+    }
+
     [Fact]
     public async Task HandleAsync_WithAnInvalidModuleKey_ReturnsModuleInvalid()
     {
