@@ -10,6 +10,7 @@
     <Project Path="src/Ago.Chat.Infrastructure.Modules/Ago.Chat.Infrastructure.Modules.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Telegram/Ago.Chat.Infrastructure.Telegram.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Vk/Ago.Chat.Infrastructure.Vk.csproj" />
+    <Project Path="src/Ago.Chat.Infrastructure.Avito/Ago.Chat.Infrastructure.Avito.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.WhatsApp/Ago.Chat.Infrastructure.WhatsApp.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.YandexGpt/Ago.Chat.Infrastructure.YandexGpt.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.YooKassa/Ago.Chat.Infrastructure.YooKassa.csproj" />

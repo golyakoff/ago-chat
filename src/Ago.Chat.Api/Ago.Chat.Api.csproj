@@ -30,6 +30,14 @@
          genuinely used here, not only transitively through Ago.Chat.Module, the same "explicit when
          actually used" reasoning the MAX/Telegram references above already follow. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Vk\Ago.Chat.Infrastructure.Vk.csproj" />
+    <!-- `14-11`: AvitoWebhookEndpoints reads AvitoWebhookEnvelope/AvitoInboundMessageParser directly (the
+         webhook receiver's own translation from Avito's wire shape to ReceiveChannelMessage) and
+         AvitoChannelEndpoints calls AvitoApiClient.GetSelfAsync/SubscribeWebhookAsync directly (this
+         channel's own "validate the token and discover the account id before ever writing a credential,
+         then subscribe the webhook" steps) - both genuinely used here, not only transitively through
+         Ago.Chat.Module, the same "explicit when actually used" reasoning the VK reference above already
+         follows. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Avito\Ago.Chat.Infrastructure.Avito.csproj" />
     <!-- `14-10`: WhatsAppWebhookEndpoints reads WhatsAppWebhookEnvelope/WhatsAppInboundMessageParser
          directly (the webhook receiver's own translation from Meta's wire shape to ReceiveChannelMessage)
          and WhatsAppChannelEndpoints calls WhatsAppApiClient.GetPhoneNumberAsync directly (this channel's

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260830094801_Stage14AddAvitoChannelCredentialRefreshToken")]
+    partial class Stage14AddAvitoChannelCredentialRefreshToken
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -228,11 +231,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Kind", "ProviderAccountId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_channel_credentials_kind_provideraccountid_active")
-                        .HasFilter("active AND provider_account_id IS NOT NULL");
-
                     b.HasIndex("SiteId", "Kind")
                         .IsUnique()
                         .HasDatabaseName("ux_channel_credentials_site_kind_active")
@@ -325,13 +323,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("operator_unread_count");
 
-                    b.Property<string>("Outcome")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("text")
-                        .HasDefaultValue("Unset")
-                        .HasColumnName("outcome");
-
                     b.Property<Guid>("SiteId")
                         .HasColumnType("uuid")
                         .HasColumnName("site_id");
@@ -373,10 +364,7 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasIndex("VisitorId", "Id")
                         .HasDatabaseName("ix_conversations_visitor_all");
 
-                    b.ToTable("conversations", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_conversations_outcome", "outcome IN ('Unset', 'Converted', 'NotConverted', 'FollowUpNeeded')");
-                        });
+                    b.ToTable("conversations", (string)null);
                 });
 
             modelBuilder.Entity("Ago.Chat.Domain.ConversationNote", b =>

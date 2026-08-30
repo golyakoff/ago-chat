@@ -38,6 +38,9 @@
     <!-- `14-08`: VkChannelAdapter/VkApiClient are registered here, the same reasoning as the
          MAX/Telegram references above. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Vk\Ago.Chat.Infrastructure.Vk.csproj" />
+    <!-- `14-11`: AvitoChannelAdapter/AvitoApiClient are registered here, the same reasoning as the
+         MAX/Telegram/VK references above. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Avito\Ago.Chat.Infrastructure.Avito.csproj" />
     <!-- `14-10`: WhatsAppChannelAdapter/WhatsAppApiClient are registered here, the same reasoning as the
          MAX/Telegram/VK references above. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.WhatsApp\Ago.Chat.Infrastructure.WhatsApp.csproj" />

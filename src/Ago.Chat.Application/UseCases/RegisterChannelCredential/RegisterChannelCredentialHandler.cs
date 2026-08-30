@@ -46,6 +46,18 @@ public sealed class RegisterChannelCredentialHandler(
             return ConversationErrors.ChannelInvalidToken(validationFailure);
         }
 
+        // `14-11`: the identical bound applied to the second secret, when present - Avito's own refresh
+        // token is just as much a credential as the access token above, and deserves the same
+        // non-empty/bounded check rather than being trusted unchecked because it is the "second" value.
+        if (command.RefreshToken is not null)
+        {
+            var refreshValidationFailure = ChannelCredentialTokenValidator.Validate(command.RefreshToken);
+            if (refreshValidationFailure is not null)
+            {
+                return ConversationErrors.ChannelInvalidToken(refreshValidationFailure);
+            }
+        }
+
         var existing = await credentials.GetActiveAsync(command.SiteId, command.Kind, cancellationToken);
         if (existing is not null)
         {
@@ -57,11 +69,13 @@ public sealed class RegisterChannelCredentialHandler(
         var id = new ChannelCredentialId(idGenerator.NewId(now));
 
         var tokenCiphertext = cipher.Encrypt(command.Token.Trim());
+        var refreshTokenCiphertext = command.RefreshToken is { } refreshToken ? cipher.Encrypt(refreshToken.Trim()) : null;
         var webhookSecret = secretGenerator.NewSecret();
         var webhookSecretHash = SHA256.HashData(Encoding.UTF8.GetBytes(webhookSecret));
 
         var credential = Domain.ChannelCredential.Register(
-            id, command.SiteId, command.Kind, tokenCiphertext, webhookSecretHash, now, command.ProviderAccountId);
+            id, command.SiteId, command.Kind, tokenCiphertext, webhookSecretHash, now, command.ProviderAccountId,
+            refreshTokenCiphertext);
         await credentials.SaveAsync(credential, cancellationToken);
 
         return new RegisteredChannelCredential(id, command.Kind, webhookSecret, now);

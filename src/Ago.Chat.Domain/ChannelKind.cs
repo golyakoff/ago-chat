@@ -26,4 +26,13 @@ public enum ChannelKind
     /// <summary>`14-08`: a VK (ВКонтакте) community's own direct messages (Сообщения сообщества) -
     /// the third concrete adapter, after MAX and Telegram.</summary>
     Vk,
+
+    /// <summary>`14-11`: an Avito seller account's own Messenger conversations (buyer-to-seller
+    /// messages about a listing, or about the seller's profile) - the fifth concrete adapter. Avito's
+    /// own "which listing" dimension (`item_id`) is deliberately not represented anywhere in this
+    /// vocabulary - see <see cref="ChannelIdentity"/>'s own remarks and
+    /// <c>Ago.Chat.Infrastructure.Avito.AvitoChannelAdapter</c>'s own remarks for why the chat-level
+    /// address this item chose already carries that distinction implicitly, without AGO Chat ever
+    /// learning the word "listing".</summary>
+    Avito,
 }

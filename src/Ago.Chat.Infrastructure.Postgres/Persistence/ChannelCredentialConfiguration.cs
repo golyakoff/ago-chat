@@ -29,6 +29,12 @@ internal sealed class ChannelCredentialConfiguration : IEntityTypeConfiguration<
         // channel-neutral column.
         builder.Property(c => c.ProviderAccountId).HasColumnName("provider_account_id");
 
+        // `14-11`: nullable - every channel but Avito leaves it null
+        // (ChannelCredential.RefreshTokenCiphertext's own remarks). Not IsRequired(), unlike
+        // TokenCiphertext/WebhookSecretHash above: those two are populated on every single row this
+        // system has ever created, this one is populated on exactly one channel's own rows.
+        builder.Property(c => c.RefreshTokenCiphertext).HasColumnName("refresh_token_ciphertext");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
 
         // `adr/0069`'s "one bot per tenant per channel" - the storage-level backstop for the check
