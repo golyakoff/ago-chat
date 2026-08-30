@@ -85,6 +85,9 @@ using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
+using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
+using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
+using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Avito;
 using Ago.Chat.Infrastructure.MaxBot;
@@ -780,6 +783,13 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetConversationTagsHandler>();
         services.AddScoped<TagConversationHandler>();
         services.AddScoped<UntagConversationHandler>();
+
+        // `14-14`/`adr/0079` section 6: unverified contact details - a phone/email/other fact an
+        // operator recorded because a visitor said it, never because AGO Chat verified it. The three
+        // handlers below are the only callers of IVisitorContactDetailRepository in this codebase.
+        services.AddScoped<RecordVisitorContactDetailHandler>();
+        services.AddScoped<ListVisitorContactDetailsHandler>();
+        services.AddScoped<DeleteVisitorContactDetailHandler>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).

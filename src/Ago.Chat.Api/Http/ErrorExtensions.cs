@@ -28,7 +28,11 @@ public static class ErrorExtensions
                 or "Tag.NotFound"
                 // `14-12`: the identical "wrong tenant reads like no such row" shape - a channel
                 // identity id from a different site is indistinguishable from one that never existed.
-                or "ChannelIdentity.NotFound" => StatusCodes.Status404NotFound,
+                or "ChannelIdentity.NotFound"
+                // `14-14`: the identical "wrong visitor reads like no such row" shape - a contact
+                // detail id belonging to a different visitor is indistinguishable from one that never
+                // existed (DeleteVisitorContactDetailHandler's own remarks).
+                or "VisitorContactDetail.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
@@ -61,7 +65,11 @@ public static class ErrorExtensions
                 or "ModuleFlow.InvalidRange"
                 // `14-12`: the same "the query itself was malformed" shape - a channel-kind string that
                 // does not parse to a real Domain.ChannelKind member.
-                or "ChannelLinkRequest.InvalidKind" => StatusCodes.Status400BadRequest,
+                or "ChannelLinkRequest.InvalidKind"
+                // `14-14`: the same "caller's mistake to fix" shape as ConversationNote.Invalid/
+                // Tag.Invalid above - an empty/oversized contact detail value, or a kind string that
+                // does not parse to a real Domain.VisitorContactDetailKind member.
+                or "VisitorContactDetail.Invalid" or "VisitorContactDetail.InvalidKind" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

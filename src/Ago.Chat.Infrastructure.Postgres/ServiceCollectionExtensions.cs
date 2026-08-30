@@ -126,6 +126,9 @@ public static class ServiceCollectionExtensions
         // shape every other repository/read-store pair on this page follows.
         services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
         services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `14-14`: unverified contact details - reachable from exactly three handlers, the same
+        // narrow-by-design shape INoteRepository's own remarks describe for itself.
+        services.AddScoped<IVisitorContactDetailRepository, VisitorContactDetailRepository>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 
