@@ -69,6 +69,11 @@ public static class ServiceCollectionExtensions
         // different table again from either `18-10`'s conversion report or `18-08`'s analytics
         // (IModuleFlowReadStore's own remarks on why).
         services.AddScoped<IModuleFlowReadStore, ModuleFlowReadStore>();
+        // `18-11`: the tag breakdown report - its own read store, a sibling to IOperatorAnalyticsReadStore
+        // rather than a sixth dimension on it, because a tag is a fan-out dimension (zero, one, or many
+        // per conversation) unlike every dimension that store already computes (ITagBreakdownReadStore's
+        // own remarks on why).
+        services.AddScoped<ITagBreakdownReadStore, TagBreakdownReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks

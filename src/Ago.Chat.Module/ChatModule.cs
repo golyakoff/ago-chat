@@ -38,6 +38,7 @@ using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
@@ -684,6 +685,10 @@ public sealed class ChatModule : IProductModule
         // own permission gate call (GetModuleFlowReportForSiteHandler's own remarks), sharing
         // ModuleFlowReportOptions bound above rather than a second binding site.
         services.AddScoped<GetModuleFlowReportForSiteHandler>();
+        // `18-11`: the tag breakdown report - its own read-store and its own permission gate call
+        // (GetTagBreakdownReportForSiteHandler's own remarks), sharing GetOperatorAnalyticsForSiteHandler's
+        // Permission.SiteConfigure gate rather than a new one.
+        services.AddScoped<GetTagBreakdownReportForSiteHandler>();
         // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
         services.AddScoped<GetVisitorHistoryHandler>();
         services.AddScoped<DeleteAttachmentHandler>();

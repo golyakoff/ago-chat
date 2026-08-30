@@ -8,6 +8,7 @@ using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
@@ -77,6 +78,15 @@ public static class ConversationsEndpoints
         // field folded into either of those two reports' responses, so a reader cannot apply one
         // report's caveat to another's numbers by mistake.
         app.MapGet("/api/v1/conversations/module-flow-report", HandleGetModuleFlowReportAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `18-11`: the same sibling sub-resource shape as `/analytics`/`/conversion-report`/
+        // `/module-flow-report` above - a compound read (an optional date range, aggregated across the
+        // site) over the plural `conversations` resource, joined through a genuinely different
+        // dimension (`tags`/`conversation_tags`, not a single-label-per-conversation attribution) -
+        // ITagBreakdownReadStore's own remarks on why this is its own read store and its own endpoint
+        // rather than a field folded into `/analytics`'s response.
+        app.MapGet("/api/v1/conversations/tag-breakdown-report", HandleGetTagBreakdownReportAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `6-02`: api-design.md's "actions that are not CRUD become sub-resources" example, verbatim -
@@ -233,6 +243,24 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new GetModuleFlowReportForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`18-11`: same `from`/`to` query-parameter contract as `/analytics`/`/conversion-report`/
+    /// `/module-flow-report` above - either or both absent means "let the handler default the window"
+    /// (`GetTagBreakdownReportForSiteHandler.DefaultWindowDays`).</summary>
+    private static async Task<IResult> HandleGetTagBreakdownReportAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        GetTagBreakdownReportForSiteHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetTagBreakdownReportForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
