@@ -811,4 +811,66 @@ public class ConversationTests
 
         Assert.Empty(conversation.DomainEvents);
     }
+
+    /// <summary>`18-12`: the common case, not the exception - most conversations are started with no
+    /// traffic source captured at all (a direct visit, a stripped referrer, no UTM tag). The fails-before
+    /// case this item's own Scope calls out by name: <see cref="Conversation.Source"/> must read
+    /// <see langword="null"/>, not a <see cref="TrafficSource"/> with four null fields inside it.</summary>
+    [Fact]
+    public void Start_WithNoSourceSupplied_LeavesSourceNull()
+    {
+        var conversation = StartConversation();
+
+        Assert.Null(conversation.Source);
+    }
+
+    /// <summary>The identical empty case, reached the other way - a caller that did construct a
+    /// <see cref="TrafficSource"/> but every field on it collapsed to <see langword="null"/> (that
+    /// type's own whitespace/empty-string-to-null normalization) must not be distinguishable at rest
+    /// from a caller that passed no source at all.</summary>
+    [Fact]
+    public void Start_WithAnAllEmptyTrafficSource_LeavesSourceNull()
+    {
+        var emptySource = new TrafficSource(null, "   ", null, "");
+
+        var conversation = Conversation.Start(
+            new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, emptySource);
+
+        Assert.Null(conversation.Source);
+    }
+
+    [Fact]
+    public void Start_WithATrafficSource_CapturesItOnceAndExposesItUnchanged()
+    {
+        var source = new TrafficSource("shop.example", "newsletter", "email", "summer_sale");
+
+        var conversation = Conversation.Start(
+            new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, source);
+
+        Assert.NotNull(conversation.Source);
+        Assert.Equal("shop.example", conversation.Source!.ReferrerHost);
+        Assert.Equal("newsletter", conversation.Source!.UtmSource);
+        Assert.Equal("email", conversation.Source!.UtmMedium);
+        Assert.Equal("summer_sale", conversation.Source!.UtmCampaign);
+    }
+
+    /// <summary>A conversation that already exists (the "resume, do not re-create" branch
+    /// <c>StartConversationHandler</c> takes for a visitor's already-active conversation) never runs
+    /// <see cref="Conversation.Start"/> again - this test documents that a source is a fact about
+    /// <em>starting</em> a conversation, with nothing at the aggregate level to mutate it afterward.
+    /// There is no setter to call: the only way to prove "never revisited" from outside this aggregate
+    /// is the absence of one, which <see cref="Conversation"/>'s own public surface already is.</summary>
+    [Fact]
+    public void Source_HasNoPublicSetter_OnceTheConversationHasStarted()
+    {
+        var source = new TrafficSource("shop.example", null, null, null);
+        var conversation = Conversation.Start(
+            new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, source);
+
+        // Every other mutation on this aggregate (AssignTo, Close, SetOutcome, ...) still leaves the
+        // originally captured source untouched.
+        conversation.AssignTo(OperatorId, Now);
+
+        Assert.Equal("shop.example", conversation.Source!.ReferrerHost);
+    }
 }

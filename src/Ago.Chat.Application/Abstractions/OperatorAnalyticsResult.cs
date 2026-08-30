@@ -15,10 +15,21 @@
 /// see <see cref="IOperatorAnalyticsReadStore"/>'s remarks for exactly what "attribute to" means and
 /// why. Never a zero-filled row for an operator with nothing attributed to them, the same "no
 /// manufactured row" rule <see cref="ByChannel"/> already holds.</param>
+/// <param name="ByReferrer">`18-12`: one entry per referrer host that sent at least one conversation in
+/// the window, plus one <c>"Direct"</c> entry for every conversation whose visitor carried no referrer
+/// at all - see <see cref="IOperatorAnalyticsReadStore"/>'s remarks for why "no referrer" gets a real
+/// label rather than being dropped, unlike <see cref="ByCampaign"/> immediately below.</param>
+/// <param name="ByCampaign">`18-12`: one entry per <c>utm_campaign</c> value that appeared on at least
+/// one conversation in the window - never a "no campaign" bucket, the same "no manufactured row" rule
+/// <see cref="ByOperator"/> already holds for its own "nobody assigned" case, applied here because most
+/// conversations carry no campaign tag at all and a placeholder for that would not answer a real
+/// question.</param>
 public sealed record OperatorAnalyticsResult(
     OperatorAnalyticsBucket Overall,
     IReadOnlyList<OperatorAnalyticsChannelBucket> ByChannel,
-    IReadOnlyList<OperatorAnalyticsOperatorBucket> ByOperator);
+    IReadOnlyList<OperatorAnalyticsOperatorBucket> ByOperator,
+    IReadOnlyList<OperatorAnalyticsReferrerBucket> ByReferrer,
+    IReadOnlyList<OperatorAnalyticsCampaignBucket> ByCampaign);
 
 /// <summary>
 /// One bucket's worth of the three numbers this item exists to compute. See
@@ -57,3 +68,15 @@ public sealed record OperatorAnalyticsChannelBucket(string Channel, OperatorAnal
 /// <summary>`18-09`: one operator's bucket - see <see cref="IOperatorAnalyticsReadStore"/> for exactly
 /// which conversations attribute to <paramref name="Operator"/> and why.</summary>
 public sealed record OperatorAnalyticsOperatorBucket(Domain.OperatorId Operator, OperatorAnalyticsBucket Bucket);
+
+/// <param name="ReferrerHost">The referring page's host, or the literal <c>"Direct"</c> for a
+/// conversation whose visitor carried no <c>document.referrer</c> at all - see
+/// <see cref="IOperatorAnalyticsReadStore"/>'s remarks. Unverified: this is what the browser reported,
+/// not a confirmed fact - see <see cref="Domain.TrafficSource"/>.</param>
+public sealed record OperatorAnalyticsReferrerBucket(string ReferrerHost, OperatorAnalyticsBucket Bucket);
+
+/// <param name="UtmCampaign">The `utm_campaign` query-parameter value a conversation's landing URL
+/// carried, exactly as captured - see <see cref="IOperatorAnalyticsReadStore"/>'s remarks for why a
+/// conversation with no campaign tag has no bucket here at all, rather than a manufactured "none" one.
+/// </param>
+public sealed record OperatorAnalyticsCampaignBucket(string UtmCampaign, OperatorAnalyticsBucket Bucket);

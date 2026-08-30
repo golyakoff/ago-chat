@@ -14,7 +14,11 @@ namespace Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 /// <c>IOperatorAnalyticsReadStore</c>, not here, the same "the port owns the definitions, the handler
 /// only shapes the wire response" split this file's existing per-channel mapping already establishes.
 /// `18-13` adds one more field, average conversation duration, to <see cref="ToDto"/>'s existing
-/// mapping - the same pass-through, no new decision made here either.
+/// mapping - the same pass-through, no new decision made here either. `18-12` adds two more grouping
+/// dimensions the same way `18-09` added the per-operator one - <see cref="Abstractions.OperatorAnalyticsResult.ByReferrer"/>
+/// and <see cref="Abstractions.OperatorAnalyticsResult.ByCampaign"/> pass through unchanged; every real
+/// decision (why two groupings rather than one, why "Direct" is a real label and "no campaign" is not)
+/// lives at <c>IOperatorAnalyticsReadStore</c>, not here.
 ///
 /// <para><b>Gated on <see cref="Permission.SiteConfigure"/>, not <see cref="Permission.ConversationRead"/>
 /// - the same call `GetAllConversationsForSiteHandler` and `18-01`'s <c>SearchConversationsHandler</c>
@@ -60,7 +64,9 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
             to,
             ToDto(result.Overall),
             result.ByChannel.Select(c => new OperatorAnalyticsChannelBucketDto(c.Channel, ToDto(c.Bucket))).ToList(),
-            result.ByOperator.Select(o => new OperatorAnalyticsOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList());
+            result.ByOperator.Select(o => new OperatorAnalyticsOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList(),
+            result.ByReferrer.Select(r => new OperatorAnalyticsReferrerBucketDto(r.ReferrerHost, ToDto(r.Bucket))).ToList(),
+            result.ByCampaign.Select(c => new OperatorAnalyticsCampaignBucketDto(c.UtmCampaign, ToDto(c.Bucket))).ToList());
     }
 
     private static OperatorAnalyticsBucketDto ToDto(OperatorAnalyticsBucket bucket) => new(

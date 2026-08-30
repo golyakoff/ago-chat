@@ -57,6 +57,39 @@ public sealed class Conversation
     /// </summary>
     public ConversationOutcome Outcome { get; private set; }
 
+    /// <summary>`18-12`: the four backing fields <see cref="Source"/> is computed from - the same
+    /// "private fields, computed public property, EF mapped to the fields by name" shape
+    /// <c>Message._contentKind</c>/<c>_payload</c>/<c>_actions</c> already establish for a nullable
+    /// multi-column value on this same aggregate (<c>MessageConfiguration</c>'s own remarks). Four
+    /// separate nullable strings, not one converted <see cref="TrafficSource"/> column, because
+    /// <see cref="TrafficSource"/>'s own fields are independently useful to the report's own
+    /// <c>GROUPING SETS</c> (referrer host and UTM campaign are separate grouping dimensions - see
+    /// <c>IOperatorAnalyticsReadStore</c>'s remarks) - a single serialized column would force the SQL to
+    /// parse it back apart to group on either piece.</summary>
+    private string? _trafficReferrerHost;
+    private string? _trafficUtmSource;
+    private string? _trafficUtmMedium;
+    private string? _trafficUtmCampaign;
+
+    /// <summary>
+    /// `18-12`: where this conversation's own visitor actually came from - see <see cref="TrafficSource"/>
+    /// for the full reasoning (why this lives on <see cref="Conversation"/> and not <see cref="Visitor"/>,
+    /// why it is unverified, why nothing here is bucketed). <see langword="null"/> for a conversation the
+    /// widget started with no referrer and no UTM tag at all (the common case, not the exception - see
+    /// <see cref="TrafficSource.IsEmpty"/>), and, permanently, for every conversation that predates this
+    /// column - the migration backfills nothing, the same "null means predates the column, or genuinely
+    /// captured nothing, and no reader needs to tell those two apart" shape <see cref="ClosedAt"/> and
+    /// <see cref="OperatorLastReadSequence"/> already established on this aggregate.
+    ///
+    /// <para>Set once, in <see cref="Start"/>, and never mutated afterward - there is no setter method
+    /// here the way <see cref="SetOutcome"/> exists for <see cref="Outcome"/>, because nothing about
+    /// this item ever asks to revise where a conversation came from after the fact.</para>
+    /// </summary>
+    public TrafficSource? Source =>
+        _trafficReferrerHost is null && _trafficUtmSource is null && _trafficUtmMedium is null && _trafficUtmCampaign is null
+            ? null
+            : new TrafficSource(_trafficReferrerHost, _trafficUtmSource, _trafficUtmMedium, _trafficUtmCampaign);
+
     /// <summary>Messages the visitor has not yet seen - i.e. authored by the operator.</summary>
     public int VisitorUnreadCount { get; private set; }
 
@@ -119,9 +152,28 @@ public sealed class Conversation
     {
     }
 
-    public static Conversation Start(ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now)
+    /// <summary>
+    /// `18-12`: <paramref name="source"/> is optional and defaults to <see langword="null"/> - every
+    /// existing call site before this item (and every existing test) starts a conversation with no
+    /// opinion about traffic source at all, the same "optional, defaulting to the honest empty value, so
+    /// no existing caller has to be touched" shape <see cref="AddVisitorMessage"/>'s own
+    /// <c>retentionClass</c> parameter already established for an unrelated field on this same method
+    /// family. An all-empty <see cref="TrafficSource"/> (<see cref="TrafficSource.IsEmpty"/>) is stored
+    /// as <see langword="null"/>, not as a value object with four <see langword="null"/> fields inside
+    /// it - see <see cref="Source"/>'s own remarks.
+    /// </summary>
+    public static Conversation Start(
+        ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now, TrafficSource? source = null)
     {
         var conversation = new Conversation(id, siteId, visitorId, now);
+        if (source is { IsEmpty: false })
+        {
+            conversation._trafficReferrerHost = source.ReferrerHost;
+            conversation._trafficUtmSource = source.UtmSource;
+            conversation._trafficUtmMedium = source.UtmMedium;
+            conversation._trafficUtmCampaign = source.UtmCampaign;
+        }
+
         conversation._domainEvents.Add(new ConversationStarted(id, siteId, visitorId, now));
         return conversation;
     }

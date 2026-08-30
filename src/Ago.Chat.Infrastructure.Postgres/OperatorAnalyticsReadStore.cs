@@ -69,6 +69,48 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// contributes nothing to the average, rather than being treated as zero seconds or as "now minus
 /// created" - either of which would keep changing the historical average every time the report re-runs
 /// for the exact same window, purely because time passed.</item>
+/// <item>`18-12`: <b>two more grouping sets, not a second query.</b> <c>referrer_label</c> and
+/// <c>utm_campaign_label</c> read straight off `conversations` (`traffic_referrer_host`/
+/// `traffic_utm_campaign` - `18-12`'s own migration), no join needed, unlike the channel/operator
+/// tiebreaks above. They ride through <c>in_window</c>/<c>detail</c> the same way `created_at`/
+/// `closed_at` do for `18-13`, and the outer `GROUP BY` grows to
+/// <c>GROUPING SETS ((), (channel_label), (attributed_operator_id), (referrer_label), (utm_campaign_label))</c>
+/// - the same "one pass over <c>detail</c> computes every dimension's bucket" reasoning the channel/
+/// operator sets already established, applied a third and fourth time rather than reached for a
+/// separate <c>ITrafficSourceReadStore</c>: referrer host and UTM campaign answer the identical "how am
+/// I doing, sliced a different way" question this whole port already exists to answer, over the exact
+/// same window and the exact same <c>detail</c> rows channel/operator already compute.</item>
+/// <item>`18-12`: <b>why referrer and campaign are two grouping sets, not one combined dimension.</b>
+/// The backlog item's own "Open questions" leaves this undecided; the answer here is two, for the same
+/// reason channel and operator are already two independent dimensions rather than one combined
+/// "channel+operator" bucket - they answer genuinely different business questions ("which sites send us
+/// conversations" vs. "which of our own campaigns work"), and a single conversation can carry both
+/// values at once with no natural precedence between them (a shop's own paid link, clicked from inside
+/// a referring app, carries a real referrer host <em>and</em> a real campaign name - collapsing them
+/// into one label would force picking one and hiding the other). Keeping them as separate `GROUPING
+/// SETS` entries costs one more grouping combination in the same query, not a second round trip, and
+/// answers both questions instead of one.</item>
+/// <item>`18-12`: <b>the Direct/present asymmetry, deliberately mirroring the Widget/missing-operator
+/// asymmetry already in this file.</b> <c>referrer_label</c> is <c>coalesce(traffic_referrer_host,
+/// 'Direct')</c> - never structurally ambiguous within its own grouping set, the same reason
+/// <c>channel_label</c>'s `Widget` fallback needs no `grouping()` flag of its own: "no referrer at all"
+/// is a real, answerable business question (direct traffic is common and worth naming), so it gets a
+/// real label rather than being dropped. <c>utm_campaign_label</c> gets no such fallback - "no campaign
+/// tag" is not a business question a shop asks the way "no referrer" is (most conversations will simply
+/// have none), so, exactly like <see cref="OperatorAnalyticsResult.ByOperator"/>'s own "nobody was ever
+/// assigned" bucket, a conversation with no UTM campaign is excluded from
+/// <see cref="OperatorAnalyticsResult.ByCampaign"/> entirely rather than reported under a manufactured
+/// "none" placeholder - the backlog item's own "grouped by ... utm_campaign when present" wording.</item>
+/// <item>`18-12`: <b>why every grouping dimension now gets its own explicit `grouping()` flag.</b> With
+/// three grouping sets, <c>Channel is null</c> alone was enough to separate "not a channel-set row"
+/// from "the total row", because only two other things could produce that combination and one of them
+/// (`OperatorGrouping == 1`) already existed to pick the total apart from the per-operator set's own
+/// "nobody assigned" bucket. Two more grouping sets break that shortcut: a referrer-set row and a
+/// campaign-set row also have <c>Channel is null</c> and <c>OperatorGrouping == 1</c>, so the old
+/// two-condition check would misidentify either as the total row. <c>ChannelGrouping</c>,
+/// <c>OperatorGrouping</c>, <c>ReferrerGrouping</c> and <c>CampaignGrouping</c> together give every row
+/// an unambiguous fingerprint - the total row is the one where all four read `1` - rather than layering
+/// a fifth special case onto a null-value heuristic that was already at its limit.</item>
 /// </list>
 /// </summary>
 public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IOperatorAnalyticsReadStore
@@ -83,10 +125,17 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
     /// so the one literal exists once.</summary>
     private const string WidgetChannelLabel = "Widget";
 
+    /// <summary>`18-12`: the read-time label for a conversation whose visitor carried no
+    /// <c>traffic_referrer_host</c> at all - a direct visit, a privacy-blocking browser setting, or a
+    /// referrer-stripping browser, the common case per <see cref="TrafficSource"/>'s own remarks, not
+    /// an error to hide. Named the same way <see cref="WidgetChannelLabel"/> is, for the same reason.
+    /// </summary>
+    private const string DirectReferrerLabel = "Direct";
+
     private const string SiteAnalyticsSql = """
         with in_window as (
             select c.id, c.site_id, c.visitor_id, c.state, c.operator_id as assigned_operator_id,
-                c.created_at, c.closed_at
+                c.created_at, c.closed_at, c.traffic_referrer_host, c.traffic_utm_campaign
             from conversations c
             where c.site_id = @SiteId
               and c.created_at >= @From
@@ -101,7 +150,9 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 ms.first_operator_at,
                 coalesce(ms.first_operator_id, iw.assigned_operator_id) as attributed_operator_id,
                 iw.created_at,
-                iw.closed_at
+                iw.closed_at,
+                coalesce(iw.traffic_referrer_host, @DirectLabel) as referrer_label,
+                iw.traffic_utm_campaign as utm_campaign_label
             from in_window iw
             left join lateral (
                 select ci.kind
@@ -123,6 +174,8 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
         select
             channel_label as "Channel",
             attributed_operator_id as "OperatorId",
+            referrer_label as "ReferrerHost",
+            utm_campaign_label as "UtmCampaign",
             count(*) as "ConversationCount",
             count(*) filter (where state = @ClosedState and first_operator_at is null) as "MissedCount",
             (avg(extract(epoch from (first_operator_at - first_visitor_at)))
@@ -131,9 +184,12 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             (avg(extract(epoch from (closed_at - created_at)))
                 filter (where closed_at is not null))::double precision
                 as "AverageDurationSeconds",
-            grouping(attributed_operator_id) as "OperatorGrouping"
+            grouping(channel_label) as "ChannelGrouping",
+            grouping(attributed_operator_id) as "OperatorGrouping",
+            grouping(referrer_label) as "ReferrerGrouping",
+            grouping(utm_campaign_label) as "CampaignGrouping"
         from detail
-        group by grouping sets ((), (channel_label), (attributed_operator_id))
+        group by grouping sets ((), (channel_label), (attributed_operator_id), (referrer_label), (utm_campaign_label))
         """;
 
     public async Task<OperatorAnalyticsResult> GetSiteAnalyticsAsync(
@@ -149,6 +205,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 From = from,
                 To = to,
                 WidgetLabel = WidgetChannelLabel,
+                DirectLabel = DirectReferrerLabel,
                 VisitorAuthorKind,
                 OperatorAuthorKind,
                 ClosedState,
@@ -158,17 +215,17 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
         // No row at all means no conversation in the window (the class doc comment's own remarks on
         // why GROUPING SETS cannot produce a zeroed total from zero input rows) - the honest answer is
         // an explicit zero bucket, not an empty response the caller would have to special-case.
-        // `grouping(attributed_operator_id) == 1` is what tells this row apart from the per-operator
-        // grouping set's own "nobody was ever assigned" bucket (the class doc comment's own remarks on
-        // why `Channel is null` alone no longer uniquely identifies the total row once a third grouping
-        // set exists).
-        var overallRow = rows.SingleOrDefault(r => r.Channel is null && r.OperatorGrouping == 1);
+        // `18-12`: the total row is now the one where *all four* grouping flags read `1` - the class
+        // doc comment's own remarks on why a two-condition null-value check stopped being unambiguous
+        // once a fourth and fifth grouping set joined channel/operator.
+        var overallRow = rows.SingleOrDefault(r =>
+            r.ChannelGrouping == 1 && r.OperatorGrouping == 1 && r.ReferrerGrouping == 1 && r.CampaignGrouping == 1);
         var overall = overallRow is null
             ? new OperatorAnalyticsBucket(0, null, null, 0)
             : ToBucket(overallRow);
 
         var byChannel = rows
-            .Where(r => r.Channel is not null)
+            .Where(r => r.ChannelGrouping == 0)
             .Select(r => new OperatorAnalyticsChannelBucket(r.Channel!, ToBucket(r)))
             .OrderBy(c => c.Channel, StringComparer.Ordinal)
             .ToList();
@@ -182,7 +239,27 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             .OrderBy(o => o.Operator.Value)
             .ToList();
 
-        return new OperatorAnalyticsResult(overall, byChannel, byOperator);
+        // `18-12`: the referrer-host grouping set's own rows - never ambiguous the way operator/campaign
+        // are, since `referrer_label` is coalesced to `Direct` and so is never a genuine null within its
+        // own grouping set (the class doc comment's own remarks on this deliberately mirroring
+        // `channel_label`'s `Widget` fallback).
+        var byReferrer = rows
+            .Where(r => r.ReferrerGrouping == 0)
+            .Select(r => new OperatorAnalyticsReferrerBucket(r.ReferrerHost!, ToBucket(r)))
+            .OrderBy(r => r.ReferrerHost, StringComparer.Ordinal)
+            .ToList();
+
+        // `18-12`: `CampaignGrouping == 0` selects the per-campaign grouping set's own rows;
+        // `UtmCampaign is not null` then drops that set's "no campaign tag at all" bucket - the class
+        // doc comment's own remarks on why this is an exclusion (the backlog item's own "when present"
+        // wording), the identical shape `byOperator` already uses for its own "nobody assigned" case.
+        var byCampaign = rows
+            .Where(r => r.CampaignGrouping == 0 && r.UtmCampaign is not null)
+            .Select(r => new OperatorAnalyticsCampaignBucket(r.UtmCampaign!, ToBucket(r)))
+            .OrderBy(c => c.UtmCampaign, StringComparer.Ordinal)
+            .ToList();
+
+        return new OperatorAnalyticsResult(overall, byChannel, byOperator, byReferrer, byCampaign);
     }
 
     private static OperatorAnalyticsBucket ToBucket(OperatorAnalyticsRow row) =>

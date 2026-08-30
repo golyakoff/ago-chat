@@ -19,12 +19,23 @@
 /// <para>`18-13`: <see cref="AverageDurationSeconds"/> is one more nullable `avg(...)` column, mapped
 /// by name the same way <see cref="AverageFirstResponseSeconds"/> already is - Dapper matches a
 /// record's constructor parameters against the SQL's own column aliases by name, not position, so this
-/// property's place in the parameter list does not need to match the `select` list's.</para></summary>
+/// property's place in the parameter list does not need to match the `select` list's.</para>
+///
+/// <para>`18-12`: <see cref="ReferrerHost"/>/<see cref="UtmCampaign"/> are the two new grouping sets'
+/// own columns, and <see cref="ChannelGrouping"/>/<see cref="ReferrerGrouping"/>/
+/// <see cref="CampaignGrouping"/> are their `grouping()` flags - see
+/// <see cref="OperatorAnalyticsReadStore"/>'s class remarks for why every dimension needs its own flag
+/// now that there are five grouping sets rather than three.</para></summary>
 internal sealed record OperatorAnalyticsRow(
     string? Channel,
     Guid? OperatorId,
+    string? ReferrerHost,
+    string? UtmCampaign,
     long ConversationCount,
     long MissedCount,
     double? AverageFirstResponseSeconds,
     double? AverageDurationSeconds,
-    int OperatorGrouping);
+    int ChannelGrouping,
+    int OperatorGrouping,
+    int ReferrerGrouping,
+    int CampaignGrouping);

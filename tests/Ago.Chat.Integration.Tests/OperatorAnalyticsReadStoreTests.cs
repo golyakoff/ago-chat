@@ -427,6 +427,131 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         await writeDb.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// `18-12`'s own Done-when: real seeded data mixing a UTM-tagged conversation, a plain-referrer one
+    /// and a genuinely direct one - not merely a query that runs. Four conversations:
+    /// </summary>
+    /// <list type="bullet">
+    /// <item>#T1: referrer `shop.example`, no UTM tag at all.</item>
+    /// <item>#T2: referrer `shop.example` again, this time carrying `utm_campaign=summer_sale`.</item>
+    /// <item>#T3: no referrer, no UTM tag - a genuinely direct visit, the common case, not the exception.
+    /// </item>
+    /// <item>#T4: no referrer, but `utm_campaign=summer_sale` anyway (a paid link opened straight from a
+    /// non-browser client, e.g. a messaging app's own in-app browser stripping the referrer while the
+    /// campaign tag survives on the URL) - proves the referrer and campaign groupings are independent,
+    /// not one collapsed dimension.</item>
+    /// </list>
+    /// <para>Ground truth: by referrer, `shop.example` = {#T1, #T2} count 2; `Direct` = {#T3, #T4} count
+    /// 2 - the fallback label applied to both the true-empty case and the UTM-only case alike. By
+    /// campaign, `summer_sale` = {#T2, #T4} count 2; #T1 and #T3 (no campaign at all) appear in no
+    /// campaign bucket - <see cref="OperatorAnalyticsResult.ByCampaign"/> never manufactures a
+    /// "none" row, matching this store's own <c>ByOperator</c> "nobody assigned" exclusion.</para>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_ComputesTrafficSourceNumbers_MixingUtmTaggedPlainReferrerAndDirectVisits()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        await SeedTrafficSourceConversationAsync(
+            siteId, offsetDays: -6, referrerHost: "shop.example", utmSource: null, utmMedium: null, utmCampaign: null);
+        await SeedTrafficSourceConversationAsync(
+            siteId, offsetDays: -5, referrerHost: "shop.example", utmSource: "newsletter", utmMedium: "email",
+            utmCampaign: "summer_sale");
+        // #T3: the common, unremarkable case - no referrer captured at all, no UTM tag. TrafficSource's
+        // own IsEmpty check means Conversation.Start stores no Source at all for this one, exactly as it
+        // would for a conversation that predates this item entirely.
+        await SeedTrafficSourceConversationAsync(
+            siteId, offsetDays: -4, referrerHost: null, utmSource: null, utmMedium: null, utmCampaign: null);
+        await SeedTrafficSourceConversationAsync(
+            siteId, offsetDays: -3, referrerHost: null, utmSource: "newsletter", utmMedium: "email",
+            utmCampaign: "summer_sale");
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(4, result.Overall.ConversationCount);
+
+        Assert.Equal(2, result.ByReferrer.Count);
+        var shop = result.ByReferrer.Single(r => r.ReferrerHost == "shop.example");
+        Assert.Equal(2, shop.Bucket.ConversationCount);
+        var direct = result.ByReferrer.Single(r => r.ReferrerHost == "Direct");
+        Assert.Equal(2, direct.Bucket.ConversationCount);
+
+        Assert.Single(result.ByCampaign);
+        var campaign = result.ByCampaign.Single();
+        Assert.Equal("summer_sale", campaign.UtmCampaign);
+        Assert.Equal(2, campaign.Bucket.ConversationCount);
+    }
+
+    /// <summary>`17-01`'s own bar, applied to the traffic-source dimension: two sites, each seeded with
+    /// its own distinct referrer host and UTM campaign, and one site's report must never surface the
+    /// other's - not even as an empty/zeroed bucket, since that referrer/campaign genuinely never
+    /// touched this site's own conversations.</summary>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_NeverReturnsAnotherSitesTrafficSourceBuckets()
+    {
+        var siteA = new SiteId(Guid.NewGuid());
+        var siteB = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteA, $"site_{siteA.Value:N}", []));
+            db.Sites.Add(new Site(siteB, $"site_{siteB.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        await SeedTrafficSourceConversationAsync(
+            siteA, offsetDays: -2, referrerHost: "site-a-referrer.example", utmSource: null, utmMedium: null,
+            utmCampaign: "site_a_campaign");
+        await SeedTrafficSourceConversationAsync(
+            siteB, offsetDays: -2, referrerHost: "site-b-referrer.example", utmSource: null, utmMedium: null,
+            utmCampaign: "site_b_campaign");
+
+        var resultA = await Store.GetSiteAnalyticsAsync(siteA, From, To, CancellationToken.None);
+        var resultB = await Store.GetSiteAnalyticsAsync(siteB, From, To, CancellationToken.None);
+
+        Assert.Single(resultA.ByReferrer);
+        Assert.Equal("site-a-referrer.example", resultA.ByReferrer.Single().ReferrerHost);
+        Assert.Single(resultA.ByCampaign);
+        Assert.Equal("site_a_campaign", resultA.ByCampaign.Single().UtmCampaign);
+
+        Assert.Single(resultB.ByReferrer);
+        Assert.Equal("site-b-referrer.example", resultB.ByReferrer.Single().ReferrerHost);
+        Assert.Single(resultB.ByCampaign);
+        Assert.Equal("site_b_campaign", resultB.ByCampaign.Single().UtmCampaign);
+    }
+
+    /// <summary>Builds one conversation carrying (or deliberately not carrying) a traffic source - the
+    /// same visitor-message-only shape <see cref="SeedOpenUnansweredConversationAsync"/> already uses,
+    /// since this scenario only needs the conversation to exist inside the window, not to be answered.
+    /// </summary>
+    private async Task SeedTrafficSourceConversationAsync(
+        SiteId siteId, int offsetDays, string? referrerHost, string? utmSource, string? utmMedium, string? utmCampaign)
+    {
+        await EnsurePartitionsAsync([offsetDays]);
+
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var createdAt = Now.AddDays(offsetDays);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            await db.SaveChangesAsync();
+        }
+
+        var source = new TrafficSource(referrerHost, utmSource, utmMedium, utmCampaign);
+        var conversation = Conversation.Start(
+            new ConversationId(Guid.NewGuid()), siteId, visitorId, createdAt, source);
+        conversation.AddVisitorMessage(
+            visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), createdAt);
+
+        await using var writeDb = fixture.CreateDbContext();
+        writeDb.Conversations.Add(conversation);
+        await writeDb.SaveChangesAsync();
+    }
+
     /// <summary>`17-01`'s own bar, applied to the per-operator dimension: two sites, each with its own
     /// operator, and one site's analytics must never surface the other site's operator at all - not even
     /// as an empty/zeroed row, since the operator genuinely does not exist in the other site's data.

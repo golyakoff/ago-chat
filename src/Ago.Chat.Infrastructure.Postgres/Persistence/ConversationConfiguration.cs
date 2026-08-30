@@ -138,5 +138,21 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         // paying to maintain on every insert.
         builder.HasIndex(c => new { c.VisitorId, c.Id })
             .HasDatabaseName("ix_conversations_visitor_all");
+
+        // `18-12`: the identical "computed property, EF pointed at the private fields by name" shape
+        // MessageConfiguration already uses for Message.Content's own three backing fields - see that
+        // class's remarks. All four nullable, all unindexed: the report reads them through
+        // OperatorAnalyticsReadStore's own GROUPING SETS over the whole table (bounded by the same
+        // site_id/created_at predicate every other analytics query there already uses), never by a
+        // point lookup on any one of these columns.
+        builder.Ignore(c => c.Source);
+        builder.Property<string?>("_trafficReferrerHost")
+            .HasColumnName("traffic_referrer_host").HasMaxLength(TrafficSource.MaxLength);
+        builder.Property<string?>("_trafficUtmSource")
+            .HasColumnName("traffic_utm_source").HasMaxLength(TrafficSource.MaxLength);
+        builder.Property<string?>("_trafficUtmMedium")
+            .HasColumnName("traffic_utm_medium").HasMaxLength(TrafficSource.MaxLength);
+        builder.Property<string?>("_trafficUtmCampaign")
+            .HasColumnName("traffic_utm_campaign").HasMaxLength(TrafficSource.MaxLength);
     }
 }

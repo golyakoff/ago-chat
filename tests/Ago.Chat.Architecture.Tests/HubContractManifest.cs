@@ -34,6 +34,11 @@ internal static class HubContractManifest
     [
         new("VisitorHub.JoinAsync", 1,
             "ago-widget VisitorConnection (`5-07` resume); dev-harness.html"),
+        new("VisitorHub.JoinWithTrafficSourceAsync", 5,
+            "ago-widget VisitorConnection.start (`18-12`) - the widget's own real first-open join, "
+            + "carrying the referrer host and the three UTM parameters it read from the browser. "
+            + "JoinAsync above stays exactly as it was (the resume path never re-sends a source), "
+            + "the same split `5-19` already made for SendMessageAsync/SendStructuredMessageAsync."),
         new("VisitorHub.SendMessageAsync", 4,
             "ago-widget VisitorConnection - THE method `14-06` broke and `5-19` restored. Four is not "
             + "negotiable: every widget already embedded on somebody else's site sends exactly this."),
