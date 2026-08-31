@@ -393,6 +393,10 @@ app.MapAvitoChannelEndpoints();
 // living in this host rather than Ago.Chat.Webhooks.
 app.MapWhatsAppWebhookEndpoints();
 app.MapWhatsAppChannelEndpoints();
+// `14-09`: the inbound receiver, and the only mapping this channel needs - EmailBotApiOptions' own
+// remarks explain why there is no MapEmailChannelEndpoints: this channel has no per-tenant secret for a
+// console connect/disconnect flow to manage at all, unlike every channel above.
+app.MapEmailWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();

@@ -45,6 +45,7 @@
          genuinely used here, not only transitively through Ago.Chat.Module, the same "explicit when
          actually used" reasoning the MAX/Telegram/VK references above already follow. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.WhatsApp\Ago.Chat.Infrastructure.WhatsApp.csproj" />
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Email\Ago.Chat.Infrastructure.Email.csproj" />
     <!-- `13-02`: BillingEndpoints reads YooKassaWebhookParser/ParsedYooKassaWebhookEvent directly (the
          webhook receiver's own translation from ЮKassa's wire shape to ProcessYooKassaWebhook) - the
          same "explicit when actually used" reasoning the MAX/Telegram references above already
