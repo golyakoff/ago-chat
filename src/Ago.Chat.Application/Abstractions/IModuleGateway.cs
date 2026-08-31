@@ -49,6 +49,19 @@ public sealed record StartModuleTaskRequest(Guid ChatTaskId, SiteId SiteId, Conv
 
 public sealed record StartModuleTaskResult(string ExternalTaskId, ModuleStep Step, bool Complete);
 
-public sealed record SubmitModuleReplyRequest(string ExternalTaskId, Guid ChatTaskId, MessageContentKind Kind, string Value);
+/// <param name="PhoneVerifiedAt">
+/// `20-09`: the one wire call that already carries a phone number across the AGO Chat/AGO Calendar
+/// boundary (the visitor's raw typed text, at whichever step a module treats as its phone field) is
+/// where the verification assertion rides along, rather than a second call being invented for it
+/// (`docs/backlog/20-09-*`'s own "cross-product data question", `adr/0077`'s "authenticity is checked;
+/// the deeper claim is trusted" trust boundary applied here for a phone instead of a module task).
+/// Null on every reply except one answering a <see cref="Domain.PrimitiveKinds.VerifiedPhoneForm"/>
+/// step for which <see cref="Application.UseCases.RouteConversationToModule.RouteConversationToModuleHandler"/>
+/// found an active, verified <c>ChannelIdentity</c> - see that handler's own remarks. Calendar decides
+/// what a non-null value means (`20-09`'s own claim-time gate); Chat's only obligation is never to send
+/// one it has not itself checked.
+/// </param>
+public sealed record SubmitModuleReplyRequest(
+    string ExternalTaskId, Guid ChatTaskId, MessageContentKind Kind, string Value, DateTimeOffset? PhoneVerifiedAt = null);
 
 public sealed record SubmitModuleReplyResult(ModuleStep? Step, bool Complete);

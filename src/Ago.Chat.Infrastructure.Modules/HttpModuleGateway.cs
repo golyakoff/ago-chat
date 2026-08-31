@@ -49,7 +49,8 @@ public sealed class HttpModuleGateway(HttpClient httpClient) : IModuleGateway
         EnabledModuleEndpoint module, SubmitModuleReplyRequest request, CancellationToken cancellationToken)
     {
         var uri = BuildUri(module.EntryPoint, $"api/v1/module-tasks/{Uri.EscapeDataString(request.ExternalTaskId)}/replies");
-        var wireRequest = new SubmitReplyWireRequest(request.ChatTaskId, request.Kind.Value, request.Value);
+        var wireRequest = new SubmitReplyWireRequest(
+            request.ChatTaskId, request.Kind.Value, request.Value, request.PhoneVerifiedAt);
 
         var wireResponse = await PostAsync<SubmitReplyWireRequest, SubmitReplyWireResponse>(
             module.ModuleKey, uri, wireRequest, cancellationToken);

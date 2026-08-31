@@ -18,10 +18,15 @@ internal sealed record StartTaskWireResponse(
     [property: JsonPropertyName("step")] StepWireDto Step,
     [property: JsonPropertyName("complete")] bool Complete);
 
+/// <param name="PhoneVerifiedAt">`20-09`: additive - api-design.md's "new optional fields are fine"
+/// within a version. Absent (or <see langword="null"/>) on every reply this contract predates and on
+/// every reply for a step that is not <c>verified_phone_form</c>; a module built before this item never
+/// has to change to keep working.</param>
 internal sealed record SubmitReplyWireRequest(
     [property: JsonPropertyName("chatTaskId")] Guid ChatTaskId,
     [property: JsonPropertyName("kind")] string Kind,
-    [property: JsonPropertyName("value")] string Value);
+    [property: JsonPropertyName("value")] string Value,
+    [property: JsonPropertyName("phoneVerifiedAt")] DateTimeOffset? PhoneVerifiedAt = null);
 
 internal sealed record SubmitReplyWireResponse(
     [property: JsonPropertyName("step")] StepWireDto? Step,

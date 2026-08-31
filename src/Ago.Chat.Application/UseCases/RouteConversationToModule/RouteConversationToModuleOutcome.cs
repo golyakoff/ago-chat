@@ -39,6 +39,17 @@ public enum RouteConversationToModuleOutcome
     /// told a person will take over (backlog item's own escalation rule).</summary>
     Escalated,
 
+    /// <summary>
+    /// `20-09`: a reply against a <see cref="Domain.PrimitiveKinds.VerifiedPhoneForm"/> step named a
+    /// phone number with no active, verified <c>ChannelIdentity</c> behind it for this visitor - the
+    /// module is never called (the same "nothing to stage, nothing to save" shape
+    /// <see cref="ReplyNotResolved"/> already has), and the task stays open exactly as it was, with one
+    /// difference from that case: the visitor is told, by name, to verify the number first, since
+    /// unlike an out-of-range choice this is not something retyping the same text differently would
+    /// ever fix.
+    /// </summary>
+    PhoneVerificationRequired,
+
     /// <summary>`CLAUDE.md` rule 5: this exact trigger message was already processed by this consumer -
     /// a redelivery, correctly producing no second effect.</summary>
     AlreadyProcessed,

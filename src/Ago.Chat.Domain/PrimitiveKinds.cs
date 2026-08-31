@@ -48,10 +48,31 @@ public static class PrimitiveKinds
     /// <c>adr/0081</c> for the full reasoning and the alternatives rejected.</summary>
     public const string Escalate = "escalate";
 
+    /// <summary>
+    /// `20-09`: a <see cref="Form"/> whose one field must be a phone number this system has already
+    /// proven the visitor can be reached on (`14-15`), not merely typed - the sixth member this
+    /// vocabulary has ever needed, added the identical way <see cref="Escalate"/> was
+    /// (<c>adr/0081</c>'s template: a module signals a structural fact by *which* primitive it sends,
+    /// never by Chat inspecting the payload).
+    ///
+    /// <para>Wire-shaped identically to <see cref="Form"/> (a prompt, a field id, a field label) -
+    /// nothing about the payload differs, which is exactly why this is a distinct <em>kind</em> rather
+    /// than a flag on <see cref="Form"/>: `adr/0065` decision 4's "modules fill them in; modules do not
+    /// define kinds of their own" means the fact "this reply must carry proof, not just a value" has to
+    /// be expressed in the one field a module can use to say anything to Chat at all - <c>kind</c>.
+    /// Handled structurally by
+    /// <see cref="RouteConversationToModule.RouteConversationToModuleHandler"/>: a reply against a step
+    /// of this kind is checked against an active, verified <c>ChannelIdentity</c> for the visitor
+    /// before it is ever forwarded to the module - see that handler's own remarks and
+    /// <c>docs/adr/0082-*</c> for the full reasoning.</para>
+    /// </summary>
+    public const string VerifiedPhoneForm = "verified_phone_form";
+
     /// <summary>Every kind this vocabulary defines, in no particular order - used by validation and by
     /// the architecture guard's own fixtures, never by a runtime branch that would decide behaviour
     /// per kind (that would defeat the very opacity this type exists to preserve outside this file).</summary>
-    public static readonly IReadOnlyList<string> All = [ChoiceList, Form, ConfirmationCard, DateTimePicker, Escalate];
+    public static readonly IReadOnlyList<string> All =
+        [ChoiceList, Form, ConfirmationCard, DateTimePicker, Escalate, VerifiedPhoneForm];
 
     /// <summary>
     /// The three kinds a visitor answers by picking one of a bounded set of <see cref="MessageAction"/>s

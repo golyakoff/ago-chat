@@ -144,6 +144,68 @@ public class ModuleTaskGatewayIntegrationTests
         Assert.Equal(ConversationState.Waiting, conversation.State);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // `20-09`: the verified-phone gate, proven over a real HTTP round trip - the literal claim
+    // the backlog item's own Done-when makes ("Event.Claim/TryBookAsync's real code path is never
+    // reached... through the real module task flow, not a unit test that stubs past the interesting
+    // part"). Ago.Chat and Ago.Calendar are separate repositories with no compile-time reference to
+    // each other (adr/0077) - what this test proves, honestly, is Chat's own half of that claim: the
+    // real HttpModuleGateway never puts an unverified reply on the wire at all, over a real socket,
+    // against a real (fake) module server. Calendar's own half - that its real BookEventHandler/
+    // BookingStore refuse a claim carrying no assertion, even if one somehow arrived - is proven
+    // symmetrically in ago-calendar's own ChatModuleTaskHandlerTests/BookEventHandlerTests, since no
+    // single test can span two repositories with no shared reference between them.
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task VerifiedPhoneFormReply_WithNoVerifiedIdentity_NeverReachesTheRealModuleServer()
+    {
+        await using var server = new FakeModuleServer();
+        await server.StartAsync(externalTaskId: "external-1", firstStepJson: FirstStepJson, replyCompleteJson: "true");
+
+        var conversation = StartConversationAwaitingVerifiedPhone();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+
+        var outcome = await RouteAsync(conversation, server.BuildGateway(), server.BaseAddress);
+
+        Assert.Equal(RouteConversationToModuleOutcome.PhoneVerificationRequired, outcome);
+        Assert.Empty(server.ReceivedReplyBodies);
+        Assert.NotNull(conversation.ActiveModuleTask);
+    }
+
+    [Fact]
+    public async Task VerifiedPhoneFormReply_WithAVerifiedIdentity_ReachesTheRealModuleServer_CarryingThePhoneVerifiedAtField()
+    {
+        await using var server = new FakeModuleServer();
+        await server.StartAsync(externalTaskId: "external-1", firstStepJson: FirstStepJson, replyCompleteJson: "true");
+
+        var verifiedAt = Now.AddDays(-1);
+        var identities = new FixedChannelIdentityRepository(ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Sms,
+            new ExternalChannelAddress("+79990000001"), VisitorId, verifiedAt));
+
+        var conversation = StartConversationAwaitingVerifiedPhone();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+
+        var outcome = await RouteAsync(conversation, server.BuildGateway(), server.BaseAddress, identities);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, outcome);
+        var body = Assert.Single(server.ReceivedReplyBodies);
+        Assert.Equal("+79990000001", ExtractField(body, "value"));
+        Assert.True(body.RootElement.TryGetProperty("phoneVerifiedAt", out var phoneVerifiedAtElement));
+        Assert.Equal(verifiedAt, phoneVerifiedAtElement.GetDateTimeOffset());
+    }
+
+    private static Conversation StartConversationAwaitingVerifiedPhone()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var kind = new MessageContentKind(PrimitiveKinds.VerifiedPhoneForm);
+        var payload = new MessagePayload("""{"prompt":"What's your phone number?","fieldId":"phone","fieldLabel":"Phone number"}""");
+        conversation.StartModuleTask(new ModuleTaskId(Guid.NewGuid()), Calendar, "external-1", Now, kind, payload, []);
+        conversation.ClearDomainEvents();
+        return conversation;
+    }
+
     private static Conversation StartConversationWithTask()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
@@ -156,7 +218,8 @@ public class ModuleTaskGatewayIntegrationTests
     }
 
     private static async Task<RouteConversationToModuleOutcome> RouteAsync(
-        Conversation conversation, IModuleGateway gateway, Uri entryPoint)
+        Conversation conversation, IModuleGateway gateway, Uri entryPoint,
+        IChannelIdentityRepository? channelIdentities = null)
     {
         var conversations = new FixedConversationRepository(conversation);
         var readStore = new FixedEnabledModuleReadStore(Calendar, ["/booking"], entryPoint);
@@ -164,7 +227,8 @@ public class ModuleTaskGatewayIntegrationTests
         var inbox = new FixedInboxChecker();
 
         var handler = new RouteConversationToModuleHandler(
-            conversations, readStore, gateway, outbox, inbox, new FixedClock(Now), new FixedIdGenerator());
+            conversations, readStore, gateway, channelIdentities ?? new FixedChannelIdentityRepository(),
+            outbox, inbox, new FixedClock(Now), new FixedIdGenerator());
 
         var command = new RouteConversationToModule(
             Guid.NewGuid(), SiteId, conversation.Id, MessageAuthorKind.Visitor, conversation.LastSequence);
@@ -204,6 +268,32 @@ public class ModuleTaskGatewayIntegrationTests
     {
         public Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<EnabledModuleSummary>>([new EnabledModuleSummary(key, triggerWords, entryPoint)]);
+    }
+
+    /// <summary>`20-09`: the minimal double the gate's own real-HTTP tests need - seeded with at most
+    /// one identity, since that is all any one test asks of it. Filters to <see cref="ChannelIdentity.Active"/>
+    /// and the exact (site, kind, address) triple, matching the real repository's own contract.</summary>
+    private sealed class FixedChannelIdentityRepository(ChannelIdentity? seeded = null) : IChannelIdentityRepository
+    {
+        public Task<ChannelIdentity?> FindAsync(
+            SiteId siteId, ChannelKind kind, ExternalChannelAddress address, CancellationToken cancellationToken) =>
+            Task.FromResult(seeded is { Active: true } identity
+                && identity.SiteId == siteId && identity.Kind == kind && identity.Address == address
+                ? identity
+                : null);
+
+        public Task<ChannelIdentity?> FindMostRecentForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ChannelIdentity>> ListActiveForVisitorAsync(
+            VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ChannelIdentity?> GetByIdAsync(ChannelIdentityId id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SaveAsync(ChannelIdentity identity, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FixedOutboxWriter : IOutboxWriter

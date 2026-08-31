@@ -25,11 +25,12 @@ public class RouteConversationToModuleHandlerTests
 
     private sealed record Fixture(
         RouteConversationToModuleHandler Handler, Conversation Conversation, FakeModuleGateway Gateway,
-        FakeOutboxWriter Outbox, FakeInboxChecker Inbox);
+        FakeOutboxWriter Outbox, FakeInboxChecker Inbox, FakeChannelIdentityRepository ChannelIdentities);
 
     private static Fixture CreateFixture(
         bool moduleEnabled = true, Action<Conversation>? arrange = null,
-        FakeModuleGateway? gateway = null, FakeInboxChecker? inbox = null)
+        FakeModuleGateway? gateway = null, FakeInboxChecker? inbox = null,
+        FakeChannelIdentityRepository? channelIdentities = null)
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         arrange?.Invoke(conversation);
@@ -47,11 +48,12 @@ public class RouteConversationToModuleHandlerTests
         gateway ??= new FakeModuleGateway();
         var outbox = new FakeOutboxWriter();
         inbox ??= new FakeInboxChecker();
+        channelIdentities ??= new FakeChannelIdentityRepository();
 
         var handler = new RouteConversationToModuleHandler(
-            conversations, readStore, gateway, outbox, inbox, new FakeClock(Now), new FakeIdGenerator());
+            conversations, readStore, gateway, channelIdentities, outbox, inbox, new FakeClock(Now), new FakeIdGenerator());
 
-        return new Fixture(handler, conversation, gateway, outbox, inbox);
+        return new Fixture(handler, conversation, gateway, outbox, inbox, channelIdentities);
     }
 
     private static Ago.Chat.Application.UseCases.RouteConversationToModule.RouteConversationToModule Trigger(
@@ -270,6 +272,123 @@ public class RouteConversationToModuleHandlerTests
         Assert.Null(fixture.Conversation.ActiveModuleTask);
         var reply = fixture.Conversation.Messages.Last();
         Assert.Equal("Not sure I can help with that.", reply.Body.Value);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // `20-09`: the verified-phone gate - a reply against a VerifiedPhoneForm step is checked
+    // against `14-15`'s own evidence before the module is ever called.
+    // ------------------------------------------------------------------------------------------
+
+    private static Conversation ConversationAwaitingVerifiedPhone(Conversation conversation, string prompt = "What's your phone number?")
+    {
+        var kind = new MessageContentKind(PrimitiveKinds.VerifiedPhoneForm);
+        var payload = new MessagePayload($$"""{"prompt":"{{prompt}}","fieldId":"phone","fieldLabel":"Phone number"}""");
+        conversation.StartModuleTask(new ModuleTaskId(Guid.NewGuid()), Calendar, "external-1", Now, kind, payload, []);
+        return conversation;
+    }
+
+    [Fact]
+    public async Task HandleAsync_AVerifiedPhoneFormReply_WithNoVerifiedIdentity_DoesNotCallTheModule_AndTellsTheVisitorToVerify()
+    {
+        var fixture = CreateFixture(arrange: c => ConversationAwaitingVerifiedPhone(c));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.PhoneVerificationRequired, result.Value);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+        Assert.NotNull(fixture.Conversation.ActiveModuleTask);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal(MessageAuthorKind.System, reply.AuthorKind);
+        Assert.Contains("verify", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>An identity verified for a phone that reads the same but belongs to a *different*
+    /// visitor must not satisfy this gate - the same "reuse, never merge" boundary `ChannelIdentity`'s
+    /// own remarks establish for `14-12`'s own linking.</summary>
+    [Fact]
+    public async Task HandleAsync_AVerifiedPhoneFormReply_VerifiedForADifferentVisitor_DoesNotCallTheModule()
+    {
+        var otherVisitor = new VisitorId(Guid.NewGuid());
+        var identities = new FakeChannelIdentityRepository();
+        await identities.SaveAsync(
+            ChannelIdentity.Link(
+                new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Sms,
+                new ExternalChannelAddress("+79990000001"), otherVisitor, Now.AddDays(-1)),
+            CancellationToken.None);
+
+        var fixture = CreateFixture(arrange: c => ConversationAwaitingVerifiedPhone(c), channelIdentities: identities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.PhoneVerificationRequired, result.Value);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AVerifiedPhoneFormReply_WithAVerifiedIdentity_ForwardsTheReply_CarryingThePhoneVerifiedAtTimestamp()
+    {
+        var verifiedAt = Now.AddDays(-1);
+        var identities = new FakeChannelIdentityRepository();
+        await identities.SaveAsync(
+            ChannelIdentity.Link(
+                new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Sms,
+                new ExternalChannelAddress("+79990000001"), VisitorId, verifiedAt),
+            CancellationToken.None);
+
+        var fixture = CreateFixture(arrange: c => ConversationAwaitingVerifiedPhone(c), channelIdentities: identities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, result.Value);
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal("+79990000001", call.Request.Value);
+        Assert.Equal(verifiedAt, call.Request.PhoneVerifiedAt);
+    }
+
+    /// <summary>A phone that does not even parse is Calendar's own concern (its <c>PhoneNumber</c>
+    /// shape check), not a second validation Chat invents - the reply is forwarded unchanged, exactly
+    /// as an ordinary <c>form</c> reply always has been, carrying no verification assertion.</summary>
+    [Fact]
+    public async Task HandleAsync_AVerifiedPhoneFormReply_ThatDoesNotParseAsAPhoneNumber_IsForwardedUnverified_ForCalendarToReject()
+    {
+        var fixture = CreateFixture(arrange: c => ConversationAwaitingVerifiedPhone(c));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("not a phone"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, result.Value);
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal("not a phone", call.Request.Value);
+        Assert.Null(call.Request.PhoneVerifiedAt);
+    }
+
+    /// <summary>The gate only ever applies to a <see cref="PrimitiveKinds.VerifiedPhoneForm"/> step -
+    /// an ordinary choice reply must never carry a verification timestamp, verified identity or not.</summary>
+    [Fact]
+    public async Task HandleAsync_AnOrdinaryChoiceListReply_NeverCarriesAPhoneVerifiedAtTimestamp()
+    {
+        var identities = new FakeChannelIdentityRepository();
+        await identities.SaveAsync(
+            ChannelIdentity.Link(
+                new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Sms,
+                new ExternalChannelAddress("1"), VisitorId, Now),
+            CancellationToken.None);
+
+        var fixture = CreateFixture(
+            arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")),
+            channelIdentities: identities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Null(call.Request.PhoneVerifiedAt);
     }
 
     /// <summary>The escalation rule's "mid-task" half: the module goes unreachable while a task is
