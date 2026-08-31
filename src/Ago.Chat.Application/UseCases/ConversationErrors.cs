@@ -490,4 +490,72 @@ public static class ConversationErrors
         new(
             "ChannelIdentity.NotEligibleForPreference",
             $"Channel identity {channelIdentityId} is not one of this visitor's own active identities.");
+
+    // `14-15`: same shared vocabulary, same reason - InitiatePhoneVerificationHandler/
+    // ConfirmPhoneVerificationHandler add their own codes here rather than a separate error class.
+    /// <summary>The wire value did not parse as a phone number `Domain.PhoneNumber`'s own constructor
+    /// accepted - the same "validate the value object, translate the throw at the Application boundary"
+    /// split `WidgetConfigInvalidColor` already draws for `WidgetConfig`.</summary>
+    public static Error PhoneVerificationInvalidNumber(string reason) =>
+        new("PhoneVerification.InvalidNumber", reason);
+
+    /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of those
+    /// gives for its own - a client branching on `type` should be able to tell "you asked for too many
+    /// verification codes" apart from a message-send or export rate limit without parsing the message
+    /// text. Raised for either the per-phone or the per-visitor bucket
+    /// (`PhoneVerificationRateLimitOptions`'s own remarks) - the caller's remedy is identical either
+    /// way ("wait and retry"), so one code serves both, the same one-code-several-reasons shape
+    /// `TransferTargetNotEligible` already uses for a different rejection.</summary>
+    public static Error PhoneVerificationRateLimited(TimeSpan retryAfter) =>
+        new(
+            "PhoneVerification.RateLimited",
+            $"Too many phone verification attempts - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
+    /// <summary>No `Domain.PendingPhoneVerification` matches the id named, or a real row that belongs to a
+    /// different site or a different visitor - the same "wrong tenant/visitor reads like no row"
+    /// info-hiding shape `ChannelIdentityNotFound`/`ContactDetailNotFound` already establish.</summary>
+    public static Error PhoneVerificationNotFound(Guid pendingPhoneVerificationId) =>
+        new("PhoneVerification.NotFound", $"Phone verification {pendingPhoneVerificationId} was not found.");
+
+    /// <summary>`Domain.PhoneVerificationConfirmOutcome.WrongCode` - the submitted code did not match.
+    /// The message deliberately does not say how many attempts remain: naming a countdown would invite a
+    /// client to build a "keep guessing until N-1" UI, which is exactly the behaviour
+    /// `PendingPhoneVerification.MaxAttempts` exists to bound.</summary>
+    public static Error PhoneVerificationWrongCode() =>
+        new("PhoneVerification.WrongCode", "The submitted code did not match.");
+
+    /// <summary>`410 Gone`, not `404` - `Domain.PhoneVerificationConfirmOutcome.Expired`, the identical
+    /// reasoning `OperatorInviteExpired` already gives for its own real-but-timed-out row: the caller's
+    /// remedy is "request a fresh code", not "try this lookup again more carefully".</summary>
+    public static Error PhoneVerificationExpired() =>
+        new("PhoneVerification.Expired", "This phone verification code has expired.");
+
+    /// <summary>`Domain.PhoneVerificationConfirmOutcome.LockedOut` - too many wrong attempts against this
+    /// specific pending verification (`PhoneVerificationOptions.MaxAttempts`). `429`, not `403`: this is a
+    /// pacing-shaped refusal a fresh `InitiatePhoneVerification` call resolves, not a permission the
+    /// caller categorically lacks - the same family `PhoneVerificationRateLimited` is in, though this one
+    /// carries no `Retry-After` (there is no wait that fixes it, only a new pending verification).</summary>
+    public static Error PhoneVerificationLockedOut() =>
+        new("PhoneVerification.LockedOut", "This phone verification has been locked out after too many wrong attempts.");
+
+    /// <summary>`Domain.PhoneVerificationConfirmOutcome.AlreadyConsumed` - a genuine race between two
+    /// concurrent confirmations of the same row (`PendingPhoneVerification.AttemptConfirm`'s own remarks).
+    /// `409`, the same "retry the request" shape `ConcurrencyConflict`/`OperatorInviteAlreadyRedeemed`
+    /// already use for an analogous already-settled row.</summary>
+    public static Error PhoneVerificationAlreadyConsumed() =>
+        new("PhoneVerification.AlreadyConsumed", "This phone verification code has already been used.");
+
+    /// <summary>`adr/0079` decision 3's own "a claimed address already owned by a *different* visitor is
+    /// refused, not merged", applied to this item's own confirmation path - the code was genuinely
+    /// correct (this is checked only after <c>Domain.PhoneVerificationConfirmOutcome.Confirmed</c>), but
+    /// the phone number's own active `Domain.ChannelIdentity` already points at a different visitor than
+    /// the one who requested this verification. `409`, the same "a real conflict with existing data"
+    /// shape `ChannelAlreadyConnected`/`TagAlreadyExists` already use - the code is still consumed (a
+    /// verified code must never be presentable a second time, the same accepted trade-off
+    /// `ReceiveChannelMessageHandler`'s own remarks describe for the identical ordering choice), so the
+    /// caller's only remedy is contacting support, not retrying this same call.</summary>
+    public static Error PhoneVerificationAlreadyLinkedToAnotherVisitor() =>
+        new(
+            "PhoneVerification.AlreadyLinkedToAnotherVisitor",
+            "This phone number is already verified for a different visitor.");
 }

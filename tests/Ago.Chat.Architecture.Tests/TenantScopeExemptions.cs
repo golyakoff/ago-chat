@@ -34,6 +34,13 @@ internal static class TenantScopeExemptions
         // ---------------------------------------------------------------------------------------
         ["Ago.Chat.Application.UseCases.ConfirmAttachment.ConfirmAttachmentHandler.HandleAsVisitorAsync"] =
             "Visitor path. Gated by conversation.VisitorId == command.RequestedBy, from the signed visitor token.",
+        ["Ago.Chat.Application.UseCases.ConfirmPhoneVerification.ConfirmPhoneVerificationHandler.HandleAsVisitorAsync"] =
+            "`14-15`. Visitor path. Gated by conversation.VisitorId == command.RequestedBy, from the signed visitor "
+            + "token - the identical shape ConfirmAttachmentHandler's own entry above uses. The pending "
+            + "verification itself is then cross-checked against that same conversation's own VisitorId/SiteId "
+            + "(ConfirmPhoneVerificationHandler's own remarks on why this second check exists, unlike `14-12`'s "
+            + "inbound-message confirmation branch), so a caller cannot confirm a code issued to a different "
+            + "visitor's request even within the same site.",
         ["Ago.Chat.Application.UseCases.CreateAttachment.CreateAttachmentHandler.HandleAsVisitorAsync"] =
             "Visitor path. Gated by conversation.VisitorId == command.RequestedBy, from the signed visitor token.",
         ["Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl.GetAttachmentDownloadUrlHandler.HandleAsVisitorAsync"] =
@@ -42,6 +49,11 @@ internal static class TenantScopeExemptions
             "Visitor path. Gated by conversation.VisitorId == query.RequestedBy, from the signed visitor token.",
         ["Ago.Chat.Application.UseCases.GetConversationHistory.GetConversationHistoryHandler.HandleDeltaAsVisitorAsync"] =
             "Visitor path. Gated by conversation.VisitorId == query.RequestedBy, from the signed visitor token.",
+        ["Ago.Chat.Application.UseCases.InitiatePhoneVerification.InitiatePhoneVerificationHandler.HandleAsVisitorAsync"] =
+            "`14-15`. Visitor path. Gated by conversation.VisitorId == command.RequestedBy, from the signed visitor "
+            + "token - the identical shape CreateAttachmentHandler's own entry above uses. No operator-initiated "
+            + "twin exists for this item (InitiatePhoneVerificationHandler's own remarks on why), so there is "
+            + "nothing else on this entry point to gate.",
         ["Ago.Chat.Application.UseCases.SendMessage.SendVisitorMessageHandler.HandleAsync"] =
             "Visitor path. Conversation.AddVisitorMessage rejects an author who is not this conversation's visitor; "
             + "this handler's own pre-checks are rate limiting and body shape, not authorization.",

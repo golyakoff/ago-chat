@@ -68,6 +68,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ChannelMessageDeliveryConsumer>();
 
+// `14-15`: the outbound half of phone verification - see PhoneVerificationDeliveryConsumer's own
+// remarks for why this Worker consumer, not the initiating HTTP request, places the paid SMS/voice send.
+builder.Services
+    .AddOptions<PhoneVerificationDeliveryConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(PhoneVerificationDeliveryConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<PhoneVerificationDeliveryConsumer>();
+
 // `14-02`: the dev-only inbound mechanism (MaxLongPollingService's own remarks on why both this and
 // Ago.Chat.Api's webhook receiver exist). Ago.Chat.Worker, not Ago.Chat.Api, because this is
 // restart-tolerant background work with no request to answer - adr/0013's own failure-profile split,

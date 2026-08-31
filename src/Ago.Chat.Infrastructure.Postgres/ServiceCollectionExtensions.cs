@@ -45,6 +45,10 @@ public static class ServiceCollectionExtensions
         // IOperatorInviteCodeGenerator/IWebhookSecretGenerator already use.
         services.AddScoped<IPendingChannelLinkRequestRepository, PendingChannelLinkRequestRepository>();
         services.AddSingleton<IPendingChannelLinkCodeGenerator, PendingChannelLinkCodeGenerator>();
+        // `14-15`: the pending-phone-verification aggregate's own port - reuses
+        // IPendingChannelLinkCodeGenerator directly (InitiatePhoneVerificationHandler's own remarks on
+        // why), so no second code generator is registered here.
+        services.AddScoped<IPendingPhoneVerificationRepository, PendingPhoneVerificationRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         // `10-02`
         services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();

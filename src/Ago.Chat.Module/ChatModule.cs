@@ -93,6 +93,9 @@ using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
 using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
+using Ago.Chat.Application.UseCases.InitiatePhoneVerification;
+using Ago.Chat.Application.UseCases.ConfirmPhoneVerification;
+using Ago.Chat.Module.PhoneVerification;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Avito;
 using Ago.Chat.Infrastructure.MaxBot;
@@ -852,6 +855,29 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RecordVisitorContactDetailHandler>();
         services.AddScoped<ListVisitorContactDetailsHandler>();
         services.AddScoped<DeleteVisitorContactDetailHandler>();
+
+        // `14-15`/`adr/0079`: phone verification via a proactive SMS/voice code - see this item's own
+        // backlog file, "Why this cannot reuse 14-12's mechanism". Both handlers share one options
+        // group (`PhoneVerificationOptions`), the same `PendingChannelLinkRequestOptions` shape.
+        services
+            .AddOptions<PhoneVerificationOptions>()
+            .Bind(configuration.GetSection(PhoneVerificationOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<PhoneVerificationOptions>>().Value);
+        services
+            .AddOptions<PhoneVerificationRateLimitOptions>()
+            .Bind(configuration.GetSection(PhoneVerificationRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<PhoneVerificationRateLimitOptions>>().Value);
+        services.AddScoped<InitiatePhoneVerificationHandler>();
+        services.AddScoped<ConfirmPhoneVerificationHandler>();
+
+        // The resilience shape a real gateway client would be wrapped in - built and unit-tested
+        // (`PhoneVerificationResiliencePipeline`/`ResilientPhoneVerificationSender`'s own remarks), but
+        // not wired into this registration: no gateway account exists in this environment
+        // (`UnconfiguredPhoneVerificationSender`'s own remarks on why this registration, unlike
+        // ReplyDraft's own `if (configured)` branch, is unconditional).
+        services.AddScoped<IPhoneVerificationSender, UnconfiguredPhoneVerificationSender>();
 
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
         // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
