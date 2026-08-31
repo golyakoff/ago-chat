@@ -17,5 +17,11 @@ internal static class KnownModuleKeys
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
         "calendar",
+
+        // `19-03`: the second real module, and the reason this file exists at all rather than a
+        // one-element constant nobody would have bothered to make a set - see this backlog item's own
+        // report for the honest finding on whether guard 2 (ModuleKeyLiteralRule) actually catches an
+        // opaque, non-English module key the way guard 1 (the IL word-list scan) cannot.
+        "faq",
     };
 }

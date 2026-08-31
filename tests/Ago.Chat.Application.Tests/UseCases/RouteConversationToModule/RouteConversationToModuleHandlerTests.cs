@@ -64,6 +64,14 @@ public class RouteConversationToModuleHandlerTests
         new MessagePayload($$"""{"prompt":"{{prompt}}"}"""),
         options.Select(o => new MessageAction(o.Label, o.Value)).ToList());
 
+    /// <summary>`19-03`: a module's own low-confidence signal - <see cref="PrimitiveKinds.Escalate"/>,
+    /// no actions, `prompt` optional (a module may hand off with nothing more to say than "I don't
+    /// know").</summary>
+    private static ModuleStep EscalateStep(string? prompt = null) => new(
+        new MessageContentKind(PrimitiveKinds.Escalate),
+        prompt is null ? null : new MessagePayload($$"""{"prompt":"{{prompt}}"}"""),
+        []);
+
     // ------------------------------------------------------------------------------------------
     // Trigger match -> start task
     // ------------------------------------------------------------------------------------------
@@ -120,6 +128,45 @@ public class RouteConversationToModuleHandlerTests
         var reply = fixture.Conversation.Messages.Last();
         Assert.Equal(MessageAuthorKind.System, reply.AuthorKind);
         Assert.Null(reply.Content);
+    }
+
+    /// <summary>`19-03`'s own Done-when: "a visitor asking something the knowledge base does not cover
+    /// gets the low-confidence escape to an operator, proven by a test." The module signals this on its
+    /// very first answer - no active task ever exists to close, but the fresh one this call just
+    /// started must still end up closed, not left open waiting for a reply nobody will resolve.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleAnswersWithEscalateOnStart_ClosesTheTaskAndReportsEscalated()
+    {
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking is the shop open on Mars"), Now);
+        // The module deliberately (or by a bug) reports `complete: false` alongside `escalate` - decision
+        // 7's "cannot be suppressed by the module" is exactly the case this asserts against.
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", EscalateStep("I'm not sure about that one."), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.Escalated, result.Value);
+        Assert.Null(fixture.Conversation.ActiveModuleTask);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal(MessageAuthorKind.System, reply.AuthorKind);
+        Assert.Equal("I'm not sure about that one.", reply.Body.Value);
+    }
+
+    /// <summary>The fallback text is Chat's own generic apology, never the visitor's own trigger
+    /// message - showing a visitor their own last message back as "the reason" would read as a bug.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheEscalateStepCarriesNoPromptOfItsOwn_UsesTheGenericFallback_NotTheVisitorsOwnMessage()
+    {
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking is the shop open on Mars"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", EscalateStep(), true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("Mars", reply.Body.Value);
+        Assert.Equal("Let me get a team member to help with that.", reply.Body.Value);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -205,6 +252,24 @@ public class RouteConversationToModuleHandlerTests
 
         Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, result.Value);
         Assert.Null(fixture.Conversation.ActiveModuleTask);
+    }
+
+    /// <summary>`19-03`: the *reachable-but-unsure* mirror of the unreachable-mid-task case just below -
+    /// the module answers, but with the low-confidence signal instead of a further step, again with
+    /// `complete: false` to prove Chat does not trust the module's own flag for this one kind.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleAnswersWithEscalateMidTask_ClosesTheTask_AndReportsEscalated()
+    {
+        var fixture = CreateFixture(arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(EscalateStep("Not sure I can help with that."), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.Escalated, result.Value);
+        Assert.Null(fixture.Conversation.ActiveModuleTask);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal("Not sure I can help with that.", reply.Body.Value);
     }
 
     /// <summary>The escalation rule's "mid-task" half: the module goes unreachable while a task is
