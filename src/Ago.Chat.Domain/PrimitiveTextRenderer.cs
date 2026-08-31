@@ -58,8 +58,14 @@ public static class PrimitiveTextRenderer
             return sb.ToString();
         }
 
-        if (kind == PrimitiveKinds.Form)
+        if (kind == PrimitiveKinds.Form || kind == PrimitiveKinds.Escalate)
         {
+            // `19-03`: an escalate step asks nothing, so it renders exactly like `form`'s own prompt-only
+            // case - the difference between the two kinds is what the routing handler does with the task
+            // afterward (force-closed, `RouteConversationToModuleOutcome.Escalated`), never how this
+            // function renders it. `fallbackBody` is the caller's own concern too: for escalate specifically,
+            // callers should not pass the visitor's own last message as the fallback (see
+            // RouteConversationToModuleHandler's own remarks on why that default would be wrong here).
             return prompt;
         }
 

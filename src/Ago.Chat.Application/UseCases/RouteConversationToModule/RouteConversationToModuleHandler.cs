@@ -63,6 +63,14 @@ public sealed class RouteConversationToModuleHandler(
     private const string ModuleBecameUnreachableText =
         "Sorry, something went wrong on our end - a person will take over from here.";
 
+    /// <summary>`19-03`: the fallback <see cref="PrimitiveTextRenderer.Render"/> falls back to when a
+    /// module's own escalate step carries no <c>payload.prompt</c> of its own. Deliberately not the
+    /// visitor's own trigger/reply text (which is what every other kind's fallback is) - showing a
+    /// visitor their own last message back at them as the "reason" for handing off reads as a bug, not
+    /// as an apology.</summary>
+    private const string ModuleEscalatedFallbackText =
+        "Let me get a team member to help with that.";
+
     public async Task<Result<RouteConversationToModuleOutcome>> HandleAsync(
         RouteConversationToModule command, CancellationToken cancellationToken)
     {
@@ -133,18 +141,15 @@ public sealed class RouteConversationToModuleHandler(
             new ModuleTaskId(chatTaskId), key, startResult.ExternalTaskId, now,
             startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions);
 
-        if (startResult.Complete)
-        {
-            conversation.CloseModuleTask(now);
-        }
-
-        var body = PrimitiveTextRenderer.Render(
-            trigger.Body.Value, startResult.Step.Kind.Value, startResult.Step.Payload, startResult.Step.Actions);
-        var content = MessageContent.Create(startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions);
-
-        return await AddSystemMessageAndSaveAsync(
-            conversation, now, command, new MessageBody(body), content, RouteConversationToModuleOutcome.TaskStarted,
-            cancellationToken);
+        // A first step is always reported as `TaskStarted`, regardless of `startResult.Complete` - the
+        // enum's own doc comment ("a new ModuleTask is now the conversation's active one") describes the
+        // task's birth, not its length, and a single-round-trip module (`startResult.Complete == true`
+        // on the very first answer) is not a distinct case a caller needs to tell apart from a
+        // multi-step one. Escalation is the one exception: it is not "the task started", it is "the task
+        // started and immediately had to be handed off", which is why it still gets its own outcome.
+        return await FinishStepAsync(
+            conversation, trigger, startResult.Step, startResult.Complete, RouteConversationToModuleOutcome.TaskStarted,
+            now, command, cancellationToken);
     }
 
     private async Task<Result<RouteConversationToModuleOutcome>> ContinueActiveTaskAsync(
@@ -191,29 +196,55 @@ public sealed class RouteConversationToModuleHandler(
         if (replyResult.Step is { } step)
         {
             conversation.RecordModuleStep(step.Kind, step.Payload, step.Actions);
+            var nonEscalationOutcome = replyResult.Complete
+                ? RouteConversationToModuleOutcome.TaskCompleted
+                : RouteConversationToModuleOutcome.StepAdvanced;
+            return await FinishStepAsync(
+                conversation, trigger, step, replyResult.Complete, nonEscalationOutcome, now, command, cancellationToken);
         }
 
-        if (replyResult.Complete)
+        // No further step: the module's own "done" with nothing to add - unaffected by `19-03`, since
+        // an escalate step always carries a step (that is the whole signal); a module that wants to hand
+        // off with literally nothing to say still has to say so through a step, not through silence.
+        conversation.CloseModuleTask(now);
+        return await AddSystemMessageAndSaveAsync(
+            conversation, now, command, new MessageBody("Done - thank you."), content: null,
+            RouteConversationToModuleOutcome.TaskCompleted, cancellationToken);
+    }
+
+    /// <summary>
+    /// `19-03`: the one place both call paths (a task's first step and every step after it) decide
+    /// what a step means for the task's own lifecycle and which system message to add - pulled out once
+    /// <see cref="PrimitiveKinds.Escalate"/> gave the two call sites a second outcome to agree on
+    /// identically, rather than duplicating the branch in both.
+    ///
+    /// <para><b>Escalate force-closes regardless of <paramref name="moduleSaysComplete"/>.</b>
+    /// `adr/0065` decision 7's "an escape... cannot be suppressed by the module" was written for the
+    /// *unreachable* case, where Chat itself decides to close (the module never gets a vote). An escalate
+    /// step is the *reachable* mirror of that same principle: the module is answering, so it could in
+    /// principle send <c>escalate</c> with <c>complete: false</c> - by a bug or by a future module's
+    /// misuse - and ask to keep the task open anyway. Honouring that would let a module suppress its own
+    /// escalation, which is exactly what decision 7 forbids; forcing the close here regardless keeps the
+    /// guarantee unconditional rather than "unconditional unless the module says otherwise."</para>
+    /// </summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> FinishStepAsync(
+        Conversation conversation, Message trigger, ModuleStep step, bool moduleSaysComplete,
+        RouteConversationToModuleOutcome nonEscalationOutcome, DateTimeOffset now, RouteConversationToModule command,
+        CancellationToken cancellationToken)
+    {
+        var isEscalation = step.Kind.Value == PrimitiveKinds.Escalate;
+        if (moduleSaysComplete || isEscalation)
         {
             conversation.CloseModuleTask(now);
         }
 
-        MessageBody body;
-        MessageContent? content = null;
-        if (replyResult.Step is { } s)
-        {
-            body = new MessageBody(PrimitiveTextRenderer.Render(trigger.Body.Value, s.Kind.Value, s.Payload, s.Actions));
-            content = MessageContent.Create(s.Kind, s.Payload, s.Actions);
-        }
-        else
-        {
-            body = new MessageBody("Done - thank you.");
-        }
+        var fallback = isEscalation ? ModuleEscalatedFallbackText : trigger.Body.Value;
+        var body = PrimitiveTextRenderer.Render(fallback, step.Kind.Value, step.Payload, step.Actions);
+        var content = MessageContent.Create(step.Kind, step.Payload, step.Actions);
+        var outcome = isEscalation ? RouteConversationToModuleOutcome.Escalated : nonEscalationOutcome;
 
         return await AddSystemMessageAndSaveAsync(
-            conversation, now, command, body, content,
-            replyResult.Complete ? RouteConversationToModuleOutcome.TaskCompleted : RouteConversationToModuleOutcome.StepAdvanced,
-            cancellationToken);
+            conversation, now, command, new MessageBody(body), content, outcome, cancellationToken);
     }
 
     /// <summary>

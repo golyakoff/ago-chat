@@ -78,6 +78,28 @@ public class PrimitiveTextRendererTests
         Assert.Equal("The message's own body.", rendered);
     }
 
+    /// <summary>`19-03`: escalate renders like `form` - the prompt alone, no numbering, since there is
+    /// nothing to pick from.</summary>
+    [Fact]
+    public void Render_Escalate_ReturnsThePromptAloneWithNoNumbering()
+    {
+        var payload = new MessagePayload("""{"prompt":"I'm not sure about that one."}""");
+
+        var rendered = PrimitiveTextRenderer.Render("fallback", PrimitiveKinds.Escalate, payload, []);
+
+        Assert.Equal("I'm not sure about that one.", rendered);
+    }
+
+    /// <summary>A module may escalate with nothing more to say - the caller's own fallback text is
+    /// used, exactly like every other kind's no-payload case.</summary>
+    [Fact]
+    public void Render_EscalateWithNoPayload_FallsBackToTheCallersFallbackText()
+    {
+        var rendered = PrimitiveTextRenderer.Render("Let me get a team member to help with that.", PrimitiveKinds.Escalate, null, []);
+
+        Assert.Equal("Let me get a team member to help with that.", rendered);
+    }
+
     /// <summary>Forward compatibility: an unrecognised kind renders as plain prose rather than
     /// throwing - see the type's own remarks.</summary>
     [Fact]

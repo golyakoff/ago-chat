@@ -22,6 +22,7 @@ using Ago.Chat.Api.Realtime;
 using Ago.Chat.Api.ReplyDraft;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
+using Ago.Chat.Api.Modules;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Contracts;
@@ -398,6 +399,8 @@ app.MapWhatsAppChannelEndpoints();
 // console connect/disconnect flow to manage at all, unlike every channel above.
 app.MapEmailWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
+// `19-03`: the console-facing surface for `EnableModuleForSite`, left unbuilt by `20-07`.
+app.MapModuleEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();
 // `18-03`
