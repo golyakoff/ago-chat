@@ -2,6 +2,7 @@
 using Ago.Chat.Api.CannedResponses;
 using Ago.Chat.Api.ChannelIdentities;
 using Ago.Chat.Api.ContactDetails;
+using Ago.Chat.Api.PhoneVerification;
 using Ago.Chat.Api.Notes;
 using Ago.Chat.Api.Tags;
 using Ago.Chat.Api.Auth;
@@ -415,6 +416,10 @@ app.MapChannelIdentityEndpoints();
 // `14-14`/`adr/0079` section 6: unverified contact details - a separate, simpler surface beside
 // channel identities, never reaching IChannelIdentityRepository or DeliverChannelMessageHandler.
 app.MapContactDetailEndpoints();
+// `14-15`/`adr/0079`: phone verification via a proactive SMS/voice code - visitor-only (see
+// PhoneVerificationEndpoints' own remarks), the third caller of the dual-scheme EitherTokenKind policy
+// after AttachmentEndpoints.
+app.MapPhoneVerificationEndpoints();
 app.MapSitesEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();

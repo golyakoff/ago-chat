@@ -37,7 +37,11 @@ public static class ErrorExtensions
                 // not eligible (someone else's identity, or unlinked) must read exactly like naming one
                 // that never existed at all, ConversationErrors.ChannelIdentityNotEligibleForPreference's
                 // own remarks.
-                or "ChannelIdentity.NotEligibleForPreference" => StatusCodes.Status404NotFound,
+                or "ChannelIdentity.NotEligibleForPreference"
+                // `14-15`: the identical "wrong tenant/visitor reads like no such row" shape once more -
+                // a pending phone verification id from a different site or a different visitor is
+                // indistinguishable from one that never existed.
+                or "PhoneVerification.NotFound" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
@@ -74,7 +78,11 @@ public static class ErrorExtensions
                 // `14-14`: the same "caller's mistake to fix" shape as ConversationNote.Invalid/
                 // Tag.Invalid above - an empty/oversized contact detail value, or a kind string that
                 // does not parse to a real Domain.VisitorContactDetailKind member.
-                or "VisitorContactDetail.Invalid" or "VisitorContactDetail.InvalidKind" => StatusCodes.Status400BadRequest,
+                or "VisitorContactDetail.Invalid" or "VisitorContactDetail.InvalidKind"
+                // `14-15`: the caller's own mistake to fix - an unparsable phone number, or a code that
+                // did not match (ConversationErrors.PhoneVerificationWrongCode's own remarks on why the
+                // message never names a remaining-attempts count).
+                or "PhoneVerification.InvalidNumber" or "PhoneVerification.WrongCode" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -86,10 +94,19 @@ public static class ErrorExtensions
                 or "Conversation.TransferTargetAtCapacity" or "Conversation.TransferContended"
                 // `18-04`: a real conflict with existing data (a duplicate name), not a malformed
                 // request - ConversationErrors.TagAlreadyExists's own remarks.
-                or "Tag.AlreadyExists" => StatusCodes.Status409Conflict,
+                or "Tag.AlreadyExists"
+                // `14-15`: a genuine race between two concurrent confirmations of the same pending
+                // verification - ConversationErrors.PhoneVerificationAlreadyConsumed's own remarks.
+                or "PhoneVerification.AlreadyConsumed"
+                // `14-15`/`adr/0079` decision 3: the identical "refused, not merged" conflict for a
+                // phone number already verified under a different visitor - ConversationErrors.
+                // PhoneVerificationAlreadyLinkedToAnotherVisitor's own remarks.
+                or "PhoneVerification.AlreadyLinkedToAnotherVisitor" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
-            "OperatorInvite.Expired" => StatusCodes.Status410Gone,
+            // `14-15`: the identical shape for an expired verification code - ConversationErrors.
+            // PhoneVerificationExpired's own remarks.
+            "OperatorInvite.Expired" or "PhoneVerification.Expired" => StatusCodes.Status410Gone,
             // `13-01`'s own reasoned choice: `402 Payment Required`, not a generic `409` - the actual
             // remedy for a site at its seat limit is "upgrade", not "retry", which `402` signals
             // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own
@@ -97,7 +114,13 @@ public static class ErrorExtensions
             "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
             // `19-01`: its own distinct rate-limit code, same 429 group - ConversationErrors.ReplyDraftRateLimited's
             // own remarks.
+            // `14-15`: its own distinct rate-limit code, same 429 group - ConversationErrors.
+            // PhoneVerificationRateLimited's own remarks. LockedOut shares the group for the identical
+            // "a fresh attempt, not a permission, is the remedy" reasoning
+            // (ConversationErrors.PhoneVerificationLockedOut's own remarks), even though it carries no
+            // Retry-After.
             "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "ReplyDraft.RateLimited"
+                or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut"
                 => StatusCodes.Status429TooManyRequests,
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
             // own remarks. `19-01`: ReplyDraft.Unavailable is the identical shape - the LLM provider is

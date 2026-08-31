@@ -32,6 +32,10 @@ internal static class IdConverters
     public static readonly ValueConverter<VisitorContactDetailId, Guid> VisitorContactDetail = new(
         id => id.Value, value => new VisitorContactDetailId(value));
 
+    // `14-15`
+    public static readonly ValueConverter<PendingPhoneVerificationId, Guid> PendingPhoneVerification = new(
+        id => id.Value, value => new PendingPhoneVerificationId(value));
+
     // `20-07`
     public static readonly ValueConverter<EnabledModuleId, Guid> EnabledModule = new(id => id.Value, value => new EnabledModuleId(value));
     public static readonly ValueConverter<ModuleTaskId, Guid> ModuleTask = new(id => id.Value, value => new ModuleTaskId(value));

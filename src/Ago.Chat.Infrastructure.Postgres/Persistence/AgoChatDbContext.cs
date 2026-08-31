@@ -45,6 +45,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `14-09`: EmailThreadState's own table - see its own remarks for why it is a 1:1 extension of
     // Conversation rather than a column on it.
     public DbSet<EmailThreadState> EmailThreads => Set<EmailThreadState>();
+    // `14-15`: PendingPhoneVerification's own table - the sibling of PendingChannelLinkRequests above,
+    // for a channel that cannot supply that item's own inbound evidence.
+    public DbSet<PendingPhoneVerification> PendingPhoneVerifications => Set<PendingPhoneVerification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
