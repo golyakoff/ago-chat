@@ -58,7 +58,7 @@ public static class PrimitiveTextRenderer
             return sb.ToString();
         }
 
-        if (kind == PrimitiveKinds.Form || kind == PrimitiveKinds.Escalate)
+        if (kind == PrimitiveKinds.Form || kind == PrimitiveKinds.Escalate || kind == PrimitiveKinds.VerifiedPhoneForm)
         {
             // `19-03`: an escalate step asks nothing, so it renders exactly like `form`'s own prompt-only
             // case - the difference between the two kinds is what the routing handler does with the task
@@ -66,6 +66,9 @@ public static class PrimitiveTextRenderer
             // function renders it. `fallbackBody` is the caller's own concern too: for escalate specifically,
             // callers should not pass the visitor's own last message as the fallback (see
             // RouteConversationToModuleHandler's own remarks on why that default would be wrong here).
+            // `20-09`: a verified-phone-form step's wire payload is shaped exactly like a plain form's
+            // (prompt, field id, field label) - the only thing that differs is what the routing handler
+            // does with the reply, never how this function renders the prompt.
             return prompt;
         }
 

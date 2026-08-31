@@ -50,6 +50,7 @@ public sealed class RouteConversationToModuleHandler(
     IConversationRepository conversations,
     IEnabledModuleReadStore moduleReadStore,
     IModuleGateway gateway,
+    IChannelIdentityRepository channelIdentities,
     IOutboxWriter outbox,
     IInboxChecker inbox,
     IClock clock,
@@ -62,6 +63,14 @@ public sealed class RouteConversationToModuleHandler(
 
     private const string ModuleBecameUnreachableText =
         "Sorry, something went wrong on our end - a person will take over from here.";
+
+    /// <summary>`20-09`: what a visitor sees when a <see cref="PrimitiveKinds.VerifiedPhoneForm"/> reply
+    /// names a phone number this system has not yet proven they can be reached on. Deliberately
+    /// actionable rather than a generic refusal - see <see cref="ContinueActiveTaskAsync"/>'s own
+    /// remarks for exactly what "verify it" means operationally today (no widget popup exists yet;
+    /// `14-15`'s own HTTP endpoints are the real mechanism, driven directly until one does).</summary>
+    private const string PhoneVerificationRequiredText =
+        "Before I can book that, please verify this phone number - we'll send you a code by SMS or call.";
 
     /// <summary>`19-03`: the fallback <see cref="PrimitiveTextRenderer.Render"/> falls back to when a
     /// module's own escalate step carries no <c>payload.prompt</c> of its own. Deliberately not the
@@ -177,12 +186,66 @@ public sealed class RouteConversationToModuleHandler(
             return RouteConversationToModuleOutcome.ReplyNotResolved;
         }
 
+        // `20-09`: the structural gate. A reply against a step this vocabulary marks as needing a
+        // *verified* phone is checked against `14-15`'s own evidence - an active ChannelIdentity for
+        // this exact (site, Sms, phone) triple, owned by this conversation's own visitor - before the
+        // module is ever called, the identical "recognise the kind by value, act before forwarding"
+        // shape `PrimitiveKinds.Escalate`'s own handling already established (`adr/0081`). Calendar
+        // never sees this decision; it only ever sees its result (a timestamp, or no reply at all).
+        //
+        // A phone that does not even parse (not this vocabulary's concern - shape validation is
+        // Calendar's own `PhoneNumber`, the same "Chat never re-validates what a module already
+        // validates" split `ReplyToModuleTaskHandler`'s own remarks describe for a reply's id) is
+        // forwarded unchanged, exactly as an ordinary `form` reply always has been: Calendar's own
+        // `BookEventHandler` turns it into `booking.invalid_phone`, and the existing lost-race
+        // re-offer path handles it from there - no second validation invented here.
+        DateTimeOffset? phoneVerifiedAt = null;
+        if (active.LastStepKind!.Value.Value == PrimitiveKinds.VerifiedPhoneForm)
+        {
+            PhoneNumber? phone = null;
+            try
+            {
+                phone = new PhoneNumber(value);
+            }
+            catch (ArgumentException)
+            {
+                // Malformed - not this handler's concern, see the remarks above. Falls through with
+                // phoneVerifiedAt left null; Calendar rejects the shape itself.
+            }
+
+            if (phone is { } parsedPhone)
+            {
+                var address = new ExternalChannelAddress(parsedPhone.Value);
+                var identity = await channelIdentities.FindAsync(
+                    conversation.SiteId, ChannelKind.Sms, address, cancellationToken);
+
+                if (identity is null || identity.VisitorId != conversation.VisitorId)
+                {
+                    // Not verified for this visitor - never forwarded. The task stays open (the visitor
+                    // can retype the identical number once verification actually completes, through
+                    // `14-15`'s own endpoints - there is no widget popup wired to trigger them yet,
+                    // `20-09`'s own report names this as the deferred, frontend-side follow-up).
+                    return await AddSystemMessageAndSaveAsync(
+                        conversation, now, command, new MessageBody(PhoneVerificationRequiredText), content: null,
+                        RouteConversationToModuleOutcome.PhoneVerificationRequired, cancellationToken);
+                }
+
+                // Verified - and has been since `identity.FirstSeenAt` (`ChannelIdentity.Link`'s own
+                // instant, never touched again by `Touch`), which is the honest answer to "since when"
+                // rather than "now": Calendar snapshots this value verbatim (`20-09`'s own "cross-product
+                // data question" - Chat asserts, Calendar trusts, the identical `adr/0077` boundary
+                // `20-07`'s module-task endpoints already accept).
+                phoneVerifiedAt = identity.FirstSeenAt;
+            }
+        }
+
         SubmitModuleReplyResult replyResult;
         try
         {
             replyResult = await gateway.SubmitReplyAsync(
                 new EnabledModuleEndpoint(active.ModuleKey, enabledModule.EntryPoint),
-                new SubmitModuleReplyRequest(active.ExternalTaskId, active.Id.Value, active.LastStepKind!.Value, value),
+                new SubmitModuleReplyRequest(
+                    active.ExternalTaskId, active.Id.Value, active.LastStepKind!.Value, value, phoneVerifiedAt),
                 cancellationToken);
         }
         catch (ModuleUnreachableException)
