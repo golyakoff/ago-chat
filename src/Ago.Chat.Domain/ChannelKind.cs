@@ -35,4 +35,15 @@ public enum ChannelKind
     /// address this item chose already carries that distinction implicitly, without AGO Chat ever
     /// learning the word "listing".</summary>
     Avito,
+
+    /// <summary>`14-09`: a visitor's own inbound email to a site's dedicated support address - the
+    /// sixth concrete adapter, and the first one with no per-tenant provider account at all. Unlike
+    /// every channel above, there is no vendor whose name this member (or its own wire types) could
+    /// leak - <c>Ago.Chat.Infrastructure.Email</c> speaks RFC 5321/5322 directly, which is already the
+    /// channel-neutral protocol, not a provider's own dialect of it (<c>EmailChannelAdapter</c>'s own
+    /// remarks). <see cref="ExternalChannelAddress"/> holds the visitor's own email address for this
+    /// channel - the same "no per-channel canonicalisation in Domain" shape SMS's phone number already
+    /// uses, so no email-specific normalisation (e.g. lower-casing the domain part) happens above
+    /// Infrastructure either.</summary>
+    Email,
 }

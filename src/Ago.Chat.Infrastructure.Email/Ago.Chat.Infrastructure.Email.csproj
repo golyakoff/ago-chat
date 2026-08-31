@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `14-09`: a project of its own because email is a distinct external technology -
+       `naming-and-structure.md`'s "one project per external technology" rule, the same reason
+       Ago.Chat.Infrastructure.MaxBot/.Telegram/.Vk/.WhatsApp/.Avito each exist. Unlike every one of
+       those, this project's own protocol (SMTP/RFC 5321/5322) is not a vendor's dialect - there is no
+       vendor to guard against leaking above this boundary (ChannelKind.Email's own remarks), but the
+       project split is still correct: everything that knows this channel's own wire shape (its DTOs,
+       its MIME construction, its SMTP command sequence) lives here and nowhere above it, the identical
+       "one project per protocol" reasoning even where the protocol has no company's name on it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+</Project>

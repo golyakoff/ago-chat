@@ -42,6 +42,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `14-14`: VisitorContactDetail's own table - see its own remarks for why it is not folded into
     // ChannelIdentities.
     public DbSet<VisitorContactDetail> VisitorContactDetails => Set<VisitorContactDetail>();
+    // `14-09`: EmailThreadState's own table - see its own remarks for why it is a 1:1 extension of
+    // Conversation rather than a column on it.
+    public DbSet<EmailThreadState> EmailThreads => Set<EmailThreadState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

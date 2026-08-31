@@ -134,6 +134,10 @@ public static class ServiceCollectionExtensions
         // `14-14`: unverified contact details - reachable from exactly three handlers, the same
         // narrow-by-design shape INoteRepository's own remarks describe for itself.
         services.AddScoped<IVisitorContactDetailRepository, VisitorContactDetailRepository>();
+        // `14-09`: EmailThreadState's own store - EmailChannelAdapter (Infrastructure.Email) and
+        // EmailWebhookEndpoints (Ago.Chat.Api) both resolve it through this port, neither one referencing
+        // this project directly (IEmailThreadStore's own remarks on why).
+        services.AddScoped<IEmailThreadStore, EmailThreadStore>();
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

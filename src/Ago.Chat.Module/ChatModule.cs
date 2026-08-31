@@ -102,6 +102,7 @@ using Ago.Chat.Infrastructure.Postgres.Schema;
 using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Infrastructure.Vk;
 using Ago.Chat.Infrastructure.WhatsApp;
+using Ago.Chat.Infrastructure.Email;
 using Ago.Chat.Infrastructure.YandexGpt;
 using Ago.Chat.Infrastructure.YooKassa;
 using Ago.Chat.Module.Billing;
@@ -472,6 +473,25 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<WhatsAppChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<WhatsAppChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+
+        // `14-09`: Email's own SMTP client and adapter. Domain/WebhookSecret left unbound-and-unvalidated-
+        // on-start deliberately, the identical "a deployment that has not configured this channel at all
+        // must still start" shape WhatsAppBotApiOptions' own remarks state - EmailWebhookEndpoints refuses
+        // at the point of use instead (no EmailChannelEndpoints to also guard: EmailBotApiOptions' own
+        // remarks explain why this channel ships no console connect/disconnect endpoint at all).
+        services
+            .AddOptions<EmailBotApiOptions>()
+            .Bind(configuration.GetSection(EmailBotApiOptions.SectionName));
+        services.AddSingleton(sp => new EmailSmtpClient(sp.GetRequiredService<IOptions<EmailBotApiOptions>>().Value));
+        // Singleton, not scoped - the identical reasoning every channel adapter above gives: the
+        // singleton InboundChannelAdapterRegistry can only ever hold adapters safe to keep for the
+        // process lifetime. EmailChannelAdapter takes IOptions<EmailBotApiOptions> (not the plain value),
+        // matching AvitoChannelAdapter's own reasoning, even though nothing here reloads it live today -
+        // the same "no plain value snapshot" convention every other IOptions<T> registration on this page
+        // follows.
+        services.AddSingleton<EmailChannelAdapter>();
+        services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
+            sp.GetRequiredService<EmailChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
 
         // `20-07`/`adr/0065`: the module HTTP boundary - the same "registered everywhere, resolved
         // where it matters" shape as the channel adapters above. Unlike MAX/Telegram, HttpModuleGateway's
