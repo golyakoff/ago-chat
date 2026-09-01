@@ -88,7 +88,10 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         FOR VALUES IN ('{retentionClass.Value}') PARTITION BY RANGE (created_at);
                     """);
 
-                for (var i = 0; i < 3; i++)
+                // Three months behind as well as forward - see Stage2PartitionMessages's own remarks
+                // for why the look-back half is a stopgap with a known expiry (adr/0087 / `15-09`
+                // remove this whole grid), and what it was breaking.
+                for (var i = -3; i < 3; i++)
                 {
                     var from = monthStart.AddMonths(i);
                     var to = monthStart.AddMonths(i + 1);
