@@ -44,11 +44,28 @@ namespace Ago.Chat.Application.UseCases.DeliverChannelMessage;
 /// the shape this codebase avoids). A stale <see cref="Visitor.PreferredChannelIdentityId"/> is
 /// harmless: it is never trusted without this same <see cref="ChannelIdentity.Active"/> check, here or
 /// anywhere else.</para>
+///
+/// <para><b>`20-11`: a third, narrower resolution step now runs *ahead of* the preference above -
+/// this conversation's own active booking's own priority list, if one was set.</b> `20-11`'s own
+/// "Decided" section: "this item's own list, if the visitor added one for this booking; otherwise
+/// `14-13`'s own preference; otherwise today's existing most-recent-channel fallback, unchanged." Scoped
+/// to <see cref="Conversation.ActiveModuleTask"/> deliberately, not to "any message this handler is ever
+/// asked to deliver" - Chat's own <see cref="Domain.ModuleKey"/> is intentionally opaque (no
+/// <c>"calendar"</c> literal may appear anywhere in <c>Ago.Chat.*</c>, an arch-tested rule
+/// <see cref="Domain.ModuleKey"/>'s own remarks state), so this handler cannot and does not ask "is this
+/// module a booking module" - it asks only "does the conversation's current module task have a priority
+/// list recorded for it", which is exactly the structural signal `20-11`'s own storage keys on. In
+/// practice this list is only ever populated for the one module (`20-07`'s booking flow) whose own
+/// console/chat surface offers a way to set it, but nothing in this handler needs to know that.
+/// <see cref="ResolveModuleTaskChannelPriorityIdentityAsync"/> tries each entry in the visitor's own priority order
+/// and skips a since-unlinked one rather than abandoning the whole list at the first miss, so a lower-
+/// ranked but still-verified entry can still win over `14-13`'s preference.</para>
 /// </summary>
 public sealed class DeliverChannelMessageHandler(
     IConversationRepository conversations,
     IChannelIdentityRepository identities,
     IVisitorRepository visitors,
+    IModuleTaskChannelPreferenceRepository moduleTaskPreferences,
     IInboundChannelAdapterRegistry adapters)
 {
     public async Task<DeliverChannelMessageOutcome> HandleAsync(
@@ -70,7 +87,8 @@ public sealed class DeliverChannelMessageHandler(
             return DeliverChannelMessageOutcome.NoLinkedChannel;
         }
 
-        var identity = await ResolvePreferredIdentityAsync(conversation.VisitorId, cancellationToken)
+        var identity = await ResolveModuleTaskChannelPriorityIdentityAsync(conversation, cancellationToken)
+            ?? await ResolvePreferredIdentityAsync(conversation.VisitorId, cancellationToken)
             ?? await identities.FindMostRecentForVisitorAsync(conversation.VisitorId, cancellationToken);
         if (identity is null)
         {
@@ -127,5 +145,35 @@ public sealed class DeliverChannelMessageHandler(
         // rather than trusting a foreign-key value blindly, the same "the row itself disagrees with the
         // wire field" defensive posture this handler's own loop guard already uses further down.
         return preferred is { Active: true } && preferred.VisitorId == visitorId ? preferred : null;
+    }
+
+    /// <summary>`20-11`: <see langword="null"/> when there is no active module task, no priority list was
+    /// ever set for it, or every entry in it has since been unlinked - so the caller's own <c>??</c>
+    /// falls through to `14-13`'s own preference next. Walks the list in the visitor's own priority order
+    /// (<see cref="ModuleTaskChannelPreference.Priority"/> ascending) and returns the first entry whose
+    /// <see cref="ChannelIdentity"/> is still <see cref="ChannelIdentity.Active"/> and still belongs to
+    /// this same visitor - a since-unlinked top entry does not abandon the whole list, it just yields to
+    /// the next-ranked one, honouring the "priority order" the visitor actually set rather than the
+    /// coarser "list present or not" this handler could have settled for instead.</summary>
+    private async Task<ChannelIdentity?> ResolveModuleTaskChannelPriorityIdentityAsync(
+        Conversation conversation, CancellationToken cancellationToken)
+    {
+        var activeTask = conversation.ActiveModuleTask;
+        if (activeTask is null)
+        {
+            return null;
+        }
+
+        var entries = await moduleTaskPreferences.ListForModuleTaskAsync(activeTask.Id, cancellationToken);
+        foreach (var entry in entries)
+        {
+            var candidate = await identities.GetByIdAsync(entry.ChannelIdentityId, cancellationToken);
+            if (candidate is { Active: true } && candidate.VisitorId == conversation.VisitorId)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 }

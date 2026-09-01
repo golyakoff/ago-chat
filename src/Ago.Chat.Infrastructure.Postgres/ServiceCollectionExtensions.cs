@@ -49,6 +49,8 @@ public static class ServiceCollectionExtensions
         // IPendingChannelLinkCodeGenerator directly (InitiatePhoneVerificationHandler's own remarks on
         // why), so no second code generator is registered here.
         services.AddScoped<IPendingPhoneVerificationRepository, PendingPhoneVerificationRepository>();
+        // `20-11`: the per-booking priority list's own port.
+        services.AddScoped<IModuleTaskChannelPreferenceRepository, ModuleTaskChannelPreferenceRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         // `10-02`
         services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();

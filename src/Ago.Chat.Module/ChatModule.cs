@@ -50,6 +50,7 @@ using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
+using Ago.Chat.Application.UseCases.ListModuleTaskChannelPriorityList;
 using Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
@@ -80,6 +81,7 @@ using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
+using Ago.Chat.Application.UseCases.SetModuleTaskChannelPriorityList;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.SetPreferredChannelIdentity;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -305,6 +307,11 @@ public sealed class ChatModule : IProductModule
         // `14-13`/`adr/0079` decision 5: the preferred-reply-channel write path - see the handler's own
         // remarks for why it is gated on ConversationSend rather than a channel-management permission.
         services.AddScoped<SetPreferredChannelIdentityHandler>();
+        // `20-11`: the per-booking priority list - the deferred second half of `20-09`'s own primary-
+        // phone gate. Same permission/registration shape as SetPreferredChannelIdentityHandler right
+        // above, one level narrower (per booking, not per visitor).
+        services.AddScoped<SetModuleTaskChannelPriorityListHandler>();
+        services.AddScoped<ListModuleTaskChannelPriorityListHandler>();
 
         // `14-02`/`adr/0069`: bound here, with WebhookSecretCipherOptions right above it - the same
         // fail-fast-on-a-missing-key discipline, a different named section and a different key.

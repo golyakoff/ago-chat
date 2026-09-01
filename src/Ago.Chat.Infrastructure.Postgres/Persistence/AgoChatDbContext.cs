@@ -48,6 +48,10 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `14-15`: PendingPhoneVerification's own table - the sibling of PendingChannelLinkRequests above,
     // for a channel that cannot supply that item's own inbound evidence.
     public DbSet<PendingPhoneVerification> PendingPhoneVerifications => Set<PendingPhoneVerification>();
+    // `20-11`: the per-booking priority list's own table - a real DbSet (unlike ModuleTasks above) since
+    // ModuleTaskChannelPreferenceRepository queries it directly, keyed on ModuleTaskId by value rather than
+    // reached through Conversation's own encapsulated navigation.
+    public DbSet<ModuleTaskChannelPreference> ModuleTaskChannelPreferences => Set<ModuleTaskChannelPreference>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
