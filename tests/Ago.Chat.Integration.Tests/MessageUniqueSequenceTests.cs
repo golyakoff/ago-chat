@@ -10,13 +10,11 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public class MessageUniqueSequenceTests(PostgresFixture fixture)
 {
-    // Real time, not a fixed date: 2-06 partitions messages by created_at, and the migration only
-    // ever creates the current month's partition plus the next two (whenever it runs) - a fixed
-    // past date would fall outside every partition that exists and fail with "no partition found
-    // for row" instead of the unique-violation this test means to prove. Truncated to whole
-    // seconds so it round-trips through Postgres's timestamptz (microsecond precision) unchanged,
-    // same as the literal it replaces.
-    private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
+    // `15-09`/`adr/0087`: any timestamp works now - `messages` is `PARTITION BY HASH (site_id)`, not
+    // `RANGE (created_at)`, so there is no "no partition found for row" failure mode left to dodge by
+    // using real time instead of a fixed date. Kept as a fixed instant anyway (simpler, deterministic),
+    // truncated to whole seconds so it round-trips through Postgres's timestamptz unchanged.
+    private static readonly DateTimeOffset Now = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public async Task InsertingTwoMessagesWithTheSameConversationAndSequence_TheSecondIsRejected()
@@ -36,12 +34,13 @@ public class MessageUniqueSequenceTests(PostgresFixture fixture)
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
 
-        // `13-06`: retention_class joined created_at in the widened unique index - the same literal
-        // class both inserts so this still collides on all four columns, proving the constraint
-        // itself rather than a class mismatch.
+        // `15-09`/`adr/0087`: the widened unique index is now (conversation_id, sequence, site_id) -
+        // created_at/retention_class dropped out of the partition key, site_id took their place. The
+        // same literal site_id on both inserts is what makes this still collide, proving the
+        // constraint itself rather than a tenant mismatch.
         const string sql = """
-            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class)
-            values (@id, @conversationId, 1, 'Visitor', @authorId, 'dup', @now, 'free')
+            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
+            values (@id, @conversationId, 1, 'Visitor', @authorId, 'dup', @now, 'free', @siteId)
             """;
 
         await using (var first = new NpgsqlCommand(sql, connection))
@@ -50,6 +49,7 @@ public class MessageUniqueSequenceTests(PostgresFixture fixture)
             first.Parameters.AddWithValue("conversationId", conversationId.Value);
             first.Parameters.AddWithValue("authorId", visitorId.Value);
             first.Parameters.AddWithValue("now", Now);
+            first.Parameters.AddWithValue("siteId", siteId.Value);
             await first.ExecuteNonQueryAsync();
         }
 
@@ -58,6 +58,7 @@ public class MessageUniqueSequenceTests(PostgresFixture fixture)
         second.Parameters.AddWithValue("conversationId", conversationId.Value);
         second.Parameters.AddWithValue("authorId", visitorId.Value);
         second.Parameters.AddWithValue("now", Now);
+        second.Parameters.AddWithValue("siteId", siteId.Value);
 
         var exception = await Assert.ThrowsAsync<PostgresException>(() => second.ExecuteNonQueryAsync());
         Assert.Equal("23505", exception.SqlState); // unique_violation

@@ -1,4 +1,6 @@
-﻿namespace Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Domain;
+
+namespace Ago.Chat.Application.Abstractions;
 
 /// <summary>
 /// `15-04`'s stand-in for <see cref="IMessageArchiveGate"/>, kept after `13-06` shipped the real,
@@ -12,6 +14,6 @@
 public sealed class AlwaysConfirmedMessageArchiveGate : IMessageArchiveGate
 {
     public Task<bool> IsArchivedAsync(
-        string partitionName, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken) =>
+        SiteId siteId, RetentionClass retentionClass, DateOnly periodStart, CancellationToken cancellationToken) =>
         Task.FromResult(true);
 }

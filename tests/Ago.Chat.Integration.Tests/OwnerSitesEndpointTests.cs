@@ -252,40 +252,29 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         // something to exclude. The older one needs its own monthly partition to exist first
         // (`2-06`): nothing creates past partitions, since production never writes into one.
         var old = now.AddDays(-120);
-        await EnsurePartitionAsync(old);
-        await InsertMessageAsync(conversationIds[0], visitorId, sequence: 1, createdAt: now.AddDays(-1));
-        await InsertMessageAsync(conversationIds[0], visitorId, sequence: 2, createdAt: old);
-    }
-
-    // `13-06`: messages is now PARTITION BY LIST (retention_class) then RANGE (created_at) -
-    // InsertMessageAsync below stamps 'free' explicitly, so every leaf this helper creates hangs off
-    // the `free` class partition.
-    private async Task EnsurePartitionAsync(DateTimeOffset at)
-    {
-        var from = new DateTimeOffset(at.Year, at.Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var to = from.AddMonths(1);
-        var partitionName = MessagePartitionNames.ForMonth(RetentionClass.Free, from);
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
-        await using var command = new Npgsql.NpgsqlCommand($"""
-            CREATE TABLE IF NOT EXISTS {partitionName} PARTITION OF {MessagePartitionNames.ForClass(RetentionClass.Free)}
-                FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
-            """, connection);
-        await command.ExecuteNonQueryAsync();
+        // `15-09`/`adr/0087`: no partition to create ahead of the insert any more - `messages` is
+        // `PARTITION BY HASH (site_id)`, 64 fixed buckets that already exist for every site, so a
+        // message dated 120 days in the past inserts exactly as easily as one dated yesterday. This is
+        // the structural fix this file's own comment above used to work around by creating a partition
+        // first; `MessagePartitioningTests` has the dedicated proof.
+        await InsertMessageAsync(siteId, conversationIds[0], visitorId, sequence: 1, createdAt: now.AddDays(-1));
+        await InsertMessageAsync(siteId, conversationIds[0], visitorId, sequence: 2, createdAt: old);
     }
 
     private async Task InsertMessageAsync(
-        ConversationId conversationId, VisitorId visitorId, int sequence, DateTimeOffset createdAt)
+        SiteId siteId, ConversationId conversationId, VisitorId visitorId, int sequence, DateTimeOffset createdAt)
     {
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new Npgsql.NpgsqlCommand("""
-            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class)
-            values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free')
+            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
+            values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free', @siteId)
             """, connection);
         command.Parameters.AddWithValue("id", Guid.NewGuid());
         command.Parameters.AddWithValue("conversationId", conversationId.Value);
         command.Parameters.AddWithValue("sequence", sequence);
         command.Parameters.AddWithValue("authorId", visitorId.Value);
         command.Parameters.AddWithValue("createdAt", createdAt);
+        command.Parameters.AddWithValue("siteId", siteId.Value);
         await command.ExecuteNonQueryAsync();
     }
 

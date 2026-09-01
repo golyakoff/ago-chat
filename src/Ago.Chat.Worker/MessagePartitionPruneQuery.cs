@@ -3,84 +3,89 @@ using Npgsql;
 
 namespace Ago.Chat.Worker;
 
-/// <summary>One <c>messages</c> leaf partition, as reported by Postgres's own catalog rather than
-/// computed from a clock - `MessagePartitionPruneJob` must only ever act on a partition that genuinely
-/// exists, never on a name it merely expects to.</summary>
-public sealed record MessagePartitionInfo(string Name, RetentionClass RetentionClass, DateOnly PeriodStart, DateOnly PeriodEnd);
+/// <summary>One (site, retention class, month) slice of `messages` whose rows are past the retention
+/// horizon - the unit `MessagePartitionPruneJob`/`MessageArchiveJob` now both work in, replacing the
+/// whole-partition unit the pre-`15-09` scheme used. <see cref="BucketName"/> is the leaf partition this
+/// slice's rows happen to live in (kept only so <see cref="MessagePartitionPruneQuery.DeleteMessageBatchAsync"/>'s
+/// own bounded loop reads/writes against the same connection efficiently within one bucket - it plays no
+/// role in identifying the slice, which is fully named by the other four fields).</summary>
+public sealed record ExpiredMessageSlice(
+    string BucketName, Guid SiteId, RetentionClass RetentionClass, DateOnly PeriodStart, DateOnly PeriodEnd);
 
 /// <summary>
-/// `15-04`: the read/drop half of partition pruning. Reads from <c>pg_partition_tree</c> - Postgres's
-/// own recursive view of a partitioned table's whole subtree (available since Postgres 12; this
-/// codebase runs 17) - rather than reconstructing partition names from a clock the way
-/// <see cref="PartitionMaintenanceJob"/> does for *creating* them; a job that decides what to drop
-/// should look at what actually exists, not what it thinks should exist.
+/// `15-04`'s own discovery/removal query, reworked for `15-09`/`adr/0087`: `messages` no longer has a
+/// physical partition per (retention class, month), so there is nothing left to enumerate via
+/// `pg_partition_tree` and nothing left to `DROP`. The removal unit is now a slice of rows identified by
+/// value - `(site_id, retention_class, month)` - discovered by querying, not by reading Postgres's
+/// catalog, and removed by a bounded `DELETE ... WHERE`.
 ///
-/// <para><b>`13-06`/`adr/0031`: <c>pg_inherits</c> directly on <c>messages</c> stopped being the right
-/// read the day this table grew a second partition level.</b> Verified against a real Postgres 17
-/// while building this item: <c>SELECT ... FROM pg_inherits WHERE inhparent = 'messages'::regclass</c>
-/// - this class's own query before this change - now returns only the three *class-level* partitions
-/// (<c>messages_free</c>, <c>messages_starter</c>, <c>messages_growth</c>), never the monthly leaves
-/// underneath them; every caller of this class (this job, <c>MessageSearchIndexJob</c>,
-/// <c>MessageSiteIdBackfillJob</c>) would have silently stopped seeing any partition to act on at all,
-/// failing closed (nothing dropped, nothing indexed, nothing backfilled) rather than loudly, which is
-/// exactly the kind of regression that hides until someone notices the disk stopped shrinking.
-/// <c>pg_partition_tree('messages')</c> returns the *whole* subtree regardless of depth, each row
-/// carrying its own <c>isleaf</c> flag - filtering on that instead of a fixed inheritance depth is what
-/// makes this correct at two levels today and would still be correct at three if a future item ever
-/// added one.</para>
+/// <para><b>Bucket iteration is a fixed, in-memory list now, not a catalog read.</b>
+/// <see cref="MessagePartitionNames.AllBucketNames"/> - 64 names, known at compile time - replaces the
+/// live `pg_partition_tree` read this class used before `15-09`: the bucket list can no longer change
+/// (`adr/0087`'s own "64, forever" decision), so there is nothing dynamic left to ask Postgres
+/// about.</para>
+///
+/// <para><b>Discovery is per-bucket, deliberately bounded the same way the old per-partition iteration
+/// was</b> - <see cref="ListExpiredSlicesAsync"/> scans one of the 64 buckets at a time rather than the
+/// whole `messages` table in one query, so no single statement's working set is larger than 1/64th of
+/// the table. Removal (<see cref="DeleteMessageBatchAsync"/>) and the attachment lookup that precedes it
+/// (<see cref="ListReferencedAttachmentIdsAsync"/>) address the *parent* `messages` table with a full
+/// `(site_id, retention_class, created_at)` predicate instead of the named bucket, deliberately: once a
+/// slice's exact `site_id` is known, Postgres prunes to the one bucket that predicate can possibly match
+/// on its own, so there is no need to interpolate a bucket name into either statement at all - the
+/// pruning this whole item exists to buy is what makes that safe and correct.</para>
 /// </summary>
 public static class MessagePartitionPruneQuery
 {
-    public static async Task<IReadOnlyList<MessagePartitionInfo>> ListPartitionsAsync(
-        NpgsqlConnection connection, CancellationToken cancellationToken)
+    /// <summary>Every distinct (site, retention class, month) combination this one bucket holds whose
+    /// rows are entirely before <paramref name="cutoff"/> - `MessagePartitionPruneJob`'s and
+    /// `MessageArchiveJob`'s shared discovery step. `date_trunc('month', ...)` matches the calendar-month
+    /// grouping the pre-`15-09` scheme's own leaf partitions used, so an archive object's own "one period
+    /// = one calendar month" meaning is unchanged.</summary>
+    public static async Task<IReadOnlyList<ExpiredMessageSlice>> ListExpiredSlicesAsync(
+        NpgsqlConnection connection, string bucketName, DateOnly cutoff, CancellationToken cancellationToken)
     {
-        const string sql = """
-            SELECT c.relname AS name
-            FROM pg_partition_tree('messages'::regclass) pt
-            JOIN pg_class c ON c.oid = pt.relid
-            WHERE pt.isleaf
-            ORDER BY name
+        var sql = $"""
+            select site_id, retention_class, date_trunc('month', created_at)::date as period_start
+            from {bucketName}
+            where created_at < @cutoff
+            group by site_id, retention_class, date_trunc('month', created_at)
+            order by period_start
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("cutoff", cutoff.ToDateTime(TimeOnly.MinValue));
 
-        var partitions = new List<MessagePartitionInfo>();
+        var slices = new List<ExpiredMessageSlice>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var name = reader.GetString(0);
-            if (!MessagePartitionNames.TryParse(name, out var retentionClass, out var periodStart))
-            {
-                // Not one of this scheme's own monthly leaves - left alone rather than guessed at.
-                continue;
-            }
-
-            partitions.Add(new MessagePartitionInfo(name, retentionClass, periodStart, periodStart.AddMonths(1)));
+            var siteId = reader.GetGuid(0);
+            var retentionClass = new RetentionClass(reader.GetString(1));
+            var periodStart = reader.GetFieldValue<DateOnly>(2);
+            slices.Add(new ExpiredMessageSlice(bucketName, siteId, retentionClass, periodStart, periodStart.AddMonths(1)));
         }
 
-        return partitions;
+        return slices;
     }
 
-    /// <summary>`13-06`: every distinct <c>attachment_id</c> a leaf partition's own rows reference,
-    /// read before the partition is dropped - <c>MessagePartitionPruneJob</c>'s own source of truth for
-    /// exactly which <c>attachments</c> rows belong to the messages about to disappear ("attachments
-    /// expire with the messages they belong to", `adr/0031`'s Decision 4). Deliberately *not* a
-    /// site+date-range query against the separate, unpartitioned `attachments` table: a site that
-    /// changed tier mid-month can have two different retention classes' messages sharing the same
-    /// calendar month, and a date-range predicate alone cannot tell which attachments belong to the
-    /// partition actually being dropped versus a sibling class's partition that has not been archived
-    /// yet - reading the exact ids straight off this partition's own rows cannot make that
-    /// mistake.</summary>
+    /// <summary>Every distinct `attachment_id` a slice's own rows reference, read before any row in it
+    /// is deleted - `MessagePartitionPruneJob`'s own source of truth for exactly which `attachments`
+    /// rows belong to the messages about to disappear ("attachments expire with the messages they
+    /// belong to", `adr/0031`'s Decision 4). Queries the parent `messages` table - see this class's own
+    /// remarks for why that prunes to one bucket without needing a bucket name.</summary>
     public static async Task<IReadOnlyList<Guid>> ListReferencedAttachmentIdsAsync(
-        NpgsqlConnection connection, string partitionName, CancellationToken cancellationToken)
+        NpgsqlConnection connection, ExpiredMessageSlice slice, CancellationToken cancellationToken)
     {
-        if (!MessagePartitionNames.TryParse(partitionName, out _, out _))
-        {
-            throw new ArgumentException($"'{partitionName}' is not a recognised messages partition name.", nameof(partitionName));
-        }
-
-        var sql = $"SELECT DISTINCT attachment_id FROM {partitionName} WHERE attachment_id IS NOT NULL";
+        const string sql = """
+            select distinct attachment_id
+            from messages
+            where site_id = @siteId and retention_class = @retentionClass
+              and created_at >= @periodStart and created_at < @periodEnd
+              and attachment_id is not null
+            """;
         await using var command = new NpgsqlCommand(sql, connection);
+        AddSliceParameters(command, slice);
 
         var ids = new List<Guid>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -92,23 +97,37 @@ public static class MessagePartitionPruneQuery
         return ids;
     }
 
-    /// <summary>Idempotent by construction (<c>IF EXISTS</c>) - the same reason
-    /// <see cref="PartitionMaintenanceJob"/>'s own <c>CREATE TABLE IF NOT EXISTS</c> is, for a second
-    /// <c>Worker</c> replica racing this one on the same partition. <paramref name="partitionName"/>
-    /// must already match <see cref="MessagePartitionNames.TryParse"/> - callers only ever pass a name
-    /// this class itself returned from <see cref="ListPartitionsAsync"/>, never a caller-supplied
-    /// string, but the assert stays as the same defense-in-depth <see cref="PartitionMaintenanceJob"/>
-    /// applies to its own interpolated identifiers.</summary>
-    public static async Task DropPartitionAsync(
-        NpgsqlConnection connection, string partitionName, CancellationToken cancellationToken)
+    /// <summary>One bounded batch of a slice's own removal - `FOR UPDATE SKIP LOCKED`, the same shape
+    /// `ConversationErasureQuery.DeleteMessageBatchAsync` already establishes for a per-conversation
+    /// delete, applied here to a per-(site, class, month) one. `MessagePartitionPruneJob` loops this
+    /// until a call returns fewer rows than <paramref name="batchSize"/>, `MessageSiteIdBackfillJob`'s
+    /// own "drain one unit completely before moving to the next" shape.</summary>
+    public static async Task<int> DeleteMessageBatchAsync(
+        NpgsqlConnection connection, ExpiredMessageSlice slice, int batchSize, CancellationToken cancellationToken)
     {
-        if (!MessagePartitionNames.TryParse(partitionName, out _, out _))
-        {
-            throw new ArgumentException($"'{partitionName}' is not a recognised messages partition name.", nameof(partitionName));
-        }
-
-        var sql = $"DROP TABLE IF EXISTS {partitionName};";
+        const string sql = """
+            delete from messages
+            where site_id = @siteId
+              and id in (
+                select id from messages
+                where site_id = @siteId and retention_class = @retentionClass
+                  and created_at >= @periodStart and created_at < @periodEnd
+                limit @batchSize
+                for update skip locked
+            )
+            """;
         await using var command = new NpgsqlCommand(sql, connection);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        AddSliceParameters(command, slice);
+        command.Parameters.AddWithValue("batchSize", batchSize);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void AddSliceParameters(NpgsqlCommand command, ExpiredMessageSlice slice)
+    {
+        command.Parameters.AddWithValue("siteId", slice.SiteId);
+        command.Parameters.AddWithValue("retentionClass", slice.RetentionClass.Value);
+        command.Parameters.AddWithValue("periodStart", slice.PeriodStart.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("periodEnd", slice.PeriodEnd.ToDateTime(TimeOnly.MinValue));
     }
 }

@@ -19,7 +19,7 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         (_taggedBy.TryGetValue(tagId, out var set) ? set : _taggedBy[tagId] = []).Add(conversationId);
 
     public Task<ConversationHistoryPage> GetHistoryAsync(
-        ConversationId conversationId, int? beforeSequence, int pageSize, CancellationToken cancellationToken)
+        ConversationId conversationId, SiteId siteId, int? beforeSequence, int pageSize, CancellationToken cancellationToken)
     {
         var conversation = _bySource[conversationId];
         var items = conversation.Messages
@@ -34,7 +34,7 @@ public sealed class FakeConversationReadStore : IConversationReadStore
     }
 
     public Task<IReadOnlyList<MessageHistoryItem>> GetDeltaAsync(
-        ConversationId conversationId, int afterSequence, CancellationToken cancellationToken)
+        ConversationId conversationId, SiteId siteId, int afterSequence, CancellationToken cancellationToken)
     {
         var conversation = _bySource[conversationId];
         IReadOnlyList<MessageHistoryItem> items = conversation.Messages

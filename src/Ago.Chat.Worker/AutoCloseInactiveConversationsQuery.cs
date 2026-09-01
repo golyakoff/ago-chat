@@ -14,11 +14,15 @@ namespace Ago.Chat.Worker;
 /// a reload-and-retry on a genuine `xmin` conflict), logged and left for next cycle
 /// (`AutoCloseInactiveConversationsJob`'s own remarks), never a corrupted close.
 ///
-/// <para><b>Both predicates are bounded by <paramref name="cutoff"/>, deliberately.</b>
-/// `data-model.md`'s own partitioning note: `messages` is `PARTITION BY RANGE (created_at)`, so a query
-/// with no `created_at` predicate reads every partition that has ever existed. `m.created_at >=
-/// @cutoff` is what lets Postgres prune to the partitions the window actually covers - the same reason
-/// `12-02`'s 30-day read bounds itself the same way. `c.created_at < @cutoff` is not just the
+/// <para><b>Both predicates are bounded by <paramref name="cutoff"/>, deliberately - though what
+/// `m.created_at >= @cutoff` buys changed under `15-09`/`adr/0087`.</b> Before this item, `messages` was
+/// `PARTITION BY RANGE (created_at)`, so this predicate was what let Postgres prune to the partitions
+/// the window actually covered. `messages` is now `PARTITION BY HASH (site_id)` - `created_at` carries
+/// no pruning power any more, and it is `m.site_id = c.site_id` (this class's own remarks just below)
+/// that prunes each per-row subquery execution to one bucket instead. `m.created_at >= @cutoff` is still
+/// worth keeping regardless: it is what makes this a bounded, recent-window scan within that one already-
+/// pruned bucket rather than a scan of the conversation's entire history, the same ordinary index-scan
+/// cost reasoning `12-02`'s own 30-day read bounds itself with. `c.created_at < @cutoff` is not just the
 /// zero-messages fallback (a conversation assigned but never messaged, however rare) - it is also what
 /// keeps a conversation created seconds ago, with no messages yet, from ever being a false positive:
 /// without it, "no message at or after cutoff" would be trivially true for a conversation that simply
@@ -42,6 +46,12 @@ namespace Ago.Chat.Worker;
 /// </summary>
 public static class AutoCloseInactiveConversationsQuery
 {
+    // `15-09`/`adr/0087`: each `NOT EXISTS` subquery's own `m.site_id = c.site_id` needs no new bind
+    // parameter or query-level site scope - this whole sweep is deliberately cross-tenant (candidates
+    // come from every site at once, this class's own remarks explain why there is no single site_id to
+    // filter on up front), but `c.site_id` is already selected on the correlated outer row, so each
+    // per-row execution of the subquery still prunes to exactly one of the 64 messages buckets instead
+    // of touching all of them for every candidate conversation checked.
     private const string WidgetSql = """
         SELECT c.id
         FROM conversations c
@@ -50,7 +60,7 @@ public static class AutoCloseInactiveConversationsQuery
           AND NOT EXISTS (SELECT 1 FROM channel_identities ci WHERE ci.visitor_id = c.visitor_id)
           AND NOT EXISTS (
               SELECT 1 FROM messages m
-              WHERE m.conversation_id = c.id AND m.created_at >= @cutoff
+              WHERE m.conversation_id = c.id AND m.site_id = c.site_id AND m.created_at >= @cutoff
           )
         ORDER BY c.created_at
         LIMIT @batchSize
@@ -67,7 +77,7 @@ public static class AutoCloseInactiveConversationsQuery
           )
           AND NOT EXISTS (
               SELECT 1 FROM messages m
-              WHERE m.conversation_id = c.id AND m.created_at >= @cutoff
+              WHERE m.conversation_id = c.id AND m.site_id = c.site_id AND m.created_at >= @cutoff
           )
         ORDER BY c.created_at
         LIMIT @batchSize

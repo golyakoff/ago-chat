@@ -6,11 +6,21 @@ namespace Ago.Chat.Application.Abstractions;
 /// The read-side port: hand-written SQL over the write model, never through the aggregate
 /// (adr/0004). Keyset-shaped from the start - <paramref name="beforeSequence"/><c>null</c> means
 /// "most recent page."
+///
+/// <para><b>`15-09`/`adr/0087`: <paramref name="siteId"/> on <see cref="GetHistoryAsync"/>/
+/// <see cref="GetDeltaAsync"/>.</b> Before this item, `messages` had no partition key that a
+/// conversation-scoped query could prune on, so these two methods - the most frequent query in the
+/// product, one per conversation open - took only a `ConversationId`. Now that `messages` is
+/// `PARTITION BY HASH (site_id)`, a query with no `site_id` predicate silently visits all 64 buckets
+/// instead of the one it needs (`adr/0087`'s own "the failure mode is a performance cliff, not an
+/// error"). Both callers (`GetConversationHistoryHandler`) already load the `Conversation` aggregate -
+/// which carries `SiteId` - before reaching either method, so threading it through costs nothing at
+/// the call site.</para>
 /// </summary>
 public interface IConversationReadStore
 {
     Task<ConversationHistoryPage> GetHistoryAsync(
-        ConversationId conversationId, int? beforeSequence, int pageSize, CancellationToken cancellationToken);
+        ConversationId conversationId, SiteId siteId, int? beforeSequence, int pageSize, CancellationToken cancellationToken);
 
     /// <summary>
     /// `3-03`'s reconnect delta - every message strictly after <paramref name="afterSequence"/>,
@@ -20,7 +30,7 @@ public interface IConversationReadStore
     /// <see cref="GetHistoryAsync"/>'s "load older messages" direction guards against by paging.
     /// </summary>
     Task<IReadOnlyList<MessageHistoryItem>> GetDeltaAsync(
-        ConversationId conversationId, int afterSequence, CancellationToken cancellationToken);
+        ConversationId conversationId, SiteId siteId, int afterSequence, CancellationToken cancellationToken);
 
     /// <summary>
     /// `5-08`: the admin/supervisor view's own read - every conversation for a site regardless of

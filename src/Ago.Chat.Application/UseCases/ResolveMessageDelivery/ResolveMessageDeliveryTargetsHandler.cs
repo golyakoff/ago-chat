@@ -41,7 +41,8 @@ public sealed class ResolveMessageDeliveryTargetsHandler(
             recipients.Add(PrincipalKeys.ForOperator(operatorId));
         }
 
-        var page = await readStore.GetHistoryAsync(command.ConversationId, command.Sequence + 1, pageSize: 1, cancellationToken);
+        var page = await readStore.GetHistoryAsync(
+            command.ConversationId, conversation.SiteId, command.Sequence + 1, pageSize: 1, cancellationToken);
         var item = page.Messages.Single();
         // `14-06`: through the shared mapper, so the fan-out copy of a message is byte-identical to
         // the local-echo copy the sender's own hub built.

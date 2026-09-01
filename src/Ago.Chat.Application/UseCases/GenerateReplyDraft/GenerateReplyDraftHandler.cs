@@ -84,7 +84,7 @@ public sealed class GenerateReplyDraftHandler(
         // there is no second read anywhere in this method that could pull in a different
         // conversation's rows.
         var page = await readStore.GetHistoryAsync(
-            command.ConversationId, beforeSequence: null, options.HistoryMessageCount, cancellationToken);
+            command.ConversationId, command.SiteId, beforeSequence: null, options.HistoryMessageCount, cancellationToken);
 
         // The read store returns newest-first (`ConversationHistoryPage`'s own doc comment); a
         // reply-draft prompt needs the exchange in the order it actually happened, so this reverses

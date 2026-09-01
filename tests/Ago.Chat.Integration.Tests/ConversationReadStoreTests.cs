@@ -6,11 +6,12 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public class ConversationReadStoreTests(PostgresFixture fixture)
 {
-    // Real time, not a fixed date - 2-06 partitions messages by created_at, and only the current
-    // month plus the next two ever have a partition.
+    // A fixed instant, truncated to whole seconds so it round-trips through Postgres's timestamptz
+    // unchanged. No partition-boundary constraint to respect any more (15-09/adr/0087: messages is
+    // PARTITION BY HASH (site_id), not RANGE (created_at)).
     private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
-    private async Task<ConversationId> SeedConversationWithMessages(int count)
+    private async Task<(ConversationId ConversationId, SiteId SiteId)> SeedConversationWithMessages(int count)
     {
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
@@ -26,16 +27,16 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         db.Conversations.Add(conversation);
         await db.SaveChangesAsync();
 
-        return conversation.Id;
+        return (conversation.Id, siteId);
     }
 
     [Fact]
     public async Task GetHistoryAsync_ReturnsMessagesNewestFirst()
     {
-        var conversationId = await SeedConversationWithMessages(3);
+        var (conversationId, siteId) = await SeedConversationWithMessages(3);
         var store = new ConversationReadStore(fixture.DataSource);
 
-        var page = await store.GetHistoryAsync(conversationId, beforeSequence: null, pageSize: 10, CancellationToken.None);
+        var page = await store.GetHistoryAsync(conversationId, siteId, beforeSequence: null, pageSize: 10, CancellationToken.None);
 
         Assert.Equal([3, 2, 1], page.Messages.Select(m => m.Sequence));
         Assert.Null(page.NextBeforeSequence);
@@ -44,14 +45,14 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
     [Fact]
     public async Task GetHistoryAsync_PagesBackwardsThroughTheFullHistoryWithNoGapsOrDuplicates()
     {
-        var conversationId = await SeedConversationWithMessages(5);
+        var (conversationId, siteId) = await SeedConversationWithMessages(5);
         var store = new ConversationReadStore(fixture.DataSource);
         var seen = new List<int>();
 
         int? cursor = null;
         do
         {
-            var page = await store.GetHistoryAsync(conversationId, cursor, pageSize: 2, CancellationToken.None);
+            var page = await store.GetHistoryAsync(conversationId, siteId, cursor, pageSize: 2, CancellationToken.None);
             seen.AddRange(page.Messages.Select(m => m.Sequence));
             cursor = page.NextBeforeSequence;
         } while (cursor is not null);
@@ -74,7 +75,7 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         }
 
         var store = new ConversationReadStore(fixture.DataSource);
-        var page = await store.GetHistoryAsync(conversation.Id, null, 10, CancellationToken.None);
+        var page = await store.GetHistoryAsync(conversation.Id, siteId, null, 10, CancellationToken.None);
 
         Assert.Empty(page.Messages);
         Assert.Null(page.NextBeforeSequence);
@@ -83,10 +84,10 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
     [Fact]
     public async Task GetDeltaAsync_ReturnsOnlyMessagesAfterTheGivenSequence_OldestFirst()
     {
-        var conversationId = await SeedConversationWithMessages(5);
+        var (conversationId, siteId) = await SeedConversationWithMessages(5);
         var store = new ConversationReadStore(fixture.DataSource);
 
-        var delta = await store.GetDeltaAsync(conversationId, afterSequence: 3, CancellationToken.None);
+        var delta = await store.GetDeltaAsync(conversationId, siteId, afterSequence: 3, CancellationToken.None);
 
         Assert.Equal([4, 5], delta.Select(m => m.Sequence));
     }
@@ -94,10 +95,10 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
     [Fact]
     public async Task GetDeltaAsync_WhenNothingIsNewerThanTheGivenSequence_ReturnsAnEmptyList()
     {
-        var conversationId = await SeedConversationWithMessages(3);
+        var (conversationId, siteId) = await SeedConversationWithMessages(3);
         var store = new ConversationReadStore(fixture.DataSource);
 
-        var delta = await store.GetDeltaAsync(conversationId, afterSequence: 3, CancellationToken.None);
+        var delta = await store.GetDeltaAsync(conversationId, siteId, afterSequence: 3, CancellationToken.None);
 
         Assert.Empty(delta);
     }

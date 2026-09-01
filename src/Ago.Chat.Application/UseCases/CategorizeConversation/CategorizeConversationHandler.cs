@@ -67,7 +67,7 @@ public sealed class CategorizeConversationHandler(
         }
 
         var page = await readStore.GetHistoryAsync(
-            command.ConversationId, beforeSequence: null, options.HistoryMessageCount, cancellationToken);
+            command.ConversationId, command.SiteId, beforeSequence: null, options.HistoryMessageCount, cancellationToken);
 
         // The identical reordering/filtering GenerateReplyDraftHandler's own remarks explain: the read
         // store's own page is newest-first, a categorization prompt needs the exchange in the order it

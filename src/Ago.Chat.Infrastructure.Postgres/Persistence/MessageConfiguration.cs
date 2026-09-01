@@ -10,13 +10,12 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
     {
         builder.ToTable("messages");
         // EF's logical key stays id-only - MessageId (UUID v7) never collides in practice, and
-        // nothing here needs composite-key change-tracking semantics. The *physical* primary key
-        // is (id, created_at): Postgres requires every unique/PK constraint on a RANGE-partitioned
-        // table to include the partition column, so Stage2PartitionMessages creates that composite
-        // PK by hand via raw SQL (`data-model.md`'s Partitioning section) - this HasKey deliberately
-        // does not mirror it, since EF never validates a DbContext's model against the live schema
-        // and doing so would drag composite-key ceremony into every place a Message is tracked, for
-        // no behavioural gain (2-06).
+        // nothing here needs composite-key change-tracking semantics. The *physical* primary key is
+        // (id, site_id) as of `15-09`/`adr/0087`: Postgres requires every unique/PK constraint on a
+        // partitioned table to include the partition column, and the partition key is now `site_id`
+        // (`HASH`, 64 buckets) rather than `created_at`/`retention_class` - Stage15RepartitionMessagesByTenantHash
+        // creates that composite PK by hand via raw SQL, the same "EF never validates a DbContext's
+        // model against the live schema" reasoning `adr/0019` gave for the shape this one replaces.
         builder.HasKey(m => m.Id);
         builder.Property(m => m.Id).HasColumnName("id").HasConversion(IdConverters.Message).ValueGeneratedNever();
         builder.Property(m => m.ConversationId).HasColumnName("conversation_id").HasConversion(IdConverters.Conversation);
@@ -37,14 +36,20 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
 
         // `18-01`/`adr/0031` Addendum: denormalized straight onto `messages` rather than reached
         // through `conversations` by a join - the whole point being a tenant-scoped predicate that
-        // does not defeat partition pruning. No `HasIndex` here deliberately: the composite
-        // `(site_id, created_at)` index and the full-text GIN index this column exists to serve both
-        // have to be built once per leaf partition with `CREATE INDEX CONCURRENTLY` (Postgres will not
-        // let either run inside a transaction, and EF wraps a migration's `Up()` in one) - see
-        // `MessageSearchIndexJob` in `Ago.Chat.Worker`, the same "raw SQL owns this table's DDL, EF
-        // does not" split `PartitionMaintenanceJob`'s own remarks already establish for
-        // `CREATE TABLE ... PARTITION OF`.
-        builder.Property(m => m.SiteId).HasColumnName("site_id").HasConversion(IdConverters.NullableSite);
+        // does not defeat partition pruning. `15-09`/`adr/0087`: this is now also the physical
+        // partition key (`PARTITION BY HASH (site_id)`, 64 buckets) - see this class's own `HasKey`
+        // remarks. Non-nullable as of the same item (`Message.SiteId`'s own remarks explain why the
+        // historical gap closed for good rather than staying a permanent nullable column). No
+        // `HasIndex` here deliberately: the composite `(site_id, created_at)` index and the full-text
+        // GIN index this column exists to serve are both built once, directly in
+        // `Stage15RepartitionMessagesByTenantHash` via `CREATE INDEX CONCURRENTLY` - once per bucket,
+        // not against the partitioned parent (Postgres refuses `CONCURRENTLY` directly on a partitioned
+        // table; that migration's own remarks have the detail and the correction) - the same "raw SQL
+        // owns this table's DDL, EF does not" split this table's partitioning has always followed,
+        // except this time the fixed, one-time bucket count means the work fits in the migration
+        // instead of needing a recurring background job (`MessageSearchIndexJob`'s own removal note has
+        // the full reasoning).
+        builder.Property(m => m.SiteId).HasColumnName("site_id").HasConversion(IdConverters.Site);
 
         // `13-06`/`adr/0031`: the immutable half of the two-level partition key. A plain `text`
         // conversion, not `IdConverters` (this is not an id) - the same "wrap a string, convert with a
@@ -74,34 +79,34 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Ignore(m => m.Content);
 
         // data-model.md: turns duplicate delivery into a no-op insert at the storage level. Widened
-        // to include created_at in 2-06 for the same partitioning reason as the PK above - a real,
-        // documented weakening (adr/0019): two racing inserts for the same (conversation_id,
-        // sequence) no longer collide here if their created_at values differ enough to land in
-        // different partitions. The primary defence against a genuine duplicate sequence was always
-        // the conversation aggregate's optimistic-concurrency load-mutate-save (xmin), not this
-        // index - this stays the last line of defence, not the first.
+        // to include the partition key in 2-06 (created_at) and again in 13-06 (retention_class) for
+        // the reason adr/0019 gives - a real, documented weakening: two racing inserts for the same
+        // (conversation_id, sequence) no longer collide here if they land in different partitions.
+        // The primary defence against a genuine duplicate sequence was always the conversation
+        // aggregate's optimistic-concurrency load-mutate-save (xmin), not this index - this stays the
+        // last line of defence, not the first.
         //
-        // `13-06`/`adr/0031`: widened once more, to `retention_class` - the same consequence
-        // `adr/0019` already argued was acceptable, applied a second time now that the partition key
-        // itself has grown a second column. Two racing inserts for the same (conversation_id,
-        // sequence) now also fail to collide here if they land in different *classes* as well as
-        // different months - stated because it is a real further weakening of the same backstop, not
-        // because it changes what actually prevents the race (Conversation's own xmin check, unchanged).
-        builder.HasIndex(m => new { m.ConversationId, m.Sequence, m.CreatedAt, m.RetentionClass }).IsUnique();
+        // `15-09`/`adr/0087`: the partition key changed shape, not the argument. `created_at` and
+        // `retention_class` drop out (neither is part of the partition key any more) and `site_id`
+        // takes their place - a *narrower* widening than before, per the ADR's own Consequences
+        // section, and one with a real upside: uniqueness is now enforced within a tenant by the
+        // database itself, not just approximately (a site's own messages all hash to the same bucket,
+        // so this index once again catches every genuine same-conversation collision that index alone
+        // could, the guarantee `adr/0019`'s own two-column widening had partially given up).
+        builder.HasIndex(m => new { m.ConversationId, m.Sequence, m.SiteId }).IsUnique();
 
-        // `5-07`: same adr/0019 shape (partition key `created_at` must be part of any unique
-        // constraint on this table) applied to the new retry-dedup column - the in-memory check in
+        // `5-07`: same adr/0019 shape (the partition key must be part of any unique constraint on
+        // this table) applied to the retry-dedup column - the in-memory check in
         // `Conversation.AddMessage` is the mechanism actually relied on in the normal path (it also
         // catches a same-batch duplicate this index cannot, since both would still be un-committed
         // when it runs); this index is the storage-level backstop for two concurrent processes each
-        // racing their own freshly-loaded copy of the aggregate, exactly the case adr/0019 already
-        // named as this table's storage-level indexes' real job. Filtered (partial) so the very
+        // racing their own freshly-loaded copy of the aggregate. Filtered (partial) so the very
         // common `NULL` case - a caller that sent no clientMessageId at all - never collides with
-        // itself; Postgres treats every `NULL` in a unique index as distinct already, but the filter
-        // also keeps the index smaller by not indexing rows it will never need to check.
+        // itself.
         //
-        // `13-06`: widened to `retention_class` for the identical reason the index above is.
-        builder.HasIndex(m => new { m.ConversationId, m.ClientMessageId, m.CreatedAt, m.RetentionClass })
+        // `15-09`/`adr/0087`: widened to `site_id` instead of `created_at`/`retention_class`, for the
+        // identical reason the index above changed shape.
+        builder.HasIndex(m => new { m.ConversationId, m.ClientMessageId, m.SiteId })
             .IsUnique()
             .HasFilter("client_message_id IS NOT NULL");
     }

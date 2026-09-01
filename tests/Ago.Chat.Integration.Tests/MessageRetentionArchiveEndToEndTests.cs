@@ -17,20 +17,20 @@ namespace Ago.Chat.Integration.Tests;
 /// <summary>
 /// `13-06`/`adr/0031`'s own Done-when, live, against a real Postgres and a real MinIO
 /// (<see cref="AttachmentFixture"/>, the same combination <see cref="SiteExportIntegrationTests"/>
-/// already uses): a period is archived to object storage and only then dropped
-/// (<see cref="ArchiveThenPrune_ArchivesUploadsAndDropsThePartition_AndSweepsItsAttachments"/>), a
-/// failed archive upload provably leaves the partition undropped
-/// (<see cref="WhenTheArchiveUploadFails_TheGateRefusesToConfirm_AndTheDropDoesNotHappen"/>), a tenant
-/// can request and receive an archived period end to end
-/// (<see cref="ArchiveThenPrune_ArchivesUploadsAndDropsThePartition_AndSweepsItsAttachments"/> also
-/// drives the retrieval read), and <see cref="RetentionClassImmutabilityTests"/> proves a tier change
-/// never touches an already-written row's class.
+/// already uses), reworked for `15-09`/`adr/0087`'s `DELETE`-based removal mechanism - the policy this
+/// proves is unchanged: a period is archived to object storage and only then removed
+/// (<see cref="ArchiveThenPrune_ArchivesUploadsAndRemovesTheMessages_AndSweepsItsAttachments"/>), a
+/// failed archive upload provably leaves the messages in place
+/// (<see cref="WhenTheArchiveUploadFails_TheGateRefusesToConfirm_AndTheRemovalDoesNotHappen"/>), a tenant
+/// can request and receive an archived period end to end (the happy-path test also drives the retrieval
+/// read), and <see cref="RetentionClassImmutabilityTests"/> proves a tier change never touches an
+/// already-written row's class.
 ///
-/// <para>Every partition this suite creates is far in the past (year 2010) so it can never collide
-/// with <see cref="PartitionMaintenanceJob"/>'s own ongoing current-month activity in this shared
-/// fixture - <see cref="MessagePartitionPruneJobTests"/>'s own convention (1999-2001), a distinct year
-/// here since this suite shares no fixture with that one but the collision risk is identical in
-/// kind.</para>
+/// <para>Every message this suite seeds is dated far in the past (year 2010) so it can never collide
+/// with normal message-insert traffic elsewhere in this shared fixture - unlike the pre-`15-09` scheme,
+/// there is no partition to create ahead of the seed any more (`HASH (site_id)`'s 64 buckets already
+/// exist for every site), so the old "far in the past, its own dedicated partition" convention now only
+/// needs the date, not a partition too.</para>
 /// </summary>
 [Collection(AttachmentCollection.Name)]
 public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixture)
@@ -45,15 +45,26 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
     private static readonly HttpClient Http = new();
     private const int RetentionHorizonMonths = 3;
 
-    /// <summary>The full happy path: archive, confirm, drop, sweep, retrieve.</summary>
+    /// <summary>The full happy path: archive, confirm, remove, sweep, retrieve.
+    ///
+    /// <para>`15-09`/`adr/0087`: cleans up its own seeded `messages`/`message_archives` rows in
+    /// `finally`, a new requirement the pre-`15-09` version of this file did not have. Before this item,
+    /// each test's data lived in its own physical partition (created fresh, implicitly isolated from
+    /// every other test); now every test's rows share the same 64 fixed buckets, and both
+    /// `MessageArchiveJob.ArchiveAsync`/`MessagePartitionPruneJob.PruneAsync` are whole-table sweeps with
+    /// no way to scope themselves to "only this test's rows" - discovering everything past the horizon,
+    /// including a sibling test's leftover data if it was not cleaned up. Without this cleanup, this test
+    /// and <see cref="WhenTheArchiveUploadFails_TheGateRefusesToConfirm_AndTheRemovalDoesNotHappen"/> -
+    /// both dated within the identical 3-month horizon relative to the identical `ReferenceNow` - would
+    /// intermittently see each other's rows depending on run order (found by actually running this suite
+    /// during development: `archived` came back `2` instead of `1`).</para></summary>
     [Fact]
-    public async Task ArchiveThenPrune_ArchivesUploadsAndDropsThePartition_AndSweepsItsAttachments()
+    public async Task ArchiveThenPrune_ArchivesUploadsAndRemovesTheMessages_AndSweepsItsAttachments()
     {
         var retentionClass = RetentionClass.Free;
-        var partitionName = await CreatePartitionAsync(retentionClass, 2010, 1);
+        var (siteId, operatorId) = await SeedSiteAndOperatorAsync("archive-e2e-site");
         try
         {
-            var (siteId, operatorId) = await SeedSiteAndOperatorAsync("archive-e2e-site");
             var conversationId = await SeedConversationAsync(siteId);
             var periodStart = new DateOnly(2010, 1, 1);
             var createdAt = new DateTimeOffset(2010, 1, 15, 12, 0, 0, TimeSpan.Zero);
@@ -111,40 +122,40 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
             attachmentResponse.EnsureSuccessStatusCode();
             Assert.Equal(attachmentBytes, await attachmentResponse.Content.ReadAsByteArrayAsync());
 
-            // Now the drop: MessagePartitionPruneJob's real gate confirms (every distinct site in this
-            // partition now has a matching manifest row) and the partition genuinely disappears.
+            // Now the removal: MessagePartitionPruneJob's real gate confirms (this exact site/class/period
+            // now has a matching manifest row) and the message row genuinely disappears via DELETE.
             var pruneJob = CreatePruneJob(clock, fixture.FileStorage, new MessageArchiveGate(fixture.DataSource));
             await pruneJob.PruneAsync(CancellationToken.None);
-            Assert.False(await PartitionExistsAsync(partitionName));
+            Assert.Equal(0, await CountAsync("select count(*) from messages where id = @id", new { id = messageId }));
 
             // "Attachments and thumbnails for an expired period are gone": the row and the MinIO
-            // object both disappeared as a direct consequence of the drop.
+            // object both disappeared as a direct consequence of the removal.
             Assert.Equal(0, await CountAsync("select count(*) from attachments where id = @id", new { id = attachmentId }));
             Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(attachmentObjectKey), CancellationToken.None));
         }
         finally
         {
-            await DropIfExistsAsync(partitionName);
+            await CleanupSiteRetentionDataAsync(siteId);
         }
     }
 
     /// <summary>The single most important proof in this item: an archive upload failure must leave the
-    /// partition exactly as it was - not partially archived, not dropped. <see cref="ThrowingOnUploadFileStorage"/>
+    /// messages exactly as they were - not partially archived, not removed. <see cref="ThrowingOnUploadFileStorage"/>
     /// wraps the real MinIO-backed <see cref="IFileStorage"/> and fails only the one call
     /// <see cref="MessageArchiveJob"/> makes to actually write the object, so this is a real Postgres and
     /// a real (fake-failure-injected, real-protocol) object storage throughout - not a mock asserting
     /// call order.</summary>
     [Fact]
-    public async Task WhenTheArchiveUploadFails_TheGateRefusesToConfirm_AndTheDropDoesNotHappen()
+    public async Task WhenTheArchiveUploadFails_TheGateRefusesToConfirm_AndTheRemovalDoesNotHappen()
     {
         var retentionClass = RetentionClass.Free;
-        var partitionName = await CreatePartitionAsync(retentionClass, 2010, 2);
+        var (siteId, _) = await SeedSiteAndOperatorAsync("archive-fail-site");
         try
         {
-            var (siteId, _) = await SeedSiteAndOperatorAsync("archive-fail-site");
             var conversationId = await SeedConversationAsync(siteId);
+            var periodStart = new DateOnly(2010, 2, 1);
             var createdAt = new DateTimeOffset(2010, 2, 15, 12, 0, 0, TimeSpan.Zero);
-            await SeedMessageAsync(conversationId, retentionClass, siteId, createdAt, "never archived", attachmentId: null);
+            var messageId = await SeedMessageAsync(conversationId, retentionClass, siteId, createdAt, "never archived", attachmentId: null);
 
             var clock = new SettableClock(ReferenceNow);
             var failingStorage = new ThrowingOnUploadFileStorage(fixture.FileStorage);
@@ -161,20 +172,34 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
             Assert.Equal(0, await CountAsync(
                 "select count(*) from message_archives where site_id = @siteId", new { siteId = siteId.Value }));
 
-            // The gate itself, asked directly, refuses to confirm this partition.
+            // The gate itself, asked directly, refuses to confirm this slice.
             var gate = new MessageArchiveGate(fixture.DataSource);
-            var confirmed = await gate.IsArchivedAsync(partitionName, new DateOnly(2010, 2, 1), new DateOnly(2010, 3, 1), CancellationToken.None);
+            var confirmed = await gate.IsArchivedAsync(siteId, retentionClass, periodStart, CancellationToken.None);
             Assert.False(confirmed);
 
-            // And MessagePartitionPruneJob, driven for real, leaves the partition exactly where it was.
+            // And MessagePartitionPruneJob, driven for real, leaves the message exactly where it was.
             var pruneJob = CreatePruneJob(clock, fixture.FileStorage, gate);
             await pruneJob.PruneAsync(CancellationToken.None);
-            Assert.True(await PartitionExistsAsync(partitionName));
+            Assert.Equal(1, await CountAsync("select count(*) from messages where id = @id", new { id = messageId }));
         }
         finally
         {
-            await DropIfExistsAsync(partitionName);
+            await CleanupSiteRetentionDataAsync(siteId);
         }
+    }
+
+    /// <summary>Deletes exactly what this suite's own seeding put in the shared `messages`/
+    /// `message_archives`/`attachments` tables for one site - see
+    /// <see cref="ArchiveThenPrune_ArchivesUploadsAndRemovesTheMessages_AndSweepsItsAttachments"/>'s own
+    /// remarks for why this is now required. Run regardless of outcome (`finally`), the same convention
+    /// every partition-dropping `finally` in this codebase's retention tests already used before
+    /// `15-09`.</summary>
+    private async Task CleanupSiteRetentionDataAsync(SiteId siteId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await connection.ExecuteAsync("delete from message_archives where site_id = @siteId", new { siteId = siteId.Value });
+        await connection.ExecuteAsync("delete from attachments where site_id = @siteId", new { siteId = siteId.Value });
+        await connection.ExecuteAsync("delete from messages where site_id = @siteId", new { siteId = siteId.Value });
     }
 
     private MessageArchiveJob CreateArchiveJob(IClock clock, IFileStorage fileStorage)
@@ -191,19 +216,6 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
         new(fixture.DataSource, gate, fileStorage, clock,
             Options.Create(new MessagePartitionPruneJobOptions { RetentionHorizonMonths = RetentionHorizonMonths }),
             NullLogger<MessagePartitionPruneJob>.Instance);
-
-    private async Task<string> CreatePartitionAsync(RetentionClass retentionClass, int year, int month)
-    {
-        var from = new DateOnly(year, month, 1);
-        var name = MessagePartitionNames.ForMonth(retentionClass, new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
-
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
-        await connection.ExecuteAsync($"""
-            CREATE TABLE IF NOT EXISTS {name} PARTITION OF {MessagePartitionNames.ForClass(retentionClass)}
-                FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{from.AddMonths(1):yyyy-MM-dd}');
-            """);
-        return name;
-    }
 
     private async Task<(SiteId SiteId, OperatorId OperatorId)> SeedSiteAndOperatorAsync(string name)
     {
@@ -231,10 +243,10 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
         return conversation.Id;
     }
 
-    /// <summary>Bypasses `Conversation`/EF entirely - direct SQL into a partition this test built by
-    /// hand, matching every other far-past-partition seed in this codebase's own test suites
-    /// (`MessagePartitionPruneJobTests`'s own convention). The row lands via Postgres's own partition
-    /// routing on `(retention_class, created_at)` - no partition name is needed as an argument.</summary>
+    /// <summary>Bypasses `Conversation`/EF entirely - direct SQL, dated far in the past. `15-09`/
+    /// `adr/0087`: no partition name is needed here any more (there was never one to route on besides
+    /// `site_id`, which every one of the 64 buckets already has) - Postgres routes the row purely on
+    /// `hash(site_id)`.</summary>
     private async Task<Guid> SeedMessageAsync(
         ConversationId conversationId, RetentionClass retentionClass, SiteId siteId,
         DateTimeOffset createdAt, string body, Guid? attachmentId)
@@ -298,15 +310,6 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
             "update messages set attachment_id = @attachmentId where id = @messageId", new { attachmentId, messageId });
 
         return (attachmentId, bytes, objectKey);
-    }
-
-    private async Task<bool> PartitionExistsAsync(string partitionName) =>
-        await CountAsync("select count(*) from pg_class where relname = @name", new { name = partitionName }) > 0;
-
-    private async Task DropIfExistsAsync(string partitionName)
-    {
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
-        await connection.ExecuteAsync($"DROP TABLE IF EXISTS {partitionName};");
     }
 
     private async Task<int> CountAsync(string sql, object parameters)

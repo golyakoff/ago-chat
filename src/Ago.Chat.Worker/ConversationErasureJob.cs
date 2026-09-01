@@ -67,18 +67,18 @@ public sealed class ConversationErasureJob(
     {
         var startedAt = clock.UtcNow;
 
-        IReadOnlyList<Guid> pending;
+        IReadOnlyList<PendingConversationErasure> pending;
         await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
             pending = await ConversationErasureQuery.ListPendingAsync(connection, options.Value.BatchSize, cancellationToken);
         }
 
         var erased = 0;
-        foreach (var conversationId in pending)
+        foreach (var candidate in pending)
         {
             try
             {
-                if (await EraseConversationAsync(conversationId, cancellationToken))
+                if (await EraseConversationAsync(candidate.ConversationId, candidate.SiteId, cancellationToken))
                 {
                     erased++;
                 }
@@ -89,7 +89,7 @@ public sealed class ConversationErasureJob(
                 // same reasoning DemoTenantExpiryJob.SweepAsync's own per-tenant try/catch gives.
                 logger.LogError(
                     ex, "Failed to erase conversation {ConversationId}; it stays flagged for the next cycle.",
-                    conversationId);
+                    candidate.ConversationId);
             }
         }
 
@@ -123,7 +123,7 @@ public sealed class ConversationErasureJob(
     /// <returns><see langword="true"/> if this conversation was fully erased (its row is gone);
     /// <see langword="false"/> if it was only partially drained this call and remains flagged for the
     /// next cycle.</returns>
-    internal async Task<bool> EraseConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+    internal async Task<bool> EraseConversationAsync(Guid conversationId, Guid siteId, CancellationToken cancellationToken)
     {
         await using (var readConnection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
@@ -156,7 +156,7 @@ public sealed class ConversationErasureJob(
         for (var batch = 0; batch < options.Value.MaxMessageBatchesPerConversation; batch++)
         {
             var removed = await ConversationErasureQuery.DeleteMessageBatchAsync(
-                connection, conversationId, options.Value.MessageBatchSize, cancellationToken);
+                connection, conversationId, siteId, options.Value.MessageBatchSize, cancellationToken);
 
             if (removed < options.Value.MessageBatchSize)
             {

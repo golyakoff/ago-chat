@@ -8,7 +8,7 @@ public sealed record DeletedAttachment(Guid Id, string ObjectKey, string? Thumbn
 /// <summary>
 /// `13-06`/`adr/0031`'s Decision 4 ("attachments follow their message's window"), applied to the exact
 /// attachment ids <see cref="MessagePartitionPruneQuery.ListReferencedAttachmentIdsAsync"/> reads off a
-/// partition just before <see cref="MessagePartitionPruneJob"/> drops it. Reuses `5-04`'s own
+/// slice's own rows just before <see cref="MessagePartitionPruneJob"/> removes them. Reuses `5-04`'s own
 /// atomic-delete-then-clean-up-storage shape (<see cref="AttachmentOrphanSweepQuery"/>'s own remarks:
 /// "one `DELETE ... RETURNING` statement... the row is already gone by the time storage cleanup
 /// runs") rather than a second deletion technique - the predicate differs (an explicit id list here,
@@ -18,8 +18,8 @@ public static class AttachmentRetentionSweepQuery
 {
     // Chunked rather than one statement for an arbitrarily large id list - the same reason every
     // other batch-oriented query in this codebase's retention/pruning family bounds its own work
-    // instead of one unbounded statement (MessageSiteIdBackfillJob's own remarks on this table
-    // specifically).
+    // instead of one unbounded statement (MessagePartitionPruneQuery.DeleteMessageBatchAsync's own
+    // bounded-batch reasoning, applied here to a different table).
     private const int ChunkSize = 500;
 
     public static async Task<IReadOnlyList<DeletedAttachment>> DeleteByIdsAsync(

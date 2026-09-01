@@ -169,6 +169,10 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 order by ci.first_seen_at asc
                 limit 1
             ) ch on true
+            -- `15-09`/`adr/0087`: `m.site_id = iw.site_id` needs no new bind parameter - `iw.site_id`
+            -- is already selected by the CTE above (itself filtered to @SiteId), correlated per row,
+            -- so this per-row lateral execution prunes to exactly one of the 64 messages buckets
+            -- instead of touching all of them for every conversation in the window.
             left join lateral (
                 select
                     min(m.created_at) filter (where m.author_kind = @VisitorAuthorKind) as first_visitor_at,
@@ -177,6 +181,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                         filter (where m.author_kind = @OperatorAuthorKind))[1] as first_operator_id
                 from messages m
                 where m.conversation_id = iw.id
+                  and m.site_id = iw.site_id
             ) ms on true
         )
         select
