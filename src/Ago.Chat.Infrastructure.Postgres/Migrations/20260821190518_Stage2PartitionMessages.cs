@@ -35,13 +35,20 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                 ) PARTITION BY RANGE (created_at);
                 """);
 
-            // Current month and the next two - the same rule PartitionMaintenanceJob enforces daily
-            // from here on (2-06's backlog item). Computed from wall-clock time because a migration
-            // has no IClock to take it from and must reflect whenever it actually runs, on whatever
-            // environment (a fresh CI Testcontainers Postgres included) - date-and-time.md still
-            // applies (UTC), it just has no injectable clock at this layer.
+            // Three months behind, the current one, and the next two. Computed from wall-clock time
+            // because a migration has no IClock to take it from and must reflect whenever it actually
+            // runs, on whatever environment (a fresh CI Testcontainers Postgres included) -
+            // date-and-time.md still applies (UTC), it just has no injectable clock at this layer.
+            //
+            // The look-back half is a deliberate stopgap with a known expiry, not a design: this whole
+            // monthly grid is being replaced by `PARTITION BY HASH (site_id)` with no time dimension at
+            // all (adr/0087, built by `15-09`), which removes the failure structurally rather than
+            // widening a window. It exists because the forward-only original rejected every insert
+            // dated before the month the migration happened to run in - which broke CI outright on
+            // 2026-09-01 for the three integration suites that seed a hardcoded `2026-08-28`, and would
+            // have kept them broken permanently rather than only near a month boundary.
             var monthStart = new DateTimeOffset(DateTimeOffset.UtcNow.Year, DateTimeOffset.UtcNow.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            for (var i = 0; i < 3; i++)
+            for (var i = -3; i < 3; i++)
             {
                 var from = monthStart.AddMonths(i);
                 var to = monthStart.AddMonths(i + 1);
