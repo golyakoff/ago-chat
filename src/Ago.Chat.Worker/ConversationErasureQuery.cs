@@ -21,13 +21,19 @@ namespace Ago.Chat.Worker;
 /// state.</b> <see cref="DeleteMessageBatchAsync"/> is the one place <c>FOR UPDATE SKIP LOCKED</c>
 /// still appears, because it *is* the single-statement, no-I/O-in-between shape.</para>
 /// </summary>
+/// <summary>`15-09`/`adr/0087`: one pending conversation, with the `site_id` its own erasure needs to
+/// scope <see cref="ConversationErasureQuery.DeleteMessageBatchAsync"/> against - `messages` is now
+/// `PARTITION BY HASH (site_id)`, so a delete keyed on `conversation_id` alone would still have to probe
+/// all 64 buckets to find the rows before restricting to one conversation's worth.</summary>
+public sealed record PendingConversationErasure(Guid ConversationId, Guid SiteId);
+
 public static class ConversationErasureQuery
 {
-    public static async Task<IReadOnlyList<Guid>> ListPendingAsync(
+    public static async Task<IReadOnlyList<PendingConversationErasure>> ListPendingAsync(
         NpgsqlConnection connection, int limit, CancellationToken cancellationToken)
     {
         const string sql = """
-            select id
+            select id, site_id
             from conversations
             where erasure_requested_at is not null
             order by erasure_requested_at
@@ -37,14 +43,14 @@ public static class ConversationErasureQuery
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("limit", limit);
 
-        var ids = new List<Guid>();
+        var pending = new List<PendingConversationErasure>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            ids.Add(reader.GetGuid(0));
+            pending.Add(new PendingConversationErasure(reader.GetGuid(0), reader.GetGuid(1)));
         }
 
-        return ids;
+        return pending;
     }
 
     /// <summary>Every attachment object key and thumbnail key for this conversation - read before any
@@ -82,16 +88,25 @@ public static class ConversationErasureQuery
     /// unbounded `DELETE ... WHERE conversation_id = @id`. Ordered by `sequence`, the natural order
     /// within a conversation and the leading non-`conversation_id` column of the covering unique index
     /// `MessageConfiguration` already declares, so the subquery is an index scan rather than a
-    /// sequential one.</summary>
+    /// sequential one.
+    ///
+    /// <para>`15-09`/`adr/0087`: <paramref name="siteId"/> is new - `messages` is now `PARTITION BY
+    /// HASH (site_id)`, so both the inner and outer statement's own `site_id = @siteId` are what let
+    /// Postgres prune to the one bucket this conversation's messages live in, instead of probing all 64
+    /// to find rows a `conversation_id`-only predicate would still locate correctly but slowly. The
+    /// caller (`ConversationErasureJob`) already has it from `ListPendingAsync`'s own
+    /// <see cref="PendingConversationErasure"/>.</para></summary>
     public static async Task<int> DeleteMessageBatchAsync(
-        NpgsqlConnection connection, Guid conversationId, int batchSize, CancellationToken cancellationToken)
+        NpgsqlConnection connection, Guid conversationId, Guid siteId, int batchSize, CancellationToken cancellationToken)
     {
         const string sql = """
             delete from messages
-            where id in (
+            where site_id = @siteId
+              and id in (
                 select id
                 from messages
                 where conversation_id = @conversationId
+                  and site_id = @siteId
                 order by sequence
                 limit @batchSize
                 for update skip locked
@@ -100,6 +115,7 @@ public static class ConversationErasureQuery
 
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("conversationId", conversationId);
+        command.Parameters.AddWithValue("siteId", siteId);
         command.Parameters.AddWithValue("batchSize", batchSize);
 
         return await command.ExecuteNonQueryAsync(cancellationToken);

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260901213751_Stage15RepartitionMessagesByTenantHash")]
+    partial class Stage15RepartitionMessagesByTenantHash
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -637,55 +640,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasFilter("state = 'Open'");
 
                     b.ToTable("module_tasks", (string)null);
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.ModuleTaskChannelPreference", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("AddedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("added_at");
-
-                    b.Property<Guid>("ChannelIdentityId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("channel_identity_id");
-
-                    b.Property<Guid>("ModuleTaskId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("module_task_id");
-
-                    b.Property<int>("Priority")
-                        .HasColumnType("integer")
-                        .HasColumnName("priority");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.Property<Guid>("VisitorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("visitor_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ChannelIdentityId");
-
-                    b.HasIndex("SiteId");
-
-                    b.HasIndex("VisitorId");
-
-                    b.HasIndex("ModuleTaskId", "ChannelIdentityId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_module_task_channel_preferences_module_task_channel_identity");
-
-                    b.HasIndex("ModuleTaskId", "Priority")
-                        .IsUnique()
-                        .HasDatabaseName("ux_module_task_channel_preferences_module_task_priority");
-
-                    b.ToTable("module_task_channel_preferences", (string)null);
                 });
 
             modelBuilder.Entity("Ago.Chat.Domain.Operator", b =>
@@ -1558,33 +1512,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasOne("Ago.Chat.Domain.Conversation", null)
                         .WithMany("_moduleTasks")
                         .HasForeignKey("ConversationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.ModuleTaskChannelPreference", b =>
-                {
-                    b.HasOne("Ago.Chat.Domain.ChannelIdentity", null)
-                        .WithMany()
-                        .HasForeignKey("ChannelIdentityId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Ago.Chat.Domain.ModuleTask", null)
-                        .WithMany()
-                        .HasForeignKey("ModuleTaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Ago.Chat.Domain.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Ago.Chat.Domain.Visitor", null)
-                        .WithMany()
-                        .HasForeignKey("VisitorId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

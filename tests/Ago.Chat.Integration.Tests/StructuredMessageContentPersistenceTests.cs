@@ -19,8 +19,6 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(PostgresCollection.Name)]
 public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
 {
-    // Real time, not a fixed date - 2-06 partitions messages by created_at, and only the current
-    // month plus the next two ever have a partition.
     private static readonly DateTimeOffset Now =
         new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
@@ -29,7 +27,7 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
     [Fact]
     public async Task AStructuredMessageRoundTripsThroughTheAggregate()
     {
-        var (conversationId, _) = await SeedAsync(WithContent());
+        var (conversationId, _, _) = await SeedAsync(WithContent());
 
         await using var db = fixture.CreateDbContext();
         var conversation = await db.Conversations
@@ -56,10 +54,10 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
     [Fact]
     public async Task AStructuredMessageRoundTripsThroughTheDapperReadModelAndOntoTheWire()
     {
-        var (conversationId, _) = await SeedAsync(WithContent());
+        var (conversationId, _, siteId) = await SeedAsync(WithContent());
 
         var page = await new ConversationReadStore(fixture.DataSource)
-            .GetHistoryAsync(conversationId, beforeSequence: null, pageSize: 10, CancellationToken.None);
+            .GetHistoryAsync(conversationId, siteId, beforeSequence: null, pageSize: 10, CancellationToken.None);
 
         var item = page.Messages.Single();
         Assert.Equal("holds.pickup_choice", item.ContentKind);
@@ -81,7 +79,7 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
     {
         // The overwhelmingly common case, and the one the storage decision was argued around: three
         // NULLs, which Postgres records in a null bitmap the row already had.
-        var (conversationId, _) = await SeedAsync(content: null);
+        var (conversationId, _, _) = await SeedAsync(content: null);
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(
@@ -104,10 +102,10 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
             payload: null,
             actions: [new MessageAction("Central Library", "cen")]);
 
-        var (conversationId, _) = await SeedAsync(content);
+        var (conversationId, _, siteId) = await SeedAsync(content);
 
         var page = await new ConversationReadStore(fixture.DataSource)
-            .GetHistoryAsync(conversationId, beforeSequence: null, pageSize: 10, CancellationToken.None);
+            .GetHistoryAsync(conversationId, siteId, beforeSequence: null, pageSize: 10, CancellationToken.None);
 
         var item = page.Messages.Single();
         Assert.Equal("holds.pickup_choice", item.ContentKind);
@@ -126,7 +124,7 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
         // the table without going through the domain is refused as well. data-model.md's own rule -
         // "anything enforcing a guarantee gets a constraint, not just application code" - applied to
         // the one opaque field on the one write path that accepts unauthenticated input.
-        var (conversationId, _) = await SeedAsync(content: null);
+        var (conversationId, _, _) = await SeedAsync(content: null);
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new NpgsqlCommand(
@@ -152,10 +150,10 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
         var content = MessageContent.Create(
             new MessageContentKind("holds.pickup_choice"), new MessagePayload(atTheLimit));
 
-        var (conversationId, _) = await SeedAsync(content);
+        var (conversationId, _, siteId) = await SeedAsync(content);
 
         var page = await new ConversationReadStore(fixture.DataSource)
-            .GetHistoryAsync(conversationId, beforeSequence: null, pageSize: 10, CancellationToken.None);
+            .GetHistoryAsync(conversationId, siteId, beforeSequence: null, pageSize: 10, CancellationToken.None);
 
         Assert.Equal(atTheLimit, page.Messages.Single().Payload);
     }
@@ -168,7 +166,7 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
             new MessageAction("Riverside Branch", "riv"),
         ]);
 
-    private async Task<(ConversationId ConversationId, MessageId MessageId)> SeedAsync(MessageContent? content)
+    private async Task<(ConversationId ConversationId, MessageId MessageId, SiteId SiteId)> SeedAsync(MessageContent? content)
     {
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
@@ -184,6 +182,6 @@ public class StructuredMessageContentPersistenceTests(PostgresFixture fixture)
         db.Conversations.Add(conversation);
         await db.SaveChangesAsync();
 
-        return (conversation.Id, messageId);
+        return (conversation.Id, messageId, siteId);
     }
 }

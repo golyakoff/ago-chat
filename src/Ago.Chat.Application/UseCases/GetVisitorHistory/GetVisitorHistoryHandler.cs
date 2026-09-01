@@ -129,7 +129,7 @@ public sealed class GetVisitorHistoryHandler(
         }
 
         return await readStore.GetHistoryAsync(
-            query.HistoricalConversationId, query.BeforeSequence, query.PageSize, cancellationToken);
+            query.HistoricalConversationId, historical.SiteId, query.BeforeSequence, query.PageSize, cancellationToken);
     }
 
     private static VisitorHistoryConversationDto ToDto(VisitorHistoryItem item) => new(

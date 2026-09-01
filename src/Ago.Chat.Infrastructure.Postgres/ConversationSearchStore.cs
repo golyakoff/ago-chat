@@ -20,12 +20,18 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// in - a real feature this item does not build. `'simple'` is exact-token matching, not a worse
 /// version of a same feature; language-aware ranking is future work, not a corner cut here.</para>
 ///
-/// <para><b><c>from</c>/<c>to</c> are what makes this prune.</b> `messages` is `RANGE (created_at)`
-/// partitioned monthly (`2-06`) - a query that does not bound `created_at` touches every partition
-/// regardless of how selective its other predicates are. The two indexes this query relies on
-/// (composite `(site_id, created_at)` and the full-text GIN, both per leaf partition) are built and
-/// maintained by <c>Ago.Chat.Worker.MessageSearchIndexJob</c>, never by this class or by a
-/// migration - see that job's own remarks for why.</para>
+/// <para><b>`m.site_id = @SiteId` is what makes this prune, as of `15-09`/`adr/0087`.</b> `messages` is
+/// now `PARTITION BY HASH (site_id)`, 64 buckets - a query with no `site_id` equality predicate touches
+/// all 64 regardless of how selective its other predicates are, and one with it prunes to exactly one.
+/// Before this item the partition key was `created_at` (`2-06`, then `13-06`'s `retention_class`/
+/// `created_at` two-level scheme), so `from`/`to` were what pruned and `site_id` was "merely" an index;
+/// now the roles are reversed - `site_id` is what prunes, `from`/`to` narrow the result *within* the one
+/// bucket the planner already committed to, via the composite `(site_id, created_at)` index. That index
+/// and the full-text GIN are built once, directly by `Stage15RepartitionMessagesByTenantHash` - one
+/// `CREATE INDEX CONCURRENTLY` per bucket, 64 times over (Postgres refuses `CONCURRENTLY` against a
+/// partitioned parent directly; that migration's own remarks have the detail) - no longer a recurring background job
+/// (`MessageSearchIndexJob`, deleted in this same change), since the bucket list is now a fixed,
+/// one-time set rather than a dynamically growing monthly grid.</para>
 /// </summary>
 public sealed class ConversationSearchStore(NpgsqlDataSource dataSource) : IConversationSearchStore
 {
@@ -36,7 +42,9 @@ public sealed class ConversationSearchStore(NpgsqlDataSource dataSource) : IConv
     // that ("this whole string is what I'm looking for", ANDing its tokens together) - `websearch_to_
     // tsquery` would additionally interpret quotes/OR/minus an operator never asked this UI to
     // support.
-    private const string Sql = """
+    // internal, not private: MessagePartitionPruningExplainTests (15-09/adr/0087) runs `EXPLAIN`
+    // against this exact text - see ConversationReadStore.Sql's own remarks for why.
+    internal const string Sql = """
         select m.id as "MessageId", m.conversation_id as "ConversationId", m.sequence as "Sequence",
                m.body as "MatchedBody", m.author_kind as "AuthorKind", m.created_at as "CreatedAt",
                c.state as "ConversationState"

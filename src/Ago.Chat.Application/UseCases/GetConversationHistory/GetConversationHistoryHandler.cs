@@ -29,7 +29,7 @@ public sealed class GetConversationHistoryHandler(
         }
 
         var page = await readStore.GetHistoryAsync(
-            query.ConversationId, query.BeforeSequence, query.PageSize, cancellationToken);
+            query.ConversationId, conversation.SiteId, query.BeforeSequence, query.PageSize, cancellationToken);
         return page;
     }
 
@@ -55,7 +55,7 @@ public sealed class GetConversationHistoryHandler(
         }
 
         var page = await readStore.GetHistoryAsync(
-            query.ConversationId, query.BeforeSequence, query.PageSize, cancellationToken);
+            query.ConversationId, conversation.SiteId, query.BeforeSequence, query.PageSize, cancellationToken);
         return page;
     }
 
@@ -78,7 +78,7 @@ public sealed class GetConversationHistoryHandler(
             return ConversationErrors.Forbidden("This visitor is not a participant of this conversation.");
         }
 
-        var delta = await readStore.GetDeltaAsync(query.ConversationId, query.AfterSequence, cancellationToken);
+        var delta = await readStore.GetDeltaAsync(query.ConversationId, conversation.SiteId, query.AfterSequence, cancellationToken);
         return Result<IReadOnlyList<MessageHistoryItem>>.Success(delta);
     }
 
@@ -104,7 +104,7 @@ public sealed class GetConversationHistoryHandler(
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
         }
 
-        var delta = await readStore.GetDeltaAsync(query.ConversationId, query.AfterSequence, cancellationToken);
+        var delta = await readStore.GetDeltaAsync(query.ConversationId, conversation.SiteId, query.AfterSequence, cancellationToken);
         return Result<IReadOnlyList<MessageHistoryItem>>.Success(delta);
     }
 }

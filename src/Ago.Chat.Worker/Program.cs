@@ -104,26 +104,15 @@ builder.Services.AddSingleton<MessageBatchWriter>();
 builder.Services.AddHostedService<MessagePipelineWorkerHost>();
 builder.Services.AddHostedService<BatchFlusherService>();
 
-builder.Services
-    .AddOptions<PartitionMaintenanceJobOptions>()
-    .Bind(builder.Configuration.GetSection(PartitionMaintenanceJobOptions.SectionName))
-    .ValidateOnStart();
-builder.Services.AddHostedService<PartitionMaintenanceJob>();
-
-// `18-01`: the per-partition search indexes and the site_id backfill - see MessageSearchIndexJob's/
-// MessageSiteIdBackfillJob's own remarks for why both live here rather than in the EF migration that
-// adds the column.
-builder.Services
-    .AddOptions<MessageSearchIndexJobOptions>()
-    .Bind(builder.Configuration.GetSection(MessageSearchIndexJobOptions.SectionName))
-    .ValidateOnStart();
-builder.Services.AddHostedService<MessageSearchIndexJob>();
-
-builder.Services
-    .AddOptions<MessageSiteIdBackfillJobOptions>()
-    .Bind(builder.Configuration.GetSection(MessageSiteIdBackfillJobOptions.SectionName))
-    .ValidateOnStart();
-builder.Services.AddHostedService<MessageSiteIdBackfillJob>();
+// `15-09`/`adr/0087`: PartitionMaintenanceJob, MessageSearchIndexJob and MessageSiteIdBackfillJob are
+// all deleted in this change. `messages` no longer has a growing partition grid to maintain ahead of
+// need (64 fixed hash buckets, created once by Stage15RepartitionMessagesByTenantHash and never
+// again - PartitionMaintenanceJob's whole job); its search indexes are built the same way, once, in
+// that same migration - a `CREATE INDEX CONCURRENTLY` per bucket, 64 times over, since Postgres refuses
+// that statement directly against a partitioned parent (MessageSearchIndexJob's own removal note in
+// that migration's doc comment has the full reasoning and the correction); and `site_id` is `NOT NULL`
+// everywhere as of the same migration, closed once during its create-copy-drop rather than converged on
+// slowly forever (`Message.SiteId`'s own remarks - MessageSiteIdBackfillJob's entire reason to exist).
 
 builder.Services
     .AddOptions<ConnectionFanoutConsumerOptions>()
@@ -272,13 +261,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<MessagePartitionPruneJob>();
 
-// `13-06`/`adr/0031`: writes the per-(site, class, period) archive MessageArchiveGate looks for and
-// MessagePartitionPruneJob waits on. MessageArchiveJobOptions is bound both as IOptions<T>
-// (MessageArchiveJob itself) and as a plain singleton value (MessageArchiveWriter), the identical
-// shape SiteExportJobOptions/SiteExportArchiveWriter already establish just above for the same reason -
-// MessageArchiveJob deliberately shares MessagePartitionPruneJobOptions (already bound above) rather
-// than a second, independently-configurable horizon that could drift from the one the prune job
-// actually drops against (MessageArchiveJob's own remarks).
+// `13-06`/`adr/0031`, mechanism reworked by `15-09`: writes the per-(site, class, period) archive
+// MessageArchiveGate looks for and MessagePartitionPruneJob waits on before its own DELETE sweep runs.
+// MessageArchiveJobOptions is bound both as IOptions<T> (MessageArchiveJob itself) and as a plain
+// singleton value (MessageArchiveWriter), the identical shape SiteExportJobOptions/SiteExportArchiveWriter
+// already establish just above for the same reason - MessageArchiveJob deliberately shares
+// MessagePartitionPruneJobOptions (already bound above) rather than a second, independently-configurable
+// horizon that could drift from the one the prune job actually removes against (MessageArchiveJob's own
+// remarks).
 builder.Services
     .AddOptions<MessageArchiveJobOptions>()
     .Bind(builder.Configuration.GetSection(MessageArchiveJobOptions.SectionName))

@@ -137,47 +137,59 @@ public sealed class PlatformOverviewReadStoreTests(PlatformOverviewFixture fixtu
     }
 
     /// <summary>
-    /// The partitioning claim the whole bounded-window design rests on, checked against a real
-    /// planner instead of asserted in a comment: with the window predicate in place, Postgres does
-    /// not read the partitions that fall entirely outside it. The fixture seeds messages 95, 60, 45
-    /// and 40 days back specifically so that older partitions exist to be skipped.
+    /// `15-09`/`adr/0087`: the partitioning claim this read now rests on, checked against a real planner
+    /// instead of asserted in a comment. Before this item, `messages` was `RANGE (created_at)`
+    /// partitioned and this test proved the 30-day window predicate kept older monthly partitions out of
+    /// the plan; now `messages` is `PARTITION BY HASH (site_id)` and `created_at` carries no pruning
+    /// power at all - a window predicate on it prunes nothing, correctly, since it was never the
+    /// partition key. What matters now is the same thing every other query in this codebase reading
+    /// `messages` has to get right (`adr/0087`'s own central claim): a `site_id` equality predicate on
+    /// the `messages` scan itself - not merely on the `conversations` row it is joined to - is what
+    /// prunes to one bucket. `PlatformOverviewReadStore`'s own real lateral filters `m.site_id`
+    /// directly for exactly this reason; this test proves the contrast against a query that only
+    /// filters the joined `conversations.site_id` (the pre-`18-01` shape, before `messages` carried its
+    /// own `site_id` at all), which gives the planner nothing to prune `messages` on.
     ///
     /// <para>This is a <i>structural</i> check, not a performance claim - it says which partitions
     /// appear in the plan, and deliberately measures no timing (`CLAUDE.md`: measure or stay silent).
-    /// The same `EXPLAIN` without the predicate is run alongside it, so the test fails just as loudly
-    /// if the old partitions were never in the plan to begin with, which would make the first half
-    /// prove nothing.</para>
+    /// The unscoped query is run alongside the scoped one, so the test fails just as loudly if the
+    /// fixture's own multi-site data somehow collapsed onto one bucket already, which would make the
+    /// scoped half prove nothing.</para>
     /// </summary>
     [Fact]
-    public async Task TheRecentWindowPredicate_KeepsOlderMessagePartitionsOutOfThePlan()
+    public async Task TheSiteIdPredicate_PrunesTheMessagesScanToOneBucket()
     {
-        // `13-06`: messages_{yyyy_MM} became messages_free_{yyyy_MM} - PlatformOverviewFixture seeds
-        // every message through raw SQL stamped 'free' (its own SeedMessagesAsync remarks), so this is
-        // still the one partition name that must appear/disappear from the plan.
-        var oldPartition = $"messages_free_{fixture.Now.AddDays(-95):yyyy_MM}";
+        var scopedPlan = await ExplainMessageScanAsync(filterOnMessageSiteId: true);
+        var unscopedPlan = await ExplainMessageScanAsync(filterOnMessageSiteId: false);
 
-        var boundedPlan = await ExplainMessageScanAsync(withWindow: true);
-        var unboundedPlan = await ExplainMessageScanAsync(withWindow: false);
-
-        Assert.Contains(oldPartition, unboundedPlan, StringComparison.Ordinal);
-        Assert.DoesNotContain(oldPartition, boundedPlan, StringComparison.Ordinal);
+        Assert.Equal(1, DistinctPartitionCount(scopedPlan));
+        Assert.True(
+            DistinctPartitionCount(unscopedPlan) > 1,
+            $"Expected the unscoped query (join-only, no m.site_id predicate) to touch more than one bucket - the fixture seeds {PlatformOverviewFixture.Plan.Count} distinct sites so this is not vacuous.\nPlan:\n{unscopedPlan}");
     }
 
-    private async Task<string> ExplainMessageScanAsync(bool withWindow)
+    private static int DistinctPartitionCount(string planText) =>
+        System.Text.RegularExpressions.Regex.Matches(planText, @"(?<=\bon )messages_\d{2}\b")
+            .Select(m => m.Value).Distinct().Count();
+
+    private async Task<string> ExplainMessageScanAsync(bool filterOnMessageSiteId)
     {
-        var window = withWindow ? "and m.created_at >= @RecentSince" : string.Empty;
+        // `filterOnMessageSiteId: false` reproduces the pre-`18-01` shape - a join-only predicate on
+        // `conversations.site_id` that gives the planner nothing to prune the HASH(site_id)-partitioned
+        // `messages` scan on, since `conversations` is not partitioned the same way and Postgres does
+        // not perform a partition-wise join across two differently-shaped tables here.
+        var predicate = filterOnMessageSiteId ? "and m.site_id = @SiteId" : string.Empty;
         var sql = $"""
             explain
             select count(*), max(m.created_at)
             from conversations c
             join messages m on m.conversation_id = c.id
-            where c.site_id = @SiteId {window}
+            where c.site_id = @SiteId {predicate}
             """;
 
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new Npgsql.NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("SiteId", PlatformOverviewFixture.Plan[0].Id.Value);
-        command.Parameters.AddWithValue("RecentSince", fixture.RecentSince);
 
         var lines = new List<string>();
         await using var reader = await command.ExecuteReaderAsync();

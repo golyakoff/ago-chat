@@ -8,7 +8,7 @@ namespace Ago.Chat.Worker;
 /// <summary>
 /// `15-04`: outbox rows are never deleted after publication today (`2-01`'s own out-of-scope note,
 /// pointed here since 2026-08-24) - this job is that deferred maintenance concern, finally built.
-/// Same <c>BackgroundService</c>/<c>PeriodicTimer</c> shape as <see cref="PartitionMaintenanceJob"/>
+/// Same <c>BackgroundService</c>/<c>PeriodicTimer</c> shape as <see cref="MessagePartitionPruneJob"/>
 /// and <see cref="AttachmentOrphanSweepJob"/> (`concurrency.md`, and `15-04`'s own instruction: "reuse
 /// that shape, don't invent a second one"). Each cycle issues repeated bounded-batch deletes
 /// (<see cref="OutboxPruneQuery"/>) until either nothing is left to prune or

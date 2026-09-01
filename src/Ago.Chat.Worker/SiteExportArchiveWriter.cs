@@ -231,17 +231,21 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     private static async Task WriteMessagesAsync(
         ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
     {
-        // Joined through conversations - messages carries no site_id of its own (it is partitioned by
-        // created_at, not site, adr/0031's own multi-level partitioning is not built yet). Ordered by
-        // (conversation_id, sequence) so a reader sees each conversation's own messages in the order
-        // they were sent, the natural reading order for a transcript - the same leading index columns
-        // ConversationErasureQuery.DeleteMessageBatchAsync's own remarks describe.
+        // `15-09`/`adr/0087`: filters `m.site_id` directly rather than joining through `conversations`
+        // - this comment used to say `messages` "carries no site_id of its own," true when this method
+        // was written (`18-01` had not yet run) and stale ever since that column landed. Filtering the
+        // join column (`c.site_id`) instead of the partition key itself gave the planner nothing to
+        // prune `messages` on; a direct `m.site_id = @siteId` predicate prunes to exactly one of the 64
+        // hash buckets. The `join conversations c` this query used only to reach `site_id` is gone with
+        // it - nothing else here ever read a `conversations` column. Ordered by (conversation_id, sequence) so a reader sees
+        // each conversation's own messages in the order they were sent, the natural reading order for a
+        // transcript - the same leading index columns `ConversationErasureQuery.DeleteMessageBatchAsync`'s
+        // own remarks describe.
         const string sql = """
             select m.id, m.conversation_id, m.sequence, m.author_id, m.author_kind, m.created_at,
                    m.body, m.content_kind, m.content, m.actions, m.attachment_id
             from messages m
-            join conversations c on c.id = m.conversation_id
-            where c.site_id = @siteId
+            where m.site_id = @siteId
             order by m.conversation_id, m.sequence
             """;
         await using var command = new NpgsqlCommand(sql, connection);

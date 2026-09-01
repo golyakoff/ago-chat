@@ -39,13 +39,19 @@ public interface IPlatformOverviewReadStore
     ///
     /// <para><paramref name="recentMessagesSince"/> is the <b>bounded</b> lower bound for the message
     /// count and last-activity timestamp, and it is required rather than optional on purpose.
-    /// `messages` is `PARTITION BY RANGE (created_at)`, monthly (`2-06`): a predicate on `created_at`
-    /// lets Postgres prune to the handful of partitions the window actually covers, whereas an
-    /// all-time `COUNT(*)` per site has to read every partition that has ever existed - a cost that
-    /// grows without bound for the life of the deployment, on the one endpoint whose whole job is to
-    /// stay cheap enough that an operator runs it casually. The window's *value* is the caller's
-    /// policy decision (<c>ListSitesForOwnerHandler</c>, from <c>IClock</c>), not this port's: the SQL
-    /// only needs it to be bounded, not to be any particular length.</para>
+    /// `15-09`/`adr/0087`: `messages` is now `PARTITION BY HASH (site_id)`, not `RANGE (created_at)`
+    /// (`2-06`'s original scheme, then `13-06`'s two-level one) - `created_at` carries no partition
+    /// pruning power at all any more, so the reason this bound still matters changed. What prunes the
+    /// bucket is `m.site_id = p.id`, correlated per row (`PlatformOverviewReadStore`'s own remarks on
+    /// why that is the correct shape for a genuine cross-tenant read); `recentMessagesSince` is what
+    /// keeps the scan *within* that one already-pruned bucket bounded to a recent window instead of the
+    /// site's entire history, via the composite `(site_id, created_at)` index - an ordinary index-scan
+    /// cost concern now, not a partition-pruning one, but the requirement not to make it optional is
+    /// unchanged: an all-time `COUNT(*)` per site still grows without bound for the life of the
+    /// deployment, on the one endpoint whose whole job is to stay cheap enough that an operator runs it
+    /// casually. The window's *value* is the caller's policy decision (<c>ListSitesForOwnerHandler</c>,
+    /// from <c>IClock</c>), not this port's: the SQL only needs it to be bounded, not to be any
+    /// particular length.</para>
     ///
     /// <para><paramref name="before"/> <see langword="null"/> means "the first page" (the same
     /// convention <see cref="IConversationReadStore.GetAllForSiteAsync"/>'s `beforeId` uses).</para>

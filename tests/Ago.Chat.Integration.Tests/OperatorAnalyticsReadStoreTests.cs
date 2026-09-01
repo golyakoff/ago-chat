@@ -218,7 +218,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
             await db.SaveChangesAsync();
         }
 
-        await EnsurePartitionsAsync([-2]);
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(-2);
 
@@ -277,7 +276,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
             await db.SaveChangesAsync();
         }
 
-        await EnsurePartitionsAsync([-2]);
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(-2);
 
@@ -392,7 +390,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         SiteId siteId, ChannelKind? channel, OperatorId operatorId, int offsetDays, int responseSeconds,
         int? closeAfterSeconds)
     {
-        await EnsurePartitionsAsync([offsetDays]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(offsetDays);
@@ -530,7 +527,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
     private async Task SeedTrafficSourceConversationAsync(
         SiteId siteId, int offsetDays, string? referrerHost, string? utmSource, string? utmMedium, string? utmCampaign)
     {
-        await EnsurePartitionsAsync([offsetDays]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(offsetDays);
@@ -608,7 +604,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
             await db.SaveChangesAsync();
         }
 
-        await EnsurePartitionsAsync([-3]);
         var visitorId = new VisitorId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
         var createdAt = Now.AddDays(-3);
@@ -651,7 +646,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
     /// varying.</summary>
     private async Task SeedAnsweredByAsync(SiteId siteId, OperatorId operatorId, int offsetDays, int responseSeconds)
     {
-        await EnsurePartitionsAsync([offsetDays]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(offsetDays);
@@ -715,7 +709,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
     private async Task SeedSingleAnsweredConversationAsync(
         SiteId siteId, ChannelKind? channel, int offsetDays, int responseSeconds)
     {
-        await EnsurePartitionsAsync([offsetDays]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
@@ -750,7 +743,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
 
     private async Task SeedMissedConversationAsync(SiteId siteId, int offsetDays)
     {
-        await EnsurePartitionsAsync([offsetDays]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(offsetDays);
@@ -773,7 +765,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
 
     private async Task SeedOpenUnansweredConversationAsync(SiteId siteId, int offsetDays)
     {
-        await EnsurePartitionsAsync([offsetDays]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var createdAt = Now.AddDays(offsetDays);
@@ -795,7 +786,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
 
     private async Task SeedOldConversationOutsideWindowAsync(SiteId siteId)
     {
-        await EnsurePartitionsAsync([-20]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
@@ -829,7 +819,6 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
     /// the conversation to Sms, never Max.</summary>
     private async Task SeedChannelTiebreakConversationAsync(SiteId siteId, int offsetDays, int responseSeconds)
     {
-        await EnsurePartitionsAsync([offsetDays, -30]);
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
@@ -861,35 +850,4 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         await writeDb.SaveChangesAsync();
     }
 
-    /// <summary>`13-06`/`adr/0031`: `messages` is now two-level - `PARTITION BY LIST (retention_class)`
-    /// at the top, each class itself `PARTITION BY RANGE (created_at)` monthly
-    /// (`Stage13RepartitionMessagesByRetentionClass`'s own remarks) - so a monthly leaf is created
-    /// under the class-level parent (<see cref="MessagePartitionNames.ForClass"/>), never under
-    /// `messages` directly. Every message this test seeds takes the default
-    /// <see cref="RetentionClass.Free"/> (`Conversation.AddVisitorMessage`'s own default), so that is
-    /// the only class-level parent this helper ever needs. Nothing creates a partition in the past, so
-    /// every distinct month this scenario's own timestamps touch must be created up front - the same
-    /// insurance `PlatformOverviewFixture.EnsureMessagePartitionsAsync`/
-    /// `OwnerSitesEndpointTests.EnsurePartitionAsync` already take for `12-02`'s own older
-    /// timestamps, one level deeper now.</summary>
-    private async Task EnsurePartitionsAsync(IEnumerable<int> daysAgoValues)
-    {
-        var classPartition = MessagePartitionNames.ForClass(RetentionClass.Free);
-        var months = daysAgoValues
-            .Select(daysAgo => Now.AddDays(daysAgo))
-            .Select(at => new DateTimeOffset(at.Year, at.Month, 1, 0, 0, 0, TimeSpan.Zero))
-            .Distinct();
-
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
-        foreach (var from in months)
-        {
-            var to = from.AddMonths(1);
-            var leafName = MessagePartitionNames.ForMonth(RetentionClass.Free, from);
-            await using var command = new NpgsqlCommand($"""
-                CREATE TABLE IF NOT EXISTS {leafName} PARTITION OF {classPartition}
-                    FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
-                """, connection);
-            await command.ExecuteNonQueryAsync();
-        }
-    }
 }

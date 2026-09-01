@@ -47,16 +47,15 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
 
     /// <summary>
     /// The complete, deliberately varied ground truth: different seat counts, different conversation
-    /// counts, message volumes that straddle the window boundary <b>and</b> more than one monthly
-    /// `messages` partition, and different attachment byte totals - including the three states that
-    /// have to be told apart. Ids are fixed and ordered so that the keyset page order
-    /// (`id desc`) is known in advance: Epsilon, Delta, Gamma, Beta, Alpha.
+    /// counts, message volumes that straddle the window boundary, and different attachment byte totals -
+    /// including the three states that have to be told apart. Ids are fixed and ordered so that the
+    /// keyset page order (`id desc`) is known in advance: Epsilon, Delta, Gamma, Beta, Alpha.
     /// </summary>
     public static IReadOnlyList<SeededSite> Plan { get; } =
     [
         // Two conversations, messages inside the window in two different months (-1/-2/-3 days and
-        // -28 days), plus one well outside it in an older partition. Two live attachments and one
-        // deleted one that must not be counted.
+        // -28 days), plus one well outside it. Two live attachments and one deleted one that must not
+        // be counted.
         new SeededSite(
             Id: SiteIdFrom(1),
             Name: "Alpha Shop",
@@ -138,7 +137,6 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
 
         Now = DateTimeOffset.UtcNow;
 
-        await EnsureMessagePartitionsAsync();
         await SeedAsync();
     }
 
@@ -153,38 +151,6 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
     {
         var options = new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(DataSource).Options;
         return new AgoChatDbContext(options);
-    }
-
-    /// <summary>`Stage2PartitionMessages` creates the current month plus two ahead, and
-    /// `PartitionMaintenanceJob` (a Worker background service, not running here) keeps that true
-    /// going forward - neither creates partitions in the <i>past</i>, so seeding a message dated 95
-    /// days ago would simply be rejected. Creating one partition per month the plan actually touches
-    /// is what makes "spanning both a recent and an older partition" real rather than nominal: the
-    /// bounded-window query has genuinely-older partitions available to skip.</summary>
-    private async Task EnsureMessagePartitionsAsync()
-    {
-        var months = Plan
-            .SelectMany(site => site.MessageDaysAgo)
-            .Select(daysAgo => Now.AddDays(-daysAgo))
-            .Select(at => new DateTimeOffset(at.Year, at.Month, 1, 0, 0, 0, TimeSpan.Zero))
-            .Distinct();
-
-        await using var connection = await DataSource.OpenConnectionAsync();
-        foreach (var from in months)
-        {
-            var to = from.AddMonths(1);
-            // `13-06`: messages is now PARTITION BY LIST (retention_class) then RANGE (created_at) -
-            // every message this fixture seeds is written through Conversation.AddVisitorMessage with
-            // no retentionClass argument, which defaults to RetentionClass.Free (that method's own
-            // remarks), so every leaf this fixture needs hangs off the `free` class partition.
-            var partitionName = MessagePartitionNames.ForMonth(RetentionClass.Free, from);
-            var sql = $"""
-                CREATE TABLE IF NOT EXISTS {partitionName} PARTITION OF {MessagePartitionNames.ForClass(RetentionClass.Free)}
-                    FOR VALUES FROM ('{from:yyyy-MM-dd}') TO ('{to:yyyy-MM-dd}');
-                """;
-            await using var command = new NpgsqlCommand(sql, connection);
-            await command.ExecuteNonQueryAsync();
-        }
     }
 
     private async Task SeedAsync()
@@ -238,9 +204,11 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
     }
 
     /// <summary>Raw SQL, not the <c>Conversation</c> aggregate: these rows need arbitrary
-    /// <c>created_at</c> values (that is the entire point - some inside the window, some in an older
-    /// partition), and the aggregate deliberately stamps its own from the clock it is handed.
-    /// <see cref="MessagePartitioningTests"/> already inserts this way for the same reason.</summary>
+    /// <c>created_at</c> values (that is the entire point - some inside the window, some well outside
+    /// it), and the aggregate deliberately stamps its own from the clock it is handed.
+    /// `15-09`/`adr/0087`: no partition to create ahead of the seed any more - `messages` is
+    /// `PARTITION BY HASH (site_id)`, so a message dated 95 days ago inserts exactly as easily as one
+    /// dated today (<see cref="MessagePartitioningTests"/> has the dedicated structural proof).</summary>
     private async Task SeedMessagesAsync(SeededSite plan, ConversationId conversationId, VisitorId visitorId)
     {
         var sequence = 0;
@@ -249,14 +217,15 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
         {
             sequence++;
             await using var command = new NpgsqlCommand("""
-                insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class)
-                values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free')
+                insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
+                values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free', @siteId)
                 """, connection);
             command.Parameters.AddWithValue("id", Guid.NewGuid());
             command.Parameters.AddWithValue("conversationId", conversationId.Value);
             command.Parameters.AddWithValue("sequence", sequence);
             command.Parameters.AddWithValue("authorId", visitorId.Value);
             command.Parameters.AddWithValue("createdAt", Now.AddDays(-daysAgo));
+            command.Parameters.AddWithValue("siteId", plan.Id.Value);
             await command.ExecuteNonQueryAsync();
         }
     }

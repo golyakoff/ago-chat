@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
@@ -8,26 +9,28 @@ using Npgsql;
 namespace Ago.Chat.Worker;
 
 /// <summary>
-/// `15-04`/`adr/0031`: the drop half of `data-model.md`'s partitioning story - `2-06`'s own out-of-scope
-/// note named `DROP` as the cheap-retention mechanism partitioning enables and deferred building it
-/// here. Same shape as <see cref="PartitionMaintenanceJob"/> (its own natural counterpart - one creates
-/// ahead of need, this one drops past need) but gated where that one is not: every drop candidate is
-/// checked against <see cref="IMessageArchiveGate"/> first, per `adr/0031`'s ordering rule ("nothing is
-/// dropped until its archive is confirmed written"). `13-06` replaces `15-04`'s
-/// <c>AlwaysConfirmedMessageArchiveGate</c> stand-in with <see cref="MessageArchiveGate"/>, a real,
-/// object-storage-backed implementation - only the DI registration in <c>ChatModule</c> changed for
-/// that; this job's own gate-check code is untouched, exactly as `15-04` anticipated.
+/// `15-04`/`adr/0031`: the removal half of `data-model.md`'s retention story - `2-06`'s own out-of-scope
+/// note named this as the mechanism partitioning enables. Reworked for `15-09`/`adr/0087`: `messages` no
+/// longer has one physical partition per (retention class, month), so removal is a `DELETE ... WHERE`
+/// sweep over a discovered slice of rows rather than a `DROP TABLE` of a whole partition -
+/// <b>`adr/0031`'s policy is unchanged</b> (retention class immutable, archive before removal, nothing
+/// removed until confirmed archived) and only this mechanism changed.
 ///
-/// <para><b>`13-06`: attachment expiry is a direct consequence of a successful drop, not a separate
-/// cutoff computation.</b> Immediately before dropping a confirmed-archived partition, this job reads
-/// the exact <c>attachment_id</c>s that partition's own rows reference
-/// (<see cref="MessagePartitionPruneQuery.ListReferencedAttachmentIdsAsync"/> - see its own remarks for
-/// why a date-range query against the separate `attachments` table cannot substitute for this), then
-/// after the drop deletes exactly those <c>attachments</c> rows and their storage objects
-/// (<see cref="AttachmentRetentionSweepQuery"/>, reusing `5-04`'s own delete-then-clean-up-storage
-/// shape). "Attachments follow their message's window" (`adr/0031`'s Decision 4) is therefore true by
-/// construction: an attachment can only be swept in the same call that drops the one partition whose
-/// rows referenced it.</para>
+/// <para>Same shape as <see cref="PartitionMaintenanceJob"/> used to be (this job's own natural
+/// counterpart before that one was deleted - `adr/0087`: with no time axis there is nothing left to
+/// maintain ahead of need, only behind it) but gated where a bare `DROP` never was: every removal
+/// candidate is checked against <see cref="IMessageArchiveGate"/> first, per `adr/0031`'s ordering rule
+/// ("nothing is removed until its archive is confirmed written").</para>
+///
+/// <para><b>Attachment expiry is still a direct consequence of a successful removal, not a separate
+/// cutoff computation</b> (`13-06`'s own decision, restated for the new mechanism). Immediately before
+/// removing a confirmed-archived slice's rows, this job reads the exact `attachment_id`s that slice's own
+/// rows reference (<see cref="MessagePartitionPruneQuery.ListReferencedAttachmentIdsAsync"/>), then after
+/// the removal deletes exactly those `attachments` rows and their storage objects
+/// (<see cref="AttachmentRetentionSweepQuery"/>, `5-04`'s own delete-then-clean-up-storage shape).
+/// "Attachments follow their message's window" (`adr/0031`'s Decision 4) is therefore still true by
+/// construction: an attachment can only be swept in the same call that removes the one slice whose rows
+/// referenced it.</para>
 /// </summary>
 public sealed class MessagePartitionPruneJob(
     NpgsqlDataSource dataSource,
@@ -60,59 +63,69 @@ public sealed class MessagePartitionPruneJob(
         var cutoff = currentMonthStart.AddMonths(-options.Value.RetentionHorizonMonths);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var partitions = await MessagePartitionPruneQuery.ListPartitionsAsync(connection, cancellationToken);
 
-        var dropped = 0;
+        var removedSlices = 0;
         var pendingArchive = 0;
-        foreach (var partition in partitions)
+        foreach (var bucketName in MessagePartitionNames.AllBucketNames)
         {
-            if (partition.PeriodEnd > cutoff)
+            var slices = await MessagePartitionPruneQuery.ListExpiredSlicesAsync(connection, bucketName, cutoff, cancellationToken);
+            foreach (var slice in slices)
             {
-                // Not past the horizon yet - includes, by construction, every partition
-                // PartitionMaintenanceJob is actively keeping ready (RetentionHorizonMonths is
-                // validated >= 1, so the current month is never a candidate).
-                continue;
-            }
+                var confirmed = await archiveGate.IsArchivedAsync(
+                    new SiteId(slice.SiteId), slice.RetentionClass, slice.PeriodStart, cancellationToken);
+                if (!confirmed)
+                {
+                    logger.LogInformation(
+                        "Site {SiteId}'s {RetentionClass} messages for {PeriodStart} are past their retention horizon but not yet archive-confirmed; leaving them in place.",
+                        slice.SiteId, slice.RetentionClass, slice.PeriodStart);
+                    pendingArchive++;
+                    continue;
+                }
 
-            var confirmed = await archiveGate.IsArchivedAsync(
-                partition.Name, partition.PeriodStart, partition.PeriodEnd, cancellationToken);
-            if (!confirmed)
-            {
+                // Read before the delete, deliberately - once the rows are gone there is no way left
+                // to ask which attachments they referenced (MessagePartitionPruneQuery's own remarks
+                // explain why a date-range query against the separate `attachments` table cannot
+                // substitute).
+                var attachmentIds = await MessagePartitionPruneQuery.ListReferencedAttachmentIdsAsync(connection, slice, cancellationToken);
+
+                var removedRows = await DeleteSliceAsync(connection, slice, cancellationToken);
                 logger.LogInformation(
-                    "Messages partition {Partition} is past its retention horizon but not yet archive-confirmed; leaving it in place.",
-                    partition.Name);
-                pendingArchive++;
-                continue;
+                    "Removed {RowCount} message(s) for site {SiteId}, class {RetentionClass}, period {PeriodStart} (past its {Months}-month retention horizon).",
+                    removedRows, slice.SiteId, slice.RetentionClass, slice.PeriodStart, options.Value.RetentionHorizonMonths);
+                removedSlices++;
+
+                await SweepAttachmentsAsync(connection, attachmentIds, slice, cancellationToken);
             }
-
-            // Read before the drop, deliberately - once the partition is gone there is no way left to
-            // ask which attachments its rows referenced (this class's own remarks explain why a
-            // date-range query against the separate `attachments` table cannot substitute).
-            var attachmentIds = await MessagePartitionPruneQuery.ListReferencedAttachmentIdsAsync(
-                connection, partition.Name, cancellationToken);
-
-            await MessagePartitionPruneQuery.DropPartitionAsync(connection, partition.Name, cancellationToken);
-            logger.LogInformation("Dropped messages partition {Partition} (past its {Months}-month retention horizon).",
-                partition.Name, options.Value.RetentionHorizonMonths);
-            dropped++;
-
-            await SweepAttachmentsAsync(connection, attachmentIds, partition.Name, cancellationToken);
         }
 
-        ChatMetrics.RecordPartitionPruneCycle(dropped, pendingArchive, clock.UtcNow - startedAt);
+        ChatMetrics.RecordPartitionPruneCycle(removedSlices, pendingArchive, clock.UtcNow - startedAt);
     }
 
-    /// <summary>`13-06`: deletes exactly the `attachments` rows a just-dropped partition's own rows
+    /// <summary>Drains one slice completely, bounded batch by bounded batch - the same "loop until a
+    /// call returns fewer than requested" shape `MessageSiteIdBackfillJob`'s own per-partition loop
+    /// already used before it was deleted.</summary>
+    private async Task<int> DeleteSliceAsync(NpgsqlConnection connection, ExpiredMessageSlice slice, CancellationToken cancellationToken)
+    {
+        var total = 0;
+        int removed;
+        do
+        {
+            removed = await MessagePartitionPruneQuery.DeleteMessageBatchAsync(
+                connection, slice, options.Value.DeleteBatchSize, cancellationToken);
+            total += removed;
+        } while (removed == options.Value.DeleteBatchSize);
+
+        return total;
+    }
+
+    /// <summary>`13-06`: deletes exactly the `attachments` rows a just-removed slice's own rows
     /// referenced, then their storage objects - `AttachmentOrphanSweepJob`'s own established split
-    /// between "the row is gone, that is the durable fact" and "best-effort clean-up of the object
-    /// that now has no row pointing at it," restated here for a different predicate. A storage delete
-    /// failure is logged and does not roll anything back: the attachment row (and, with it, the
-    /// tenant's own record that this data ever existed) is already gone by design - `5-02`'s own "S3
-    /// DELETE is idempotent" property means a later retry of the same key is harmless if the object
-    /// genuinely is still there, and the object provider's own lifecycle rules are the backstop this
-    /// codebase has never promised to duplicate for an orphan that outlives its row.</summary>
+    /// between "the row is gone, that is the durable fact" and "best-effort clean-up of the object that
+    /// now has no row pointing at it," restated here for a different predicate. A storage delete failure
+    /// is logged and does not roll anything back: the attachment row (and, with it, the tenant's own
+    /// record that this data ever existed) is already gone by design.</summary>
     private async Task SweepAttachmentsAsync(
-        NpgsqlConnection connection, IReadOnlyList<Guid> attachmentIds, string partitionName, CancellationToken cancellationToken)
+        NpgsqlConnection connection, IReadOnlyList<Guid> attachmentIds, ExpiredMessageSlice slice, CancellationToken cancellationToken)
     {
         if (attachmentIds.Count == 0)
         {
@@ -134,16 +147,16 @@ public sealed class MessagePartitionPruneJob(
             {
                 logger.LogWarning(
                     ex,
-                    "Deleted attachment row {AttachmentId} (partition {Partition}) but could not delete its storage object(s); it may now be an orphan.",
-                    attachment.Id, partitionName);
+                    "Deleted attachment row {AttachmentId} (site {SiteId}, class {RetentionClass}, period {PeriodStart}) but could not delete its storage object(s); it may now be an orphan.",
+                    attachment.Id, slice.SiteId, slice.RetentionClass, slice.PeriodStart);
             }
         }
 
         if (deleted.Count > 0)
         {
             logger.LogInformation(
-                "Retention sweep removed {Count} attachment(s) belonging to dropped partition {Partition}.",
-                deleted.Count, partitionName);
+                "Retention sweep removed {Count} attachment(s) belonging to site {SiteId}'s {RetentionClass} messages for period {PeriodStart}.",
+                deleted.Count, slice.SiteId, slice.RetentionClass, slice.PeriodStart);
         }
     }
 }

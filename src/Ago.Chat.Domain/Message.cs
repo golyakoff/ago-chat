@@ -25,21 +25,24 @@ public sealed class Message
     /// `18-01`: denormalized from the owning <see cref="Conversation.SiteId"/> at construction -
     /// <see cref="Conversation.AddMessage"/> is the only place that sets it, using its own aggregate's
     /// `SiteId`, never a value the caller supplies (adr/0031's Addendum: "a plain denormalized column
-    /// ... populated at write time from the owning Conversation"). It is not a cache of anything a
-    /// write decision depends on - nothing reads it to decide whether a write may proceed
-    /// (`CLAUDE.md` rule 8 does not apply here, the same carve-out `retention_class` claims in
-    /// `adr/0031`) - so a stale or absent value is never a correctness risk for a write, only for how
-    /// far back a search can currently reach.
+    /// ... populated at write time from the owning Conversation").
     ///
-    /// <para><see langword="null"/> only for a message written before this column existed - every
-    /// message this aggregate constructs from here on always has one, since <see cref="Conversation"/>
-    /// itself never has a null `SiteId`. The nullable-for-history shape matches
-    /// <see cref="AttachmentId"/>/<see cref="ClientMessageId"/> on this same type: a column added after
-    /// rows already existed reads as absent on them rather than being forced to a lie. `18-01`'s own
-    /// migration backfills the gap for existing rows asynchronously, in place, so this stops being null
-    /// for any row without ever locking the table to say so.</para>
+    /// <para><b>Non-nullable as of `15-09`/`adr/0087`.</b> Before this item, the column was nullable
+    /// "for history" - a message written before `18-01` added it had no value, closed only by
+    /// <c>MessageSiteIdBackfillJob</c>'s own slow, asynchronous convergence. `15-09`'s own
+    /// repartitioning migration is a full create-copy-drop of this table (`PARTITION BY HASH (site_id)`
+    /// requires every row to route to a bucket, and a query that forgets to filter `site_id` is the
+    /// exact failure mode `adr/0087` exists to make expensive rather than invisible) - since the copy
+    /// step already joins every row back to its owning `conversations` row for a defensive fallback
+    /// (the same `COALESCE` shape `13-06`'s own migration used for `retention_class`), closing the
+    /// historical gap for good cost nothing extra: every row gets a real, non-approximated `site_id`
+    /// (an exact join key, not a guess, unlike `retention_class`'s own one-time tier approximation),
+    /// and there is no live data this item had to preserve a nullable placeholder for
+    /// (`adr/0087`'s own "no live clients, no data to migrate" premise). <c>MessageSiteIdBackfillJob</c>
+    /// is deleted in the same change - its entire reason to exist was a gap this migration now closes
+    /// once, structurally, rather than converging on slowly forever.</para>
     /// </summary>
-    public SiteId? SiteId { get; }
+    public SiteId SiteId { get; }
 
     /// <summary>`13-06`/`adr/0031`: the immutable half of this table's partition key, stamped from
     /// the owning <see cref="Conversation"/>'s site's <see cref="Site.Tier"/> at the moment this

@@ -33,16 +33,18 @@ public readonly record struct RetentionClass(string Value)
     public static RetentionClass FromTier(string tier) =>
         string.IsNullOrWhiteSpace(tier) ? Free : new RetentionClass(tier);
 
-    /// <summary>Every class the platform's partition grid maintains a monthly branch for -
-    /// `PartitionMaintenanceJob` (`Ago.Chat.Worker`) reads this to know which top-level `LIST`
-    /// partitions must exist, and `13-06`'s own migration reads it to build the same three at
-    /// migration time. Deliberately closed over `SubscriptionTierBands`' own tier set rather than
-    /// discovered from `sites.tier` at runtime - `adr/0031`'s own "three tiers, not thousands" budget
-    /// is a decision about how many partition subtrees this table carries, not a fact to infer from
-    /// whatever values happen to be in use; a typo'd or since-retired tier string stamped onto an old
-    /// row (there is no foreign key from `messages.retention_class` to a tier table - `Site.Tier`
-    /// itself is `text`, not an enum, per that property's own remarks) must never be read as "create a
-    /// fourth partition subtree."</summary>
+    /// <summary>Every retention class the platform recognises. Before `15-09`/`adr/0087`, this list
+    /// also drove partition creation - `PartitionMaintenanceJob` read it to know which top-level `LIST`
+    /// partitions had to exist, and `13-06`'s own migration read it to build the same three at
+    /// migration time. `messages` no longer partitions by class at all (`adr/0087`: `retention_class`
+    /// stays an ordinary column, replaced as the partition key by `HASH (site_id)`), so this list no
+    /// longer has DDL consequences - it now serves only as the closed set retention logic (the prune
+    /// sweep's own discovery query, the archive job) reasons about, and as a reference for tests. Still
+    /// deliberately closed over `SubscriptionTierBands`' own tier set rather than discovered from
+    /// `sites.tier` at runtime, for the identical reason `adr/0031` originally gave: a typo'd or
+    /// since-retired tier string stamped onto an old row (there is no foreign key from
+    /// `messages.retention_class` to a tier table - `Site.Tier` itself is `text`, not an enum) must
+    /// never be read as a class this system is meant to recognise.</summary>
     public static readonly IReadOnlyList<RetentionClass> KnownClasses =
         [Free, new(SubscriptionTierBands.Starter), new(SubscriptionTierBands.Growth)];
 

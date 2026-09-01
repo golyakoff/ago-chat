@@ -10,7 +10,7 @@ namespace Ago.Chat.Worker;
 /// <summary>
 /// `13-03`: the recurring monthly re-charge, and the retry/lapse machinery around a failed one - one
 /// tick per subscription whose `current_period_end` has passed or whose `PastDue` retry is due. Same
-/// `PeriodicTimer`/`BackgroundService` shape as `AutoCloseInactiveConversationsJob`/`PartitionMaintenanceJob`:
+/// `PeriodicTimer`/`BackgroundService` shape as `AutoCloseInactiveConversationsJob`/`MessagePartitionPruneJob`:
 /// runs once immediately, then every <see cref="SubscriptionRenewalJobOptions.Interval"/>, and a
 /// transient failure logs and retries next cycle rather than killing the sweep (`concurrency.md`).
 ///

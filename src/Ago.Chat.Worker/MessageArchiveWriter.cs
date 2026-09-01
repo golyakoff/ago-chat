@@ -12,11 +12,18 @@ namespace Ago.Chat.Worker;
 /// real, shipped archive format (<see cref="SiteExportArchiveWriter"/>'s own manifest/`.jsonl`
 /// conventions and row shapes) rather than inventing a second one, per `adr/0031`'s own consequence
 /// ("`16-03`'s export format becomes load-bearing twice over"). Narrower in scope than that writer -
-/// a *period* archive holds only the messages a single leaf partition's rows and their attachments,
-/// never the whole tenant - so it carries two stores (<c>messages</c>, <c>attachments</c>) instead of
-/// seven, and reads its messages straight off the leaf partition table by name rather than joining
-/// through <c>conversations</c> (`18-01`'s denormalized <c>site_id</c> is what makes that possible; it
-/// did not exist yet when `16-03` wrote its own `messages` query the long way).
+/// a *period* archive holds only the messages one <see cref="ExpiredMessageSlice"/>'s rows and their
+/// attachments, never the whole tenant - so it carries two stores (<c>messages</c>, <c>attachments</c>)
+/// instead of seven, and reads its messages by a direct `(site_id, retention_class, created_at)`
+/// predicate rather than joining through <c>conversations</c> the way `16-03`'s own tenant-wide export
+/// still does (`18-01`'s denormalized <c>site_id</c> is what makes that possible).
+///
+/// <para><b>`15-09`/`adr/0087`: no longer a leaf partition read by name.</b> Before this item, one leaf
+/// partition physically *was* one (retention class, month), shared across every tenant with rows in it -
+/// reading it by name was both a stronger guarantee than trusting the planner to prune and simply
+/// faster. Under `HASH (site_id)` a bucket holds many unrelated slices, so the exact `(site_id,
+/// retention_class, created_at)` predicate is now what both identifies the right rows and lets Postgres
+/// prune to the one bucket they live in - see <see cref="WriteMessagesAsync"/>'s own remarks.</para>
 ///
 /// <para><b>Row shapes are deliberately re-declared here, not shared via a reference to
 /// <see cref="SiteExportArchiveWriter"/>'s private nested records.</b> The two writers' rows are the
@@ -33,7 +40,7 @@ namespace Ago.Chat.Worker;
 /// unlike a tenant's own on-demand export, whose link merely *expires* after
 /// <see cref="MessageArchiveJobOptions.AttachmentUrlLifetime"/>, this archive's attachment links can go
 /// permanently dead much sooner than that, the moment <see cref="MessagePartitionPruneJob"/>'s own
-/// attachment sweep deletes the underlying object for the very partition this archive was built
+/// attachment sweep deletes the underlying object for the very slice this archive was built
 /// from.</para>
 /// </summary>
 public sealed class MessageArchiveWriter(IFileStorage fileStorage, MessageArchiveJobOptions options)
@@ -43,12 +50,12 @@ public sealed class MessageArchiveWriter(IFileStorage fileStorage, MessageArchiv
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task WriteAsync(
-        NpgsqlConnection connection, ZipArchive archive, string partitionName, Guid siteId, RetentionClass retentionClass,
-        DateOnly periodStart, DateOnly periodEnd, DateTimeOffset archivedAt, CancellationToken cancellationToken)
+        NpgsqlConnection connection, ZipArchive archive, ExpiredMessageSlice slice, DateTimeOffset archivedAt,
+        CancellationToken cancellationToken)
     {
-        await WriteManifestAsync(archive, siteId, retentionClass, periodStart, periodEnd, archivedAt, cancellationToken);
-        await WriteMessagesAsync(archive, connection, partitionName, siteId, cancellationToken);
-        await WriteAttachmentsAsync(archive, connection, siteId, periodStart, periodEnd, archivedAt, cancellationToken);
+        await WriteManifestAsync(archive, slice.SiteId, slice.RetentionClass, slice.PeriodStart, slice.PeriodEnd, archivedAt, cancellationToken);
+        await WriteMessagesAsync(archive, connection, slice, cancellationToken);
+        await WriteAttachmentsAsync(archive, connection, slice.SiteId, slice.PeriodStart, slice.PeriodEnd, archivedAt, cancellationToken);
     }
 
     private static async Task WriteManifestAsync(
@@ -65,22 +72,29 @@ public sealed class MessageArchiveWriter(IFileStorage fileStorage, MessageArchiv
         await JsonSerializer.SerializeAsync(entryStream, manifest, JsonOptions, cancellationToken);
     }
 
-    /// <summary>Reads the leaf partition table directly, by name - not the `messages` parent filtered
-    /// by `site_id`/`retention_class`/`created_at`. Querying the exact table this archive is standing
-    /// in for `DROP`ping is a stronger guarantee than trusting the planner to prune to it, and it is
-    /// also simply faster: no need to re-derive the partition bounds as a `WHERE` predicate the
-    /// planner then has to prove is equivalent to the partition boundary it already knows.</summary>
+    /// <summary>`15-09`/`adr/0087`: reads the `messages` parent, filtered by the slice's full
+    /// `(site_id, retention_class, created_at)` predicate - not a named leaf partition, unlike before
+    /// this item. A leaf partition used to *be* one (class, period) for every tenant sharing it, so
+    /// reading it directly by name was both a stronger guarantee than trusting the planner and simply
+    /// faster. Under `HASH (site_id)` a bucket holds many unrelated (site, class, period) slices at
+    /// once, so there is no longer a partition whose whole contents equal one slice - the exact
+    /// predicate below both identifies the right rows and is what lets Postgres prune to the one
+    /// bucket they live in.</summary>
     private static async Task WriteMessagesAsync(
-        ZipArchive archive, NpgsqlConnection connection, string partitionName, Guid siteId, CancellationToken cancellationToken)
+        ZipArchive archive, NpgsqlConnection connection, ExpiredMessageSlice slice, CancellationToken cancellationToken)
     {
-        var sql = $"""
+        const string sql = """
             select id, conversation_id, sequence, author_id, author_kind, created_at, body, content_kind, content, actions, attachment_id
-            from {partitionName}
-            where site_id = @siteId
+            from messages
+            where site_id = @siteId and retention_class = @retentionClass
+              and created_at >= @periodStart and created_at < @periodEnd
             order by conversation_id, sequence
             """;
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("siteId", siteId);
+        command.Parameters.AddWithValue("siteId", slice.SiteId);
+        command.Parameters.AddWithValue("retentionClass", slice.RetentionClass.Value);
+        command.Parameters.AddWithValue("periodStart", slice.PeriodStart.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("periodEnd", slice.PeriodEnd.ToDateTime(TimeOnly.MinValue));
 
         var entry = archive.CreateEntry("messages.jsonl", CompressionLevel.Fastest);
         await using var entryStream = entry.Open();

@@ -33,4 +33,15 @@ public sealed class MessagePartitionPruneJobOptions
     /// documented as what it replaces once that lands.</summary>
     [Range(1, int.MaxValue, ErrorMessage = "RetentionHorizonMonths must be at least 1 - a horizon of 0 or less would make the most recently completed month a drop candidate immediately, leaving no trailing month ever fully settled before eligibility.")]
     public int RetentionHorizonMonths { get; set; } = 3;
+
+    /// <summary>`15-09`/`adr/0087`: the removal mechanism changed from `DROP PARTITION` (one statement,
+    /// instant, whole-partition) to `DELETE ... WHERE` (row-by-row, `adr/0087`'s own accepted
+    /// regression - "slower, generates more WAL, marks rows dead rather than reclaiming space"). A
+    /// confirmed-archived (site, class, period) slice can hold an unbounded number of rows, so the
+    /// delete is a bounded, `FOR UPDATE SKIP LOCKED` loop - the same shape
+    /// `ConversationErasureQuery.DeleteMessageBatchAsync`'s own per-conversation loop already
+    /// establishes - rather than one unbounded statement holding a lock across however many rows one
+    /// tenant's one expired month happens to have.</summary>
+    [Range(1, int.MaxValue, ErrorMessage = "DeleteBatchSize must be at least 1.")]
+    public int DeleteBatchSize { get; set; } = 500;
 }
