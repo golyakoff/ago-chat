@@ -19,6 +19,7 @@ public class DeliverChannelMessageHandlerTests
         FakeConversationRepository Conversations,
         FakeChannelIdentityRepository Identities,
         FakeVisitorRepository Visitors,
+        FakeModuleTaskChannelPreferenceRepository ModuleTaskPreferences,
         FakeInboundChannelAdapterRegistry Adapters);
 
     private static Harness CreateHarness(out Conversation conversation, out FakeInboundChannelAdapter maxAdapter)
@@ -26,6 +27,7 @@ public class DeliverChannelMessageHandlerTests
         var conversations = new FakeConversationRepository();
         var identities = new FakeChannelIdentityRepository();
         var visitors = new FakeVisitorRepository();
+        var moduleTaskPreferences = new FakeModuleTaskChannelPreferenceRepository();
         var adapters = new FakeInboundChannelAdapterRegistry();
         maxAdapter = new FakeInboundChannelAdapter(ChannelKind.Max);
         adapters.Register(maxAdapter);
@@ -37,9 +39,9 @@ public class DeliverChannelMessageHandlerTests
         visitors.Seed(new Visitor(visitorId, SiteId, Now));
 
         var handler = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler(
-            conversations, identities, visitors, adapters);
+            conversations, identities, visitors, moduleTaskPreferences, adapters);
 
-        return new Harness(handler, conversations, identities, visitors, adapters);
+        return new Harness(handler, conversations, identities, visitors, moduleTaskPreferences, adapters);
     }
 
     private static Task LinkMaxIdentity(FakeChannelIdentityRepository identities, VisitorId visitorId, string address = "555000") =>
@@ -180,6 +182,143 @@ public class DeliverChannelMessageHandlerTests
         Assert.Single(telegramAdapter.Sent);
     }
 
+    /// <summary>
+    /// `20-11`: case 1 of 3 of the widened resolution order - this conversation's own active booking has
+    /// a priority list set, and it must win over both `14-13`'s own preference and the unchanged
+    /// most-recent rule, even when both of those would have picked a different, also-active identity.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheActiveBookingHasAUsablePriorityList_UsesItOverThePreferenceAndMostRecent()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        var telegramAdapter = new FakeInboundChannelAdapter(ChannelKind.Telegram);
+        var vkAdapter = new FakeInboundChannelAdapter(ChannelKind.Vk);
+        harness.Adapters.Register(telegramAdapter);
+        harness.Adapters.Register(vkAdapter);
+
+        var maxIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Max, new ExternalChannelAddress("555000"),
+            conversation.VisitorId, Now);
+        await harness.Identities.SaveAsync(maxIdentity, CancellationToken.None);
+        // Most recently seen - the unchanged most-recent rule alone would pick this one.
+        var telegramIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Telegram, new ExternalChannelAddress("tg-user-1"),
+            conversation.VisitorId, Now.AddHours(1));
+        await harness.Identities.SaveAsync(telegramIdentity, CancellationToken.None);
+        var vkIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Vk, new ExternalChannelAddress("vk-user-1"),
+            conversation.VisitorId, Now.AddHours(2));
+        await harness.Identities.SaveAsync(vkIdentity, CancellationToken.None);
+
+        // 14-13's own preference - would win the old two-step resolution, but must lose to this item's
+        // own list below.
+        var visitor = await harness.Visitors.GetByIdAsync(conversation.VisitorId, CancellationToken.None);
+        visitor!.SetPreferredChannelIdentity(telegramIdentity.Id);
+        harness.Visitors.Seed(visitor);
+
+        var task = conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+        harness.ModuleTaskPreferences.Seed(ModuleTaskChannelPreference.Add(
+            new ModuleTaskChannelPreferenceId(Guid.NewGuid()), SiteId, task.Id, conversation.VisitorId, vkIdentity.Id,
+            priority: 1, Now));
+        harness.Conversations.Seed(conversation);
+
+        var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        Assert.Single(vkAdapter.Sent);
+        Assert.Empty(telegramAdapter.Sent);
+        Assert.Empty(maxAdapter.Sent);
+    }
+
+    /// <summary>
+    /// `20-11`: the priority list's own internal ordering - the top-ranked entry was unlinked after the
+    /// list was set, so resolution must move to the next-ranked entry in the same list rather than
+    /// abandoning the list entirely for `14-13`'s preference.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheTopPriorityEntryIsUnlinked_FallsToTheNextEntryInTheSameList()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        var telegramAdapter = new FakeInboundChannelAdapter(ChannelKind.Telegram);
+        var vkAdapter = new FakeInboundChannelAdapter(ChannelKind.Vk);
+        harness.Adapters.Register(telegramAdapter);
+        harness.Adapters.Register(vkAdapter);
+
+        var vkIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Vk, new ExternalChannelAddress("vk-user-1"), conversation.VisitorId, Now);
+        vkIdentity.Unlink(Now.AddMinutes(1));
+        await harness.Identities.SaveAsync(vkIdentity, CancellationToken.None);
+        var telegramIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Telegram, new ExternalChannelAddress("tg-user-1"), conversation.VisitorId, Now);
+        await harness.Identities.SaveAsync(telegramIdentity, CancellationToken.None);
+        // Most recently seen of the three, and not in the priority list at all - what the old
+        // (pre-20-11) resolution order would pick once the unlinked top entry is out of the way,
+        // proving this test actually discriminates "moved to the next entry in the same list" from
+        // "fell all the way through to the unchanged most-recent rule and got lucky."
+        var maxIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Max, new ExternalChannelAddress("555000"), conversation.VisitorId, Now.AddHours(1));
+        await harness.Identities.SaveAsync(maxIdentity, CancellationToken.None);
+
+        var task = conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+        harness.ModuleTaskPreferences.Seed(ModuleTaskChannelPreference.Add(
+            new ModuleTaskChannelPreferenceId(Guid.NewGuid()), SiteId, task.Id, conversation.VisitorId, vkIdentity.Id, priority: 1, Now));
+        harness.ModuleTaskPreferences.Seed(ModuleTaskChannelPreference.Add(
+            new ModuleTaskChannelPreferenceId(Guid.NewGuid()), SiteId, task.Id, conversation.VisitorId, telegramIdentity.Id, priority: 2, Now));
+        harness.Conversations.Seed(conversation);
+
+        var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        Assert.Single(telegramAdapter.Sent);
+        Assert.Empty(vkAdapter.Sent);
+        Assert.Empty(maxAdapter.Sent);
+    }
+
+    /// <summary>
+    /// `20-11`: case 2 and 3 unaffected regression guard, this item's own axis - a conversation with no
+    /// active module task at all has nothing for the new resolution step to find, so control passes
+    /// straight through to `14-13`'s preference exactly as it did before this item existed.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WithNoActiveModuleTask_TheBookingPriorityStepContributesNothing_FallsBackToThePreference()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        var telegramAdapter = new FakeInboundChannelAdapter(ChannelKind.Telegram);
+        harness.Adapters.Register(telegramAdapter);
+
+        var maxIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Max, new ExternalChannelAddress("555000"), conversation.VisitorId, Now);
+        await harness.Identities.SaveAsync(maxIdentity, CancellationToken.None);
+        var telegramIdentity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Telegram, new ExternalChannelAddress("tg-user-1"), conversation.VisitorId, Now.AddHours(1));
+        await harness.Identities.SaveAsync(telegramIdentity, CancellationToken.None);
+
+        var visitor = await harness.Visitors.GetByIdAsync(conversation.VisitorId, CancellationToken.None);
+        visitor!.SetPreferredChannelIdentity(maxIdentity.Id);
+        harness.Visitors.Seed(visitor);
+        // No StartModuleTask call at all - the conversation has never run any module.
+
+        var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        Assert.Single(maxAdapter.Sent);
+        Assert.Empty(telegramAdapter.Sent);
+    }
+
     /// <summary>The loop guard: a visitor message (what an inbound MAX message itself is authored as)
     /// must never be relayed back out, or every inbound MAX message would echo straight back to the
     /// same chat.</summary>
@@ -245,7 +384,7 @@ public class DeliverChannelMessageHandlerTests
         var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
 
         var handler = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler(
-            conversations, identities, visitors, adapters);
+            conversations, identities, visitors, new FakeModuleTaskChannelPreferenceRepository(), adapters);
         var outcome = await handler.HandleAsync(
             new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
                 SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),

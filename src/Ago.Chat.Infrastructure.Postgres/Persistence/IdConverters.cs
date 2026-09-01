@@ -40,6 +40,10 @@ internal static class IdConverters
     public static readonly ValueConverter<EnabledModuleId, Guid> EnabledModule = new(id => id.Value, value => new EnabledModuleId(value));
     public static readonly ValueConverter<ModuleTaskId, Guid> ModuleTask = new(id => id.Value, value => new ModuleTaskId(value));
 
+    // `20-11`
+    public static readonly ValueConverter<ModuleTaskChannelPreferenceId, Guid> ModuleTaskChannelPreference = new(
+        id => id.Value, value => new ModuleTaskChannelPreferenceId(value));
+
     /// <summary>`20-07`: <see cref="ModuleKey"/> is a plain string wrapper (like <see cref="RetentionClass"/>),
     /// not a strongly-typed id over a <see cref="Guid"/> - listed here anyway, alongside every other
     /// value-object converter this file owns, rather than inline per configuration, since two entities

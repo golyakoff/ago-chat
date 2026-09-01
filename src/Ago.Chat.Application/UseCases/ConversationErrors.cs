@@ -558,4 +558,34 @@ public static class ConversationErrors
         new(
             "PhoneVerification.AlreadyLinkedToAnotherVisitor",
             "This phone number is already verified for a different visitor.");
+
+    // `20-11`: same shared vocabulary, same reason - SetModuleTaskChannelPriorityListHandler adds its own
+    // codes here rather than a separate error class.
+    /// <summary>There is no <see cref="Domain.Conversation.ActiveModuleTask"/> to scope a priority list
+    /// to - `20-11`'s own list is keyed to a <see cref="Domain.ModuleTaskId"/>, not the conversation as a
+    /// whole, so there is nothing for this call to attach to until a module (e.g. the chat-originated
+    /// booking flow) has actually started one.</summary>
+    public static Error ModuleTaskChannelPriorityNoActiveTask() =>
+        new(
+            "ModuleTaskChannelPriority.NoActiveTask",
+            "This conversation has no active module task in progress to set a channel priority list for.");
+
+    /// <summary>The same "never an arbitrary id" invariant `ChannelIdentityNotEligibleForPreference`
+    /// already enforces for `14-13`'s own single-value preference, applied here to every entry of a
+    /// priority list: a channel identity earns a place only when it exists, belongs to this site, belongs
+    /// to *this conversation's own visitor*, and is still <see cref="Domain.ChannelIdentity.Active"/> -
+    /// the mechanism this item is named for ("a visitor typing 'also message me here' is not
+    /// evidence").</summary>
+    public static Error ModuleTaskChannelNotEligible(Guid channelIdentityId) =>
+        new(
+            "ModuleTaskChannelPriority.ChannelNotEligible",
+            $"Channel identity {channelIdentityId} is not one of this visitor's own active identities.");
+
+    /// <summary>The same channel identity named twice in one submitted priority order - refused rather
+    /// than silently collapsed to one entry, since a caller submitting a genuine duplicate has almost
+    /// certainly made a mistake worth surfacing rather than guessing which occurrence they meant.</summary>
+    public static Error ModuleTaskChannelPriorityDuplicateEntry(Guid channelIdentityId) =>
+        new(
+            "ModuleTaskChannelPriority.DuplicateEntry",
+            $"Channel identity {channelIdentityId} appears more than once in the priority list.");
 }

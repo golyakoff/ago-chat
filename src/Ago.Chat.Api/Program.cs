@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Attachments;
 using Ago.Chat.Api.CannedResponses;
+using Ago.Chat.Api.ModuleTaskChannelPreferences;
 using Ago.Chat.Api.ChannelIdentities;
 using Ago.Chat.Api.ContactDetails;
 using Ago.Chat.Api.PhoneVerification;
@@ -413,6 +414,10 @@ app.MapTagEndpoints();
 // VisitorPanel listing, and the operator-gated unlink. The platform owner's own unconditional unlink is
 // the separate MapOwnerChannelIdentityEndpoints call below, next to MapOwnerEndpoints.
 app.MapChannelIdentityEndpoints();
+// `20-11`: the per-booking priority list - a narrower, per-booking override sitting in front of
+// `14-13`'s own preference above. See ModuleTaskChannelPreferenceEndpoints' own remarks on why no console
+// page calls this yet.
+app.MapModuleTaskChannelPreferenceEndpoints();
 // `14-14`/`adr/0079` section 6: unverified contact details - a separate, simpler surface beside
 // channel identities, never reaching IChannelIdentityRepository or DeliverChannelMessageHandler.
 app.MapContactDetailEndpoints();
