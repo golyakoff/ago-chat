@@ -21,6 +21,12 @@
          driving a scoped handler. -->
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <!-- TelegramTraceUrlRedaction's own dependency, and the only place production code in this
+         repository references the OTel SDK directly - see that class's remarks and
+         Directory.Packages.props' own note for why the exception is here and not in
+         Ago.Platform.Observability. This is the instrumentation package, not the ASP.NET Core-shaped
+         exporter/instrumentation pair, so it stays usable from a generic host too. -->
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
   </ItemGroup>
 
 </Project>

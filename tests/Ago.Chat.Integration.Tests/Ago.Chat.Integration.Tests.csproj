@@ -40,6 +40,11 @@
          correctness against one, not a live Jaeger (that is 7-03's job). -->
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
+    <!-- TelegramTraceUrlRedactionTests: the instrumentation whose `url.full` tag leaked the bot token,
+         plus the DI-shaped AddOpenTelemetry() its end-to-end fact needs to prove the redaction through
+         the real IOptions pipeline instead of a hand-built options object. -->
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
