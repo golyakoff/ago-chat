@@ -403,6 +403,14 @@ public sealed class ChatModule : IProductModule
         .RemoveAllLoggers()
         .AddHttpMessageHandler<TelegramTokenRedactingLoggingHandler>();
         services.AddTransient<TelegramTokenRedactingLoggingHandler>();
+        // Found 2026-09-02, auditing the same leak against the *other* telemetry signal: the handler
+        // above closes it for logs and does nothing for traces. OpenTelemetry's HttpClient
+        // instrumentation (wired by every host's AddPlatformObservability) listens to
+        // System.Net.Http's DiagnosticSource from below the handler chain and records the outgoing URL
+        // as `url.full`, token and all. This registers the one hook that can overwrite that tag - see
+        // TelegramTraceUrlRedaction's own remarks for why enrichment rather than a filter, and why the
+        // redaction is a product concern rather than something Ago.Platform.Observability should know.
+        services.AddTelegramTokenTraceRedaction();
         // Singleton, not scoped - the identical reasoning MaxChannelAdapter's own remarks give: the
         // singleton InboundChannelAdapterRegistry can only ever hold adapters safe to keep for the
         // process lifetime.

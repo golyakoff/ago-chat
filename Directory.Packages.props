@@ -172,6 +172,19 @@
          directly, only Ago.Platform.Hosting.AddPlatformObservability. -->
     <PackageVersion Include="OpenTelemetry" Version="1.18.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.18.0" />
+    <!-- The one exception to the "production code never references the OTel SDK directly" note
+         above, added 2026-09-02 with TelegramTraceUrlRedaction: Telegram puts its bot token in the
+         URL path, the HttpClient instrumentation records that path as `url.full`, and the only hook
+         that can redact it is HttpClientTraceInstrumentationOptions - which lives in this package and
+         has no abstraction in front of it worth inventing. Ago.Chat.Infrastructure.Telegram is the
+         one production project that references it, matching that project's own "everything that
+         knows Telegram's HTTP shape lives here and nowhere above it" rule. Same pin as the rest. -->
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+    <!-- TelegramTraceUrlRedactionTests' own end-to-end fact builds its TracerProvider through a real
+         IServiceCollection rather than Sdk.CreateTracerProviderBuilder(), because the thing under test
+         *is* the IOptions wiring - Sdk.CreateTracerProviderBuilder() would never see it. That is what
+         needs this package's AddOpenTelemetry() overload. Same pin as the rest. -->
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
   </ItemGroup>
 
 </Project>
