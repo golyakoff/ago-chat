@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Net;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,10 +25,22 @@ namespace Ago.Chat.Infrastructure.Telegram;
 /// loop. <see cref="_pollers"/> is this class's only mutable shared state, guarded by
 /// <see cref="_gate"/> because the outer refresh loop and a poller's own faulted-task cleanup can both
 /// touch it.</para>
+///
+/// <para><b><c>14-16</c>/<c>adr/0089</c>: one poll loop per credential across the whole fleet, not just
+/// within this process.</b> Every entry in <see cref="_pollers"/> is a <em>candidate</em> loop, not a
+/// guaranteed one - <see cref="PollOneCredentialAsync"/> claims <see cref="IChannelPollerOwnership"/>'s
+/// lease for its credential first and returns immediately, without polling anything, if another Worker
+/// process already holds it. <see cref="RefreshPollersAsync"/>'s reap step is what turns "returned
+/// immediately" back into a retry: a loop that ends - lease denied, lease lost mid-poll
+/// (<see cref="ChannelPollerLeaseLostException"/>), or genuinely stopped - is removed from
+/// <see cref="_pollers"/> so the next tick starts a fresh attempt for it, exactly as if it had never
+/// been active. This is the entire mechanism; nothing in this class knows or needs to know that the
+/// lease is a PostgreSQL advisory lock underneath.</para>
 /// </summary>
 public sealed class TelegramLongPollingService(
     TelegramApiClient client,
     IServiceScopeFactory scopeFactory,
+    IChannelPollerOwnership pollerOwnership,
     IOptions<TelegramBotApiOptions> apiOptions,
     IOptions<TelegramLongPollingServiceOptions> pollingOptions,
     ILogger<TelegramLongPollingService> logger) : BackgroundService
@@ -69,6 +82,19 @@ public sealed class TelegramLongPollingService(
         await _gate.WaitAsync(stoppingToken);
         try
         {
+            // `14-16`/`adr/0089`: reap a loop that ended on its own - lease denied (another process
+            // already holds this credential) or lease lost mid-poll - so a still-active credential is
+            // eligible for a fresh acquire attempt on this same tick rather than being stuck looking
+            // "already polled" in `_pollers` forever after its own `Task` already completed. Checked
+            // before the stale/start sections below so a reaped id can be picked back up by the "start"
+            // loop in the same pass.
+            foreach (var endedId in _pollers.Where(kv => kv.Value.Loop.IsCompleted).Select(kv => kv.Key).ToList())
+            {
+                var (cancellation, loop) = _pollers[endedId];
+                await CancelAndAwaitAsync(cancellation, loop);
+                _pollers.Remove(endedId);
+            }
+
             // Stop polling a credential that is no longer active (revoked since the last refresh).
             foreach (var staleId in _pollers.Keys.Where(id => !activeIds.Contains(id)).ToList())
             {
@@ -77,7 +103,8 @@ public sealed class TelegramLongPollingService(
                 _pollers.Remove(staleId);
             }
 
-            // Start polling a credential that just became active.
+            // Start polling a credential that just became active - or that was just reaped above,
+            // whether it never held the lease or lost it mid-poll.
             foreach (var credential in active.Where(c => !_pollers.ContainsKey(c.Id)))
             {
                 var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -91,17 +118,34 @@ public sealed class TelegramLongPollingService(
         }
     }
 
-    /// <summary>One bot's own long-poll loop. Decrypts the token once per iteration - the identical
-    /// "never risk a stale token surviving past its own revocation" trade-off
-    /// <c>MaxLongPollingService.PollOneCredentialAsync</c>'s own remarks describe.</summary>
+    /// <summary>One bot's own long-poll loop - if this process actually wins ownership of it.
+    /// `14-16`/`adr/0089`: the very first thing this does is claim <paramref name="credentialId"/>'s
+    /// <see cref="IChannelPollerLease"/>; a denied claim returns immediately without ever calling
+    /// Telegram, and <see cref="RefreshPollersAsync"/>'s reap step retries it on the next tick. Decrypts
+    /// the token once per iteration - the identical "never risk a stale token surviving past its own
+    /// revocation" trade-off <c>MaxLongPollingService.PollOneCredentialAsync</c>'s own remarks
+    /// describe.</summary>
     private async Task PollOneCredentialAsync(ChannelCredentialId credentialId, CancellationToken cancellationToken)
     {
+        await using var lease = await pollerOwnership.TryAcquireAsync(credentialId, cancellationToken);
+        if (lease is null)
+        {
+            // Another process already holds this credential's poll loop (adr/0089) - not an error, and
+            // not logged as one: this is the expected steady state for every credential this process
+            // does not happen to have won. The next RefreshPollersAsync tick retries.
+            return;
+        }
+
         long? offset = null;
 
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
+                // adr/0089's half-open-connection guard: confirms the lease is still backed by a live
+                // session before spending a long-poll timeout window believing it is still exclusive.
+                await lease.VerifyStillHeldAsync(cancellationToken);
+
                 string token;
                 SiteId siteId;
                 await using (var scope = scopeFactory.CreateAsyncScope())
@@ -138,6 +182,38 @@ public sealed class TelegramLongPollingService(
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return;
+            }
+            catch (ChannelPollerLeaseLostException ex)
+            {
+                // adr/0089's half-open-connection window, surfaced. Not a transport failure - stop this
+                // loop so RefreshPollersAsync's reap step retries the acquire fresh on its next tick,
+                // rather than looping forever on a lease that can never become valid again.
+                logger.LogWarning(
+                    ex, "Lost poll ownership of Telegram credential {ChannelCredentialId}; another process may take it over on its next refresh tick.",
+                    credentialId.Value);
+                return;
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
+            {
+                // `14-16`: after this change a 409 here should not happen - this process holds the lease,
+                // so no *other* Worker process should be calling getUpdates for this same token. Logged
+                // distinctly from the generic transport-failure line below specifically so a self-inflicted
+                // conflict (a bug in this mechanism) and a genuine provider-side conflict (Telegram's own
+                // side, e.g. the same token also polled from outside this fleet) are never confused with an
+                // ordinary transient failure - and, per adr/0089, are still distinguishable from each other
+                // by the fact that this process still believes it holds the lease when this fires at all.
+                logger.LogWarning(
+                    ex, "Telegram returned 409 Conflict for credential {ChannelCredentialId} while this process holds its poll lease - " +
+                    "unexpected after adr/0089; a provider-side conflict (e.g. the same token polled outside this fleet), not a topology one.",
+                    credentialId.Value);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(pollingOptions.Value.ErrorBackoffSeconds), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
             catch (Exception ex)
             {
