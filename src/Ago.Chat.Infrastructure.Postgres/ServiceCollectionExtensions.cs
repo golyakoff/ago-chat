@@ -129,6 +129,12 @@ public static class ServiceCollectionExtensions
         // it with a per-cycle scope the way that fix needed to.
         services.AddSingleton<IMessageArchiveRepository, MessageArchiveRepository>();
         services.AddSingleton<IMessageArchiveGate, MessageArchiveGate>();
+        // `14-16`/`adr/0089`: Singleton, not Scoped, for the identical captive-dependency reason the two
+        // lines above are Singleton - and because the mechanism only works if TelegramLongPollingService
+        // and MaxLongPollingService (both singleton BackgroundServices) share the one dedicated
+        // connection this holds open for the process's whole lifetime, rather than each resolving its
+        // own instance. See PostgresChannelPollerOwnership's own remarks for the full mechanism.
+        services.AddSingleton<IChannelPollerOwnership, PostgresChannelPollerOwnership>();
         // `18-04`: notes and tags - INoteRepository's own remarks on why it is registered here like
         // every other repository and yet reachable from only two handlers in the whole codebase.
         services.AddScoped<INoteRepository, NoteRepository>();
