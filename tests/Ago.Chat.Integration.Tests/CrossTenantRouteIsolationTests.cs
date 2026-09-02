@@ -4,9 +4,11 @@ using System.Net.Http.Json;
 using System.Text;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.OfflineAutoReply;
+using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
+using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
@@ -33,10 +35,11 @@ namespace Ago.Chat.Integration.Tests;
 
 /// <summary>
 /// `17-01`: every route group in this codebase that takes a <b>client-supplied</b> <c>site_id</c> -
-/// <c>/api/v1/sites/{siteId}/widget-config</c>, <c>/api/v1/sites/{siteId}/webhooks/...</c> and, since
-/// `14-04`, <c>/api/v1/sites/{siteId}/offline-auto-reply</c> - proven to refuse an operator of one
-/// tenant naming another, at the level where the composition is real. `tenant-isolation.md` states
-/// that every such group is covered here, so a new one that is not added below makes that claim false.
+/// <c>/api/v1/sites/{siteId}/widget-config</c>, <c>/api/v1/sites/{siteId}/webhooks/...</c>, since
+/// `14-04`, <c>/api/v1/sites/{siteId}/offline-auto-reply</c>, and since `10-06`
+/// <c>/api/v1/sites/{siteId}/installation</c> - proven to refuse an operator of one tenant naming
+/// another, at the level where the composition is real. `tenant-isolation.md` states that every such
+/// group is covered here, so a new one that is not added below makes that claim false.
 ///
 /// <para><b>Why full HTTP with a real Keycloak and a real Postgres, rather than a handler test with a
 /// fake checker.</b> A handler test proves "when the checker says no, the handler refuses" - a
@@ -123,6 +126,37 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         Assert.Equal(VictimColorHex, victimSite!.WidgetConfig.PrimaryColorHex);
         Assert.Equal(Position.BottomRight, victimSite.WidgetConfig.Position);
     }
+
+    /// <summary>
+    /// `10-06`: the newest client-supplied-`siteId` route group, on the same terms as the ones beside
+    /// it - and the one this backlog item calls out by name as "the one test that matters", since a
+    /// site's public key answering for the wrong caller is a silent failure (it returns a value, it
+    /// does not throw). Read-only, so there is no "and changed nothing" half the way the write routes
+    /// above need - a `GET` that leaked another tenant's key would already be the whole bug, with
+    /// nothing left to additionally verify in the database.
+    /// </summary>
+    [Fact]
+    public async Task InstallationRoute_RefusesAnotherTenantsSite()
+    {
+        var scenario = await SetUpAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, scenario.AccessToken);
+
+        var own = $"/api/v1/sites/{scenario.CallerSiteId.Value}/installation";
+        var victim = $"/api/v1/sites/{scenario.VictimSiteId.Value}/installation";
+
+        // Positive control first, same reasoning as WidgetConfigRoutes' own test right below: a 403 on
+        // the victim route means "this site, not you" only if the identical caller's own site really
+        // does answer 200.
+        var ownResponse = await client.GetAsync(own);
+        Assert.Equal(HttpStatusCode.OK, ownResponse.StatusCode);
+        var ownBody = await ownResponse.Content.ReadFromJsonAsync<SiteInstallationResponse>();
+        Assert.Equal($"site_{scenario.CallerSiteId.Value:N}", ownBody!.PublicKey);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(victim)).StatusCode);
+    }
+
+    private sealed record SiteInstallationResponse(string PublicKey, IReadOnlyList<string> AllowedOrigins);
 
     /// <summary>`14-04`: the third client-supplied-`siteId` route group, on the same terms as the two
     /// beside it. Same caller, who really does hold `site:configure` - on their own site.</summary>
@@ -317,6 +351,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<GetWidgetConfigHandler>();
         builder.Services.AddScoped<UpdateWidgetConfigHandler>();
+        // `10-06`
+        builder.Services.AddScoped<GetSiteInstallationHandler>();
         builder.Services.AddScoped<GetOfflineAutoReplyHandler>();
         builder.Services.AddScoped<UpdateOfflineAutoReplyHandler>();
         builder.Services.AddScoped<RegisterWebhookEndpointHandler>();
@@ -351,6 +387,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         app.MapWidgetConfigEndpoints();
         app.MapOfflineAutoReplyEndpoints();
         app.MapWebhookEndpoints();
+        // `10-06`
+        app.MapSiteInstallationEndpoints();
 
         await app.StartAsync();
         return app;

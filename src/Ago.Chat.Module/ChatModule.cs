@@ -44,6 +44,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
@@ -802,6 +803,12 @@ public sealed class ChatModule : IProductModule
         // else on this page, even though only `Ago.Chat.Api` maps HTTP endpoints for them today.
         services.AddScoped<GetWidgetConfigHandler>();
         services.AddScoped<UpdateWidgetConfigHandler>();
+
+        // `10-06`: the read `GetWidgetConfigHandler`'s own doc comment names as the gap this item
+        // closes - a site's own public key and allowed origins, returned to that site's operators so
+        // the console can render an installable snippet. Same registration shape, same reason, as the
+        // pair right above.
+        services.AddScoped<GetSiteInstallationHandler>();
 
         // `16-02`: the erase-request writes, and the completion-poll read the console needs since no
         // single-conversation admin-fetch endpoint existed before this item - see each handler's own
