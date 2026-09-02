@@ -426,6 +426,9 @@ app.MapContactDetailEndpoints();
 // after AttachmentEndpoints.
 app.MapPhoneVerificationEndpoints();
 app.MapSitesEndpoints();
+// `10-06`: own file, own Map call - see SiteInstallationEndpoints' own remarks on why it is not
+// folded into MapSitesEndpoints above.
+app.MapSiteInstallationEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();
 // `8-07`: the anonymous demo-credential route. Registered unconditionally; the handler refuses when
