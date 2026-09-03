@@ -77,7 +77,10 @@ using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
+using Ago.Chat.Application.UseCases.RevokeModuleForSite;
+using Ago.Chat.Application.UseCases.RotateModuleCredential;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
+using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
@@ -524,7 +527,19 @@ public sealed class ChatModule : IProductModule
                 .Get(ModuleResiliencePipelines.PipelineName)));
         services.AddScoped<IModuleGateway>(sp => new ResilientModuleGateway(
             sp.GetRequiredService<HttpModuleGateway>(), sp.GetRequiredService<ModuleResiliencePipelines>()));
+
+        // `22-11`: the provisioning boundary - a sibling to the module task boundary just above, not a
+        // third method on it (IModuleRegistrationGateway's own remarks). Deliberately unwrapped by any
+        // resilience pipeline: a rare, operator-initiated call, not hot-path traffic shared across every
+        // visitor message - HttpModuleRegistrationGateway's own remarks.
+        services.AddHttpClient<HttpModuleRegistrationGateway>();
+        services.AddScoped<IModuleRegistrationGateway, HttpModuleRegistrationGateway>();
+        services.AddSingleton<IModuleCredentialGenerator, ModuleCredentialGenerator>();
+
         services.AddScoped<EnableModuleForSiteHandler>();
+        services.AddScoped<RotateModuleCredentialHandler>();
+        services.AddScoped<RevokeModuleForSiteHandler>();
+        services.AddScoped<VerifyModuleRegistrationHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();

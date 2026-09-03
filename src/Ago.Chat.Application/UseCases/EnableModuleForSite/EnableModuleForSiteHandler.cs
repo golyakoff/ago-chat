@@ -27,10 +27,20 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSite;
 /// endpoint) and nothing has ever called it twice for the same module. Flagged rather than silently
 /// left, per the backlog item's own instruction to say plainly where an implementer's-call default was
 /// made.</para>
+///
+/// <para><b>`22-11`: the module-side registration is made real before this row is ever saved.</b> This
+/// handler calls <see cref="IModuleRegistrationGateway.RegisterAsync"/> synchronously, in the same
+/// request, before <see cref="IEnabledModuleRepository.SaveAsync"/> - not through the outbox. If the
+/// module refuses or is unreachable, nothing is written on this side either: the operator sees the
+/// failure immediately and the retry is simply calling this command again (both sides of the
+/// underlying HTTP call are idempotent - a second `PUT .../module-registrations/{siteId}` for the
+/// still-unregistered site succeeds the same way the first attempt would have). See this repository's
+/// own report for the fuller argument against an eventually-consistent, outbox-dispatched
+/// alternative.</para>
 /// </summary>
 public sealed class EnableModuleForSiteHandler(
     IEnabledModuleRepository modules, IEnabledModuleReadStore moduleReadStore, IPermissionChecker permissions,
-    IClock clock, IIdGenerator idGenerator)
+    IModuleRegistrationGateway registrationGateway, IClock clock, IIdGenerator idGenerator)
 {
     public async Task<Result<EnabledModuleId>> HandleAsync(
         EnableModuleForSite command, CancellationToken cancellationToken)
@@ -45,11 +55,13 @@ public sealed class EnableModuleForSiteHandler(
         ModuleKey moduleKey;
         Uri entryPoint;
         ModuleCredential credential;
+        ModuleProvisioningSecret provisioningSecret;
         try
         {
             moduleKey = new ModuleKey(command.ModuleKey);
             entryPoint = new Uri(command.EntryPoint, UriKind.Absolute);
             credential = new ModuleCredential(command.Credential);
+            provisioningSecret = new ModuleProvisioningSecret(command.ProvisioningSecret);
         }
         catch (Exception ex) when (ex is ArgumentException or UriFormatException)
         {
@@ -101,6 +113,19 @@ public sealed class EnableModuleForSiteHandler(
         catch (ArgumentException ex)
         {
             return ConversationErrors.ModuleInvalid(ex.Message);
+        }
+
+        // `22-11`: the module deployment confirms the registration before this row is ever
+        // persisted - see this handler's own remarks on the ordering.
+        try
+        {
+            await registrationGateway.RegisterAsync(
+                new ModuleRegistrationTarget(moduleKey, command.SiteId, entryPoint), credential, provisioningSecret,
+                cancellationToken);
+        }
+        catch (ModuleUnreachableException ex)
+        {
+            return ConversationErrors.ModuleRegistrationFailed(ex.Message);
         }
 
         await modules.SaveAsync(module, cancellationToken);

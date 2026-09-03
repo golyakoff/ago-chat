@@ -2,7 +2,11 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
+using Ago.Chat.Application.UseCases.RevokeModuleForSite;
+using Ago.Chat.Application.UseCases.RotateModuleCredential;
+using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
 using Ago.Chat.Domain;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Ago.Chat.Api.Modules;
 
@@ -32,6 +36,13 @@ public static class ModuleEndpoints
 
         group.MapGet("", HandleGetAsync);
         group.MapPut("", HandlePutAsync);
+
+        // `22-11`: the lifecycle PUT alone did not have - see EnableModuleForSiteHandler's own
+        // remarks on why a create-only registry left a leaked credential with no remedy and a site's
+        // access with no way to end.
+        group.MapPost("/{moduleKey}/rotate", HandleRotateAsync);
+        group.MapDelete("/{moduleKey}", HandleRevokeAsync);
+        group.MapPost("/{moduleKey}/verify", HandleVerifyAsync);
     }
 
     private static async Task<IResult> HandleGetAsync(
@@ -53,20 +64,95 @@ public static class ModuleEndpoints
         var result = await handler.HandleAsync(
             new EnableModuleForSite(
                 user.GetOperatorId(), new SiteId(siteId), request.ModuleKey, request.TriggerWords, request.EntryPoint,
-                request.Credential),
+                request.Credential, request.ProvisioningSecret),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(new EnableModuleResponse(
             request.ModuleKey, request.TriggerWords, request.EntryPoint));
     }
 
+    /// <summary>`22-11`: mints a fresh credential and installs it on both sides - see
+    /// <see cref="RotateModuleCredentialHandler"/>'s own remarks for why this handler mints rather than
+    /// accepts one, unlike <see cref="HandlePutAsync"/>.</summary>
+    private static async Task<IResult> HandleRotateAsync(
+        Guid siteId,
+        string moduleKey,
+        RotateModuleCredentialRequest request,
+        RotateModuleCredentialHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new RotateModuleCredential(httpContext.User.GetOperatorId(), new SiteId(siteId), moduleKey, request.ProvisioningSecret),
+            cancellationToken);
+
+        // `22-11`: the one place a credential this codebase mints is ever echoed back - the operator
+        // has no other way to learn a value Chat generated on its own behalf, the same "shown once"
+        // hygiene IWebhookSecretGenerator's own remarks describe for its sibling.
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new RotateModuleCredentialResponse(result.Value.NewCredential.Value));
+    }
+
+    private static async Task<IResult> HandleRevokeAsync(
+        Guid siteId,
+        string moduleKey,
+        // `DELETE` does not allow an inferred body parameter (Minimal API's own RequestDelegateFactory
+        // refuses to infer one for GET/HEAD/DELETE) - found by this item's own integration test, not
+        // by inspection, the same "found running, not reasoned about" shape this project's own
+        // fails-before discipline keeps surfacing.
+        [FromBody] RevokeModuleRequest request,
+        RevokeModuleForSiteHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new RevokeModuleForSite(httpContext.User.GetOperatorId(), new SiteId(siteId), moduleKey, request.ProvisioningSecret),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok();
+    }
+
+    /// <summary>`22-11`'s own fourth Done-when's operator-facing surface - see
+    /// <see cref="VerifyModuleRegistrationHandler"/>'s own remarks for what this can and cannot
+    /// prove.</summary>
+    private static async Task<IResult> HandleVerifyAsync(
+        Guid siteId,
+        string moduleKey,
+        VerifyModuleRegistrationRequest request,
+        VerifyModuleRegistrationHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new VerifyModuleRegistration(
+                httpContext.User.GetOperatorId(), new SiteId(siteId), moduleKey, request.EntryPoint, request.ProvisioningSecret),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(new VerifyModuleRegistrationResponse(
+            result.Value.ChatHasRegistration, result.Value.ModuleHasRegistration, result.Value.Agree));
+    }
+
     /// <param name="Credential">`22-02`: the shared secret this site's module calls will be signed
     /// with - never echoed back in <see cref="EnableModuleResponse"/> once written, the same
     /// "a secret is accepted, never returned" hygiene a password field would get.</param>
+    /// <param name="ProvisioningSecret">`22-11`: proves this call may provision on the module
+    /// deployment's own behalf - see <see cref="Domain.ModuleProvisioningSecret"/>'s own remarks.</param>
     public sealed record EnableModuleRequest(
-        string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, string Credential);
+        string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, string Credential,
+        string ProvisioningSecret);
 
     public sealed record EnableModuleResponse(string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint);
 
     public sealed record EnabledModulesResponse(IReadOnlyList<EnableModuleResponse> Modules);
+
+    public sealed record RotateModuleCredentialRequest(string ProvisioningSecret);
+
+    public sealed record RotateModuleCredentialResponse(string NewCredential);
+
+    public sealed record RevokeModuleRequest(string ProvisioningSecret);
+
+    public sealed record VerifyModuleRegistrationRequest(string EntryPoint, string ProvisioningSecret);
+
+    public sealed record VerifyModuleRegistrationResponse(bool ChatHasRegistration, bool ModuleHasRegistration, bool Agree);
 }

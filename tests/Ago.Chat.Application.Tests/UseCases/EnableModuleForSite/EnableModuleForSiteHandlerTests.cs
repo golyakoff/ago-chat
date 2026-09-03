@@ -18,27 +18,30 @@ public class EnableModuleForSiteHandlerTests
 
     private sealed record Fixture(
         EnableModuleForSiteHandler Handler, FakeEnabledModuleRepository Modules, FakeEnabledModuleReadStore ReadStore,
-        FakePermissionChecker Permissions);
+        FakePermissionChecker Permissions, FakeModuleRegistrationGateway RegistrationGateway);
 
     private static Fixture CreateFixture(bool permitted = true)
     {
         var modules = new FakeEnabledModuleRepository();
         var readStore = new FakeEnabledModuleReadStore();
         var permissions = new FakePermissionChecker();
+        var registrationGateway = new FakeModuleRegistrationGateway();
         if (permitted)
         {
             permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
         }
 
-        var handler = new EnableModuleForSiteHandler(modules, readStore, permissions, new FakeClock(Now), new FakeIdGenerator());
-        return new Fixture(handler, modules, readStore, permissions);
+        var handler = new EnableModuleForSiteHandler(
+            modules, readStore, permissions, registrationGateway, new FakeClock(Now), new FakeIdGenerator());
+        return new Fixture(handler, modules, readStore, permissions, registrationGateway);
     }
 
     private const string ValidCredential = "a-shared-secret-of-sixteen-plus-chars";
+    private const string ValidProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars";
 
     private static Application.UseCases.EnableModuleForSite.EnableModuleForSite Command(
         string moduleKey, params string[] triggerWords) =>
-        new(OperatorId, SiteId, moduleKey, triggerWords, "https://module.example.com", ValidCredential);
+        new(OperatorId, SiteId, moduleKey, triggerWords, "https://module.example.com", ValidCredential, ValidProvisioningSecret);
 
     [Fact]
     public async Task HandleAsync_WithNoConflict_RegistersTheModule()
@@ -166,7 +169,7 @@ public class EnableModuleForSiteHandlerTests
     {
         var fixture = CreateFixture();
         var command = new Application.UseCases.EnableModuleForSite.EnableModuleForSite(
-            OperatorId, SiteId, "calendar", ["/booking"], "ftp://module.example.com", ValidCredential);
+            OperatorId, SiteId, "calendar", ["/booking"], "ftp://module.example.com", ValidCredential, ValidProvisioningSecret);
 
         var result = await fixture.Handler.HandleAsync(command, CancellationToken.None);
 
@@ -183,7 +186,7 @@ public class EnableModuleForSiteHandlerTests
     {
         var fixture = CreateFixture();
         var command = new Application.UseCases.EnableModuleForSite.EnableModuleForSite(
-            OperatorId, SiteId, "calendar", ["/booking"], "https://module.example.com", "too-short");
+            OperatorId, SiteId, "calendar", ["/booking"], "https://module.example.com", "too-short", ValidProvisioningSecret);
 
         var result = await fixture.Handler.HandleAsync(command, CancellationToken.None);
 

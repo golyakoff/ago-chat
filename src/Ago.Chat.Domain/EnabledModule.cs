@@ -112,4 +112,12 @@ public sealed class EnabledModule
     private EnabledModule()
     {
     }
+
+    /// <summary>`22-11`: the write `RotateModuleCredentialHandler` persists - a new instance with every
+    /// other field unchanged, the same "reconstruct rather than mutate" shape this type's own
+    /// constructor-only field set already implies (no setters exist to mutate in place). Re-runs this
+    /// constructor's own validation, which is harmless here: every other field was already valid on the
+    /// instance this was called on.</summary>
+    public EnabledModule WithCredential(ModuleCredential newCredential) =>
+        new(Id, SiteId, ModuleKey, TriggerWords, EntryPoint, newCredential, EnabledAt);
 }

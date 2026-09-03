@@ -54,4 +54,24 @@ public class EnabledModuleTests
     [InlineData("not-a-url")]
     public void Constructor_WithANonHttpEntryPoint_Throws(string url) =>
         Assert.Throws<ArgumentException>(() => Build(entryPoint: new Uri(url, UriKind.RelativeOrAbsolute)));
+
+    /// <summary>`22-11`: the write <c>RotateModuleCredentialHandler</c> persists - every other field
+    /// unchanged, including the row's own id (so <see cref="IEnabledModuleRepository.UpdateAsync"/> can
+    /// find the right row to replace).</summary>
+    [Fact]
+    public void WithCredential_ReplacesOnlyTheCredential()
+    {
+        var module = Build();
+        var rotated = new ModuleCredential("rotated-secret-of-sixteen-plus-chars-x");
+
+        var result = module.WithCredential(rotated);
+
+        Assert.Equal(rotated, result.Credential);
+        Assert.Equal(module.Id, result.Id);
+        Assert.Equal(module.SiteId, result.SiteId);
+        Assert.Equal(module.ModuleKey, result.ModuleKey);
+        Assert.Equal(module.TriggerWords, result.TriggerWords);
+        Assert.Equal(module.EntryPoint, result.EntryPoint);
+        Assert.Equal(module.EnabledAt, result.EnabledAt);
+    }
 }

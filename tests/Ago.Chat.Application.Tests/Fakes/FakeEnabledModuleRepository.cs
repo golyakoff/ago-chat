@@ -16,5 +16,17 @@ public sealed class FakeEnabledModuleRepository : IEnabledModuleRepository
         return Task.CompletedTask;
     }
 
+    public Task UpdateAsync(EnabledModule module, CancellationToken cancellationToken)
+    {
+        _byId[module.Id] = module;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(EnabledModuleId id, CancellationToken cancellationToken)
+    {
+        _byId.Remove(id);
+        return Task.CompletedTask;
+    }
+
     public IReadOnlyList<EnabledModule> All => [.. _byId.Values];
 }
