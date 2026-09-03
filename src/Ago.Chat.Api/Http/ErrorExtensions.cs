@@ -50,7 +50,11 @@ public static class ErrorExtensions
                 // `14-15`: the identical "wrong tenant/visitor reads like no such row" shape once more -
                 // a pending phone verification id from a different site or a different visitor is
                 // indistinguishable from one that never existed.
-                or "PhoneVerification.NotFound" => StatusCodes.Status404NotFound,
+                or "PhoneVerification.NotFound"
+                // `22-11`: an operator tried to rotate/revoke/check a module registration for a site
+                // that does not have that module enabled - the same "nothing to act on" shape every
+                // other NotFound code in this group already gets.
+                or "Module.NotEnabled" => StatusCodes.Status404NotFound,
             "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
@@ -175,7 +179,12 @@ public static class ErrorExtensions
             // random username server-side, which is exactly `503`'s "try again" and not `409`'s "you
             // conflicted with a specific resource, send a different one".
             "ChannelCredential.NotAvailable" or "ReplyDraft.Unavailable" or "demo.capacity_reached"
-                or "demo.identity_rejected" => StatusCodes.Status503ServiceUnavailable,
+                or "demo.identity_rejected"
+                // `22-11`: the module deployment refused the provisioning call or could not be
+                // reached - a dependency of this request failing, not anything the caller supplied
+                // being wrong, the identical reasoning ChannelCredential.NotAvailable/ReplyDraft.Unavailable's
+                // own comment gives for its group.
+                or "Module.RegistrationFailed" => StatusCodes.Status503ServiceUnavailable,
             // `ago-root#352`: demo.unavailable is deliberately left here rather than given its own status.
             // MintDemoTenantHandler returns it only after ISiteRegistrationRepository.TryRegisterAsync's
             // five-row insert hits its own unique-index violation - a race that port's own remarks call

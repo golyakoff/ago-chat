@@ -424,6 +424,20 @@ public static class ConversationErrors
     public static Error ModuleTriggerWordReserved(string word) =>
         new("Module.TriggerWordReserved", $"Trigger word '{word}' is reserved for a built-in AGO Chat command.");
 
+    // `22-11`: EnableModuleForSiteHandler/RotateModuleCredentialHandler/RevokeModuleForSiteHandler's
+    // own codes for the module-side half of the call failing - the module refused the provisioning
+    // secret, was unreachable, or answered with something this side cannot parse. One code for all
+    // three underlying causes, the identical "the caller has nothing more specific to do about any of
+    // them" reasoning `ModuleUnreachableException`'s own remarks give for collapsing them into one
+    // exception type in the first place.
+    public static Error ModuleRegistrationFailed(string reason) =>
+        new("Module.RegistrationFailed", reason);
+
+    /// <summary>`22-11`: an operator tried to rotate or revoke a module registration for a site that
+    /// has none, or check the reconciliation status of one that was never enabled.</summary>
+    public static Error ModuleNotEnabled() =>
+        new("Module.NotEnabled", "This site does not have that module enabled.");
+
     // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of

@@ -24,6 +24,10 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSite;
 /// coordinates configured once on this side and once again, out of band, on the module deployment's
 /// own side. See <see cref="ModuleCredential"/>'s own remarks for what this value does and does not
 /// guarantee.</param>
+/// <param name="ProvisioningSecret">`22-11`: proves this call may provision on the module deployment's
+/// own behalf - see <see cref="ModuleProvisioningSecret"/>'s own remarks. Never persisted: this
+/// handler uses it once, to make the module-side registration real, and then discards it - the row
+/// this command produces on this side carries only <paramref name="Credential"/>.</param>
 public sealed record EnableModuleForSite(
     OperatorId RequestedBy, SiteId SiteId, string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint,
-    string Credential);
+    string Credential, string ProvisioningSecret);
