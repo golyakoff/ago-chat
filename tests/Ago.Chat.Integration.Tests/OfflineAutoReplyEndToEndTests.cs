@@ -169,7 +169,7 @@ public sealed class OfflineAutoReplyEndToEndTests(ConnectionFanoutFixture fixtur
 
         await using var dispatcherConnection = fixture.CreateRabbitMqConnection();
         var dispatcher = new OutboxDispatcher(
-            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromMilliseconds(500) }),
             NullLogger<OutboxDispatcher>.Instance);
 
@@ -177,7 +177,7 @@ public sealed class OfflineAutoReplyEndToEndTests(ConnectionFanoutFixture fixtur
         await using var siteCachePublisherConnection = fixture.CreateRabbitMqConnection();
         var siteCacheInvalidationConsumer = new SiteCacheInvalidationConsumer(
             new RabbitMqEventConsumer(siteCacheConsumerConnection),
-            new CacheInvalidationPublisher(new RabbitMqEventPublisher(siteCachePublisherConnection), new SystemClock()),
+            new CacheInvalidationPublisher(new RabbitMqEventPublisher(siteCachePublisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock()),
             Options.Create(new SiteCacheInvalidationConsumerOptions()), NullLogger<SiteCacheInvalidationConsumer>.Instance);
 
         await using var cacheInvalidationConsumerConnection = fixture.CreateRabbitMqConnection();

@@ -44,7 +44,7 @@ public sealed class UnreadCounterIdempotencyTests(ConcurrencyTestFixture fixture
         var rabbitOptions = Options.Create(fixture.BuildRabbitMqOptions());
 
         await using var services = fixture.CreateServiceProvider();
-        await using var consumerConnection = new RabbitMqConnection(rabbitOptions);
+        await using var consumerConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
         var consumer = new UnreadCounterConsumer(
             new RabbitMqEventConsumer(consumerConnection),
             services.GetRequiredService<IServiceScopeFactory>(),
@@ -69,8 +69,8 @@ public sealed class UnreadCounterIdempotencyTests(ConcurrencyTestFixture fixture
         await consumer.ExecuteTask!;
         try
         {
-            await using var publisherConnection = new RabbitMqConnection(rabbitOptions);
-            var publisher = new RabbitMqEventPublisher(publisherConnection);
+            await using var publisherConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
+            var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
             await publisher.PublishAsync(envelope, CancellationToken.None);
             await publisher.PublishAsync(envelope, CancellationToken.None);
 

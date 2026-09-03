@@ -39,7 +39,7 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         try
         {
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection), new SystemClock(), new UuidV7Generator());
+            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), new UuidV7Generator());
             await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
 
             var released = await OutboxTestHelpers.WaitUntilAsync(
@@ -69,7 +69,7 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         try
         {
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection), new SystemClock(), new UuidV7Generator());
+            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), new UuidV7Generator());
             await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
 
             // Reconnect partway through the grace period - well before it elapses, well after the
@@ -106,7 +106,7 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         try
         {
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection), new SystemClock(), new UuidV7Generator());
+            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), new UuidV7Generator());
             await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
 
             var released = await OutboxTestHelpers.WaitUntilAsync(

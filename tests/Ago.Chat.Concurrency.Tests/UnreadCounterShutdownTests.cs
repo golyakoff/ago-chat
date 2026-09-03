@@ -83,7 +83,7 @@ public sealed class UnreadCounterShutdownTests
             // Postgres but had not yet Acked when the connection died.
             await using (var services1 = BuildServiceProvider(connectionString))
             {
-                var connection1 = new RabbitMqConnection(rabbitOptions);
+                var connection1 = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
                 var consumer1 = new UnreadCounterConsumer(
                     new RabbitMqEventConsumer(connection1),
                     services1.GetRequiredService<IServiceScopeFactory>(),
@@ -97,9 +97,9 @@ public sealed class UnreadCounterShutdownTests
                 await consumer1.StartAsync(CancellationToken.None);
                 await consumer1.ExecuteTask!;
 
-                await using (var publisherConnection = new RabbitMqConnection(rabbitOptions))
+                await using (var publisherConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance))
                 {
-                    var publisher = new RabbitMqEventPublisher(publisherConnection);
+                    var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
                     foreach (var (messageId, sequence) in messageIds.Select((id, i) => (id, i + 1)))
                     {
                         var domainEvent = new MessageAdded(
@@ -116,7 +116,7 @@ public sealed class UnreadCounterShutdownTests
             // whatever consumer #1 left unacked (including any redelivery of already-committed
             // work) and finishes the batch.
             await using var services2 = BuildServiceProvider(connectionString);
-            await using var connection2 = new RabbitMqConnection(rabbitOptions);
+            await using var connection2 = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
             var consumer2 = new UnreadCounterConsumer(
                 new RabbitMqEventConsumer(connection2),
                 services2.GetRequiredService<IServiceScopeFactory>(),

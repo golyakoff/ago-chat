@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Messaging.RabbitMq;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -62,7 +63,7 @@ public sealed class WebhookDispatchFixture : IAsyncLifetime
         Port = _rabbitMq.GetMappedPublicPort(5672),
         UserName = RabbitMqUsername,
         Password = RabbitMqPassword,
-    }));
+    }), NullLogger<RabbitMqConnection>.Instance);
 }
 
 [CollectionDefinition(Name)]
