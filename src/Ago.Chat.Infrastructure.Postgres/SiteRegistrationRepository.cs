@@ -1,5 +1,8 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Abstractions;
+using Ago.Platform.Kernel;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -21,7 +24,8 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// <see cref="Ago.Chat.Application.UseCases.RegisterSite.RegisterSiteHandler"/>'s own remarks for why
 /// this is now effectively unreachable in ordinary operation rather than a real, reachable race.
 /// </summary>
-public sealed class SiteRegistrationRepository(AgoChatDbContext db) : ISiteRegistrationRepository
+public sealed class SiteRegistrationRepository(AgoChatDbContext db, IOutboxWriter outbox, IIdGenerator idGenerator, IClock clock)
+    : ISiteRegistrationRepository
 {
     public async Task<bool> TryRegisterAsync(SiteRegistration registration, CancellationToken cancellationToken)
     {
@@ -51,6 +55,22 @@ public sealed class SiteRegistrationRepository(AgoChatDbContext db) : ISiteRegis
             OperatorId = registration.Operator.Id,
             RoleId = registration.AdminRole.Id,
         });
+
+        // `22-05`/`adr/0093`: the account owner's projected fact for whichever product reads it - the
+        // union of both seeded roles, because RegisterSiteHandler grants the owner both. Staged onto
+        // this same DbContext, so it lands with the five rows above or not at all (rule 4) - not a
+        // separate call, because there is no separate transaction to put it in. Skipped only when the
+        // owner has no external identity yet, which no caller of this method produces today (every
+        // registration authenticates through Keycloak first) but is guarded anyway rather than assumed.
+        if (registration.Operator.ExternalSubjectId is { } ownerSubject)
+        {
+            var permissions = registration.OperatorRole.Permissions
+                .Concat(registration.AdminRole.Permissions)
+                .Distinct()
+                .ToList();
+            outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
+                ownerSubject, registration.Site.Id.Value, permissions, clock.UtcNow, idGenerator));
+        }
 
         try
         {

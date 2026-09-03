@@ -17,6 +17,7 @@ using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -86,6 +87,9 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
             [
                 Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
                 Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+                // `22-05`/`adr/0093`: the calendar's own day-to-day permissions, joined here unchanged.
+                Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
+                Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
             ],
             operatorRole.Permissions);
         var adminRole = Assert.Single(roles, r => r.Name == "Admin");
@@ -93,6 +97,8 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
             [
                 Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
                 Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
+                // `22-05`/`adr/0093`: the calendar's own configuration permission, joined here unchanged.
+                Permission.CalendarConfigure.Value,
             ],
             adminRole.Permissions);
 
@@ -205,6 +211,7 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         // `16-03`: SitesEndpoints now also maps the export routes - every handler for every route it

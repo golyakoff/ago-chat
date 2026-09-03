@@ -3,9 +3,11 @@ using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -53,10 +55,12 @@ public class DemoTenantLifecycleTests(DemoTenantFixture fixture)
             clock,
             NullLogger<KeycloakDemoIdentityProvisioner>.Instance);
 
-    private MintDemoTenantHandler CreateHandler(IClock clock, IDemoIdentityProvisioner identities) =>
-        new(
+    private MintDemoTenantHandler CreateHandler(IClock clock, IDemoIdentityProvisioner identities)
+    {
+        var db = fixture.CreateDbContext();
+        return new(
             new DemoTenantRepository(fixture.DataSource),
-            new SiteRegistrationRepository(fixture.CreateDbContext()),
+            new SiteRegistrationRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), clock),
             identities,
             new DemoCredentialGenerator(),
             new FakeRateLimiter(),
@@ -70,6 +74,7 @@ public class DemoTenantLifecycleTests(DemoTenantFixture fixture)
             new DemoTenantRateLimitOptions(),
             new UuidV7Generator(),
             clock);
+    }
 
     /// <summary>
     /// Done-when #1, as far as a test can carry it: the credentials a stranger is handed genuinely

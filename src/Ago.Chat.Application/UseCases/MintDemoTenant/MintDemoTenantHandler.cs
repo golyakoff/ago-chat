@@ -63,6 +63,14 @@ public sealed class MintDemoTenantHandler(
         [
             Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
             Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+            // `22-05`/`adr/0093`: the calendar day-to-day actions join the Operator set here -
+            // the same split calendar/Role.cs itself drew (v1 gave one "Operator" role every
+            // permission including configuration; this account-side model already splits
+            // Operator/Admin by day-to-day-vs-configuration everywhere else, so the split
+            // continues rather than being re-derived: booking actions and lead-card edits are
+            // ordinary operator work, calendar:configure joins Admin below instead.
+            Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
+            Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
         ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too, the same restatement this
@@ -73,6 +81,9 @@ public sealed class MintDemoTenantHandler(
         [
             Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
             Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
+            // `22-05`/`adr/0093`: calendar:configure joins the Admin set - the configuration-shaped
+            // action, the same category SiteConfigure already occupies here.
+            Permission.CalendarConfigure.Value,
         ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(

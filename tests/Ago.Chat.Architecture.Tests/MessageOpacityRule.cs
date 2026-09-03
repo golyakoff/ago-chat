@@ -79,6 +79,29 @@ internal static class MessageOpacityRule
     public static readonly IReadOnlyList<string> DeliberatelyNotEnforced = ["worker", "customer"];
 
     /// <summary>
+    /// `22-05`/`adr/0093`: one type, deliberately outside this rule's own reach - not a
+    /// <see cref="MessageOpacityExemptions"/> entry, because those exist for a coincidental word
+    /// collision and this is the opposite: <c>Permission</c> now names AGO Calendar's own vocabulary
+    /// (<c>booking:*</c>, <c>calendar:*</c>) on purpose. `adr/0027`'s "two RBAC vocabularies from day
+    /// one, never overlapping" is the clause `adr/0093` retired - the account side's role catalogue
+    /// unifies both products' permission strings into one type, precisely so a person's grant of
+    /// <c>calendar:configure</c> is a fact this repository can hold and replicate outward
+    /// (<c>RoleAssignmentsChanged</c>) rather than something it must stay ignorant of.
+    ///
+    /// <para><b>What this does not weaken.</b> The property this whole file protects - structured
+    /// message content staying opaque, so a booking is reachable from a conversation without AGO Chat
+    /// knowing what one is - is untouched. A permission string granted or checked is not message
+    /// content, and nothing about this exemption lets <c>Message</c>, <c>MessageDto</c> or any wire
+    /// contract grow a booking-shaped field; <see cref="InnerLayerWords"/>'s own scan of
+    /// <c>Ago.Chat.Domain</c>/<c>Ago.Chat.Contracts</c> for <c>slot</c>/<c>service</c> is untouched by
+    /// this list, and still would catch it.</para>
+    /// </summary>
+    public static readonly IReadOnlySet<string> ExemptTypeFullNames = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Ago.Chat.Domain.Permission",
+    };
+
+    /// <summary>
     /// Enforced only in <c>Ago.Chat.Domain</c> and <c>Ago.Chat.Contracts</c> - see this class's own
     /// remarks for why these two words cannot be enforced product-wide and why these two assemblies
     /// are the ones that matter.
@@ -122,6 +145,14 @@ internal static class MessageOpacityRule
             // already reports - and their *fields* are the hoisted locals of that member, which is
             // genuinely the same code.
             if (IsCompilerGenerated(type))
+            {
+                continue;
+            }
+
+            // `22-05`/`adr/0093`: see ExemptTypeFullNames' own remarks - one type, deliberately
+            // excluded from this scan for a real, ADR-recorded reason rather than a coincidental
+            // word collision.
+            if (ExemptTypeFullNames.Contains(type.FullName))
             {
                 continue;
             }

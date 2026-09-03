@@ -3,6 +3,7 @@ using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 using Xunit.Abstractions;
 
@@ -151,7 +152,7 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
     private async Task<OperatorInviteRedemptionResult> RedeemAsync(byte[] codeHash, string externalSubjectId)
     {
         await using var db = fixture.CreateDbContext();
-        var repository = new OperatorInviteRedemptionRepository(db, new UuidV7Generator());
+        var repository = new OperatorInviteRedemptionRepository(db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db));
         return await repository.RedeemAsync(
             new RedeemOperatorInviteAttempt(codeHash, externalSubjectId, Now.AddMinutes(1)), CancellationToken.None);
     }

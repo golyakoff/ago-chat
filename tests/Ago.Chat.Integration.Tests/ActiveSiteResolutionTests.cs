@@ -16,6 +16,7 @@ using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -173,6 +174,7 @@ public sealed class ActiveSiteResolutionTests(OperatorOidcFixture fixture)
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         // `16-03`: SitesEndpoints now also maps the export routes - see SiteRegistrationTests'

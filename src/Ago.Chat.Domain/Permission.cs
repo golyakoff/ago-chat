@@ -112,5 +112,21 @@ public readonly record struct Permission(string Value)
     // action.
     public static readonly Permission ChannelIdentityUnlink = new("channel_identity:unlink");
 
+    // `22-05`/`adr/0093`: AGO Calendar's own seven-string catalogue, joined here unchanged rather than
+    // renamed. `adr/0027` drew two independent vocabularies on purpose (`booking:*`/`calendar:*`/
+    // `customer:*` against this file's `conversation:*`/`site:*`); `adr/0093` unifies *where the
+    // catalogue lives*, not what the strings mean, and the two prefixes never collided, so nothing
+    // here was renamed to make room for them. A permission granted here is what a projection replicated
+    // into AGO Calendar's own database (`RoleAssignmentsChanged`, `Ago.Chat.Application.Mapping`) will
+    // eventually let that product act on - see that event's own remarks for why a projection and not a
+    // token claim (rule 8: a write decision may not read a cache, and a claim is exactly that).
+    public static readonly Permission BookingConfirm = new("booking:confirm");
+    public static readonly Permission BookingReject = new("booking:reject");
+    public static readonly Permission BookingCancel = new("booking:cancel");
+    public static readonly Permission BookingMarkNoShow = new("booking:mark_no_show");
+    public static readonly Permission CustomerRead = new("customer:read");
+    public static readonly Permission CustomerEdit = new("customer:edit");
+    public static readonly Permission CalendarConfigure = new("calendar:configure");
+
     public override string ToString() => Value;
 }
