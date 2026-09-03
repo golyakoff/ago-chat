@@ -1,4 +1,5 @@
-﻿using Ago.Platform.Kernel;
+﻿using System.Globalization;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Api.Http;
 
@@ -13,7 +14,15 @@ namespace Ago.Chat.Api.Http;
 /// </summary>
 public static class ErrorExtensions
 {
-    public static IResult ToProblem(this Error error, HttpContext httpContext)
+    /// <summary>
+    /// <paramref name="retryAfter"/>: `ago-root#353`. Optional and caller-supplied, never derived in
+    /// here - this method has no way to tell a rate-limited <see cref="Error"/> apart from any other
+    /// (the vocabulary is <c>(Code, Message)</c>, nothing more), so the five endpoints that own a
+    /// <c>*.RateLimited</c> code compute their own conservative wait via <see cref="RateLimitRetryAfter.Conservative"/>,
+    /// from configuration they already hold, and pass it in only for that one code. Every other call
+    /// site keeps calling <c>error.ToProblem(httpContext)</c> unchanged.
+    /// </summary>
+    public static IResult ToProblem(this Error error, HttpContext httpContext, TimeSpan? retryAfter = null)
     {
         var statusCode = error.Code switch
         {
@@ -131,11 +140,18 @@ public static class ErrorExtensions
             // `ago-root#347`: `demo.rate_limited` belongs in this same group and was simply missing from
             // it - every other rate-limit code above was already mapped correctly, so exceeding the
             // per-IP demo mint limit was the one refusal in this switch that fell through to the `_ =>
-            // 500` default below. DemoEndpoints.HandleMintAsync adds the Retry-After header this group's
-            // own comment says Error cannot carry, for this one code only, by reading the number back out
-            // of the error's own message rather than widening Error itself (Ago.Platform.Kernel is out of
-            // scope for an ago-chat-only fix) - DemoTenantErrors.TryGetRateLimitedRetryAfterSeconds's own
-            // remarks.
+            // 500` default below. DemoEndpoints.HandleMintAsync adds its own Retry-After header before
+            // reaching this method, by reading the number back out of the error's own message rather
+            // than widening Error itself (Ago.Platform.Kernel is out of scope for an ago-chat-only fix)
+            // - DemoTenantErrors.TryGetRateLimitedRetryAfterSeconds's own remarks.
+            // `ago-root#353`: the five codes right below - Message/Site/Export/ReplyDraft/PhoneVerification.RateLimited
+            // - carried no Retry-After at all until this item, this method's own former comment said so
+            // in as many words. They do not reuse demo.rate_limited's message round trip (closed for
+            // five more call sites, ago-root#353's own item file) - each endpoint computes a conservative
+            // wait from configuration it already holds (RateLimitRetryAfter.Conservative) and passes it
+            // into this method's own `retryAfter` parameter below, which is where the header is actually
+            // set. PhoneVerification.LockedOut still carries none, deliberately - see its own remarks two
+            // lines up.
             "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "ReplyDraft.RateLimited"
                 or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut" or "demo.rate_limited"
                 => StatusCodes.Status429TooManyRequests,
@@ -173,13 +189,23 @@ public static class ErrorExtensions
             _ => StatusCodes.Status500InternalServerError,
         };
 
-        // No Retry-After header here: Error carries no structured retry-after value for a 429
-        // (ConversationErrors.RateLimited's own remarks - it rides in the message text, and every
-        // existing caller, VisitorHub's HubException included, already just forwards that text
-        // verbatim rather than parsing it back out for a header). This is a real, wider gap - every
-        // *.RateLimited code in the switch above except demo.rate_limited shares it - but `ago-root#347`
-        // only asked for the demo endpoint, so only DemoEndpoints.HandleMintAsync adds the header, before
-        // calling this generic mapper, rather than this method growing a special case for one caller.
+        // `ago-root#353`: the one place every *.RateLimited code's Retry-After header gets set, driven
+        // by data the caller attached rather than five near-identical blocks at each call site
+        // (AttachmentEndpoints, SitesEndpoints twice, ReplyDraftEndpoints, PhoneVerificationEndpoints).
+        // demo.rate_limited (`ago-root#347`) still sets its own header before reaching here, via the
+        // message round trip DemoTenantErrors.TryGetRateLimitedRetryAfterSeconds documents - that one
+        // predates this item and is out of its scope to touch, so DemoEndpoints keeps its own path.
+        //
+        // RFC 9110 SS10.2.3: delta-seconds, a non-negative integer. Ceiling, and never below 1 -
+        // VisitorSessionRenewalTests treats a `0` as a bug, not a fast retry (ago-widget hammers the
+        // endpoint immediately on `0` rather than backing off), so a sub-second wait must still read
+        // as "wait a second," not "retry now."
+        if (retryAfter is { } wait)
+        {
+            var seconds = Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds));
+            httpContext.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
+        }
+
         return Results.Problem(
             title: error.Code,
             detail: error.Message,
