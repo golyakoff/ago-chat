@@ -258,6 +258,14 @@ builder.Services
     .AddOptions<MessagePartitionPruneJobOptions>()
     .Bind(builder.Configuration.GetSection(MessagePartitionPruneJobOptions.SectionName))
     .ValidateDataAnnotations()
+    // `13-08`: RetentionWindowMonthsByClass's own values are a dictionary, which
+    // ValidateDataAnnotations does not recurse into - checked explicitly here for the same
+    // "must be at least 1" guarantee RetentionHorizonMonths's own [Range] attribute already gives its
+    // sibling property, so a misconfigured per-tier window fails at startup rather than producing a
+    // cutoff in the past the first time a prune cycle runs.
+    .Validate(
+        o => o.RetentionWindowMonthsByClass.Values.All(months => months >= 1),
+        "RetentionWindowMonthsByClass values must all be at least 1 - a window of 0 or less would make the most recently completed month a drop candidate immediately, the same guarantee RetentionHorizonMonths itself enforces.")
     .ValidateOnStart();
 builder.Services.AddHostedService<MessagePartitionPruneJob>();
 

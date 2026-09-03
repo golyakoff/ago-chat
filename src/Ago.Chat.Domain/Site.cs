@@ -150,12 +150,18 @@ public sealed class Site
     /// `OperatorInviteRedemptionRepository`'s own row-locked check - never here, and never against
     /// `10-02`'s own registration flow, which already has a hard, structural one-operator cap by
     /// construction and needs no check against this column at all (this item's own Out of scope).
-    /// Defaults to `1`, matching every site's `Tier` default of `"free"` - a lone self-registered
-    /// operator is exactly what the free tier already allows before this item exists.
+    ///
+    /// <para>`13-08`: defaults to `2`, not `1` - the author's own decision, matching Jivo's published
+    /// free plan: "the free tier is two operators with two months of history." A freshly self-registered
+    /// site still has exactly one operator by construction (`10-02`'s own hard cap, unaffected), so this
+    /// default is headroom for one invited colleague, not a second automatic seat - `OperatorInvite`
+    /// redemption is still the only path that ever fills it. `Stage13RaiseFreeTierSeatLimit` raises every
+    /// existing free-tier row still on the old default the same way, so a site that predates this item
+    /// gets the same allowance a freshly registered one does, not a two-tier "free" in practice.</para>
     ///
     /// <para>`13-02`: <c>private set</c> for the identical reason <see cref="Tier"/>'s own remarks
     /// give.</para></summary>
-    public int SeatLimit { get; private set; } = 1;
+    public int SeatLimit { get; private set; } = 2;
 
     // `18-03`: a fourth flat-backing-field list, the same shape `14-04`'s _offlineAutoReplyRules
     // established just above - opaque to SQL, read and written as a unit, mapped through a converter
@@ -180,7 +186,7 @@ public sealed class Site
         DateTimeOffset? createdAt = null,
         DateTimeOffset? demoExpiresAt = null,
         string tier = "free",
-        int seatLimit = 1)
+        int seatLimit = 2)
     {
         if (string.IsNullOrWhiteSpace(publicKey))
         {

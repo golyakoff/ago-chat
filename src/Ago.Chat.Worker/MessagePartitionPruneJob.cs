@@ -60,7 +60,12 @@ public sealed class MessagePartitionPruneJob(
     {
         var startedAt = clock.UtcNow;
         var currentMonthStart = new DateOnly(startedAt.Year, startedAt.Month, 1);
-        var cutoff = currentMonthStart.AddMonths(-options.Value.RetentionHorizonMonths);
+        // `13-08`: one cutoff per known retention class, each the class's own effective (ceiling-capped)
+        // horizon - MessagePartitionPruneJobOptions.EffectiveHorizonMonths's own remarks explain why the
+        // ceiling always wins. Computed once per cycle, not once per bucket - the same fixed 64-bucket,
+        // 3-class grid every call below reuses.
+        var cutoffsByClass = RetentionClass.KnownClasses.ToDictionary(
+            c => c, c => currentMonthStart.AddMonths(-options.Value.EffectiveHorizonMonths(c)));
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
@@ -68,7 +73,7 @@ public sealed class MessagePartitionPruneJob(
         var pendingArchive = 0;
         foreach (var bucketName in MessagePartitionNames.AllBucketNames)
         {
-            var slices = await MessagePartitionPruneQuery.ListExpiredSlicesAsync(connection, bucketName, cutoff, cancellationToken);
+            var slices = await MessagePartitionPruneQuery.ListExpiredSlicesAsync(connection, bucketName, cutoffsByClass, cancellationToken);
             foreach (var slice in slices)
             {
                 var confirmed = await archiveGate.IsArchivedAsync(
@@ -91,7 +96,7 @@ public sealed class MessagePartitionPruneJob(
                 var removedRows = await DeleteSliceAsync(connection, slice, cancellationToken);
                 logger.LogInformation(
                     "Removed {RowCount} message(s) for site {SiteId}, class {RetentionClass}, period {PeriodStart} (past its {Months}-month retention horizon).",
-                    removedRows, slice.SiteId, slice.RetentionClass, slice.PeriodStart, options.Value.RetentionHorizonMonths);
+                    removedRows, slice.SiteId, slice.RetentionClass, slice.PeriodStart, options.Value.EffectiveHorizonMonths(slice.RetentionClass));
                 removedSlices++;
 
                 await SweepAttachmentsAsync(connection, attachmentIds, slice, cancellationToken);

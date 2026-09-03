@@ -15,9 +15,10 @@ namespace Ago.Chat.Worker;
 /// it will ever remove a slice's rows - the "nothing is removed until its archive is confirmed written"
 /// half of the ordering this item exists to preserve, unchanged in policy. Runs independently of, and
 /// ahead of, that job: reads the identical discovery (<see cref="MessagePartitionPruneQuery.ListExpiredSlicesAsync"/>)
-/// against the identical horizon (shares <see cref="MessagePartitionPruneJobOptions.RetentionHorizonMonths"/>
-/// rather than a second, independently-configurable number that could silently drift from the one the
-/// prune job actually uses), so a slice never becomes a removal candidate before this job has had at
+/// against the identical per-class horizon (`13-08`: shares
+/// <see cref="MessagePartitionPruneJobOptions.EffectiveHorizonMonths"/> rather than a second,
+/// independently-configurable number, or map, that could silently drift from the one the prune job
+/// actually uses), so a slice never becomes a removal candidate before this job has had at
 /// least one full cycle to notice it.
 ///
 /// <para><b>One object per site per period</b> (`adr/0031`'s own wording), unchanged - only how a
@@ -68,7 +69,12 @@ public sealed class MessageArchiveJob(
     {
         var now = clock.UtcNow;
         var currentMonthStart = new DateOnly(now.Year, now.Month, 1);
-        var cutoff = currentMonthStart.AddMonths(-pruneOptions.Value.RetentionHorizonMonths);
+        // `13-08`: the identical per-class cutoff map MessagePartitionPruneJob.PruneAsync builds - both
+        // read the same MessagePartitionPruneJobOptions instance, so a class's window can never drift
+        // between "archived" and "removed" (this type's own remarks on why it shares that options type
+        // at all).
+        var cutoffsByClass = RetentionClass.KnownClasses.ToDictionary(
+            c => c, c => currentMonthStart.AddMonths(-pruneOptions.Value.EffectiveHorizonMonths(c)));
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
@@ -77,7 +83,7 @@ public sealed class MessageArchiveJob(
 
         foreach (var bucketName in MessagePartitionNames.AllBucketNames)
         {
-            var slices = await MessagePartitionPruneQuery.ListExpiredSlicesAsync(connection, bucketName, cutoff, cancellationToken);
+            var slices = await MessagePartitionPruneQuery.ListExpiredSlicesAsync(connection, bucketName, cutoffsByClass, cancellationToken);
             foreach (var slice in slices)
             {
                 var periodKey = (slice.RetentionClass, slice.PeriodStart);

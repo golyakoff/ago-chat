@@ -162,6 +162,71 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
         Assert.Equal(0, await MessageCountForConversationAsync(conversationId));
     }
 
+    /// <summary>
+    /// `13-08`'s own Done-when: "free-tier messages older than two months are pruned, and a paid
+    /// tier's are not - proven by two tiers, not reasoned about with one." One real Postgres, one prune
+    /// cycle, two sites of two different retention classes at the identical row age - the free-tier row
+    /// gone, the paid-tier row (`starter`, left at today's undifferentiated behaviour per this item's
+    /// own scope - no number of its own yet) still present.
+    ///
+    /// <para>referenceNow = 2000-06-01, both rows dated 2000-03-15 (2.5 months old at that reference).
+    /// `free`'s own effective horizon is `Min(2, ceiling 3) = 2` months, so its cutoff is 2000-04-01 -
+    /// the row (2000-03-15) is before it, expired. `starter` has no entry in
+    /// <see cref="MessagePartitionPruneJobOptions.RetentionWindowMonthsByClass"/>, so it falls back to
+    /// the ceiling itself (3 months), cutoff 2000-03-01 - the row (2000-03-15) is *after* that, not yet
+    /// expired. The same two numbers <see cref="MessagePartitionPruneJobOptions.EffectiveHorizonMonths"/>'s
+    /// own remarks describe, exercised end to end rather than asserted as a unit.</para>
+    /// </summary>
+    [Fact]
+    public async Task PruneAsync_WithTwoRetentionClasses_PrunesTheExpiredFreeTierRow_AndLeavesThePaidTierRowOfTheSameAge()
+    {
+        var (_, freeMessageId) = await SeedExpiredMessageAsync(2000, 3, retentionClass: "free");
+        var (_, paidMessageId) = await SeedExpiredMessageAsync(2000, 3, retentionClass: SubscriptionTierBands.Starter);
+
+        var job = new MessagePartitionPruneJob(
+            fixture.DataSource, new AlwaysConfirmedMessageArchiveGate(), new FakeFileStorage(),
+            new FixedClock(new DateTimeOffset(2000, 6, 1, 0, 0, 0, TimeSpan.Zero)),
+            Options.Create(new MessagePartitionPruneJobOptions
+            {
+                RetentionHorizonMonths = RetentionHorizonMonths,
+                RetentionWindowMonthsByClass = new Dictionary<string, int> { ["free"] = 2 },
+            }),
+            NullLogger<MessagePartitionPruneJob>.Instance);
+        await job.PruneAsync(CancellationToken.None);
+
+        Assert.False(await MessageExistsAsync(freeMessageId));
+        Assert.True(await MessageExistsAsync(paidMessageId));
+    }
+
+    /// <summary>The ceiling half of the same Done-when: `13-08`'s own brief says "a generous paid
+    /// window must not be able to push the partition count past what that guard was protecting" and
+    /// "the operational horizon stays a floor" - proven here by configuring a per-class window *larger*
+    /// than <see cref="MessagePartitionPruneJobOptions.RetentionHorizonMonths"/> and showing the row is
+    /// still pruned at the ceiling's own, shorter age (past the 3-month ceiling, comfortably inside the
+    /// configured 12-month window). Without <see cref="MessagePartitionPruneJobOptions.EffectiveHorizonMonths"/>'s
+    /// own <c>Math.Min</c>, this row would still be alive - a 12-month configured window would keep a
+    /// 5-month-old row well clear of any cutoff.</summary>
+    [Fact]
+    public async Task PruneAsync_WhenAClassIsConfiguredPastTheCeiling_TheCeilingWinsAndTheRowIsStillPruned()
+    {
+        var (_, messageId) = await SeedExpiredMessageAsync(2000, 1, retentionClass: SubscriptionTierBands.Growth);
+
+        var job = new MessagePartitionPruneJob(
+            fixture.DataSource, new AlwaysConfirmedMessageArchiveGate(), new FakeFileStorage(),
+            new FixedClock(new DateTimeOffset(2000, 6, 1, 0, 0, 0, TimeSpan.Zero)),
+            Options.Create(new MessagePartitionPruneJobOptions
+            {
+                // 12 months configured for growth - if this were used unclamped, a row this age (~5
+                // months) would never be a removal candidate at all.
+                RetentionHorizonMonths = RetentionHorizonMonths,
+                RetentionWindowMonthsByClass = new Dictionary<string, int> { [SubscriptionTierBands.Growth] = 12 },
+            }),
+            NullLogger<MessagePartitionPruneJob>.Instance);
+        await job.PruneAsync(CancellationToken.None);
+
+        Assert.False(await MessageExistsAsync(messageId));
+    }
+
     private MessagePartitionPruneJob CreateJob(DateTimeOffset referenceNow, IMessageArchiveGate gate) =>
         new(fixture.DataSource, gate, new FakeFileStorage(), new FixedClock(referenceNow),
             Options.Create(new MessagePartitionPruneJobOptions { RetentionHorizonMonths = RetentionHorizonMonths }),
@@ -171,8 +236,10 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
     /// the aggregate, the same "arbitrary `created_at`" convention every retention test in this codebase
     /// uses) dated the first of <paramref name="year"/>/<paramref name="month"/> - no partition to create
     /// first, unlike before `15-09`: every one of the 64 hash buckets already exists for every
-    /// site.</summary>
-    private async Task<(SiteId SiteId, Guid MessageId)> SeedExpiredMessageAsync(int year, int month)
+    /// site. `13-08`: <paramref name="retentionClass"/> defaults to `"free"`, matching every caller this
+    /// suite had before per-class windows existed - only the two-tier tests below pass a different
+    /// value.</summary>
+    private async Task<(SiteId SiteId, Guid MessageId)> SeedExpiredMessageAsync(int year, int month, string retentionClass = "free")
     {
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
@@ -188,23 +255,24 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
             await db.SaveChangesAsync();
         }
 
-        var messageId = await InsertMessageAsync(siteId, conversationId, createdAt, sequence: 1);
+        var messageId = await InsertMessageAsync(siteId, conversationId, createdAt, sequence: 1, retentionClass);
         return (siteId, messageId);
     }
 
-    private async Task<Guid> InsertMessageAsync(SiteId siteId, ConversationId conversationId, DateTimeOffset createdAt, int sequence)
+    private async Task<Guid> InsertMessageAsync(SiteId siteId, ConversationId conversationId, DateTimeOffset createdAt, int sequence, string retentionClass = "free")
     {
         var messageId = Guid.NewGuid();
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new NpgsqlCommand("""
             insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
-            values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, 'free', @siteId)
+            values (@id, @conversationId, @sequence, 'Visitor', @authorId, 'seeded', @createdAt, @retentionClass, @siteId)
             """, connection);
         command.Parameters.AddWithValue("id", messageId);
         command.Parameters.AddWithValue("conversationId", conversationId.Value);
         command.Parameters.AddWithValue("sequence", sequence);
         command.Parameters.AddWithValue("authorId", Guid.NewGuid());
         command.Parameters.AddWithValue("createdAt", createdAt);
+        command.Parameters.AddWithValue("retentionClass", retentionClass);
         command.Parameters.AddWithValue("siteId", siteId.Value);
         await command.ExecuteNonQueryAsync();
         return messageId;

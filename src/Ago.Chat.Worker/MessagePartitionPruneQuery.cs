@@ -38,23 +38,41 @@ public sealed record ExpiredMessageSlice(
 public static class MessagePartitionPruneQuery
 {
     /// <summary>Every distinct (site, retention class, month) combination this one bucket holds whose
-    /// rows are entirely before <paramref name="cutoff"/> - `MessagePartitionPruneJob`'s and
-    /// `MessageArchiveJob`'s shared discovery step. `date_trunc('month', ...)` matches the calendar-month
-    /// grouping the pre-`15-09` scheme's own leaf partitions used, so an archive object's own "one period
-    /// = one calendar month" meaning is unchanged.</summary>
+    /// rows are entirely before that row's own class's cutoff in <paramref name="cutoffsByClass"/> -
+    /// `MessagePartitionPruneJob`'s and `MessageArchiveJob`'s shared discovery step. `13-08`: one cutoff
+    /// per class, not one shared cutoff - a `VALUES` list joined against the bucket rather than a scalar
+    /// `@cutoff` parameter, so this stays the one query per bucket this class's own remarks on bounded
+    /// discovery already establish (a per-class loop issuing 64 x |classes| queries was the
+    /// alternative, and would have multiplied this job's own query count for no correctness reason - a
+    /// class that has no cutoff of its own simply is not in the map and never matches the join).
+    /// `date_trunc('month', ...)` matches the calendar-month grouping the pre-`15-09` scheme's own leaf
+    /// partitions used, so an archive object's own "one period = one calendar month" meaning is
+    /// unchanged.</summary>
     public static async Task<IReadOnlyList<ExpiredMessageSlice>> ListExpiredSlicesAsync(
-        NpgsqlConnection connection, string bucketName, DateOnly cutoff, CancellationToken cancellationToken)
+        NpgsqlConnection connection, string bucketName, IReadOnlyDictionary<RetentionClass, DateOnly> cutoffsByClass, CancellationToken cancellationToken)
     {
+        if (cutoffsByClass.Count == 0)
+        {
+            return [];
+        }
+
+        var entries = cutoffsByClass.ToList();
+        var valuesSql = string.Join(", ", entries.Select((_, i) => $"(@class{i}, @cutoff{i}::timestamp)"));
         var sql = $"""
-            select site_id, retention_class, date_trunc('month', created_at)::date as period_start
-            from {bucketName}
-            where created_at < @cutoff
-            group by site_id, retention_class, date_trunc('month', created_at)
+            select m.site_id, m.retention_class, date_trunc('month', m.created_at)::date as period_start
+            from {bucketName} m
+            join (values {valuesSql}) as c(retention_class, cutoff) on m.retention_class = c.retention_class
+            where m.created_at < c.cutoff
+            group by m.site_id, m.retention_class, date_trunc('month', m.created_at)
             order by period_start
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("cutoff", cutoff.ToDateTime(TimeOnly.MinValue));
+        for (var i = 0; i < entries.Count; i++)
+        {
+            command.Parameters.AddWithValue($"class{i}", entries[i].Key.Value);
+            command.Parameters.AddWithValue($"cutoff{i}", entries[i].Value.ToDateTime(TimeOnly.MinValue));
+        }
 
         var slices = new List<ExpiredMessageSlice>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

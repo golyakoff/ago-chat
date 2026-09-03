@@ -113,7 +113,7 @@ public class BillingWebhookApplierTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         var site = await verify.Sites.SingleAsync(s => s.Id == siteId, CancellationToken.None);
         Assert.Equal("free", site.Tier);
-        Assert.Equal(1, site.SeatLimit);
+        Assert.Equal(2, site.SeatLimit); // `13-08`: the free tier's own default, unchanged by this path.
 
         var subscription = await verify.BillingSubscriptions.SingleAsync(s => s.YooKassaPaymentId == paymentId, CancellationToken.None);
         Assert.Equal(BillingSubscriptionStatus.Failed, subscription.Status);
