@@ -112,6 +112,15 @@ public static class ErrorExtensions
             // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own
             // remarks).
             "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
+            // `ago-root#352`: a deployment that has not turned demo tenants on genuinely lacks this
+            // capability - not "there is nothing at this path" (`404`, explicitly rejected by
+            // MintDemoTenantHandler's own remarks: "not a 404 dressed as a feature flag") and not "an
+            // upstream dependency is failing right now" (`503`, the group below, where demo.capacity_reached
+            // and demo.identity_rejected land). `501 Not Implemented` is the status RFC 7231 reserves for
+            // exactly this shape - "the server does not support the functionality required to fulfil the
+            // request" - and it is a static property of this deployment's own configuration, not a
+            // transient condition any `Retry-After` could ever shorten.
+            "demo.disabled" => StatusCodes.Status501NotImplemented,
             // `19-01`: its own distinct rate-limit code, same 429 group - ConversationErrors.ReplyDraftRateLimited's
             // own remarks.
             // `14-15`: its own distinct rate-limit code, same 429 group - ConversationErrors.
@@ -133,7 +142,34 @@ public static class ErrorExtensions
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
             // own remarks. `19-01`: ReplyDraft.Unavailable is the identical shape - the LLM provider is
             // unreachable, not anything the caller did wrong.
-            "ChannelCredential.NotAvailable" or "ReplyDraft.Unavailable" => StatusCodes.Status503ServiceUnavailable,
+            // `ago-root#352`: demo.capacity_reached joins this group for a related but distinct reason -
+            // not "the deployment isn't ready" but "the deployment is at a real ceiling that does not
+            // refill on a clock the way a rate limit does" (DemoTenantErrors.CapacityReached's own
+            // remarks: "each one expires on its own"), so `429`'s implied "the same request works again
+            // shortly, on a schedule" is the wrong promise. `503`'s "the server cannot handle this right
+            // now" is the honest one - a live tenant expiring is what frees the room, not the passage of
+            // a fixed window.
+            // `ago-root#352`: demo.identity_rejected joins for the same "deployment-side dependency, not
+            // caller-side mistake" reasoning as ChannelCredential.NotAvailable/ReplyDraft.Unavailable above
+            // - KeycloakDemoIdentityProvisioner.CreateAsync returns it whenever Keycloak itself refuses or
+            // answers unexpectedly (a `409`/`400` from a randomly generated username colliding, or a `201`
+            // with no `Location` header), never because of anything the anonymous demo caller supplied.
+            // Not `409`: the caller never named an identifier of their own to conflict with, so there is
+            // nothing for *them* to change before retrying - a fresh mint attempt generates a brand new
+            // random username server-side, which is exactly `503`'s "try again" and not `409`'s "you
+            // conflicted with a specific resource, send a different one".
+            "ChannelCredential.NotAvailable" or "ReplyDraft.Unavailable" or "demo.capacity_reached"
+                or "demo.identity_rejected" => StatusCodes.Status503ServiceUnavailable,
+            // `ago-root#352`: demo.unavailable is deliberately left here rather than given its own status.
+            // MintDemoTenantHandler returns it only after ISiteRegistrationRepository.TryRegisterAsync's
+            // five-row insert hits its own unique-index violation - a race that port's own remarks call
+            // "effectively unreachable in ordinary operation" now that every mint generates a fresh
+            // siteId. Unlike its three siblings above, this is not a deliberate business refusal wearing
+            // the wrong number; it is an unexpected database conflict reached after a Keycloak identity
+            // was already created and then compensated away - the "possibly genuinely 500" case the ticket
+            // itself flagged, and 500 is the honest status for "something we did not expect happened while
+            // trying to do this."
+            "demo.unavailable" => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status500InternalServerError,
         };
 
