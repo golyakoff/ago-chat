@@ -250,16 +250,17 @@ public class SiteTests
         Assert.Single(site.DomainEvents);
     }
 
-    // `13-02`: the free-tier defaults every existing and newly-registered site reads until a real
-    // payment writes something else - `13-01`'s own regression, restated here alongside every other
-    // "what does a fresh Site look like" assertion in this file.
+    // `13-02`/`13-08`: the free-tier defaults every existing and newly-registered site reads until a
+    // real payment writes something else - `13-01`'s own regression, restated here alongside every
+    // other "what does a fresh Site look like" assertion in this file. `13-08` raised the seat default
+    // from 1 to 2 - "the free tier is two operators with two months of history."
     [Fact]
-    public void Constructor_WhenValid_DefaultsToFreeTierWithOneSeat()
+    public void Constructor_WhenValid_DefaultsToFreeTierWithTwoSeats()
     {
         var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
 
         Assert.Equal("free", site.Tier);
-        Assert.Equal(1, site.SeatLimit);
+        Assert.Equal(2, site.SeatLimit);
     }
 
     [Fact]

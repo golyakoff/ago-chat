@@ -90,6 +90,7 @@ public class CreateCheckoutSessionHandlerTests
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
+    [InlineData(2)] // `13-08`: the free tier's own ceiling, not a purchasable seat count.
     [InlineData(101)]
     public async Task HandleAsync_WhenSeatsAreOutsideTheBandTable_ReturnsInvalidSeatCount_AndNeverCallsYooKassa(int requestedSeats)
     {

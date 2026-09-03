@@ -123,7 +123,13 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // existing row reads back on the free tier without a backfill, the same "additive column,
         // database default, no migration touches existing data" shape `Name`'s own remarks already
         // established.
+        //
+        // `13-08`: `seat_limit`'s own default raised from `1` to `2` (`Stage13RaiseFreeTierSeatLimit`) -
+        // unlike the columns above, this one *does* need a backfill, because a database default only
+        // ever applies to a row inserted after the change; every row already in `sites` still read `1`
+        // until that migration's own `UPDATE` ran. Stated here rather than left looking like the same
+        // "no backfill needed" shape the paragraph above describes, because it is not.
         builder.Property(s => s.Tier).HasColumnName("tier").IsRequired().HasDefaultValue("free");
-        builder.Property(s => s.SeatLimit).HasColumnName("seat_limit").HasDefaultValue(1);
+        builder.Property(s => s.SeatLimit).HasColumnName("seat_limit").HasDefaultValue(2);
     }
 }

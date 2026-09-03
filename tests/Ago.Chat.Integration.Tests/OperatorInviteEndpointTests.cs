@@ -25,6 +25,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,8 +44,9 @@ namespace Ago.Chat.Integration.Tests;
 ///
 /// Every test registers its own fresh `Site` through the real `POST /api/v1/sites` endpoint (never
 /// <see cref="OperatorOidcFixture.SeededSiteId"/>, which already carries two operators against the
-/// default `seat_limit` of `1` - using it here would make every redemption seat-limited before the
-/// test's own subject even begins) - `RegisterSiteHandler` grants the registering operator *both*
+/// default `seat_limit` of `2` (`13-08`) - using it here would make every redemption seat-limited before
+/// the test's own subject even begins, exactly at capacity rather than merely close to it) -
+/// `RegisterSiteHandler` grants the registering operator *both*
 /// built-in roles (`5-08`'s own shape), so that operator already holds `Permission.SiteManageOperators`
 /// and needs no separate admin-seeding step to generate an invite.
 /// </summary>
@@ -237,7 +239,12 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         using var client = host.GetTestClient();
 
         var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
-        // seat_limit stays at its default of 1 - the registering operator alone already fills it.
+        // `13-08` raised the free tier's own default seat_limit from 1 to 2, so this test's own
+        // "at capacity already" starting condition can no longer come from the default alone - lowered
+        // explicitly to 1 instead, matching this test's actual subject (redemption at an arbitrary
+        // limit, then a seat opening), which the free-tier default value itself is not.
+        // `Invite_OnAFreshFreeTierSite_*` below are the tests that exercise the real default.
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 1);
         var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
 
         // The identical identity presents the identical code both times - this test is about the
@@ -269,6 +276,88 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
             var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
             Assert.True(inviteRow.IsRedeemed);
         }
+    }
+
+    /// <summary>
+    /// `13-08`'s own Done-when: "a freshly registered site can invite a second operator without paying,
+    /// proven by doing it." No <see cref="RaiseSeatLimitAsync"/> call anywhere in this test - the whole
+    /// point is that <see cref="Site.SeatLimit"/>'s own default (`2`) already admits this redemption,
+    /// with nothing raised and nothing purchased.
+    /// </summary>
+    [Fact]
+    public async Task Invite_OnAFreshFreeTierSite_ASecondOperatorIsAdmittedWithoutRaisingTheSeatLimitOrPaying()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, adminOperatorId, adminToken) = await RegisterFreshSiteAsync(client);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+
+        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.OK, redeemResponse.StatusCode);
+
+        await using var db = fixture.CreateDbContext();
+        var siteRow = await db.Sites.AsNoTracking().SingleAsync(s => s.Id == new SiteId(adminSite));
+        Assert.Equal("free", siteRow.Tier);
+        Assert.Equal(2, siteRow.SeatLimit);
+        var operatorCount = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == new SiteId(adminSite) && o.RemovedAt == null);
+        Assert.Equal(2, operatorCount);
+    }
+
+    /// <summary>
+    /// `13-08`'s own Done-when, the other half: "a third is refused, with the refusal readable rather
+    /// than a 500." Two operators already fill the free tier's own default `seat_limit` of `2` (the
+    /// admin who registered the site plus the one redemption <see cref="Invite_OnAFreshFreeTierSite_ASecondOperatorIsAdmittedWithoutRaisingTheSeatLimitOrPaying"/>
+    /// proves above), so a third redemption must be rejected - and the rejection is asserted as an
+    /// actual RFC 7807 problem body (`api-design.md`), not just a bare status code, so this test cannot
+    /// pass against an unhandled exception's own generic 500 problem response either.
+    /// </summary>
+    [Fact]
+    public async Task Invite_OnAFreshFreeTierSite_AThirdOperatorIsRefused_WithAReadableErrorNotA500()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+
+        var firstInvite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+        var (firstRedeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var firstRedeemer = host.GetTestClient();
+        firstRedeemer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", firstRedeemerToken);
+        var firstRedeemed = await firstRedeemer.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(firstInvite.Code));
+        Assert.Equal(HttpStatusCode.OK, firstRedeemed.StatusCode);
+
+        // Now at 2/2 - admin plus the one redeemed operator above. A second invite for a third identity.
+        // A fresh client, not the outer `client` - CreateInviteAsync's own `using var adminClient =
+        // client` disposes whatever it is handed, so the outer `client` is no longer usable after the
+        // first CreateInviteAsync call above.
+        using var secondInviteClient = host.GetTestClient();
+        var secondInvite = await CreateInviteAsync(secondInviteClient, adminToken, adminSite, "Operator");
+        var (secondRedeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var secondRedeemer = host.GetTestClient();
+        secondRedeemer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secondRedeemerToken);
+        var rejected = await secondRedeemer.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(secondInvite.Code));
+
+        Assert.Equal(HttpStatusCode.PaymentRequired, rejected.StatusCode);
+
+        // The readable half - a real RFC 7807 problem body, not an empty or generic-500 payload.
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.SeatLimitReached", problem.Title);
+        Assert.Contains("seat limit of 2", problem.Detail);
+
+        // The site's operator count never crossed its own limit - the third redemption genuinely never
+        // happened, not merely reported as refused.
+        await using var db = fixture.CreateDbContext();
+        var operatorCount = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == new SiteId(adminSite) && o.RemovedAt == null);
+        Assert.Equal(2, operatorCount);
     }
 
     [Fact]

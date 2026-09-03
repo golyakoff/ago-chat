@@ -85,7 +85,7 @@ public class YooKassaWebhookEndpointTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         var site = await verify.Sites.SingleAsync(s => s.Id == siteId, CancellationToken.None);
         Assert.Equal("free", site.Tier);
-        Assert.Equal(1, site.SeatLimit);
+        Assert.Equal(2, site.SeatLimit); // `13-08`: the free tier's own default, unchanged by this path.
         Assert.False(await verify.BillingWebhookEvents.AnyAsync(e => e.YooKassaPaymentId == paymentId, CancellationToken.None));
     }
 
@@ -156,7 +156,7 @@ public class YooKassaWebhookEndpointTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         var site = await verify.Sites.SingleAsync(s => s.Id == siteId, CancellationToken.None);
         Assert.Equal("free", site.Tier);
-        Assert.Equal(1, site.SeatLimit);
+        Assert.Equal(2, site.SeatLimit); // `13-08`: the free tier's own default, unchanged by this path.
     }
 
     private async Task<HttpResponseMessage> PostSignedWebhookAsync(
