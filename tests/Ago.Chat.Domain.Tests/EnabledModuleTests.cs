@@ -6,9 +6,13 @@ public class EnabledModuleTests
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private static readonly ModuleKey Calendar = new("calendar");
     private static readonly Uri EntryPoint = new("https://calendar.example.com");
+    private static readonly ModuleCredential Credential = new("a-shared-secret-of-sixteen-plus-chars");
 
-    private static EnabledModule Build(IReadOnlyList<string>? triggerWords = null, Uri? entryPoint = null) =>
-        new(new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, triggerWords ?? ["/booking"], entryPoint ?? EntryPoint, Now);
+    private static EnabledModule Build(
+        IReadOnlyList<string>? triggerWords = null, Uri? entryPoint = null, ModuleCredential? credential = null) =>
+        new(
+            new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, triggerWords ?? ["/booking"],
+            entryPoint ?? EntryPoint, credential ?? Credential, Now);
 
     [Fact]
     public void Constructor_WithValidInput_Succeeds()
@@ -19,6 +23,7 @@ public class EnabledModuleTests
         Assert.Equal(Calendar, module.ModuleKey);
         Assert.Equal(["/booking", "book"], module.TriggerWords);
         Assert.Equal(EntryPoint, module.EntryPoint);
+        Assert.Equal(Credential, module.Credential);
     }
 
     [Fact]

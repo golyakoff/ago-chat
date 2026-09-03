@@ -22,6 +22,7 @@ public class RouteConversationToModuleHandlerTests
     private static readonly VisitorId VisitorId = new(Guid.NewGuid());
     private static readonly ModuleKey Calendar = new("calendar");
     private static readonly Uri EntryPoint = new("https://calendar.example.com");
+    private static readonly ModuleCredential Credential = new("a-shared-secret-of-sixteen-plus-chars");
 
     private sealed record Fixture(
         RouteConversationToModuleHandler Handler, Conversation Conversation, FakeModuleGateway Gateway,
@@ -42,7 +43,7 @@ public class RouteConversationToModuleHandlerTests
         var readStore = new FakeEnabledModuleReadStore();
         if (moduleEnabled)
         {
-            readStore.Seed(SiteId, new EnabledModuleSummary(Calendar, ["/booking", "book"], EntryPoint));
+            readStore.Seed(SiteId, new EnabledModuleSummary(Calendar, ["/booking", "book"], EntryPoint, Credential));
         }
 
         gateway ??= new FakeModuleGateway();
@@ -97,6 +98,25 @@ public class RouteConversationToModuleHandlerTests
         Assert.Equal(MessageAuthorKind.System, reply.AuthorKind);
         Assert.Equal("Which service?\n1) Haircut\n2) Manicure\nReply with the number.", reply.Body.Value);
         Assert.NotNull(reply.Content);
+    }
+
+    /// <summary>`22-02`: the registry's own credential rides along on every call to the gateway, not
+    /// merely the entry point - <c>HttpModuleGateway</c> is what turns this into the per-call signed
+    /// header a module actually checks, but this handler is the one place that reads it off the
+    /// registry row in the first place, so this is the boundary at which "the wrong secret got
+    /// forwarded" would first become visible.</summary>
+    [Fact]
+    public async Task HandleAsync_WithATriggerMatch_ForwardsTheRegisteredCredentialToTheGateway()
+    {
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Equal(Credential, call.Module.Credential);
     }
 
     [Fact]

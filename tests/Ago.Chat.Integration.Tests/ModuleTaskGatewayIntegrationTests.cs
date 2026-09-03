@@ -46,6 +46,7 @@ public class ModuleTaskGatewayIntegrationTests
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private static readonly VisitorId VisitorId = new(Guid.NewGuid());
     private static readonly ModuleKey Calendar = new("calendar");
+    private static readonly ModuleCredential DefaultCredential = new("a-shared-secret-of-sixteen-plus-chars");
 
     private const string FirstStepJson = """
         {
@@ -113,6 +114,52 @@ public class ModuleTaskGatewayIntegrationTests
         Assert.Equal(2, conversation.ActiveModuleTask!.LastStepActions.Count);
         Assert.Equal(
             "Which service?\n1) Haircut\n2) Manicure\nReply with the number.", conversation.Messages.Last().Body.Value);
+    }
+
+    /// <summary>`22-02`: the module call is no longer anonymous - a real credential header rides
+    /// along on the real HTTP round trip, over the actual wire, not merely asserted at the
+    /// Application level with a fake gateway.</summary>
+    [Fact]
+    public async Task TriggerMatch_SendsANonEmptyCredentialHeader()
+    {
+        await using var server = new FakeModuleServer();
+        await server.StartAsync(externalTaskId: "external-1", firstStepJson: FirstStepJson, replyCompleteJson: "true");
+
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+
+        await RouteAsync(conversation, server.BuildGateway(), server.BaseAddress);
+
+        var header = Assert.Single(server.ReceivedStartCredentialHeaders);
+        Assert.False(string.IsNullOrWhiteSpace(header));
+    }
+
+    /// <summary>`22-02`'s own sharpest claim, proven at this boundary: two sites' registry rows -
+    /// different site ids, and in this case different secrets too - never sign a call the identical
+    /// way. If they did, a module validating by comparing tokens (rather than by verifying a
+    /// signature) could not tell one site's call from another's - which is exactly the property
+    /// <c>ChatModuleTaskEndpointTests</c>/<c>ModuleTaskEndpointTests</c> in `ago-calendar`/`ago-faq`
+    /// prove from the receiving end, against a real HMAC check.</summary>
+    [Fact]
+    public async Task TriggerMatch_TwoDifferentSites_ProduceDifferentCredentialHeaders()
+    {
+        await using var server = new FakeModuleServer();
+        await server.StartAsync(externalTaskId: "external-1", firstStepJson: FirstStepJson, replyCompleteJson: "true");
+
+        var siteACredential = new ModuleCredential("site-a-secret-of-sixteen-plus-chars");
+        var siteBCredential = new ModuleCredential("site-b-secret-of-sixteen-plus-chars");
+
+        var conversationA = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversationA.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        await RouteAsync(conversationA, server.BuildGateway(), server.BaseAddress, credential: siteACredential);
+
+        var otherSiteId = new SiteId(Guid.NewGuid());
+        var conversationB = Conversation.Start(new ConversationId(Guid.NewGuid()), otherSiteId, VisitorId, Now);
+        conversationB.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        await RouteAsync(conversationB, server.BuildGateway(), server.BaseAddress, credential: siteBCredential);
+
+        Assert.Equal(2, server.ReceivedStartCredentialHeaders.Count);
+        Assert.NotEqual(server.ReceivedStartCredentialHeaders[0], server.ReceivedStartCredentialHeaders[1]);
     }
 
     [Fact]
@@ -219,10 +266,10 @@ public class ModuleTaskGatewayIntegrationTests
 
     private static async Task<RouteConversationToModuleOutcome> RouteAsync(
         Conversation conversation, IModuleGateway gateway, Uri entryPoint,
-        IChannelIdentityRepository? channelIdentities = null)
+        IChannelIdentityRepository? channelIdentities = null, ModuleCredential? credential = null)
     {
         var conversations = new FixedConversationRepository(conversation);
-        var readStore = new FixedEnabledModuleReadStore(Calendar, ["/booking"], entryPoint);
+        var readStore = new FixedEnabledModuleReadStore(Calendar, ["/booking"], entryPoint, credential);
         var outbox = new FixedOutboxWriter();
         var inbox = new FixedInboxChecker();
 
@@ -231,7 +278,7 @@ public class ModuleTaskGatewayIntegrationTests
             outbox, inbox, new FixedClock(Now), new FixedIdGenerator());
 
         var command = new RouteConversationToModule(
-            Guid.NewGuid(), SiteId, conversation.Id, MessageAuthorKind.Visitor, conversation.LastSequence);
+            Guid.NewGuid(), conversation.SiteId, conversation.Id, MessageAuthorKind.Visitor, conversation.LastSequence);
         var result = await handler.HandleAsync(command, CancellationToken.None);
         Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
         return result.Value;
@@ -263,11 +310,13 @@ public class ModuleTaskGatewayIntegrationTests
         public Task SaveAsync(Conversation conversation, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class FixedEnabledModuleReadStore(ModuleKey key, IReadOnlyList<string> triggerWords, Uri entryPoint)
+    private sealed class FixedEnabledModuleReadStore(
+        ModuleKey key, IReadOnlyList<string> triggerWords, Uri entryPoint, ModuleCredential? credential = null)
         : IEnabledModuleReadStore
     {
         public Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<EnabledModuleSummary>>([new EnabledModuleSummary(key, triggerWords, entryPoint)]);
+            Task.FromResult<IReadOnlyList<EnabledModuleSummary>>(
+                [new EnabledModuleSummary(key, triggerWords, entryPoint, credential ?? DefaultCredential)]);
     }
 
     /// <summary>`20-09`: the minimal double the gate's own real-HTTP tests need - seeded with at most
@@ -331,6 +380,13 @@ public class ModuleTaskGatewayIntegrationTests
 
         public List<JsonDocument> ReceivedReplyBodies { get; } = [];
 
+        /// <summary>`22-02`: the credential header <c>HttpModuleGateway</c> attached to each
+        /// <c>POST .../module-tasks</c> call - captured so a test can assert it is present, non-empty,
+        /// and varies with the registry row that produced it, without this test project needing to
+        /// see <c>ModuleCallCredential</c>'s own internal token format (that class is deliberately not
+        /// exposed outside <c>Ago.Chat.Infrastructure.Modules</c> - see its own remarks).</summary>
+        public List<string?> ReceivedStartCredentialHeaders { get; } = [];
+
         public async Task StartAsync(string externalTaskId, string firstStepJson, string replyCompleteJson)
         {
             var builder = WebApplication.CreateBuilder();
@@ -340,6 +396,11 @@ public class ModuleTaskGatewayIntegrationTests
 
             app.MapPost("/api/v1/module-tasks", async context =>
             {
+                lock (ReceivedStartCredentialHeaders)
+                {
+                    ReceivedStartCredentialHeaders.Add(context.Request.Headers["X-Ago-Module-Credential"].FirstOrDefault());
+                }
+
                 using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
                 _ = await reader.ReadToEndAsync();
                 context.Response.ContentType = "application/json";
@@ -375,7 +436,7 @@ public class ModuleTaskGatewayIntegrationTests
             }
         }
 
-        public HttpModuleGateway BuildGateway() => new(new HttpClient());
+        public HttpModuleGateway BuildGateway() => new(new HttpClient(), new FixedClock(Now));
 
         public async ValueTask DisposeAsync()
         {

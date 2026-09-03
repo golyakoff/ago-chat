@@ -47,7 +47,7 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         using var client = CreateClient(host, token);
 
         var response = await client.PutAsJsonAsync(
-            Route, new ModuleEndpoints.EnableModuleRequest("faq", ["/faq"], "https://faq.example.com"));
+            Route, new ModuleEndpoints.EnableModuleRequest("faq", ["/faq"], "https://faq.example.com", "a-shared-secret-of-sixteen-plus-chars"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<ModuleEndpoints.EnableModuleResponse>();
@@ -70,7 +70,7 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         using var client = CreateClient(host, token);
 
         var response = await client.PutAsJsonAsync(
-            Route, new ModuleEndpoints.EnableModuleRequest("faq", ["/faq"], "https://faq.example.com"));
+            Route, new ModuleEndpoints.EnableModuleRequest("faq", ["/faq"], "https://faq.example.com", "a-shared-secret-of-sixteen-plus-chars"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -82,7 +82,7 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         using var client = CreateClient(host, token: null);
 
         var response = await client.PutAsJsonAsync(
-            Route, new ModuleEndpoints.EnableModuleRequest("faq", ["/faq"], "https://faq.example.com"));
+            Route, new ModuleEndpoints.EnableModuleRequest("faq", ["/faq"], "https://faq.example.com", "a-shared-secret-of-sixteen-plus-chars"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
