@@ -2,9 +2,30 @@
 # `credential-expiry.yml` already uses, so there is one weekly cadence for automated checks rather
 # than a different one per ecosystem.
 version: 2
+
+# 17-11 (golyakoff/ago-root#396): the checked-in nuget.config named the local dev feed by a Windows
+# absolute path, which does not exist on Dependabot's Linux runner - a *configured* source that
+# does not exist is a hard NU1301 restore error, so Dependabot's nuget updater could never even
+# read this repository's dependency graph, let alone propose an update. This registry gives it a
+# source that does exist for it: the same GitHub Packages feed nuget.ci.config already proves works
+# for CI (adr/0018), authenticated with the same read:packages-scoped PAT, stored here as a
+# Dependabot secret (separate from the identically-named Actions secret CI uses - Dependabot cannot
+# read Actions secrets). No new secret: this repository already had a Dependabot secret named
+# AGO_PLATFORM_PACKAGES_TOKEN before this change. nuget.config's own packageSourceMapping names this
+# registry's key ("ago-platform-github") as a second, normally-absent source for "Ago.Platform.*" -
+# see that file's own comment for why a mapped-but-undeclared source is not an error.
+registries:
+  ago-platform-github:
+    type: nuget-feed
+    url: https://nuget.pkg.github.com/golyakoff/index.json
+    username: golyakoff
+    password: ${{secrets.AGO_PLATFORM_PACKAGES_TOKEN}}
+
 updates:
   - package-ecosystem: "nuget"
     directory: "/"
+    registries:
+      - ago-platform-github
     schedule:
       interval: "weekly"
       day: "monday"
