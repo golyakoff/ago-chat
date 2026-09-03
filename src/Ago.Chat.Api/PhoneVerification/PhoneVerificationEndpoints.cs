@@ -35,10 +35,13 @@ public static class PhoneVerificationEndpoints
         group.MapPost("/{pendingPhoneVerificationId:guid}/confirm", HandleConfirmAsync);
     }
 
-    private static async Task<IResult> HandleInitiateAsync(
+    // `ago-root#353`: public, not private - `AttachmentEndpoints.HandleCreateAsync`'s own reasoning:
+    // a test can call this directly to prove the Retry-After header, no hosting pipeline needed.
+    public static async Task<IResult> HandleInitiateAsync(
         Guid conversationId,
         InitiatePhoneVerificationRequest request,
         InitiatePhoneVerificationHandler handler,
+        PhoneVerificationRateLimitOptions rateLimitOptions,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -54,12 +57,28 @@ public static class PhoneVerificationEndpoints
                 new ConversationId(conversationId), user.GetVisitorId(), request.Phone ?? string.Empty),
             cancellationToken);
 
-        return result.IsFailure
-            ? result.Error!.Value.ToProblem(httpContext)
-            : Results.Created(
-                $"/api/v1/conversations/{conversationId}/phone-verifications/{result.Value.PendingPhoneVerificationId}",
-                new InitiatedPhoneVerificationResponse(
-                    result.Value.PendingPhoneVerificationId, result.Value.ExpiresAt, result.Value.DeliveryMethod));
+        if (result.IsFailure)
+        {
+            var error = result.Error!.Value;
+            // `ago-root#353`: the phone/visitor/site buckets `InitiatePhoneVerificationHandler` checks
+            // all share this one code - the slowest of the three is the safe conservative answer
+            // regardless of which one denied this call. `PhoneVerification.LockedOut` is a distinct
+            // code from a different handler (`ConfirmPhoneVerificationHandler`) and never reaches this
+            // branch - see its own remarks (`ConversationErrors.PhoneVerificationLockedOut`) for why it
+            // deliberately carries no Retry-After at all.
+            var retryAfter = error.Code == "PhoneVerification.RateLimited"
+                ? RateLimitRetryAfter.Conservative(
+                    rateLimitOptions.PerPhoneRefillPerSecond,
+                    rateLimitOptions.PerVisitorRefillPerSecond,
+                    rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
+        }
+
+        return Results.Created(
+            $"/api/v1/conversations/{conversationId}/phone-verifications/{result.Value.PendingPhoneVerificationId}",
+            new InitiatedPhoneVerificationResponse(
+                result.Value.PendingPhoneVerificationId, result.Value.ExpiresAt, result.Value.DeliveryMethod));
     }
 
     private static async Task<IResult> HandleConfirmAsync(

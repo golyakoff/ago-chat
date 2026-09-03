@@ -53,10 +53,15 @@ public static class AttachmentEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
-    private static async Task<IResult> HandleCreateAsync(
+    // `ago-root#353`: public, not private - the same reason `AuthEndpoints.HandleVisitorSessionAsync`/
+    // `DemoEndpoints.HandleMintAsync` are: a named method Minimal API happily takes as a method group,
+    // and a test can then call it directly with hand-built dependencies, no hosting/routing pipeline
+    // needed, to prove the Retry-After header this method now attaches.
+    public static async Task<IResult> HandleCreateAsync(
         Guid conversationId,
         CreateAttachmentRequest request,
         CreateAttachmentHandler handler,
+        AttachmentRateLimitOptions rateLimitOptions,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -74,7 +79,17 @@ public static class AttachmentEndpoints
 
         if (result.IsFailure)
         {
-            return result.Error!.Value.ToProblem(httpContext);
+            var error = result.Error!.Value;
+            // `ago-root#353`: the visitor/operator/site buckets `CreateAttachmentHandler` checks all
+            // share this one code - see `RateLimitRetryAfter`'s own remarks on why the slowest of the
+            // three, not the one that actually denied this call, is the safe answer.
+            var retryAfter = error.Code == "Message.RateLimited"
+                ? RateLimitRetryAfter.Conservative(
+                    rateLimitOptions.PerVisitorRefillPerSecond,
+                    rateLimitOptions.PerOperatorRefillPerSecond,
+                    rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
         }
 
         return Results.Created(

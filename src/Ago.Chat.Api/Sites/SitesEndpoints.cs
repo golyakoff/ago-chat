@@ -68,9 +68,13 @@ public static class SitesEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
-    private static async Task<IResult> HandleRegisterSiteAsync(
+    // `ago-root#353`: public, not private - `AttachmentEndpoints.HandleCreateAsync`'s own reasoning,
+    // itself following `AuthEndpoints`/`DemoEndpoints`'s precedent: a test can call this directly to
+    // prove the Retry-After header, no hosting pipeline needed.
+    public static async Task<IResult> HandleRegisterSiteAsync(
         RegisterSiteRequest request,
         RegisterSiteHandler handler,
+        RegisterSiteRateLimitOptions rateLimitOptions,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -101,7 +105,13 @@ public static class SitesEndpoints
 
         if (result.IsFailure)
         {
-            return result.Error!.Value.ToProblem(httpContext);
+            var error = result.Error!.Value;
+            // `ago-root#353`: the subject and IP buckets `RegisterSiteHandler` checks share this one
+            // code - the slower of the two is the safe conservative answer either way.
+            var retryAfter = error.Code == "Site.RateLimited"
+                ? RateLimitRetryAfter.Conservative(rateLimitOptions.PerSubjectRefillPerSecond, rateLimitOptions.PerIpRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
         }
 
         // `10-02`'s own Scope: Location points at a resource shape with no matching GET behind it yet
@@ -145,8 +155,10 @@ public static class SitesEndpoints
     /// `Location` header alone (pointing at the status endpoint below) would leave a caller that does
     /// not parse response headers with no way to find its own request again.
     /// </summary>
-    private static async Task<IResult> HandleRequestExportAsync(
-        Guid siteId, RequestSiteExportHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    // `ago-root#353`: public, not private - same reasoning as `HandleRegisterSiteAsync` above.
+    public static async Task<IResult> HandleRequestExportAsync(
+        Guid siteId, RequestSiteExportHandler handler, SiteExportRateLimitOptions rateLimitOptions,
+        HttpContext httpContext, CancellationToken cancellationToken)
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
@@ -154,7 +166,13 @@ public static class SitesEndpoints
 
         if (result.IsFailure)
         {
-            return result.Error!.Value.ToProblem(httpContext);
+            var error = result.Error!.Value;
+            // `ago-root#353`: one bucket, so this is the exact wait, not a max over several - still
+            // computed from configuration, never a second IRateLimiter.CheckAsync.
+            var retryAfter = error.Code == "Export.RateLimited"
+                ? RateLimitRetryAfter.Conservative(rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
         }
 
         var exportId = result.Value;

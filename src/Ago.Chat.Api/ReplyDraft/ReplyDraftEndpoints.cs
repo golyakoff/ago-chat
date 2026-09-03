@@ -21,9 +21,12 @@ public static class ReplyDraftEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
-    private static async Task<IResult> HandleGenerateAsync(
+    // `ago-root#353`: public, not private - `AttachmentEndpoints.HandleCreateAsync`'s own reasoning:
+    // a test can call this directly to prove the Retry-After header, no hosting pipeline needed.
+    public static async Task<IResult> HandleGenerateAsync(
         Guid conversationId,
         GenerateReplyDraftHandler handler,
+        ReplyDraftRateLimitOptions rateLimitOptions,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -33,9 +36,18 @@ public static class ReplyDraftEndpoints
             new GenerateReplyDraftAsOperator(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
             cancellationToken);
 
-        return result.IsFailure
-            ? result.Error!.Value.ToProblem(httpContext)
-            : Results.Ok(new ReplyDraftResponse(result.Value.DraftText));
+        if (result.IsFailure)
+        {
+            var error = result.Error!.Value;
+            // `ago-root#353`: the operator and site buckets `GenerateReplyDraftHandler` checks share
+            // this one code - the slower of the two is the safe conservative answer either way.
+            var retryAfter = error.Code == "ReplyDraft.RateLimited"
+                ? RateLimitRetryAfter.Conservative(rateLimitOptions.PerOperatorRefillPerSecond, rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
+        }
+
+        return Results.Ok(new ReplyDraftResponse(result.Value.DraftText));
     }
 
     public sealed record ReplyDraftResponse(string DraftText);
