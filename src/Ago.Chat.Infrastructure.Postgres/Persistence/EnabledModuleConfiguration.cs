@@ -24,6 +24,14 @@ internal sealed class EnabledModuleConfiguration : IEntityTypeConfiguration<Enab
 
         builder.Property(m => m.EntryPoint).HasColumnName("entry_point")
             .HasConversion(u => u.ToString(), value => new Uri(value, UriKind.Absolute));
+
+        // `22-02`: the credential this site's calls prove themselves with - see ModuleCredential's own
+        // remarks. No HasMaxLength beyond the value object's own MaxLength: the same "the value object
+        // is the single source of truth for shape" rule ModuleKey's own conversion already follows.
+        builder.Property(m => m.Credential).HasColumnName("credential")
+            .HasMaxLength(ModuleCredential.MaxLength)
+            .HasConversion(c => c.Value, value => new ModuleCredential(value));
+
         builder.Property(m => m.EnabledAt).HasColumnName("enabled_at");
 
         builder.HasOne<Site>().WithMany().HasForeignKey(m => m.SiteId);

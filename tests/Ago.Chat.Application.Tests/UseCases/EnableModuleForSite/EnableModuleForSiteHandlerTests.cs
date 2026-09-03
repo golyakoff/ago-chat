@@ -34,9 +34,11 @@ public class EnableModuleForSiteHandlerTests
         return new Fixture(handler, modules, readStore, permissions);
     }
 
+    private const string ValidCredential = "a-shared-secret-of-sixteen-plus-chars";
+
     private static Application.UseCases.EnableModuleForSite.EnableModuleForSite Command(
         string moduleKey, params string[] triggerWords) =>
-        new(OperatorId, SiteId, moduleKey, triggerWords, "https://module.example.com");
+        new(OperatorId, SiteId, moduleKey, triggerWords, "https://module.example.com", ValidCredential);
 
     [Fact]
     public async Task HandleAsync_WithNoConflict_RegistersTheModule()
@@ -70,8 +72,7 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_WhenATriggerWordAlreadyBelongsToAnotherEnabledModule_IsRejected()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(
-            new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com")));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential)));
 
         var result = await fixture.Handler.HandleAsync(Command("taxi", "/booking"), CancellationToken.None);
 
@@ -84,8 +85,7 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_TheConflictCheckIsCaseInsensitive()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(
-            new ModuleKey("calendar"), ["/BOOKING"], new Uri("https://calendar.example.com")));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/BOOKING"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential)));
 
         var result = await fixture.Handler.HandleAsync(Command("taxi", "/booking"), CancellationToken.None);
 
@@ -100,9 +100,9 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_ChecksEveryExistingModule_NotJustTheFirstOne()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("first"), ["/first"], new Uri("https://a.example.com")));
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("second"), ["/second"], new Uri("https://b.example.com")));
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("third"), ["/third"], new Uri("https://c.example.com")));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("first"), ["/first"], new Uri("https://a.example.com"), new ModuleCredential(ValidCredential)));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("second"), ["/second"], new Uri("https://b.example.com"), new ModuleCredential(ValidCredential)));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("third"), ["/third"], new Uri("https://c.example.com"), new ModuleCredential(ValidCredential)));
 
         var result = await fixture.Handler.HandleAsync(Command("fourth", "/third"), CancellationToken.None);
 
@@ -115,8 +115,7 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_DoesNotConflictWithItself_WhenTheSameModuleKeyReRegisters()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(
-            new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com")));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential)));
 
         var result = await fixture.Handler.HandleAsync(Command("calendar", "/booking"), CancellationToken.None);
 
@@ -167,11 +166,44 @@ public class EnableModuleForSiteHandlerTests
     {
         var fixture = CreateFixture();
         var command = new Application.UseCases.EnableModuleForSite.EnableModuleForSite(
-            OperatorId, SiteId, "calendar", ["/booking"], "ftp://module.example.com");
+            OperatorId, SiteId, "calendar", ["/booking"], "ftp://module.example.com", ValidCredential);
 
         var result = await fixture.Handler.HandleAsync(command, CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Module.Invalid", result.Error!.Value.Code);
+    }
+
+    /// <summary>`22-02`: an operator cannot register a module with a trivially short credential -
+    /// the same "shape, not meaning" floor <see cref="ModuleCredential"/>'s own remarks describe,
+    /// surfaced here as the ordinary Module.Invalid a malformed EntryPoint or ModuleKey already
+    /// gets.</summary>
+    [Fact]
+    public async Task HandleAsync_WithATooShortCredential_ReturnsModuleInvalid()
+    {
+        var fixture = CreateFixture();
+        var command = new Application.UseCases.EnableModuleForSite.EnableModuleForSite(
+            OperatorId, SiteId, "calendar", ["/booking"], "https://module.example.com", "too-short");
+
+        var result = await fixture.Handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.Invalid", result.Error!.Value.Code);
+        Assert.Empty(fixture.Modules.All);
+    }
+
+    /// <summary>`22-02`'s own registration-time guarantee: the credential actually lands on the saved
+    /// row, not merely accepted and discarded - the field <c>RouteConversationToModuleHandler</c>
+    /// later signs every module call with.</summary>
+    [Fact]
+    public async Task HandleAsync_WithValidInput_SavesTheCredentialOnTheRow()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command("calendar", "/booking"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = Assert.Single(fixture.Modules.All);
+        Assert.Equal(new ModuleCredential(ValidCredential), saved.Credential);
     }
 }

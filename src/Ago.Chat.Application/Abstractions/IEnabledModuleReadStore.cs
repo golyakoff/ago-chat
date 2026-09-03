@@ -17,5 +17,12 @@ public interface IEnabledModuleReadStore
 
 /// <summary>Exactly what <see cref="TriggerCommandMatcher"/> and the registration-time overlap check
 /// need, and nothing else about an <see cref="EnabledModule"/> row - no <see cref="EnabledModuleId"/>,
-/// which neither caller has any use for.</summary>
-public sealed record EnabledModuleSummary(ModuleKey ModuleKey, IReadOnlyList<string> TriggerWords, Uri EntryPoint);
+/// which neither caller has any use for.
+///
+/// <para><b>`22-02`: <see cref="Credential"/> rides along even though neither of those two callers
+/// reads it.</b> The one caller that does - <c>RouteConversationToModuleHandler</c>, building an
+/// <see cref="EnabledModuleEndpoint"/> per call - already reads this same row for
+/// <see cref="EntryPoint"/>, so carrying the credential here avoids a second read store method for a
+/// single extra field.</para></summary>
+public sealed record EnabledModuleSummary(
+    ModuleKey ModuleKey, IReadOnlyList<string> TriggerWords, Uri EntryPoint, ModuleCredential Credential);

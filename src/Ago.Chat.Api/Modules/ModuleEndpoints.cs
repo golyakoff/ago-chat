@@ -52,14 +52,19 @@ public static class ModuleEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new EnableModuleForSite(
-                user.GetOperatorId(), new SiteId(siteId), request.ModuleKey, request.TriggerWords, request.EntryPoint),
+                user.GetOperatorId(), new SiteId(siteId), request.ModuleKey, request.TriggerWords, request.EntryPoint,
+                request.Credential),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(new EnableModuleResponse(
             request.ModuleKey, request.TriggerWords, request.EntryPoint));
     }
 
-    public sealed record EnableModuleRequest(string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint);
+    /// <param name="Credential">`22-02`: the shared secret this site's module calls will be signed
+    /// with - never echoed back in <see cref="EnableModuleResponse"/> once written, the same
+    /// "a secret is accepted, never returned" hygiene a password field would get.</param>
+    public sealed record EnableModuleRequest(
+        string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, string Credential);
 
     public sealed record EnableModuleResponse(string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint);
 

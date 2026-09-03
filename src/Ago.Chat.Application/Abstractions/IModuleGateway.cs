@@ -34,10 +34,20 @@ public interface IModuleGateway
         EnabledModuleEndpoint module, SubmitModuleReplyRequest request, CancellationToken cancellationToken);
 }
 
-/// <summary>A module's key and where to reach it - grouped because every resilience pipeline this
-/// boundary needs is keyed per <see cref="ModuleKey"/> (`resilience.md`'s per-channel-key reasoning,
-/// reused verbatim: one module's outage must not open a breaker shared with another module's calls).</summary>
-public sealed record EnabledModuleEndpoint(ModuleKey ModuleKey, Uri EntryPoint);
+/// <summary>A site's module: its key, where to reach it, and what proves a call is really for the
+/// site it claims - grouped because every resilience pipeline this boundary needs is keyed per
+/// <see cref="ModuleKey"/> (`resilience.md`'s per-channel-key reasoning, reused verbatim: one module's
+/// outage must not open a breaker shared with another module's calls).
+///
+/// <para><b>`22-02`: <see cref="SiteId"/> and <see cref="Credential"/></b>. Both ride along on every
+/// call, including a reply - <see cref="SubmitModuleReplyRequest"/> carries no site id of its own (the
+/// wire contract's reply route never has, since a reply is addressed by <c>externalTaskId</c> alone),
+/// so this is the only place <c>Ago.Chat.Infrastructure.Modules</c> can read the site a reply is for
+/// when it signs the call. <see cref="Credential"/> is the secret that signature is made with, so the
+/// module on the other end can tell a genuine chat-originated call for this site from anyone who
+/// reached its entry point and guessed a site id. See <see cref="Domain.ModuleCredential"/>'s own
+/// remarks.</para></summary>
+public sealed record EnabledModuleEndpoint(ModuleKey ModuleKey, SiteId SiteId, Uri EntryPoint, ModuleCredential Credential);
 
 /// <summary>One step a module handed back - <c>StepDto</c> in the wire contract, translated into this
 /// system's own <see cref="MessageContentKind"/>/<see cref="MessagePayload"/>/<see cref="MessageAction"/>

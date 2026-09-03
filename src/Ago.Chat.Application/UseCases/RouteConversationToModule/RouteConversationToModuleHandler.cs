@@ -134,7 +134,7 @@ public sealed class RouteConversationToModuleHandler(
         try
         {
             startResult = await gateway.StartTaskAsync(
-                new EnabledModuleEndpoint(key, enabledModule.EntryPoint),
+                new EnabledModuleEndpoint(key, command.SiteId, enabledModule.EntryPoint, enabledModule.Credential),
                 new StartModuleTaskRequest(chatTaskId, command.SiteId, command.ConversationId, trigger.Body.Value),
                 cancellationToken);
         }
@@ -243,7 +243,7 @@ public sealed class RouteConversationToModuleHandler(
         try
         {
             replyResult = await gateway.SubmitReplyAsync(
-                new EnabledModuleEndpoint(active.ModuleKey, enabledModule.EntryPoint),
+                new EnabledModuleEndpoint(active.ModuleKey, conversation.SiteId, enabledModule.EntryPoint, enabledModule.Credential),
                 new SubmitModuleReplyRequest(
                     active.ExternalTaskId, active.Id.Value, active.LastStepKind!.Value, value, phoneVerifiedAt),
                 cancellationToken);

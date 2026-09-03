@@ -44,10 +44,12 @@ public sealed class EnableModuleForSiteHandler(
 
         ModuleKey moduleKey;
         Uri entryPoint;
+        ModuleCredential credential;
         try
         {
             moduleKey = new ModuleKey(command.ModuleKey);
             entryPoint = new Uri(command.EntryPoint, UriKind.Absolute);
+            credential = new ModuleCredential(command.Credential);
         }
         catch (Exception ex) when (ex is ArgumentException or UriFormatException)
         {
@@ -94,7 +96,7 @@ public sealed class EnableModuleForSiteHandler(
         {
             module = new EnabledModule(
                 new EnabledModuleId(idGenerator.NewId(now)), command.SiteId, moduleKey, command.TriggerWords,
-                entryPoint, now);
+                entryPoint, credential, now);
         }
         catch (ArgumentException ex)
         {

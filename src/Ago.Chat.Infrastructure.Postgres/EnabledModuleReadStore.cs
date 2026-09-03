@@ -14,7 +14,8 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
     private static readonly JsonSerializerOptions TriggerWordsOptions = new(JsonSerializerDefaults.Web);
 
     private const string Sql = """
-        select module_key as "ModuleKey", trigger_words as "TriggerWords", entry_point as "EntryPoint"
+        select module_key as "ModuleKey", trigger_words as "TriggerWords", entry_point as "EntryPoint",
+               credential as "Credential"
         from enabled_modules
         where site_id = @SiteId
         """;
@@ -32,7 +33,8 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
     private static EnabledModuleSummary ToSummary(EnabledModuleRow r) => new(
         new ModuleKey(r.ModuleKey),
         JsonSerializer.Deserialize<List<string>>(r.TriggerWords, TriggerWordsOptions)!,
-        new Uri(r.EntryPoint, UriKind.Absolute));
+        new Uri(r.EntryPoint, UriKind.Absolute),
+        new ModuleCredential(r.Credential));
 
     private sealed class EnabledModuleRow
     {
@@ -41,5 +43,7 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
         public string TriggerWords { get; init; } = string.Empty;
 
         public string EntryPoint { get; init; } = string.Empty;
+
+        public string Credential { get; init; } = string.Empty;
     }
 }

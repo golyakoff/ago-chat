@@ -2,6 +2,7 @@
 using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Infrastructure.Modules;
 
@@ -26,8 +27,16 @@ namespace Ago.Chat.Infrastructure.Modules;
 /// <see cref="Domain.MessageContentKind"/>/<see cref="Domain.MessagePayload"/>/<see cref="Domain.MessageAction"/>'s
 /// own validation) are all translated here - see <see cref="IModuleGateway"/>'s own remarks on why the
 /// contract treats all three identically.</para>
+///
+/// <para><b>`22-02`: every call carries a signed <see cref="ModuleCallCredential.HeaderName"/>
+/// header</b>, minted fresh per call from <see cref="EnabledModuleEndpoint.SiteId"/> and
+/// <see cref="EnabledModuleEndpoint.Credential"/> - see <see cref="ModuleCallCredential"/>'s own
+/// remarks for the exact wire shape. <see cref="PostAsJsonAsync"/> cannot attach a per-call header
+/// (it would need <see cref="HttpClient.DefaultRequestHeaders"/>, which is shared across every module
+/// this one <see cref="HttpClient"/> ever calls), so this class builds an explicit
+/// <see cref="HttpRequestMessage"/> instead.</para>
 /// </summary>
-public sealed class HttpModuleGateway(HttpClient httpClient) : IModuleGateway
+public sealed class HttpModuleGateway(HttpClient httpClient, IClock clock) : IModuleGateway
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -39,7 +48,7 @@ public sealed class HttpModuleGateway(HttpClient httpClient) : IModuleGateway
             request.ChatTaskId, request.SiteId.Value, request.ConversationId.Value, request.TriggerText);
 
         var wireResponse = await PostAsync<StartTaskWireRequest, StartTaskWireResponse>(
-            module.ModuleKey, uri, wireRequest, cancellationToken);
+            module, uri, wireRequest, cancellationToken);
 
         return new StartModuleTaskResult(
             wireResponse.ExternalTaskId, ToModuleStep(module.ModuleKey, wireResponse.Step), wireResponse.Complete);
@@ -53,19 +62,27 @@ public sealed class HttpModuleGateway(HttpClient httpClient) : IModuleGateway
             request.ChatTaskId, request.Kind.Value, request.Value, request.PhoneVerifiedAt);
 
         var wireResponse = await PostAsync<SubmitReplyWireRequest, SubmitReplyWireResponse>(
-            module.ModuleKey, uri, wireRequest, cancellationToken);
+            module, uri, wireRequest, cancellationToken);
 
         return new SubmitModuleReplyResult(
             wireResponse.Step is { } step ? ToModuleStep(module.ModuleKey, step) : null, wireResponse.Complete);
     }
 
     private async Task<TResponse> PostAsync<TRequest, TResponse>(
-        ModuleKey moduleKey, Uri uri, TRequest wireRequest, CancellationToken cancellationToken)
+        EnabledModuleEndpoint module, Uri uri, TRequest wireRequest, CancellationToken cancellationToken)
     {
+        var moduleKey = module.ModuleKey;
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.PostAsJsonAsync(uri, wireRequest, JsonOptions, cancellationToken);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri)
+            {
+                Content = JsonContent.Create(wireRequest, options: JsonOptions),
+            };
+            httpRequest.Headers.Add(
+                ModuleCallCredential.HeaderName, ModuleCallCredential.Mint(module.SiteId, module.Credential, clock.UtcNow));
+
+            response = await httpClient.SendAsync(httpRequest, cancellationToken);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {

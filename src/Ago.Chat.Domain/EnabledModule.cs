@@ -11,6 +11,15 @@
 /// <see cref="TriggerCommandMatcher"/> compares - never interpreted, never validated against anything
 /// but shape (non-empty, bounded count/length). What a trigger word *means* is entirely the site owner's
 /// choice.</para>
+///
+/// <para><b>`22-02`: <see cref="Credential"/> makes this row's own <see cref="SiteId"/> provable, not
+/// merely asserted.</b> Before this item, <c>Ago.Chat.Infrastructure.Modules.HttpModuleGateway</c> sent
+/// a module the caller's claimed site id in the request body and nothing else - a module had no way to
+/// tell a real chat-originated call from anyone who could reach its entry point and had guessed a site
+/// id. This field is what closes that gap: it belongs on the registry row, next to
+/// <see cref="EntryPoint"/>, because both are per-(site, module) coordinates the module deployment's own
+/// operator configures out of band - Chat never learns what a "calendar" or "faq" is by holding
+/// one.</para>
 /// </summary>
 public sealed class EnabledModule
 {
@@ -34,11 +43,15 @@ public sealed class EnabledModule
 
     public Uri EntryPoint { get; } = null!;
 
+    /// <summary>`22-02`: proves a call claiming to be for this site actually is - see
+    /// <see cref="ModuleCredential"/>'s own remarks for what it is and is not.</summary>
+    public ModuleCredential Credential { get; }
+
     public DateTimeOffset EnabledAt { get; }
 
     public EnabledModule(
         EnabledModuleId id, SiteId siteId, ModuleKey moduleKey, IReadOnlyList<string> triggerWords,
-        Uri entryPoint, DateTimeOffset enabledAt)
+        Uri entryPoint, ModuleCredential credential, DateTimeOffset enabledAt)
     {
         if (triggerWords.Count == 0)
         {
@@ -91,6 +104,7 @@ public sealed class EnabledModule
         ModuleKey = moduleKey;
         TriggerWords = [.. triggerWords.Select(w => w.Trim())];
         EntryPoint = entryPoint;
+        Credential = credential;
         EnabledAt = enabledAt;
     }
 
