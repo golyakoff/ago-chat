@@ -4,11 +4,13 @@
 /// `22-02`: the secret half of an <see cref="EnabledModule"/> row - "site X has module K enabled,
 /// answered at this entry point, proven by this credential." Stored beside
 /// <see cref="EnabledModule.EntryPoint"/> for the identical reason: both are coordinates a site owner
-/// configures once on this side and once again on the module deployment's own side (a matched
-/// deployment setting, the same manual-coordination shape `ChatModuleTaskOptions.TenantPublicKey`
-/// already uses in `ago-calendar` today) - there is no live provisioning handshake between the two
-/// products, and inventing one was out of this item's scope (see this repository's own report for the
-/// argument).
+/// configures once on this side and once again on the module deployment's own side - a value this
+/// row and the module's own per-tenant registry row must be configured to match, the same
+/// manual-coordination shape this repository's chat-module credential already was before `22-04`
+/// replaced `ago-calendar`'s single deployment-wide `ChatModule:SharedSecret` with a per-tenant
+/// database row (`Ago.Calendar.Domain.ChatModuleRegistration`, that repository's own remarks) -
+/// there is no live provisioning handshake between the two products, and inventing one was out of
+/// scope for both items (see each repository's own report for the argument).
 ///
 /// <para><b>Opaque to Chat, exactly like <see cref="ModuleKey"/>.</b> This type validates shape only
 /// (non-empty, bounded length) - never meaning. Chat never inspects a credential's bytes beyond using
