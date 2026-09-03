@@ -123,7 +123,7 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
     {
         var options = Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromSeconds(30), BatchSize = 20 });
         await using var connection = fixture.CreateRabbitMqConnection();
-        var dispatcher = new OutboxDispatcher(fixture.DataSource, new RabbitMqEventPublisher(connection), new SystemClock(), options, NullLogger<OutboxDispatcher>.Instance);
+        var dispatcher = new OutboxDispatcher(fixture.DataSource, new RabbitMqEventPublisher(connection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), options, NullLogger<OutboxDispatcher>.Instance);
 
         await dispatcher.StartAsync(CancellationToken.None);
         try
@@ -317,7 +317,7 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
     }
 
     private OutboxDispatcher CreateDispatcher(RabbitMqConnection connection, int batchSize = 20) =>
-        new(fixture.DataSource, new RabbitMqEventPublisher(connection), new SystemClock(),
+        new(fixture.DataSource, new RabbitMqEventPublisher(connection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromSeconds(2), BatchSize = batchSize }),
             NullLogger<OutboxDispatcher>.Instance);
 

@@ -40,16 +40,16 @@ public sealed class OutboxDispatcherContainerFailureTests
             Password = "ago-test-local-dev",
         });
 
-        await using var consumerConnection = new RabbitMqConnection(rabbitOptions);
+        await using var consumerConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
         var consumer = new RabbitMqEventConsumer(consumerConnection);
         var receivedIds = new ConcurrentBag<Guid>();
         await consumer.SubscribeAsync(
             "MessageAccepted", SubscriptionMode.Broadcast, "test-consumer", new RetryPolicy(3, TimeSpan.FromMilliseconds(200), $"dlq.{Guid.NewGuid():N}"),
             (envelope, ctx, ct) => { receivedIds.Add(envelope.MessageId); return ctx.AckAsync(ct); }, CancellationToken.None);
 
-        await using var dispatcherConnection = new RabbitMqConnection(rabbitOptions);
+        await using var dispatcherConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
         var dispatcher = new OutboxDispatcher(
-            dataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+            dataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             // Rows in a claimed batch are published sequentially, each against its own
             // PublishTimeout - with the default 10s, a batch of 5 stuck against a paused broker takes
             // up to 50s to give up on. 2s keeps that worst case at 10s, so this test's own wait

@@ -34,7 +34,7 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
 
         await using var dispatcherConnection = fixture.CreateRabbitMqConnection();
         var dispatcher = new OutboxDispatcher(
-            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromMilliseconds(500) }), NullLogger<OutboxDispatcher>.Instance);
 
         await using var consumerConnection = fixture.CreateRabbitMqConnection();

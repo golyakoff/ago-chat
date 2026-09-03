@@ -98,7 +98,7 @@ public sealed class TracingEndToEndTests(ConnectionFanoutFixture fixture)
 
         await using var dispatcherConnection = fixture.CreateRabbitMqConnection();
         var dispatcher = new OutboxDispatcher(
-            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromSeconds(2) }), NullLogger<OutboxDispatcher>.Instance);
 
         await using var fanoutConsumerConnection = fixture.CreateRabbitMqConnection();
@@ -199,7 +199,7 @@ public sealed class TracingEndToEndTests(ConnectionFanoutFixture fixture)
         services.AddScoped<IConversationReadStore>(_ => new ConversationReadStore(fixture.DataSource));
         services.AddSingleton<IConnectionRegistry>(_ => new RedisConnectionRegistry(
             fixture.RedisMultiplexer, Options.Create(new ConnectionRegistryOptions()), NullLogger<RedisConnectionRegistry>.Instance));
-        services.AddSingleton<IEventPublisher>(_ => new RabbitMqEventPublisher(fanoutPublisherConnection));
+        services.AddSingleton<IEventPublisher>(_ => new RabbitMqEventPublisher(fanoutPublisherConnection, NullLogger<RabbitMqEventPublisher>.Instance));
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<INodeFanoutPublisher, NodeFanoutPublisher>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();

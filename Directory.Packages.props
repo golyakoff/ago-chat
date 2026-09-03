@@ -64,16 +64,33 @@
          restoring the new package, because the wiring lives in `AddConnectionRegistry`, which they
          already call. This bump is the entire delivery mechanism: without it the fix sits in
          ago-platform's `main` and never reaches anything that runs. -->
-    <PackageVersion Include="Ago.Platform.Hosting" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Observability" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Kernel" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Realtime" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.18.0" />
-    <PackageVersion Include="Ago.Platform.Resilience" Version="0.18.0" />
+    <!-- `17-10`: bumped from 0.18.0 to 0.19.0. The fix itself is `17-09` - `RabbitMqConnection` and
+         `RabbitMqEventPublisher` no longer let a `TaskCanceledException` out of `DisposeAsync`, and
+         no longer leak their lock when they do, so a host stopping while the broker is gone finishes
+         stopping. Both types gained a required `ILogger<T>` constructor parameter, which is
+         source-breaking only for a direct `new` - this repository resolves both through
+         `AddRabbitMqMessaging`, so nothing here changed.
+         **Polly.Core and AWSSDK.S3 move with it, and that is the part worth reading.** `0.19.0`
+         declares `Polly.Core >= 8.7.0` and `AWSSDK.S3 >= 4.0.102.4` because Dependabot raised them in
+         ago-platform and this file never followed; central package management turns that into
+         NU1109 "detected package downgrade" rather than resolving quietly, so a platform bump and its
+         transitive floors are one change or neither.
+         **And this bump is not optional maintenance.** `redeploy.sh` packs only the *current*
+         platform version into the node's local feed, and the Docker build resolves `Ago.Platform.*`
+         from that feed alone (`nuget.docker.config` clears every other source). While this file said
+         0.18.0 and the feed held 0.19.0, `ago-chat` could not be built on the node at all - the
+         redeploy aborted at image build with NU1603, before applying anything. A platform release
+         strands a consumer's *deploy*, not just its fix. -->
+    <PackageVersion Include="Ago.Platform.Hosting" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Observability" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Kernel" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Abstractions" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Persistence.Postgres" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Messaging.RabbitMq" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Realtime" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Caching.Redis" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Storage.S3" Version="0.19.0" />
+    <PackageVersion Include="Ago.Platform.Resilience" Version="0.19.0" />
   </ItemGroup>
 
   <ItemGroup Label="Attachments">
@@ -139,7 +156,7 @@
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <!-- Ago.Platform.Caching.Redis's own resilience pipeline type (ResiliencePipeline), needed
          directly by tests that construct a RedisCache by hand against a Testcontainers Redis. -->
-    <PackageVersion Include="Polly.Core" Version="8.5.2" />
+    <PackageVersion Include="Polly.Core" Version="8.7.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
@@ -160,7 +177,7 @@
          Testcontainers package's pinned version in this project. -->
     <PackageVersion Include="Testcontainers.Keycloak" Version="4.14.0" />
     <!-- AttachmentFixture builds the bucket directly via the S3 API, same version ago-platform pins. -->
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.102.3" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.102.4" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>

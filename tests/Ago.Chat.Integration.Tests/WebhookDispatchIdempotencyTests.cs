@@ -59,7 +59,7 @@ public sealed class WebhookDispatchIdempotencyTests(WebhookDispatchFixture fixtu
             await Task.Delay(TimeSpan.FromMilliseconds(500)); // subscription to actually land
 
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new RabbitMqEventPublisher(publisherConnection);
+            var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
 
             var envelope = BuildEnvelope(siteId, visitorId, operatorId);
 

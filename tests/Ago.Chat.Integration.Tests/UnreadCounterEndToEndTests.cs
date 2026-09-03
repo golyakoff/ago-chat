@@ -77,14 +77,14 @@ public sealed class UnreadCounterEndToEndTests
                 Password = Password,
             });
 
-            await using var dispatcherConnection = new RabbitMqConnection(rabbitOptions);
+            await using var dispatcherConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
             var dispatcher = new OutboxDispatcher(
-                dataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+                dataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
                 Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromSeconds(2), BatchSize = 20 }),
                 NullLogger<OutboxDispatcher>.Instance);
 
             await using var services = BuildServiceProvider(dataSource);
-            await using var consumerConnection = new RabbitMqConnection(rabbitOptions);
+            await using var consumerConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
             var consumer = new UnreadCounterConsumer(
                 new RabbitMqEventConsumer(consumerConnection),
                 services.GetRequiredService<IServiceScopeFactory>(),

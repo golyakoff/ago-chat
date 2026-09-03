@@ -113,7 +113,7 @@ public sealed class OfflineAutoReplyDeliveryEndToEndTests(ConnectionFanoutFixtur
 
         await using var dispatcherConnection = fixture.CreateRabbitMqConnection();
         var dispatcher = new OutboxDispatcher(
-            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromMilliseconds(500) }),
             NullLogger<OutboxDispatcher>.Instance);
 
@@ -205,7 +205,7 @@ public sealed class OfflineAutoReplyDeliveryEndToEndTests(ConnectionFanoutFixtur
         services.AddSingleton<IConnectionRegistry>(_ => new RedisConnectionRegistry(
             fixture.RedisMultiplexer, Options.Create(new ConnectionRegistryOptions()), NullLogger<RedisConnectionRegistry>.Instance));
         // See ConnectionFanoutEndToEndTests' own note on why this is not registered as disposable.
-        services.AddSingleton<IEventPublisher>(_ => new RabbitMqEventPublisher(fanoutPublisherConnection));
+        services.AddSingleton<IEventPublisher>(_ => new RabbitMqEventPublisher(fanoutPublisherConnection, NullLogger<RabbitMqEventPublisher>.Instance));
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IIdGenerator, UuidV7Generator>();
         services.AddSingleton<INodeFanoutPublisher, NodeFanoutPublisher>();

@@ -80,7 +80,7 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
             await Task.Delay(TimeSpan.FromMilliseconds(500)); // both subscriptions to actually land
 
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new RabbitMqEventPublisher(publisherConnection);
+            var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
             for (var i = 0; i < MessageCount; i++)
             {
                 await publisher.PublishAsync(BuildEnvelope(siteId, visitorId, operatorId), CancellationToken.None);

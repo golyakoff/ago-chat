@@ -68,7 +68,7 @@ public sealed class ConnectionFanoutEndToEndTests(ConnectionFanoutFixture fixtur
 
         await using var dispatcherConnection = fixture.CreateRabbitMqConnection();
         var dispatcher = new OutboxDispatcher(
-            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection), new SystemClock(),
+            fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
             Options.Create(new OutboxDispatcherOptions { PollInterval = TimeSpan.FromSeconds(2) }), NullLogger<OutboxDispatcher>.Instance);
 
         await using var fanoutConsumerConnection = fixture.CreateRabbitMqConnection();
@@ -132,7 +132,7 @@ public sealed class ConnectionFanoutEndToEndTests(ConnectionFanoutFixture fixtur
         // Not IAsyncDisposable-registered here: RabbitMqEventPublisher.DisposeAsync only disposes
         // its own channel, never the RabbitMqConnection it was given - that connection's lifetime
         // is the caller's, and the test method's own `await using` on fanoutPublisherConnection owns it.
-        services.AddSingleton<IEventPublisher>(_ => new RabbitMqEventPublisher(fanoutPublisherConnection));
+        services.AddSingleton<IEventPublisher>(_ => new RabbitMqEventPublisher(fanoutPublisherConnection, NullLogger<RabbitMqEventPublisher>.Instance));
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<INodeFanoutPublisher, NodeFanoutPublisher>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();

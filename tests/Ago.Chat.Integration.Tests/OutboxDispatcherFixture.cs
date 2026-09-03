@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Messaging.RabbitMq;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -57,7 +58,7 @@ public sealed class OutboxDispatcherFixture : IAsyncLifetime
         Port = RabbitMq.GetMappedPublicPort(5672),
         UserName = Username,
         Password = Password,
-    }));
+    }), NullLogger<RabbitMqConnection>.Instance);
 }
 
 [CollectionDefinition(Name)]
