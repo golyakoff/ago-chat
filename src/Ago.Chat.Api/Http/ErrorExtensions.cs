@@ -119,8 +119,16 @@ public static class ErrorExtensions
             // "a fresh attempt, not a permission, is the remedy" reasoning
             // (ConversationErrors.PhoneVerificationLockedOut's own remarks), even though it carries no
             // Retry-After.
+            // `ago-root#347`: `demo.rate_limited` belongs in this same group and was simply missing from
+            // it - every other rate-limit code above was already mapped correctly, so exceeding the
+            // per-IP demo mint limit was the one refusal in this switch that fell through to the `_ =>
+            // 500` default below. DemoEndpoints.HandleMintAsync adds the Retry-After header this group's
+            // own comment says Error cannot carry, for this one code only, by reading the number back out
+            // of the error's own message rather than widening Error itself (Ago.Platform.Kernel is out of
+            // scope for an ago-chat-only fix) - DemoTenantErrors.TryGetRateLimitedRetryAfterSeconds's own
+            // remarks.
             "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "ReplyDraft.RateLimited"
-                or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut"
+                or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut" or "demo.rate_limited"
                 => StatusCodes.Status429TooManyRequests,
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
             // own remarks. `19-01`: ReplyDraft.Unavailable is the identical shape - the LLM provider is
@@ -129,10 +137,13 @@ public static class ErrorExtensions
             _ => StatusCodes.Status500InternalServerError,
         };
 
-        // No Retry-After header: Error carries no structured retry-after value for a 429
+        // No Retry-After header here: Error carries no structured retry-after value for a 429
         // (ConversationErrors.RateLimited's own remarks - it rides in the message text, and every
         // existing caller, VisitorHub's HubException included, already just forwards that text
-        // verbatim rather than parsing it back out for a header).
+        // verbatim rather than parsing it back out for a header). This is a real, wider gap - every
+        // *.RateLimited code in the switch above except demo.rate_limited shares it - but `ago-root#347`
+        // only asked for the demo endpoint, so only DemoEndpoints.HandleMintAsync adds the header, before
+        // calling this generic mapper, rather than this method growing a special case for one caller.
         return Results.Problem(
             title: error.Code,
             detail: error.Message,
