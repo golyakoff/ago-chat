@@ -1,6 +1,8 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -33,7 +35,7 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// (an EF-opened transaction lending its connection to raw SQL, rather than a raw transaction lending
 /// itself to EF).</para>
 /// </summary>
-public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdGenerator idGenerator)
+public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdGenerator idGenerator, IOutboxWriter outbox)
     : IOperatorInviteRedemptionRepository
 {
     public async Task<OperatorInviteRedemptionResult> RedeemAsync(
@@ -100,6 +102,15 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
         db.Operators.Add(new Operator(newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, attempt.ExternalSubjectId));
         db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = newOperatorId, RoleId = invite.RoleId });
         invite.Redeem(newOperatorId, now);
+
+        // `22-05`/`adr/0093`: the redeemed operator's projected fact - the one role this invite names.
+        // Read back from `roles` rather than carried on the invite itself: the invite only ever held a
+        // `RoleId` (`OperatorInvite`'s own shape), and the row it names was already committed at site
+        // registration, so this is an ordinary read of already-durable data, not a read of anything
+        // this method is itself in the middle of writing.
+        var rolePermissions = await db.Roles.Where(r => r.Id == invite.RoleId).Select(r => r.Permissions).SingleAsync(cancellationToken);
+        outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
+            attempt.ExternalSubjectId, invite.SiteId.Value, rolePermissions, now, idGenerator));
 
         try
         {

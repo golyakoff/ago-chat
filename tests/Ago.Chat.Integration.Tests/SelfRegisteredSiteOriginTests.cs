@@ -5,9 +5,11 @@ using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -114,8 +116,10 @@ public sealed class SelfRegisteredSiteOriginTests(SiteCachingFixture fixture)
 
     private async Task<(string PublicKey, SiteId SiteId)> RegisterSiteAsync(string origin)
     {
+        var registrationDb = fixture.CreateDbContext();
         var handler = new RegisterSiteHandler(
-            new SiteRegistrationRepository(fixture.CreateDbContext()),
+            new SiteRegistrationRepository(
+                registrationDb, new EfOutboxWriter<AgoChatDbContext>(registrationDb), new UuidV7Generator(), new SystemClock()),
             new FakeRateLimiter(),
             new RegisterSiteRateLimitOptions(),
             new UuidV7Generator(),

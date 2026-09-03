@@ -19,6 +19,7 @@ using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -429,6 +430,7 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<IRoleRepository, RoleRepository>();
         builder.Services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();

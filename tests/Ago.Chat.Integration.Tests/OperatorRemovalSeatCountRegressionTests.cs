@@ -4,6 +4,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 
 namespace Ago.Chat.Integration.Tests;
@@ -38,7 +39,8 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
 
         var (codeHash1, _) = await SeedInviteAsync(siteId, roleId);
         await using var repositoryDb = fixture.CreateDbContext();
-        var repository = new OperatorInviteRedemptionRepository(repositoryDb, new Ago.Platform.Kernel.UuidV7Generator());
+        var repository = new OperatorInviteRedemptionRepository(
+            repositoryDb, new Ago.Platform.Kernel.UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(repositoryDb));
 
         // At seat_limit=1 with one live operator already occupying the site's only seat, a new
         // identity's redemption is rejected - the baseline every removal must actually change.

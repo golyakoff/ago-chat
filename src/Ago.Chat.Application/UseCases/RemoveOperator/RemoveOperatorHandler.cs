@@ -38,9 +38,22 @@ public sealed class RemoveOperatorHandler(
             return ConversationErrors.OperatorAlreadyRemoved(command.TargetOperatorId.Value);
         }
 
-        target.Remove(clock.UtcNow);
+        var removedAt = clock.UtcNow;
+        target.Remove(removedAt);
         var removed = target.DomainEvents.OfType<OperatorRemoved>().Single();
         outbox.Enqueue(OperatorRemovedMapper.ToEnvelope(removed, idGenerator));
+
+        // `22-05`/`adr/0093`: revocation is the same fact this event always carries, becoming empty -
+        // not a different event. Skipped only when the removed operator never linked an external
+        // identity (an unredeemed invite that was later removed), the same "nothing to project"
+        // guard `SiteRegistrationRepository`'s own publisher uses, for the identical reason: no
+        // subject means no projection row anywhere could exist to revoke.
+        if (target.ExternalSubjectId is { } removedSubject)
+        {
+            outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
+                removedSubject, command.SiteId.Value, [], removedAt, idGenerator));
+        }
+
         target.ClearDomainEvents();
 
         await operators.SaveAsync(target, cancellationToken);

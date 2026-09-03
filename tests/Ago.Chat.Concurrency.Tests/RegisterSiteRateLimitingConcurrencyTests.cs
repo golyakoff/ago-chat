@@ -1,8 +1,10 @@
 ﻿using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.Extensions.Logging.Abstractions;
 using Polly;
 
@@ -47,7 +49,7 @@ public sealed class RegisterSiteRateLimitingConcurrencyTests(SiteCachingConcurre
         {
             await using var db = fixture.CreateDbContext();
             var handler = new RegisterSiteHandler(
-                new SiteRegistrationRepository(db),
+                new SiteRegistrationRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock()),
                 limiter,
                 options,
                 new UuidV7Generator(),

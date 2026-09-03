@@ -53,6 +53,9 @@ public class RegisterSiteHandlerTests
             [
                 Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
                 Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+                // `22-05`/`adr/0093`: the calendar's own day-to-day permissions, joined here unchanged.
+                Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
+                Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
             ],
             registration.OperatorRole.Permissions);
 
@@ -61,6 +64,8 @@ public class RegisterSiteHandlerTests
             [
                 Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
                 Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
+                // `22-05`/`adr/0093`: the calendar's own configuration permission, joined here unchanged.
+                Permission.CalendarConfigure.Value,
             ],
             registration.AdminRole.Permissions);
     }
