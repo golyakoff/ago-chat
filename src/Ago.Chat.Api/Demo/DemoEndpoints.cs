@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Api.Http;
+﻿using System.Globalization;
+using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.MintDemoTenant;
 
 namespace Ago.Chat.Api.Demo;
@@ -26,7 +27,10 @@ public static class DemoEndpoints
             .AllowAnonymous();
     }
 
-    private static async Task<IResult> HandleMintAsync(
+    // Public, not private: the same reason AuthEndpoints.HandleVisitorSessionAsync is public - a named
+    // method Minimal API happily takes as a method group, and a test can then call it directly with
+    // hand-built dependencies (RateLimitingTests' own precedent), no hosting/routing pipeline needed.
+    public static async Task<IResult> HandleMintAsync(
         MintDemoTenantHandler handler,
         HttpContext httpContext,
         CancellationToken cancellationToken)
@@ -43,7 +47,18 @@ public static class DemoEndpoints
         var result = await handler.HandleAsync(new MintDemoTenant(requestIp), cancellationToken);
         if (result.IsFailure)
         {
-            return result.Error!.Value.ToProblem(httpContext);
+            var error = result.Error!.Value;
+            // `ago-root#347`: a deliberate refusal must not read as a fault, and api-design.md's own
+            // widget-facing rule ("returns 429 with Retry-After, which the widget must honour") applies
+            // here too - ErrorExtensions maps demo.rate_limited to 429 on its own, but the header still
+            // needs the number, which Error itself cannot carry (DemoTenantErrors.
+            // TryGetRateLimitedRetryAfterSeconds's own remarks).
+            if (DemoTenantErrors.TryGetRateLimitedRetryAfterSeconds(error) is { } retryAfterSeconds)
+            {
+                httpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            }
+
+            return error.ToProblem(httpContext);
         }
 
         var minted = result.Value;
