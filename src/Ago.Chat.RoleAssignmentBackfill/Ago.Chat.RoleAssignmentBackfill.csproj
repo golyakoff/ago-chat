@@ -14,7 +14,6 @@
        applies to Ago.Chat.Migrator. -->
   <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
-    <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
   </ItemGroup>
 
   <!-- Microsoft.NET.Sdk, not Microsoft.NET.Sdk.Web like the three serving hosts: this one serves
