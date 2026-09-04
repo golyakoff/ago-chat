@@ -442,6 +442,9 @@ app.MapOwnerEndpoints();
 // remarks for why this is a separate route from ChannelIdentityEndpoints' operator-gated unlink above,
 // even though both ultimately call Domain.ChannelIdentity.Unlink.
 app.MapOwnerChannelIdentityEndpoints();
+// `22-17`: the platform owner's own module grant/revoke - a deliberate cross-tenant write, gated by
+// RequirePlatformOwner exactly as the two owner surfaces above are (OwnerModuleEndpoints' own remarks).
+app.MapOwnerModuleEndpoints();
 // `13-02`: checkout-session creation (operator-authenticated) and the ЮKassa webhook receiver
 // (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
 // why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.

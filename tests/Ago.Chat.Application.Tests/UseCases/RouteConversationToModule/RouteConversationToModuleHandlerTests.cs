@@ -43,7 +43,9 @@ public class RouteConversationToModuleHandlerTests
         var readStore = new FakeEnabledModuleReadStore();
         if (moduleEnabled)
         {
-            readStore.Seed(SiteId, new EnabledModuleSummary(Calendar, ["/booking", "book"], EntryPoint, Credential));
+            readStore.Seed(
+                SiteId, new EnabledModuleSummary(
+                    Calendar, ["/booking", "book"], EntryPoint, Credential, GrantedByOwner: false, ExpiresAt: null));
         }
 
         gateway ??= new FakeModuleGateway();

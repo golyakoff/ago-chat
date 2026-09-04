@@ -13,19 +13,25 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
 {
     private static readonly JsonSerializerOptions TriggerWordsOptions = new(JsonSerializerDefaults.Web);
 
+    // `22-17`: `expires_at is null or expires_at > @Now` - an expired grant simply is not in this
+    // result set, which every caller (registration-time conflict check, per-message trigger match,
+    // the console listing) already treats "not enabled" as meaning. `@Now` is a parameter this store
+    // is handed, never `now()`: this codebase compares instants sourced from `IClock`
+    // (`CLAUDE.md` rule 11), not the database server's own clock - see this interface's own remarks.
     private const string Sql = """
         select module_key as "ModuleKey", trigger_words as "TriggerWords", entry_point as "EntryPoint",
-               credential as "Credential"
+               credential as "Credential", granted_by_owner as "GrantedByOwner", expires_at as "ExpiresAt"
         from enabled_modules
-        where site_id = @SiteId
+        where site_id = @SiteId and (expires_at is null or expires_at > @Now)
         """;
 
-    public async Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(
+        SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var rows = await connection.QueryAsync<EnabledModuleRow>(new CommandDefinition(
-            Sql, new { SiteId = siteId.Value }, cancellationToken: cancellationToken));
+            Sql, new { SiteId = siteId.Value, Now = now }, cancellationToken: cancellationToken));
 
         return rows.Select(ToSummary).ToList();
     }
@@ -34,7 +40,9 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
         new ModuleKey(r.ModuleKey),
         JsonSerializer.Deserialize<List<string>>(r.TriggerWords, TriggerWordsOptions)!,
         new Uri(r.EntryPoint, UriKind.Absolute),
-        new ModuleCredential(r.Credential));
+        new ModuleCredential(r.Credential),
+        r.GrantedByOwner,
+        r.ExpiresAt);
 
     private sealed class EnabledModuleRow
     {
@@ -45,5 +53,9 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
         public string EntryPoint { get; init; } = string.Empty;
 
         public string Credential { get; init; } = string.Empty;
+
+        public bool GrantedByOwner { get; init; }
+
+        public DateTimeOffset? ExpiresAt { get; init; }
     }
 }

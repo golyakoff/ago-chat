@@ -202,6 +202,9 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `22-17`: EnableModuleForSiteHandler's own new dependency - the display name it hands the
+        // module's provisioning call.
+        builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         // `22-11`: a fake, not a real HTTP call - this suite is about the wire from operator to
         // handler (RequireOperatorIdentity, route-level siteId, the permission check), not about
         // whether the module deployment answers. The real module-provisioning HTTP round trip is
@@ -260,7 +263,7 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
     {
         public Task RegisterAsync(
             ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            string displayName, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task RotateAsync(
             ModuleRegistrationTarget module, ModuleCredential newCredential, ModuleProvisioningSecret provisioningSecret,

@@ -8,7 +8,7 @@ namespace Ago.Chat.Application.Tests.Fakes;
 /// sibling.</summary>
 public sealed class FakeModuleRegistrationGateway : IModuleRegistrationGateway
 {
-    public List<(ModuleRegistrationTarget Module, ModuleCredential Credential, ModuleProvisioningSecret ProvisioningSecret)> RegisterCalls { get; } = [];
+    public List<(ModuleRegistrationTarget Module, ModuleCredential Credential, ModuleProvisioningSecret ProvisioningSecret, string DisplayName)> RegisterCalls { get; } = [];
 
     public List<(ModuleRegistrationTarget Module, ModuleCredential NewCredential, ModuleProvisioningSecret ProvisioningSecret)> RotateCalls { get; } = [];
 
@@ -26,9 +26,9 @@ public sealed class FakeModuleRegistrationGateway : IModuleRegistrationGateway
 
     public Task RegisterAsync(
         ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
-        CancellationToken cancellationToken)
+        string displayName, CancellationToken cancellationToken)
     {
-        RegisterCalls.Add((module, credential, provisioningSecret));
+        RegisterCalls.Add((module, credential, provisioningSecret, displayName));
         if (UnreachableOnRegister)
         {
             throw new ModuleUnreachableException(module.ModuleKey, "fake unreachable (register)");

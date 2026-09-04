@@ -49,9 +49,31 @@ public sealed class EnabledModule
 
     public DateTimeOffset EnabledAt { get; }
 
+    /// <summary>`22-17`: <see langword="true"/> when this row was written by
+    /// <c>EnableModuleForSiteAsOwnerHandler</c> rather than the tenant's own
+    /// <c>EnableModuleForSiteHandler</c> - the audit distinction the item's own brief requires
+    /// ("an owner writing into a tenant's entitlements must be distinguishable... from the tenant
+    /// doing it"). Lives on this row rather than in a side table because this row already *is* the
+    /// one place "site X has module K enabled" is recorded (this type's own opening remarks); a
+    /// second table carrying the identical (SiteId, ModuleKey) key would be a second place the two
+    /// facts could drift apart, for a flag with none of <see cref="EnabledModule"/>'s own lifecycle
+    /// (it never changes after the row is written - a rotation or an expiry does not change who
+    /// originally granted it).</summary>
+    public bool GrantedByOwner { get; }
+
+    /// <summary>`22-17`: when this grant stops being honoured, or <see langword="null"/> for a grant
+    /// that does not expire. Checked live, in <see cref="Infrastructure.Postgres"/>'s own read-store
+    /// query, every time this row is consulted to decide whether a module may act for this site
+    /// (rule 8: a write/routing decision never reads a cache) - never by a scheduled sweep that
+    /// deletes or disables the row, which would need its own worker, its own failure mode, and its
+    /// own test for "the sweep has not run yet". A self-service <c>EnableModuleForSiteHandler</c>
+    /// grant is always <see langword="null"/> here: a tenant who paid did not buy a trial.</summary>
+    public DateTimeOffset? ExpiresAt { get; }
+
     public EnabledModule(
         EnabledModuleId id, SiteId siteId, ModuleKey moduleKey, IReadOnlyList<string> triggerWords,
-        Uri entryPoint, ModuleCredential credential, DateTimeOffset enabledAt)
+        Uri entryPoint, ModuleCredential credential, DateTimeOffset enabledAt, bool grantedByOwner = false,
+        DateTimeOffset? expiresAt = null)
     {
         if (triggerWords.Count == 0)
         {
@@ -99,6 +121,16 @@ public sealed class EnabledModule
             throw new ArgumentException("A module entry point must be an absolute http(s) URI.", nameof(entryPoint));
         }
 
+        // `22-17`: an expiry that has already passed (or that is exactly "now") is not a grant, it is
+        // a refusal wearing a grant's shape - refused here, at construction, the same
+        // "there is no such thing as a validated-somewhere-else entity" reasoning `Tenant.Register`'s
+        // own remarks give on the calendar side for an identical judgement call.
+        if (expiresAt is { } expiry && expiry <= enabledAt)
+        {
+            throw new ArgumentException(
+                "A module grant's expiry must be after the moment it was enabled.", nameof(expiresAt));
+        }
+
         Id = id;
         SiteId = siteId;
         ModuleKey = moduleKey;
@@ -106,6 +138,8 @@ public sealed class EnabledModule
         EntryPoint = entryPoint;
         Credential = credential;
         EnabledAt = enabledAt;
+        GrantedByOwner = grantedByOwner;
+        ExpiresAt = expiresAt;
     }
 
     // EF Core materialization only.
@@ -117,7 +151,11 @@ public sealed class EnabledModule
     /// other field unchanged, the same "reconstruct rather than mutate" shape this type's own
     /// constructor-only field set already implies (no setters exist to mutate in place). Re-runs this
     /// constructor's own validation, which is harmless here: every other field was already valid on the
-    /// instance this was called on.</summary>
+    /// instance this was called on.
+    ///
+    /// <para>`22-17`: <see cref="GrantedByOwner"/> and <see cref="ExpiresAt"/> carry over unchanged - a
+    /// credential rotation is not a re-grant, so it must not silently clear an owner grant's own
+    /// end date or turn an owner grant back into an ordinary one.</para></summary>
     public EnabledModule WithCredential(ModuleCredential newCredential) =>
-        new(Id, SiteId, ModuleKey, TriggerWords, EntryPoint, newCredential, EnabledAt);
+        new(Id, SiteId, ModuleKey, TriggerWords, EntryPoint, newCredential, EnabledAt, GrantedByOwner, ExpiresAt);
 }

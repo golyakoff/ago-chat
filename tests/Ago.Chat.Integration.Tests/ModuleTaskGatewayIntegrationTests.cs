@@ -314,9 +314,11 @@ public class ModuleTaskGatewayIntegrationTests
         ModuleKey key, IReadOnlyList<string> triggerWords, Uri entryPoint, ModuleCredential? credential = null)
         : IEnabledModuleReadStore
     {
-        public Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(
+            SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<EnabledModuleSummary>>(
-                [new EnabledModuleSummary(key, triggerWords, entryPoint, credential ?? DefaultCredential)]);
+                [new EnabledModuleSummary(
+                    key, triggerWords, entryPoint, credential ?? DefaultCredential, GrantedByOwner: false, ExpiresAt: null)]);
     }
 
     /// <summary>`20-09`: the minimal double the gate's own real-HTTP tests need - seeded with at most

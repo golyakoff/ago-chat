@@ -438,6 +438,16 @@ public static class ConversationErrors
     public static Error ModuleNotEnabled() =>
         new("Module.NotEnabled", "This site does not have that module enabled.");
 
+    /// <summary>`22-17`: <see cref="EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwnerHandler"/>'s
+    /// own guard - an <c>ExpiresAt</c> that is not strictly in the future, or that reaches further out
+    /// than <see cref="EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwnerHandler.MaxGrantDuration"/>
+    /// allows. Refused here, before the module is ever called, rather than surfacing as
+    /// <see cref="Domain.EnabledModule"/>'s own constructor exception - the same "reject the caller's
+    /// input before touching another system" ordering every other validation in this file already
+    /// follows.</summary>
+    public static Error ModuleGrantExpiryInvalid(string reason) =>
+        new("Module.GrantExpiryInvalid", reason);
+
     // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of
