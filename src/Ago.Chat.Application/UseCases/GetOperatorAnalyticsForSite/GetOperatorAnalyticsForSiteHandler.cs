@@ -76,7 +76,7 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
             previousTo,
             ToDto(previousResult.Overall),
             result.ByChannel.Select(c => new OperatorAnalyticsChannelBucketDto(c.Channel, ToDto(c.Bucket))).ToList(),
-            result.ByOperator.Select(o => new OperatorAnalyticsOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList(),
+            result.ByOperator.Select(o => new OperatorAnalyticsOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket), o.OperatorName)).ToList(),
             result.ByReferrer.Select(r => new OperatorAnalyticsReferrerBucketDto(r.ReferrerHost, ToDto(r.Bucket))).ToList(),
             result.ByCampaign.Select(c => new OperatorAnalyticsCampaignBucketDto(c.UtmCampaign, ToDto(c.Bucket))).ToList());
     }

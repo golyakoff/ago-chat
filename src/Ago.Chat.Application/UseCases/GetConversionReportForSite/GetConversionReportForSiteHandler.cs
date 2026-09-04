@@ -60,7 +60,7 @@ public sealed class GetConversionReportForSiteHandler(
             previousFrom,
             previousTo,
             ToDto(previousResult.Overall),
-            result.ByOperator.Select(o => new ConversionOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList());
+            result.ByOperator.Select(o => new ConversionOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket), o.OperatorName)).ToList());
     }
 
     private static ConversionBucketDto ToDto(ConversionBucket bucket) => new(

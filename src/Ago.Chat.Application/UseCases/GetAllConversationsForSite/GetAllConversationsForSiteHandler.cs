@@ -36,5 +36,6 @@ public sealed class GetAllConversationsForSiteHandler(
     }
 
     private static ConversationSummaryDto ToSummary(ConversationSummaryItem item) => new(
-        item.Id.Value, item.VisitorId.Value, item.State, item.CreatedAt, item.OperatorUnreadCount, item.OperatorId?.Value);
+        item.Id.Value, item.VisitorId.Value, item.State, item.CreatedAt, item.OperatorUnreadCount,
+        item.OperatorId?.Value, item.OperatorName);
 }

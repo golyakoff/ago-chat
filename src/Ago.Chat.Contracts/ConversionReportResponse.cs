@@ -43,7 +43,9 @@ public sealed record ConversionBucketDto(
 
 /// <summary>`18-10`'s own per-operator breakdown. <see cref="OperatorId"/> is the conversation's own
 /// <c>operator_id</c> column (currently/last-assigned) - see <c>IConversionReportReadStore</c>'s own
-/// remarks (`ago-chat`) for why this needs none of `18-09`'s first-reply-attribution ambiguity. The
-/// console has no operator display name to render, the same "no name, so the id itself" precedent
-/// `OperatorAnalyticsOperatorBucketDto` already establishes.</summary>
-public sealed record ConversionOperatorBucketDto(Guid OperatorId, ConversionBucketDto Bucket);
+/// remarks (`ago-chat`) for why this needs none of `18-09`'s first-reply-attribution ambiguity.
+///
+/// <para>`23-02`: <see cref="OperatorName"/> is that operator's own display name - <see langword="null"/>
+/// for a row that predates the column, the same fallback-to-id shape
+/// `OperatorAnalyticsOperatorBucketDto.OperatorName` already establishes.</para></summary>
+public sealed record ConversionOperatorBucketDto(Guid OperatorId, ConversionBucketDto Bucket, string? OperatorName = null);

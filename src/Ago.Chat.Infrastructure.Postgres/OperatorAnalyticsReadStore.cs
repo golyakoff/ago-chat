@@ -171,6 +171,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 ms.first_visitor_at,
                 ms.first_operator_at,
                 coalesce(ms.first_operator_id, iw.assigned_operator_id) as attributed_operator_id,
+                op.display_name as attributed_operator_name,
                 iw.created_at,
                 iw.closed_at,
                 coalesce(iw.traffic_referrer_host, @DirectLabel) as referrer_label,
@@ -197,10 +198,23 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
                 where m.conversation_id = iw.id
                   and m.site_id = iw.site_id
             ) ms on true
+            -- `23-02`: at most one row per conversation (an `operators` id lookup, not a fan-out), so
+            -- this join cannot multiply `detail`'s own one-row-per-conversation shape the way a second
+            -- lateral over a many-row table could. Left, not inner - an attributed operator whose row
+            -- has since been removed (`Operator.Remove`) must not drop the conversation out of the
+            -- report entirely, only leave its name blank.
+            left join operators op on op.id = coalesce(ms.first_operator_id, iw.assigned_operator_id)
         )
         select
             channel_label as "Channel",
             attributed_operator_id as "OperatorId",
+            -- `23-02`: `max(...)`, not a bare column - `attributed_operator_name` is functionally
+            -- dependent on `attributed_operator_id` (one operator, one name), but every column in this
+            -- `select` list outside the active `GROUPING SETS` key must be an aggregate or the query
+            -- does not parse; `max` over a single repeated value is a no-op aggregation, the same
+            -- "wrap it, don't group by it" choice this file makes nowhere else because no other column
+            -- here has this exact shape.
+            max(attributed_operator_name) as "OperatorName",
             referrer_label as "ReferrerHost",
             utm_campaign_label as "UtmCampaign",
             count(*) as "ConversationCount",
@@ -262,7 +276,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
         // it under (the class doc comment's own remarks on why this is an exclusion, not a placeholder).
         var byOperator = rows
             .Where(r => r.OperatorGrouping == 0 && r.OperatorId is not null)
-            .Select(r => new OperatorAnalyticsOperatorBucket(new OperatorId(r.OperatorId!.Value), ToBucket(r)))
+            .Select(r => new OperatorAnalyticsOperatorBucket(new OperatorId(r.OperatorId!.Value), ToBucket(r), r.OperatorName))
             .OrderBy(o => o.Operator.Value)
             .ToList();
 

@@ -99,8 +99,14 @@ public static class SitesEndpoints
         // has a real RemoteIpAddress.
         var requestIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
+        // `23-02`: this endpoint also creates an `Operator` from a real human's token
+        // (`RegisterSiteHandler`'s own remarks) - "pass whatever it has", same as the invite-redemption
+        // path.
+        var name = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Name);
+        var email = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Email);
+
         var result = await handler.HandleAsync(
-            new RegisterSite(externalSubjectId, requestIp, request.SiteName, request.InitialAllowedOrigin),
+            new RegisterSite(externalSubjectId, requestIp, request.SiteName, request.InitialAllowedOrigin, name, email),
             cancellationToken);
 
         if (result.IsFailure)

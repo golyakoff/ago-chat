@@ -99,7 +99,9 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
         // Capacity 5, Offline - the identical starting shape `RegisterSiteHandler` gives a freshly
         // bootstrapped site's own first operator; an invited operator is not structurally different
         // from a self-registered one once the row exists.
-        db.Operators.Add(new Operator(newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, attempt.ExternalSubjectId));
+        db.Operators.Add(new Operator(
+            newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, attempt.ExternalSubjectId,
+            displayName: attempt.Name, email: attempt.Email));
         db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = newOperatorId, RoleId = invite.RoleId });
         invite.Redeem(newOperatorId, now);
 

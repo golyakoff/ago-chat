@@ -59,4 +59,24 @@ public sealed class OperatorRepository(AgoChatDbContext db) : IOperatorRepositor
     /// either - `OperatorConfiguration` gives this table no concurrency token, unlike `conversations`.</summary>
     public Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken) =>
         db.SaveChangesAsync(cancellationToken);
+
+    /// <summary>`23-02`: raw SQL through this same `AgoChatDbContext`'s own connection
+    /// (`ExecuteSqlInterpolatedAsync`), the identical shape `OperatorCapacityStore`'s own
+    /// `active_chats` compare-and-set already uses for the same reason - no aggregate load, because
+    /// there is no invariant here for the aggregate to enforce. `IS DISTINCT FROM` (not `<>`) is
+    /// load-bearing: ordinary inequality never matches a `NULL` against a `NULL`, which would make
+    /// every claimless identity's every sign-in look like a change forever.</summary>
+    public async Task<bool> RefreshIdentityAsync(
+        OperatorId operatorId, string? displayName, string? email, CancellationToken cancellationToken)
+    {
+        var rowsAffected = await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE operators
+            SET display_name = {displayName}, email = {email}
+            WHERE id = {operatorId.Value}
+              AND (display_name IS DISTINCT FROM {displayName} OR email IS DISTINCT FROM {email})
+            """,
+            cancellationToken);
+        return rowsAffected > 0;
+    }
 }

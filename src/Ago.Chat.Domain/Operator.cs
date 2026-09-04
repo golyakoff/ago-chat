@@ -35,6 +35,24 @@ public sealed class Operator
     /// nothing before `5-05` had one to provide.</summary>
     public string? ExternalSubjectId { get; }
 
+    /// <summary>`23-02`: a copy of the token's own `name` claim, captured at invite redemption
+    /// (`OperatorInviteRedemptionRepository`) or bootstrap registration (`RegisterSiteHandler`) and
+    /// **rewritten at every sign-in** (`decisions.md` §1) - never queried live from Keycloak
+    /// (`personal-data.md`'s own "not a small change" warning is why this exists as a column at all,
+    /// not a join). Optional at construction for the identical reason <see cref="ExternalSubjectId"/>
+    /// is: `MintDemoTenantHandler`'s minted identity carries no claims to copy, so its own operator
+    /// stays permanently unnamed rather than inventing one. The refresh itself never goes through this
+    /// aggregate - see `IOperatorRepository.RefreshIdentityAsync`'s own remarks for why it is raw SQL,
+    /// the same "no invariant to enforce, so no reason to load the aggregate" reasoning
+    /// `OperatorCapacityStore`'s `active_chats` compare-and-set already established for a different
+    /// column on this same table - so there is no domain method here that ever changes this value.
+    /// </summary>
+    public string? DisplayName { get; }
+
+    /// <summary>`23-02`: the identical shape and the identical source as <see cref="DisplayName"/> -
+    /// the token's own `email` claim, copied and refreshed the same way, for the same reason.</summary>
+    public string? Email { get; }
+
     /// <summary>`13-03`: does this operator currently occupy one of the site's paid seats. Defaults to
     /// <see langword="true"/> at construction - every operator created today (self-registration,
     /// invite redemption) is created within `13-01`'s own seat-limit check and therefore already fits,
@@ -72,6 +90,8 @@ public sealed class Operator
         OperatorStatus status,
         int capacity,
         string? externalSubjectId = null,
+        string? displayName = null,
+        string? email = null,
         bool holdsSeat = true,
         DateTimeOffset? removedAt = null)
     {
@@ -86,6 +106,8 @@ public sealed class Operator
         Status = status;
         Capacity = capacity;
         ExternalSubjectId = externalSubjectId;
+        DisplayName = displayName;
+        Email = email;
         HoldsSeat = holdsSeat;
         RemovedAt = removedAt;
     }

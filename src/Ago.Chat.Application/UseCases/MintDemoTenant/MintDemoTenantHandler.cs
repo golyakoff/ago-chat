@@ -148,6 +148,9 @@ public sealed class MintDemoTenantHandler(
 
         var site = new Site(
             siteId, publicKey, [options.VisitorOrigin], siteName, createdAt: now, demoExpiresAt: expiresAt);
+        // `23-02`: no `displayName`/`email` - this identity was minted, not authenticated, so there is
+        // no token and no claims to copy. Left empty rather than inventing one from `MintedDemoTenant`'s
+        // own `Username` (`MintDemoTenant`'s own doc comment: "no name, no email and no identity").
         var operatorEntity = new Operator(
             operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: externalSubjectId);
 

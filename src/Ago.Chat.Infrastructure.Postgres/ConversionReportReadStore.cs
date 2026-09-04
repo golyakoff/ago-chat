@@ -56,12 +56,17 @@ public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource, Analy
               and c.created_at < @To
         )
         select
-            operator_id as "OperatorId",
-            outcome as "Outcome",
+            iw.operator_id as "OperatorId",
+            iw.outcome as "Outcome",
             count(*) as "Count",
-            grouping(operator_id) as "OperatorGrouping"
-        from in_window
-        group by grouping sets ((outcome), (operator_id, outcome))
+            grouping(iw.operator_id) as "OperatorGrouping",
+            -- `23-02`: `max(...)`, the same "functionally dependent, not part of the grouping key"
+            -- reasoning `OperatorAnalyticsReadStore`'s own remarks give for its identical addition -
+            -- one operator has exactly one name, so the aggregate is a no-op over a repeated value.
+            max(op.display_name) as "OperatorName"
+        from in_window iw
+        left join operators op on op.id = iw.operator_id
+        group by grouping sets ((iw.outcome), (iw.operator_id, iw.outcome))
         """;
 
     public async Task<ConversionReportResult> GetConversionReportAsync(
@@ -92,7 +97,8 @@ public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource, Analy
         var byOperator = rows
             .Where(r => r.OperatorGrouping == 0 && r.OperatorId is not null)
             .GroupBy(r => r.OperatorId!.Value)
-            .Select(g => new ConversionOperatorBucket(new OperatorId(g.Key), BuildBucket(g)))
+            .Select(g => new ConversionOperatorBucket(
+                new OperatorId(g.Key), BuildBucket(g), g.Select(r => r.OperatorName).FirstOrDefault(n => n is not null)))
             .OrderByDescending(o => MeetsSampleThreshold(o.Bucket))
             .ThenByDescending(o => MeetsSampleThreshold(o.Bucket) ? o.Bucket.ConversionRate : null)
             .ThenByDescending(o => o.Bucket.RecordedCount)
