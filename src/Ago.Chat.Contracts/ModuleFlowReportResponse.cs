@@ -12,6 +12,18 @@
 /// (`ago-chat`) for the full reasoning. The console's own copy that renders these two numbers must
 /// preserve the same distinction in the text a site owner actually reads (the backlog item's own
 /// Done-when is explicit this is not only a code-comment concern).</para>
+///
+/// <para><b>`23-16`: <see cref="PreviousFlowsStarted"/>/<see cref="PreviousFlowsClosed"/> are the
+/// identical pair, computed over the immediately preceding window of equal length</b>
+/// (<c>Ago.Chat.Application.Abstractions.PrecedingPeriod</c>) - <see cref="PreviousFrom"/>/
+/// <see cref="PreviousTo"/> are that window's own bound.</para>
 /// </summary>
 public sealed record ModuleFlowReportResponse(
-    DateTimeOffset From, DateTimeOffset To, long FlowsStarted, long FlowsClosed);
+    DateTimeOffset From,
+    DateTimeOffset To,
+    long FlowsStarted,
+    long FlowsClosed,
+    DateTimeOffset PreviousFrom,
+    DateTimeOffset PreviousTo,
+    long PreviousFlowsStarted,
+    long PreviousFlowsClosed);

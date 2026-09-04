@@ -9,11 +9,20 @@
 /// <see cref="Overall"/>/<see cref="ByOperator"/>.</b> See <c>Ago.Chat.Domain.ConversationOutcome</c>'s
 /// own remarks (`ago-chat`) for the full reasoning this wire contract carries no field for: every count
 /// here comes from what an operator chose to record, never from a verified order or payment.
+///
+/// <b>`23-16`: <see cref="PreviousOverall"/> is the immediately preceding window of equal length</b> -
+/// see <c>Ago.Chat.Application.Abstractions.PrecedingPeriod</c> for exactly how it is computed and why
+/// server-side, once, rather than by the console calling this endpoint twice. <see cref="PreviousFrom"/>/
+/// <see cref="PreviousTo"/> are that window's own bound, echoed back the same "never silent" way
+/// <see cref="From"/>/<see cref="To"/> already are.
 /// </summary>
 public sealed record ConversionReportResponse(
     DateTimeOffset From,
     DateTimeOffset To,
     ConversionBucketDto Overall,
+    DateTimeOffset PreviousFrom,
+    DateTimeOffset PreviousTo,
+    ConversionBucketDto PreviousOverall,
     IReadOnlyList<ConversionOperatorBucketDto> ByOperator);
 
 /// <param name="ConvertedCount">Conversations recorded as <c>Converted</c>.</param>

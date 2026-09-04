@@ -568,6 +568,17 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ModuleFlowReportOptions>>().Value);
 
+        // `23-16`: the ranking threshold `ConversionReportReadStore`/`TagBreakdownReadStore` both take a
+        // dependency on directly (AnalyticsOptions' own remarks on why one shared options class, and why
+        // a non-negative int is the whole validation this needs - unlike ModuleFlowReportOptions' own
+        // ModuleKey, there is no real construction to run against it).
+        services
+            .AddOptions<AnalyticsOptions>()
+            .Bind(configuration.GetSection(AnalyticsOptions.SectionName))
+            .Validate(o => o.MinimumSampleForRate >= 0, "Analytics:MinimumSampleForRate must not be negative.")
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AnalyticsOptions>>().Value);
+
         // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
         // above - PricePerSeatRub deliberately ships no code default (BillingOptions' own remarks:
         // "measure or stay silent" applies with more force to a figure that charges a real card), so

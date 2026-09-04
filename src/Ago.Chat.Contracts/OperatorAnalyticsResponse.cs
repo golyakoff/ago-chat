@@ -12,10 +12,19 @@
 /// <param name="ByCampaign">`18-12`: one entry per `utm_campaign` value actually seen on a landing URL -
 /// never a "no campaign" row, matching <see cref="ByOperator"/>'s own "nobody assigned" exclusion.
 /// Equally unverified - a client-supplied query parameter, not a confirmed fact.</param>
+/// <param name="PreviousFrom">`23-16`: the immediately preceding window of equal length's own start -
+/// see <c>Ago.Chat.Application.Abstractions.PrecedingPeriod</c>.</param>
+/// <param name="PreviousTo">`23-16`: that window's own end.</param>
+/// <param name="PreviousOverall">`23-16`: <see cref="Overall"/>'s identical shape, computed over the
+/// preceding window - never a per-channel/per-operator/per-referrer/per-campaign breakdown of it (the
+/// item's own scope: the headline figure gets a comparison, not every row of every table).</param>
 public sealed record OperatorAnalyticsResponse(
     DateTimeOffset From,
     DateTimeOffset To,
     OperatorAnalyticsBucketDto Overall,
+    DateTimeOffset PreviousFrom,
+    DateTimeOffset PreviousTo,
+    OperatorAnalyticsBucketDto PreviousOverall,
     IReadOnlyList<OperatorAnalyticsChannelBucketDto> ByChannel,
     IReadOnlyList<OperatorAnalyticsOperatorBucketDto> ByOperator,
     IReadOnlyList<OperatorAnalyticsReferrerBucketDto> ByReferrer,

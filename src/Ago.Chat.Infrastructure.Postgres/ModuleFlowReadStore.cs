@@ -27,6 +27,12 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// produces zero output rows over zero input rows, forcing that class to substitute an honest zero
 /// bucket itself), a bare <c>count(*)</c> with no <c>GROUP BY</c> always returns exactly one row - SQL's
 /// own aggregate-over-empty-input behaviour - so there is no equivalent substitution to do here.</para>
+///
+/// <para><b>`23-16`: no ordering question at all, and no dependency on <c>AnalyticsOptions</c>.</b> This
+/// report returns exactly one row per call - no list of rows a ranking or a threshold could apply to.
+/// The item's own comparison-window requirement is still honoured, at
+/// <c>GetModuleFlowReportForSiteHandler</c> (a second call to <see cref="GetSiteModuleFlowReportAsync"/>
+/// over the preceding window, the same orchestration its sibling handlers use).</para>
 /// </summary>
 public sealed class ModuleFlowReadStore(NpgsqlDataSource dataSource) : IModuleFlowReadStore
 {

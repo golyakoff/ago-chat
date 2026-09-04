@@ -65,8 +65,8 @@ public class GetConversionReportForSiteHandlerTests
         var expectedFrom = Now.AddDays(-GetConversionReportForSiteHandler.DefaultWindowDays);
         Assert.Equal(expectedFrom, result.Value.From);
         Assert.Equal(Now, result.Value.To);
-        Assert.Equal(expectedFrom, store.LastFrom);
-        Assert.Equal(Now, store.LastTo);
+        Assert.Equal(expectedFrom, store.Calls[0].From);
+        Assert.Equal(Now, store.Calls[0].To);
     }
 
     [Fact]
@@ -83,8 +83,8 @@ public class GetConversionReportForSiteHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(from, result.Value.From);
         Assert.Equal(to, result.Value.To);
-        Assert.Equal(from, store.LastFrom);
-        Assert.Equal(to, store.LastTo);
+        Assert.Equal(from, store.Calls[0].From);
+        Assert.Equal(to, store.Calls[0].To);
     }
 
     [Fact]
@@ -98,6 +98,69 @@ public class GetConversionReportForSiteHandlerTests
 
         Assert.Equal(SiteId, store.LastSiteId);
         Assert.NotEqual(OtherSiteId, store.LastSiteId);
+    }
+
+    /// <summary>`23-16`: the handler now calls the read store twice per request - the current window,
+    /// then the immediately preceding window of equal length (`PrecedingPeriod`'s own remarks). Both
+    /// calls must carry the caller's own site, never a swapped or wrong one - the "tenant-isolation test
+    /// covers the comparison window's own query" the item's own Done-when asks for, proven here at the
+    /// handler's own orchestration boundary since the comparison window reuses the identical
+    /// site-scoped port `GetConversionReportAsync_NeverReturnsAnotherSitesConversations` already proves
+    /// safe against a real Postgres for the primary window.</summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheStoreTwice_BothCallsCarryingTheCallersOwnSite_NeverAnother()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        await handler.HandleAsync(
+            new Application.UseCases.GetConversionReportForSite.GetConversionReportForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.Equal(2, store.Calls.Count);
+        Assert.All(store.Calls, call => Assert.Equal(SiteId, call.SiteId));
+        Assert.All(store.Calls, call => Assert.NotEqual(OtherSiteId, call.SiteId));
+    }
+
+    /// <summary>The preceding window's own arithmetic: equal length, ending exactly where the current
+    /// window begins - no gap, no overlap (`PrecedingPeriod.Before`'s own remarks).</summary>
+    [Fact]
+    public async Task HandleAsync_TheSecondCall_IsThePrecedingWindowOfEqualLength()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetConversionReportForSite.GetConversionReportForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(from, result.Value.PreviousTo);
+        Assert.Equal(from - (to - from), result.Value.PreviousFrom);
+        Assert.Equal(result.Value.PreviousFrom, store.Calls[1].From);
+        Assert.Equal(result.Value.PreviousTo, store.Calls[1].To);
+    }
+
+    [Fact]
+    public async Task HandleAsync_MapsThePreviousOverallBucket_FromTheStoresSecondCall()
+    {
+        var (handler, store) = CreateFixture();
+        store.SeedSequence(
+            new ConversionReportResult(new ConversionBucket(6, 2, 0, 0, 8, 0.75), []),
+            new ConversionReportResult(new ConversionBucket(3, 3, 0, 0, 6, 0.5), []));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetConversionReportForSite.GetConversionReportForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(6, result.Value.Overall.ConvertedCount);
+        Assert.Equal(0.75, result.Value.Overall.ConversionRate);
+        Assert.Equal(3, result.Value.PreviousOverall.ConvertedCount);
+        Assert.Equal(3, result.Value.PreviousOverall.NotConvertedCount);
+        Assert.Equal(0.5, result.Value.PreviousOverall.ConversionRate);
     }
 
     [Fact]

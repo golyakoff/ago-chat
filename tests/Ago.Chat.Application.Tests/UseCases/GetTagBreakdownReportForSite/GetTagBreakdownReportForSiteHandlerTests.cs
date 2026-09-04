@@ -65,8 +65,8 @@ public class GetTagBreakdownReportForSiteHandlerTests
         var expectedFrom = Now.AddDays(-GetTagBreakdownReportForSiteHandler.DefaultWindowDays);
         Assert.Equal(expectedFrom, result.Value.From);
         Assert.Equal(Now, result.Value.To);
-        Assert.Equal(expectedFrom, store.LastFrom);
-        Assert.Equal(Now, store.LastTo);
+        Assert.Equal(expectedFrom, store.Calls[0].From);
+        Assert.Equal(Now, store.Calls[0].To);
     }
 
     [Fact]
@@ -83,8 +83,8 @@ public class GetTagBreakdownReportForSiteHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(from, result.Value.From);
         Assert.Equal(to, result.Value.To);
-        Assert.Equal(from, store.LastFrom);
-        Assert.Equal(to, store.LastTo);
+        Assert.Equal(from, store.Calls[0].From);
+        Assert.Equal(to, store.Calls[0].To);
     }
 
     [Fact]
@@ -98,6 +98,63 @@ public class GetTagBreakdownReportForSiteHandlerTests
 
         Assert.Equal(SiteId, store.LastSiteId);
         Assert.NotEqual(OtherSiteId, store.LastSiteId);
+    }
+
+    /// <summary>`23-16`: same shape `GetConversionReportForSiteHandlerTests` establishes - the handler
+    /// now calls the read store twice per request, and both calls must carry the caller's own site.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheStoreTwice_BothCallsCarryingTheCallersOwnSite_NeverAnother()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        await handler.HandleAsync(
+            new Application.UseCases.GetTagBreakdownReportForSite.GetTagBreakdownReportForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.Equal(2, store.Calls.Count);
+        Assert.All(store.Calls, call => Assert.Equal(SiteId, call.SiteId));
+        Assert.All(store.Calls, call => Assert.NotEqual(OtherSiteId, call.SiteId));
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheSecondCall_IsThePrecedingWindowOfEqualLength()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetTagBreakdownReportForSite.GetTagBreakdownReportForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(from, result.Value.PreviousTo);
+        Assert.Equal(from - (to - from), result.Value.PreviousFrom);
+        Assert.Equal(result.Value.PreviousFrom, store.Calls[1].From);
+        Assert.Equal(result.Value.PreviousTo, store.Calls[1].To);
+    }
+
+    [Fact]
+    public async Task HandleAsync_MapsThePreviousCoverageFigures_FromTheStoresSecondCall()
+    {
+        var (handler, store) = CreateFixture();
+        store.SeedSequence(
+            new TagBreakdownResult(10, 4, 0.4, []),
+            new TagBreakdownResult(8, 6, 0.75, []));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetTagBreakdownReportForSite.GetTagBreakdownReportForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(10, result.Value.TotalConversationCount);
+        Assert.Equal(0.4, result.Value.PercentageTagged);
+        Assert.Equal(8, result.Value.PreviousTotalConversationCount);
+        Assert.Equal(6, result.Value.PreviousTaggedConversationCount);
+        Assert.Equal(0.75, result.Value.PreviousPercentageTagged);
     }
 
     [Fact]

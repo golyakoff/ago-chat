@@ -83,8 +83,8 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         var expectedFrom = Now.AddDays(-GetOperatorAnalyticsForSiteHandler.DefaultWindowDays);
         Assert.Equal(expectedFrom, result.Value.From);
         Assert.Equal(Now, result.Value.To);
-        Assert.Equal(expectedFrom, store.LastFrom);
-        Assert.Equal(Now, store.LastTo);
+        Assert.Equal(expectedFrom, store.Calls[0].From);
+        Assert.Equal(Now, store.Calls[0].To);
     }
 
     [Fact]
@@ -101,8 +101,8 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(from, result.Value.From);
         Assert.Equal(to, result.Value.To);
-        Assert.Equal(from, store.LastFrom);
-        Assert.Equal(to, store.LastTo);
+        Assert.Equal(from, store.Calls[0].From);
+        Assert.Equal(to, store.Calls[0].To);
     }
 
     [Fact]
@@ -116,6 +116,62 @@ public class GetOperatorAnalyticsForSiteHandlerTests
 
         Assert.Equal(SiteId, store.LastSiteId);
         Assert.NotEqual(OtherSiteId, store.LastSiteId);
+    }
+
+    /// <summary>`23-16`: same shape `GetConversionReportForSiteHandlerTests` establishes - the handler
+    /// now calls the read store twice per request, and both calls must carry the caller's own site.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheStoreTwice_BothCallsCarryingTheCallersOwnSite_NeverAnother()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.Equal(2, store.Calls.Count);
+        Assert.All(store.Calls, call => Assert.Equal(SiteId, call.SiteId));
+        Assert.All(store.Calls, call => Assert.NotEqual(OtherSiteId, call.SiteId));
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheSecondCall_IsThePrecedingWindowOfEqualLength()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(from, result.Value.PreviousTo);
+        Assert.Equal(from - (to - from), result.Value.PreviousFrom);
+        Assert.Equal(result.Value.PreviousFrom, store.Calls[1].From);
+        Assert.Equal(result.Value.PreviousTo, store.Calls[1].To);
+    }
+
+    [Fact]
+    public async Task HandleAsync_MapsThePreviousOverallBucket_FromTheStoresSecondCall()
+    {
+        var (handler, store) = CreateFixture();
+        store.SeedSequence(
+            new OperatorAnalyticsResult(new OperatorAnalyticsBucket(5, 42.5, 300.0, 1), [], [], [], []),
+            new OperatorAnalyticsResult(new OperatorAnalyticsBucket(3, 60.0, 200.0, 0), [], [], [], []));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(5, result.Value.Overall.ConversationCount);
+        Assert.Equal(3, result.Value.PreviousOverall.ConversationCount);
+        Assert.Equal(60.0, result.Value.PreviousOverall.AverageFirstResponseSeconds);
+        Assert.Equal(0, result.Value.PreviousOverall.MissedCount);
     }
 
     [Fact]

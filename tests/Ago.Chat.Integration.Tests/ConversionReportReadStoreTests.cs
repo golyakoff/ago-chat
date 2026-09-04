@@ -33,7 +33,13 @@ public class ConversionReportReadStoreTests(PostgresFixture fixture)
     private static readonly DateTimeOffset From = Now.AddDays(-14);
     private static readonly DateTimeOffset To = Now;
 
-    private ConversionReportReadStore Store => new(fixture.DataSource);
+    private ConversionReportReadStore Store => new(fixture.DataSource, new AnalyticsOptions { MinimumSampleForRate = 10 });
+
+    /// <summary>`23-16`: a store built with a caller-chosen threshold, for the ordering tests below -
+    /// proving `AnalyticsOptions.MinimumSampleForRate` is genuinely load-bearing on `ByOperator`'s own
+    /// order, not a value the query ignores.</summary>
+    private ConversionReportReadStore StoreWithThreshold(int minimumSampleForRate) =>
+        new(fixture.DataSource, new AnalyticsOptions { MinimumSampleForRate = minimumSampleForRate });
 
     [Fact]
     public async Task GetConversionReportAsync_ComputesTheRate_ExcludingUnsetAndFollowUpNeededFromTheDenominator()
@@ -178,6 +184,78 @@ public class ConversionReportReadStoreTests(PostgresFixture fixture)
         Assert.Equal(operatorA, resultA.ByOperator.Single().Operator);
         Assert.Single(resultB.ByOperator);
         Assert.Equal(operatorB, resultB.ByOperator.Single().Operator);
+    }
+
+    /// <summary>`23-16`'s own load-bearing proof: a high rate built on a thin sample must never outrank
+    /// a lower, real rate built on a sample that clears the configured threshold - "the threshold ranks,
+    /// it does not silence" (`docs/design/decisions.md` §7's amendment), made concrete against a real
+    /// query instead of taken on faith.
+    ///
+    /// <para>Three operators, threshold set to 5: Operator A has 5 recorded outcomes (meets the
+    /// threshold), rate 0.2 (1 converted of 5). Operator C has 2 recorded outcomes (below threshold),
+    /// rate 1.0 (2 converted of 2). Operator B has 1 recorded outcome (below threshold), rate 1.0 (1
+    /// converted of 1). If ranking used the raw rate, B and C (both 100%) would lead and A (20%) would
+    /// trail. The rule instead: A leads (the only operator whose own sample meets the threshold, ranked
+    /// among that group by rate - trivially first, being alone in it); C and B follow, ranked by their
+    /// own `RecordedCount` instead of their tied 100% rate - C (2) before B (1).</para>
+    /// </summary>
+    [Fact]
+    public async Task GetConversionReportAsync_NeverRanksAThinSampleAboveARealRate_EvenWhenItsOwnRateIsHigher()
+    {
+        var siteId = await CreateSiteAsync();
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        var operatorC = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorB, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorC, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+
+        // Operator A: 5 recorded (meets threshold=5) - 1 Converted, 4 NotConverted - rate 0.2.
+        await SeedConversationAsync(siteId, offsetDays: -10, outcome: ConversationOutcome.Converted, assignTo: operatorA);
+        await SeedConversationAsync(siteId, offsetDays: -9, outcome: ConversationOutcome.NotConverted, assignTo: operatorA);
+        await SeedConversationAsync(siteId, offsetDays: -8, outcome: ConversationOutcome.NotConverted, assignTo: operatorA);
+        await SeedConversationAsync(siteId, offsetDays: -7, outcome: ConversationOutcome.NotConverted, assignTo: operatorA);
+        await SeedConversationAsync(siteId, offsetDays: -6, outcome: ConversationOutcome.NotConverted, assignTo: operatorA);
+        // Operator C: 2 recorded (below threshold) - both Converted - rate 1.0.
+        await SeedConversationAsync(siteId, offsetDays: -5, outcome: ConversationOutcome.Converted, assignTo: operatorC);
+        await SeedConversationAsync(siteId, offsetDays: -4, outcome: ConversationOutcome.Converted, assignTo: operatorC);
+        // Operator B: 1 recorded (below threshold) - Converted - rate 1.0.
+        await SeedConversationAsync(siteId, offsetDays: -3, outcome: ConversationOutcome.Converted, assignTo: operatorB);
+
+        var result = await StoreWithThreshold(5).GetConversionReportAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(3, result.ByOperator.Count);
+        Assert.Equal([operatorA, operatorC, operatorB], result.ByOperator.Select(o => o.Operator));
+        AssertClose(0.2, result.ByOperator[0].Bucket.ConversionRate);
+        AssertClose(1.0, result.ByOperator[1].Bucket.ConversionRate);
+        AssertClose(1.0, result.ByOperator[2].Bucket.ConversionRate);
+    }
+
+    /// <summary>The order is fully deterministic, not merely "the order Postgres happened to return
+    /// today" - run the identical scenario twice and the row order must not move.</summary>
+    [Fact]
+    public async Task GetConversionReportAsync_ByOperatorOrder_IsDeterministic_AcrossRepeatedCalls()
+    {
+        var siteId = await SeedScenarioAsync();
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Operators.Add(new Operator(operatorA, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Operators.Add(new Operator(operatorB, siteId, OperatorStatus.Offline, capacity: 5));
+            await db.SaveChangesAsync();
+        }
+        await SeedConversationAsync(siteId, offsetDays: -2, outcome: ConversationOutcome.Converted, assignTo: operatorA);
+        await SeedConversationAsync(siteId, offsetDays: -1, outcome: ConversationOutcome.NotConverted, assignTo: operatorB);
+
+        var first = await Store.GetConversionReportAsync(siteId, From, To, CancellationToken.None);
+        var second = await Store.GetConversionReportAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(first.ByOperator.Select(o => o.Operator), second.ByOperator.Select(o => o.Operator));
     }
 
     /// <summary>An outcome recorded on a conversation nobody was ever assigned to - the `ByOperator`

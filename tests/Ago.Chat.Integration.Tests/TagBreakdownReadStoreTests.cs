@@ -40,7 +40,12 @@ public class TagBreakdownReadStoreTests(PostgresFixture fixture)
     private static readonly DateTimeOffset From = Now.AddDays(-14);
     private static readonly DateTimeOffset To = Now;
 
-    private TagBreakdownReadStore Store => new(fixture.DataSource);
+    private TagBreakdownReadStore Store => new(fixture.DataSource, new AnalyticsOptions { MinimumSampleForRate = 10 });
+
+    /// <summary>`23-16`: a store built with a caller-chosen threshold, for the ordering test below - the
+    /// same reason `ConversionReportReadStoreTests.StoreWithThreshold` exists.</summary>
+    private TagBreakdownReadStore StoreWithThreshold(int minimumSampleForRate) =>
+        new(fixture.DataSource, new AnalyticsOptions { MinimumSampleForRate = minimumSampleForRate });
 
     [Fact]
     public async Task GetTagBreakdownAsync_ComputesCoverageAndPerTagNumbers_MatchingHandCalculatedGroundTruth()
@@ -149,6 +154,45 @@ public class TagBreakdownReadStoreTests(PostgresFixture fixture)
 
         Assert.Equal(1, result.TaggedConversationCount);
         Assert.Equal(1, result.ByTag.Single().ConversationCount);
+    }
+
+    /// <summary>`23-16`'s own load-bearing proof for this report, the identical shape
+    /// `ConversionReportReadStoreTests.GetConversionReportAsync_NeverRanksAThinSampleAboveARealRate_EvenWhenItsOwnRateIsHigher`
+    /// already establishes: a tag with a thin sample and a perfect rate must never outrank a tag whose
+    /// own sample clears the configured threshold, even at a worse rate.
+    ///
+    /// <para>Threshold set to 4. "Popular" carries 4 recorded outcomes (meets threshold), rate 0.25 (1
+    /// converted of 4). "RareA" carries 2 recorded outcomes (below threshold), rate 1.0. "RareB" carries
+    /// 1 recorded outcome (below threshold), rate 1.0. Expected order: Popular first (alone in the
+    /// meets-threshold group); RareA before RareB among the below-threshold group, ranked by
+    /// `ConversationCount` (2 vs 1) rather than by their tied 100% rate.</para>
+    /// </summary>
+    [Fact]
+    public async Task GetTagBreakdownAsync_NeverRanksAThinSampleAboveARealRate_EvenWhenItsOwnRateIsHigher()
+    {
+        var siteId = await CreateSiteAsync();
+        var popularTagId = await SeedTagAsync(siteId, "Popular");
+        var rareATagId = await SeedTagAsync(siteId, "RareA");
+        var rareBTagId = await SeedTagAsync(siteId, "RareB");
+
+        // Popular: 4 recorded (meets threshold=4) - 1 Converted, 3 NotConverted - rate 0.25.
+        await SeedConversationAsync(siteId, offsetDays: -10, outcome: ConversationOutcome.Converted, tags: [(popularTagId, TagSource.Operator)]);
+        await SeedConversationAsync(siteId, offsetDays: -9, outcome: ConversationOutcome.NotConverted, tags: [(popularTagId, TagSource.Operator)]);
+        await SeedConversationAsync(siteId, offsetDays: -8, outcome: ConversationOutcome.NotConverted, tags: [(popularTagId, TagSource.Operator)]);
+        await SeedConversationAsync(siteId, offsetDays: -7, outcome: ConversationOutcome.NotConverted, tags: [(popularTagId, TagSource.Operator)]);
+        // RareA: 2 recorded (below threshold) - both Converted - rate 1.0.
+        await SeedConversationAsync(siteId, offsetDays: -6, outcome: ConversationOutcome.Converted, tags: [(rareATagId, TagSource.Operator)]);
+        await SeedConversationAsync(siteId, offsetDays: -5, outcome: ConversationOutcome.Converted, tags: [(rareATagId, TagSource.Operator)]);
+        // RareB: 1 recorded (below threshold) - Converted - rate 1.0.
+        await SeedConversationAsync(siteId, offsetDays: -4, outcome: ConversationOutcome.Converted, tags: [(rareBTagId, TagSource.Operator)]);
+
+        var result = await StoreWithThreshold(4).GetTagBreakdownAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(3, result.ByTag.Count);
+        Assert.Equal(["Popular", "RareA", "RareB"], result.ByTag.Select(t => t.TagName));
+        AssertClose(0.25, result.ByTag[0].ConversionRate);
+        AssertClose(1.0, result.ByTag[1].ConversionRate);
+        AssertClose(1.0, result.ByTag[2].ConversionRate);
     }
 
     private static void AssertClose(double expected, double? actual)
