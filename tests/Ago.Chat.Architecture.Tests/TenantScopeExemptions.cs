@@ -273,6 +273,24 @@ internal static class TenantScopeExemptions
             + "authorizing fact is a Keycloak realm role (adr/0032) and Ago.Chat.Application has no port that sees "
             + "claims, so re-checking here would be a second, weaker copy of the same rule. Read-only; no owner "
             + "write surface exists.",
+        ["Ago.Chat.Application.UseCases.GetSiteForOwner.GetSiteForOwnerHandler.HandleAsync"] =
+            "`23-14`, the per-tenant companion to ListSitesForOwnerHandler right above - a genuinely different "
+            + "shape from this shape's other neighbours, which is worth stating precisely: unlike "
+            + "ListSitesForOwnerHandler, this one DOES take a SiteId (a query record, not just a command, can carry "
+            + "one), which is exactly why it needs an entry here at all rather than being invisible to the rule the "
+            + "way its sibling is. The SiteId is chosen by the platform owner, not resolved from a token, the "
+            + "identical 'caller names the tenant' shape the owner's three cross-tenant writes already have "
+            + "(UnlinkChannelIdentityAsOwnerHandler/EnableModuleForSiteAsOwnerHandler/"
+            + "RevokeModuleForSiteAsOwnerHandler above) - the read-side counterpart of that shape rather than a "
+            + "fourth write. The whole access-control story is RequirePlatformOwner on "
+            + "GET /api/v1/owner/sites/{siteId} (OwnerSitesEndpoints): Ago.Chat.Application still has no port that "
+            + "can see a Keycloak realm-role claim, so a permission check here would be a second, weaker copy of a "
+            + "rule the policy already decided. Do not confuse this with ListEnabledModulesForSiteHandler (`23-01`), "
+            + "which also takes a SiteId but is gated - it carries a RequestedBy its handler checks through "
+            + "IPermissionChecker, because that read is a tenant's own operator looking at their own site; this one "
+            + "carries no requester at all, because it is the platform owner looking at any site they name. Read-"
+            + "only; the SiteId is used only to load one row (IPlatformOverviewReadStore.GetSiteAsync) and that "
+            + "row's own modules (IEnabledModuleReadStore.GetAllForSiteAsync) - nothing is written.",
         ["Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner.UnlinkChannelIdentityAsOwnerHandler.HandleAsync"] =
             "`14-12`, the platform owner's own first write surface - see the handler's own remarks for why it is a "
             + "deliberately separate class from UnlinkChannelIdentityHandler rather than a nullable-OperatorId "

@@ -45,6 +45,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.GetSiteForOwner;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
@@ -823,6 +824,9 @@ public sealed class ChatModule : IProductModule
         // page - ChatModule is where handler registration lives, and a host that never maps the route
         // simply never resolves it.
         services.AddScoped<ListSitesForOwnerHandler>();
+        // `23-14`: the per-tenant companion to the read above - same host, same policy, same
+        // registration shape.
+        services.AddScoped<GetSiteForOwnerHandler>();
 
         // `6-03`: the registration and delivery-history backend for a future self-service console
         // screen - see each handler's own remarks. Registered for every host (the same shape as

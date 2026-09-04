@@ -438,6 +438,9 @@ app.MapDemoEndpoints();
 // `12-02`: the platform owner's cross-tenant read - the only route here not scoped to one site,
 // and the only one carrying `12-01`'s RequirePlatformOwner policy (OwnerSitesEndpoints' remarks).
 app.MapOwnerEndpoints();
+// `23-14`: the per-tenant detail companion - its own Map call, not folded into the one above
+// (OwnerSitesEndpoints' own class remarks say why).
+app.MapOwnerSiteDetailEndpoint();
 // `14-12`: the platform owner's first write/action surface - see OwnerChannelIdentityEndpoints' own
 // remarks for why this is a separate route from ChannelIdentityEndpoints' operator-gated unlink above,
 // even though both ultimately call Domain.ChannelIdentity.Unlink.

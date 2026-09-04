@@ -12,9 +12,11 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// (`adr/0004`) - the cross-tenant scope is the only unusual thing about it, and it is unusual in the
 /// `WHERE` clause, not in the mechanism.
 ///
-/// <para>Read-only in the strongest available sense: <see cref="ListSitesAsync"/> issues one `SELECT`
-/// and this class has no other method. Nothing here writes, and `12-02` deliberately ships no write
-/// or action surface for the owner at all.</para>
+/// <para>Read-only in the strongest available sense: both methods this class carries issue `SELECT`
+/// statements only - <see cref="ListSitesAsync"/> two (counts, then the page), <see cref="GetSiteAsync"/>
+/// one. Nothing here writes, and `12-02`/`23-14` deliberately ship no write or action surface for the
+/// owner's *reads* at all (`22-17`'s owner grant/revoke are writes, but they live behind a different
+/// port - `EnabledModule`'s own aggregate, never this read store).</para>
 /// </summary>
 public sealed class PlatformOverviewReadStore(NpgsqlDataSource dataSource) : IPlatformOverviewReadStore
 {
@@ -29,10 +31,14 @@ public sealed class PlatformOverviewReadStore(NpgsqlDataSource dataSource) : IPl
 
     // Shape, and why it is this shape:
     //
-    // 1. `page` picks the page of sites FIRST, by keyset on `id` alone (`SiteOverviewPage`'s own
+    // 1. `matching` narrows the candidate set by `23-14`'s own search predicate FIRST, and `page` picks
+    //    the keyset page from that already-narrowed set, by `id` alone (`SiteOverviewPage`'s own
     //    remarks on why the cursor cannot be `created_at`). `OFFSET` is banned outright
     //    (`data-model.md`), and there is no ORDER BY over an aggregate here to make a cursor
-    //    impossible - see ListSitesForOwner on the sort parameter deliberately left out.
+    //    impossible - see ListSitesForOwner on the sort parameter deliberately left out. Filtering
+    //    before paging, rather than after, is what makes a search and the cursor compose: paging an
+    //    unfiltered set and discarding non-matches per page would make `limit` mean something different
+    //    for a search than for the ordinary list.
     //
     // 2. Every usage signal is then computed PER PAGE ROW, not for all sites and then filtered. The
     //    number of aggregate evaluations per request is therefore bounded by `limit`, not by how many
@@ -68,9 +74,14 @@ public sealed class PlatformOverviewReadStore(NpgsqlDataSource dataSource) : IPl
     //    attachments" into 0 rather than null - "this tenant stores nothing" is a real 0, not a
     //    missing value, unlike `last_message_at` where null genuinely means "nothing to report".
     private const string ListSitesSql = """
-        with page as (
+        with matching as (
             select id, name, created_at
             from sites
+            where (@Pattern is null or name ilike @Pattern or cast(id as text) ilike @Pattern)
+        ),
+        page as (
+            select id, name, created_at
+            from matching
             where (@Before is null or id < @Before)
             order by id desc
             limit @Limit
@@ -95,21 +106,66 @@ public sealed class PlatformOverviewReadStore(NpgsqlDataSource dataSource) : IPl
         order by p.id desc
         """;
 
+    // `23-14`: counted separately from `ListSitesSql`, over the *whole* table rather than the page -
+    // this is precisely what keeps "how many matched" honest when a search returns fewer rows than
+    // `@Limit`, or none at all. `count(*) filter (where ...)` reuses the identical predicate `matching`
+    // above narrows by, so the two queries can never disagree about what "matches" means; `TotalSites`
+    // needs no predicate at all, since it is the fixed denominator a caller compares the filtered count
+    // against regardless of what was searched for.
+    private const string CountsSql = """
+        select
+            count(*) as "TotalSites",
+            count(*) filter (where @Pattern is null or name ilike @Pattern or cast(id as text) ilike @Pattern)
+                as "MatchingSites"
+        from sites
+        """;
+
+    private const string GetSiteSql = """
+        select p.id as "Id",
+               p.name as "Name",
+               p.created_at as "CreatedAt",
+               (select count(*) from operators o where o.site_id = p.id) as "SeatCount",
+               (select count(*) from conversations c where c.site_id = p.id) as "ConversationCount",
+               recent.message_count as "RecentMessageCount",
+               recent.last_message_at as "LastMessageAt",
+               (select coalesce(sum(a.size_bytes), 0)::bigint
+                from attachments a
+                where a.site_id = p.id and a.state <> @DeletedState) as "AttachmentBytes"
+        from sites p
+        left join lateral (
+            select count(*) as message_count, max(m.created_at) as last_message_at
+            from conversations c
+            join messages m on m.conversation_id = c.id
+            where c.site_id = p.id and m.site_id = p.id and m.created_at >= @RecentSince
+        ) recent on true
+        where p.id = @SiteId
+        """;
+
     public async Task<SiteOverviewPage> ListSitesAsync(
-        DateTimeOffset recentMessagesSince, Guid? before, int limit, CancellationToken cancellationToken)
+        DateTimeOffset recentMessagesSince, string? query, Guid? before, int limit, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
+        var parameters = new
+        {
+            Pattern = BuildLikePattern(query),
+            Before = before,
+            Limit = limit,
+            RecentSince = recentMessagesSince,
+            DeletedState = DeletedAttachmentState,
+        };
+
+        // Two round trips on the same connection, not one multi-statement command: `CountsSql` has no
+        // `@Before`/`@Limit` use, and keeping the two queries textually separate is what lets each be
+        // read (and EXPLAINed) on its own rather than as one query whose two halves share nothing.
+        // Both are cheap - `sites` is not partitioned and every real deployment this runs against today
+        // is small enough that a human reads the result by hand (`ListSitesForOwnerHandler`'s own
+        // remarks on this endpoint's frequency).
+        var counts = await connection.QuerySingleAsync<SiteCountsRow>(new CommandDefinition(
+            CountsSql, parameters, cancellationToken: cancellationToken));
+
         var rows = await connection.QueryAsync<SiteOverviewRow>(new CommandDefinition(
-            ListSitesSql,
-            new
-            {
-                Before = before,
-                Limit = limit,
-                RecentSince = recentMessagesSince,
-                DeletedState = DeletedAttachmentState,
-            },
-            cancellationToken: cancellationToken));
+            ListSitesSql, parameters, cancellationToken: cancellationToken));
 
         var items = rows.Select(ToOverviewItem).ToList();
 
@@ -117,7 +173,41 @@ public sealed class PlatformOverviewReadStore(NpgsqlDataSource dataSource) : IPl
         // (ConversationReadStore) - it can hand back one cursor that yields an empty final page, which
         // is cheaper and simpler than reading limit+1 rows to know for certain.
         var nextBefore = items.Count == limit ? items[^1].Id.Value : (Guid?)null;
-        return new SiteOverviewPage(items, nextBefore);
+        return new SiteOverviewPage(items, nextBefore, counts.MatchingSites, counts.TotalSites);
+    }
+
+    public async Task<SiteOverviewItem?> GetSiteAsync(
+        SiteId siteId, DateTimeOffset recentMessagesSince, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var row = await connection.QuerySingleOrDefaultAsync<SiteOverviewRow?>(new CommandDefinition(
+            GetSiteSql,
+            new { SiteId = siteId.Value, RecentSince = recentMessagesSince, DeletedState = DeletedAttachmentState },
+            cancellationToken: cancellationToken));
+
+        return row is null ? null : ToOverviewItem(row);
+    }
+
+    /// <summary>`23-14`: turns a raw search string into an `ILIKE` pattern, or <see langword="null"/>
+    /// for "no filter" - the one place either SQL statement's `@Pattern is null` branch is decided.
+    /// `%`/`_`/`\` are escaped so a tenant name that happens to contain one of LIKE's own wildcard
+    /// characters is matched literally rather than interpreted; Postgres's default `LIKE`/`ILIKE`
+    /// escape character is already backslash, so no explicit `ESCAPE` clause is needed on the SQL side.
+    /// Substring, not prefix: it matches the site's name <i>or</i> its id cast to text
+    /// (`ListSitesForOwner`'s own remarks on why an id search is not required to start at the
+    /// beginning), which also covers `ui-inventory.md` §8.1's own 8-hex-character id badge - that badge
+    /// is always a leading substring of the full id text, so searching it finds the row without this
+    /// method needing to know the badge is only 8 characters wide.</summary>
+    private static string? BuildLikePattern(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return null;
+        }
+
+        var escaped = query.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+        return $"%{escaped}%";
     }
 
     private static SiteOverviewItem ToOverviewItem(SiteOverviewRow r) => new(
@@ -132,4 +222,8 @@ public sealed class PlatformOverviewReadStore(NpgsqlDataSource dataSource) : IPl
 
     private static DateTimeOffset? ToUtc(DateTime? value) =>
         value is { } present ? new DateTimeOffset(DateTime.SpecifyKind(present, DateTimeKind.Utc)) : null;
+
+    /// <summary>`23-14`: the two-count row <see cref="CountsSql"/> materializes - its own type rather
+    /// than reusing <see cref="SiteOverviewRow"/>, since the two queries share no columns.</summary>
+    private sealed record SiteCountsRow(long TotalSites, long MatchingSites);
 }

@@ -21,6 +21,24 @@ public interface IEnabledModuleReadStore
     /// this codebase compares (`CLAUDE.md` rule 11) - never the database's own clock.</param>
     Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(
         SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>`23-14`: every module this site has ever had enabled, expired ones included - the
+    /// diagnostic sibling of <see cref="GetForSiteAsync"/> above, for the platform owner's per-tenant
+    /// detail read alone. <see cref="GetForSiteAsync"/>'s `WHERE` clause is what production trusts to
+    /// decide "may this module act for this site right now", and that stays exactly as it is: a tenant
+    /// configuring their own site (`23-01`'s `ListEnabledModulesForSite`) has no reason to see a lapsed
+    /// grant chat has already stopped honouring. A support agent repairing a tenant does
+    /// (`flows.md` 5.3) - "the module vanished" and "the module was never granted" are different facts,
+    /// and only this method can tell them apart.
+    ///
+    /// <para><see cref="EnabledModuleDetailSummary.IsActive"/> is computed by the identical
+    /// `expires_at is null or expires_at > @Now` comparison <see cref="GetForSiteAsync"/>'s own `WHERE`
+    /// clause already uses - projected here instead of filtered, so a caller reading it is trusting the
+    /// same decision the hot path makes, not a second one computed against a different clock
+    /// (`CLAUDE.md` rule 11: instants come from `IClock`, and this is what keeps that single source of
+    /// truth even when the SQL shape differs).</para></summary>
+    Task<IReadOnlyList<EnabledModuleDetailSummary>> GetAllForSiteAsync(
+        SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
 /// <summary>Exactly what <see cref="TriggerCommandMatcher"/> and the registration-time overlap check
@@ -41,3 +59,14 @@ public interface IEnabledModuleReadStore
 public sealed record EnabledModuleSummary(
     ModuleKey ModuleKey, IReadOnlyList<string> TriggerWords, Uri EntryPoint, ModuleCredential Credential,
     bool GrantedByOwner, DateTimeOffset? ExpiresAt);
+
+/// <summary>`23-14`: one row of <see cref="IEnabledModuleReadStore.GetAllForSiteAsync"/> - the same
+/// facts <see cref="EnabledModuleSummary"/> carries for the production hot path, minus
+/// <see cref="EnabledModuleSummary.Credential"/> (the platform owner's detail read never needs it, the
+/// same "never echoed back" hygiene <c>ModuleEndpoints.EnableModuleResponse</c> already applies to the
+/// wire), plus <see cref="IsActive"/> - the one fact <see cref="EnabledModuleSummary"/> does not need
+/// to carry, because <see cref="IEnabledModuleReadStore.GetForSiteAsync"/> already expresses "active"
+/// by including the row at all.</summary>
+public sealed record EnabledModuleDetailSummary(
+    ModuleKey ModuleKey, IReadOnlyList<string> TriggerWords, Uri EntryPoint, bool GrantedByOwner,
+    DateTimeOffset? ExpiresAt, bool IsActive);

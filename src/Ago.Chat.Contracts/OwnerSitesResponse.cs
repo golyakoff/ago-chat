@@ -10,8 +10,17 @@
 /// <see cref="OwnerSiteSummaryDto.LastMessageAt"/> are computed over. Returned rather than left for
 /// the reader to know: those two fields are meaningless without it, and a client that hardcoded an
 /// assumed window would silently start lying the day the server's window changed.</param>
+/// <param name="MatchingSites">`23-14`: how many sites, across the whole deployment, matched the
+/// search the caller sent - not how many rows are in <see cref="Sites"/> on this one page. Equal to
+/// <see cref="TotalSites"/> when the caller searched for nothing.</param>
+/// <param name="TotalSites">`23-14`: how many sites exist on the deployment, ignoring any search -
+/// present on <b>every</b> response, searched or not, so a client can always render "N of M sites
+/// match" rather than a bare row count that would read exactly like a platform with fewer tenants
+/// (this item's own "must not break" clause; `flows.md` 5.1's "must be able to trust the list is
+/// complete"). The predicate is explicit in this response, never implicit in a narrowed page.</param>
 public sealed record OwnerSitesResponse(
-    IReadOnlyList<OwnerSiteSummaryDto> Sites, Guid? NextBefore, int RecentWindowDays);
+    IReadOnlyList<OwnerSiteSummaryDto> Sites, Guid? NextBefore, int RecentWindowDays,
+    long MatchingSites, long TotalSites);
 
 /// <summary>
 /// `12-02`: one tenant as the platform owner sees it. Raw signals only - `12-02`'s Out of scope rules

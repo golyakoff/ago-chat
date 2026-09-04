@@ -168,6 +168,146 @@ public sealed class PlatformOverviewReadStoreTests(PlatformOverviewFixture fixtu
             $"Expected the unscoped query (join-only, no m.site_id predicate) to touch more than one bucket - the fixture seeds {PlatformOverviewFixture.Plan.Count} distinct sites so this is not vacuous.\nPlan:\n{unscopedPlan}");
     }
 
+    /// <summary>`23-14`'s own "must not break" clause, at the read-store level: an empty search must
+    /// return the identical page an unfiltered call would, and the two counts must both equal the
+    /// fixture's own known total - never a narrower page that merely happens to look complete.</summary>
+    [Fact]
+    public async Task ListSites_WithNoQuery_MatchesTotalSites_AndTheUnfilteredPage()
+    {
+        var unfiltered = await ListAsync(before: null, limit: LargeEnoughForEverySite);
+        var withBlankQuery = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: "   ");
+
+        Assert.Equal(PlatformOverviewFixture.Plan.Count, unfiltered.TotalSites);
+        Assert.Equal(unfiltered.TotalSites, unfiltered.MatchingSites);
+        Assert.Equal(unfiltered.TotalSites, withBlankQuery.TotalSites);
+        Assert.Equal(unfiltered.MatchingSites, withBlankQuery.MatchingSites);
+        Assert.Equal(unfiltered.Sites.Select(s => s.Id), withBlankQuery.Sites.Select(s => s.Id));
+    }
+
+    /// <summary>The guard the item's own author asked for by name: a search that narrows the page must
+    /// still report the true, unnarrowed total - never let it "disappear from the response". Beta is
+    /// the only site whose name contains "Bakery", so this also proves the predicate is a real
+    /// substring match rather than an accidental match-everything.</summary>
+    [Fact]
+    public async Task ListSites_WithAQueryMatchingOneSite_ReportsMatchingSites1_AndTotalSitesUnchanged()
+    {
+        var unfiltered = await ListAsync(before: null, limit: LargeEnoughForEverySite);
+        var searched = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: "Bakery");
+
+        Assert.Equal("Beta Bakery", Assert.Single(searched.Sites).Name);
+        Assert.Equal(1L, searched.MatchingSites);
+        // The load-bearing assertion: TotalSites is the SAME denominator the unfiltered call reports,
+        // never recomputed from the (now narrower) page - a caller must always be able to render "1 of
+        // 5 sites match", not just "here is 1 site".
+        Assert.Equal(unfiltered.TotalSites, searched.TotalSites);
+        Assert.True(searched.MatchingSites < searched.TotalSites, "The search must narrow the result for this test to prove anything.");
+    }
+
+    /// <summary>A query with no match at all: an empty page, MatchingSites of zero, and TotalSites
+    /// still the true count - the shape a support agent sees when they mistype a name, which must not
+    /// be confused with "the platform has no tenants".</summary>
+    [Fact]
+    public async Task ListSites_WithAQueryMatchingNoSite_ReturnsAnEmptyPage_ButTheRealTotalSites()
+    {
+        var searched = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: "no-such-tenant-exists");
+
+        Assert.Empty(searched.Sites);
+        Assert.Equal(0L, searched.MatchingSites);
+        Assert.Equal(PlatformOverviewFixture.Plan.Count, searched.TotalSites);
+    }
+
+    /// <summary>Case-insensitive, and matches a substring anywhere in the name - not only a prefix.
+    /// </summary>
+    [Fact]
+    public async Task ListSites_QueryIsCaseInsensitive_AndMatchesAnywhereInTheName()
+    {
+        var searched = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: "diner");
+
+        Assert.Equal("Delta Diner", Assert.Single(searched.Sites).Name);
+    }
+
+    /// <summary>The id half of the name/id predicate: searching by (part of) a site's own id text finds
+    /// it, matching `ui-inventory.md` §8.1's own 8-hex-character id badge - which is always a leading
+    /// substring of the id's full text representation.</summary>
+    [Fact]
+    public async Task ListSites_QueryMatchingPartOfTheSiteId_ReturnsThatSite()
+    {
+        var target = PlatformOverviewFixture.Plan[0];
+        var idFragment = target.Id.Value.ToString().Substring(0, 8);
+
+        var searched = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: idFragment);
+
+        Assert.Contains(searched.Sites, s => s.Id == target.Id);
+    }
+
+    /// <summary>A query containing LIKE's own wildcard characters must be matched literally, not
+    /// interpreted - a site named "50% Off Shop" (hypothetically) searched for as "50%" must not match
+    /// every site the way an uninterpreted wildcard would. Proven here against the seeded names, none
+    /// of which contain a literal `%`, by asserting a `%`-containing query that matches nothing still
+    /// returns zero rows rather than the whole table.</summary>
+    [Fact]
+    public async Task ListSites_QueryContainingPercentSign_IsMatchedLiterally_NotAsAWildcard()
+    {
+        var searched = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: "Shop%Nonexistent");
+
+        Assert.Empty(searched.Sites);
+        Assert.Equal(0L, searched.MatchingSites);
+    }
+
+    /// <summary>The search predicate narrows the candidate set the keyset cursor walks, so paging a
+    /// search must behave exactly like paging the unfiltered list: no gap, no duplicate, and the
+    /// concatenation of every page must equal the single-page result for that same query.</summary>
+    [Fact]
+    public async Task ListSites_WithAQuery_PagesCorrectly()
+    {
+        // "a" matches every seeded name here (Alpha, Beta, Gamma, Delta, Epsilon all contain 'a'), so
+        // this proves pagination composes with a filter without needing a query that happens to match
+        // exactly one page's worth.
+        var wholeMatch = await ListAsync(before: null, limit: LargeEnoughForEverySite, query: "a");
+        Assert.True(wholeMatch.Sites.Count > 1, "The query must match more than one site for pagination to prove anything.");
+
+        var walked = new List<SiteId>();
+        Guid? cursor = null;
+        do
+        {
+            var page = await ListAsync(before: cursor, limit: 2, query: "a");
+            walked.AddRange(page.Sites.Select(s => s.Id));
+            cursor = page.NextBefore;
+        } while (cursor is not null);
+
+        Assert.Equal(wholeMatch.Sites.Select(s => s.Id), walked);
+    }
+
+    /// <summary>`23-14`'s per-tenant detail read: the same ground truth `ListSites_...` above checks
+    /// for a page, checked here for one site fetched directly by id.</summary>
+    [Fact]
+    public async Task GetSite_ReturnsGroundTruthForOneSite()
+    {
+        var plan = PlatformOverviewFixture.Plan.Single(p => p.Name == "Epsilon Electric");
+
+        var site = await GetSiteAsync(plan.Id);
+
+        Assert.NotNull(site);
+        Assert.Equal(plan.Name, site.Name);
+        Assert.Equal((long)plan.Operators, site.SeatCount);
+        Assert.Equal((long)plan.Conversations, site.ConversationCount);
+        Assert.Equal(ExpectedRecentMessages(plan), site.RecentMessageCount);
+        Assert.Equal(ExpectedAttachmentBytes(plan), site.AttachmentBytes);
+        AssertSameInstant(ExpectedCreatedAt(plan), site.CreatedAt);
+        AssertSameInstant(ExpectedLastMessageAt(plan), site.LastMessageAt);
+    }
+
+    /// <summary>A genuine "not found" - not the info-hiding shape a tenant-scoped route would use,
+    /// because there is no wrong-tenant case to hide behind it here (`IPlatformOverviewReadStore.
+    /// GetSiteAsync`'s own remarks).</summary>
+    [Fact]
+    public async Task GetSite_ForANonexistentId_ReturnsNull()
+    {
+        var site = await GetSiteAsync(new SiteId(Guid.NewGuid()));
+
+        Assert.Null(site);
+    }
+
     private static int DistinctPartitionCount(string planText) =>
         System.Text.RegularExpressions.Regex.Matches(planText, @"(?<=\bon )messages_\d{2}\b")
             .Select(m => m.Value).Distinct().Count();
@@ -201,9 +341,13 @@ public sealed class PlatformOverviewReadStoreTests(PlatformOverviewFixture fixtu
         return string.Join('\n', lines);
     }
 
-    private Task<SiteOverviewPage> ListAsync(Guid? before, int limit) =>
+    private Task<SiteOverviewPage> ListAsync(Guid? before, int limit, string? query = null) =>
         new PlatformOverviewReadStore(fixture.DataSource)
-            .ListSitesAsync(fixture.RecentSince, before, limit, CancellationToken.None);
+            .ListSitesAsync(fixture.RecentSince, query, before, limit, CancellationToken.None);
+
+    private Task<SiteOverviewItem?> GetSiteAsync(SiteId siteId) =>
+        new PlatformOverviewReadStore(fixture.DataSource)
+            .GetSiteAsync(siteId, fixture.RecentSince, CancellationToken.None);
 
     private static long ExpectedRecentMessages(SeededSite plan) =>
         plan.MessageDaysAgo.Count(daysAgo => daysAgo <= PlatformOverviewFixture.WindowDays);

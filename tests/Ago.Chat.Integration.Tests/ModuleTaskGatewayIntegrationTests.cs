@@ -319,6 +319,13 @@ public class ModuleTaskGatewayIntegrationTests
             Task.FromResult<IReadOnlyList<EnabledModuleSummary>>(
                 [new EnabledModuleSummary(
                     key, triggerWords, entryPoint, credential ?? DefaultCredential, GrantedByOwner: false, ExpiresAt: null)]);
+
+        // `23-14`: interface parity only - this fixture is for the module-task gateway's own tests,
+        // none of which exercise the owner's detail read.
+        public Task<IReadOnlyList<EnabledModuleDetailSummary>> GetAllForSiteAsync(
+            SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<EnabledModuleDetailSummary>>(
+                [new EnabledModuleDetailSummary(key, triggerWords, entryPoint, GrantedByOwner: false, ExpiresAt: null, IsActive: true)]);
     }
 
     /// <summary>`20-09`: the minimal double the gate's own real-HTTP tests need - seeded with at most

@@ -59,10 +59,17 @@ public sealed class ListSitesForOwnerHandler(IPlatformOverviewReadStore readStor
         // the window testable at a fixed instant instead of "whatever the machine said".
         var recentSince = clock.UtcNow.AddDays(-RecentWindowDays);
 
-        var page = await readStore.ListSitesAsync(recentSince, query.Before, limit, cancellationToken);
+        // `23-14`: "blank means no filter" is decided here, not by the read store - a caller who typed
+        // only spaces meant to search for nothing, the same trim-then-treat-empty-as-absent shape
+        // `SearchConversationsHandler.HandleAsync` already applies to its own `Phrase`. Trimmed once,
+        // so the read store's own `@Query is null` branch and this handler's own idea of "no search"
+        // never disagree.
+        var normalizedQuery = string.IsNullOrWhiteSpace(query.Query) ? null : query.Query.Trim();
+
+        var page = await readStore.ListSitesAsync(recentSince, normalizedQuery, query.Before, limit, cancellationToken);
 
         return new OwnerSitesResponse(
-            page.Sites.Select(ToSummary).ToList(), page.NextBefore, RecentWindowDays);
+            page.Sites.Select(ToSummary).ToList(), page.NextBefore, RecentWindowDays, page.MatchingSites, page.TotalSites);
     }
 
     private static OwnerSiteSummaryDto ToSummary(SiteOverviewItem item) => new(

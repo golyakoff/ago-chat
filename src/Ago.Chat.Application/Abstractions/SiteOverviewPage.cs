@@ -15,4 +15,15 @@
 /// `RegisterSiteHandler`), so id order already is creation order for those - the identical argument
 /// <see cref="ConversationListPage"/> makes for conversation ids.</para>
 /// </summary>
-public sealed record SiteOverviewPage(IReadOnlyList<SiteOverviewItem> Sites, Guid? NextBefore);
+/// <param name="MatchingSites">`23-14`: how many sites, across the <b>whole</b> deployment, matched
+/// the caller's search predicate - not how many landed on this one page. Counted from the same
+/// candidate set <see cref="Sites"/> is paged from, so it is exact regardless of `limit`. Equal to
+/// <paramref name="TotalSites"/> whenever the caller searched for nothing (`IPlatformOverviewReadStore.
+/// ListSitesAsync`'s own remarks on why an empty query must leave both counts, and the page itself,
+/// unchanged).</param>
+/// <param name="TotalSites">`23-14`: how many sites exist on the deployment, ignoring the search
+/// predicate entirely - the fixed denominator a caller compares <paramref name="MatchingSites"/>
+/// against to render "3 of 41 sites match" rather than three rows that look like the whole platform
+/// (this item's own "must not break" clause, and `flows.md` 5.1's "the list is complete").</param>
+public sealed record SiteOverviewPage(
+    IReadOnlyList<SiteOverviewItem> Sites, Guid? NextBefore, long MatchingSites, long TotalSites);
