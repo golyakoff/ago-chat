@@ -16,22 +16,34 @@ public class RoleAssignmentProjectionBackfillHostTests
     /// <summary>`22-16`'s own report: "it references Ago.Chat.Infrastructure.Postgres and nothing above
     /// it" - the identical csproj-comment-plus-test shape `adr/0056` established for the migrator, and
     /// the identical reason: `Ago.Chat.Module` validates RabbitMQ/Redis/S3/Keycloak at startup, and none
-    /// of those are needed to stage an outbox row.</summary>
+    /// of those are needed to stage an outbox row.
+    ///
+    /// <para>Checked against the host's own resolved restore graph
+    /// (<see cref="ReferenceBoundaryRule"/>), not its compiled assembly's metadata. This test's first
+    /// version read <c>Cecil.MainModule.AssemblyReferences</c>, and `17-12` - filed after that version
+    /// was written, and while this branch was still open - proved that check blind: <b>the C# compiler
+    /// elides an assembly reference nothing in the code actually uses</b>, so a
+    /// <c>&lt;ProjectReference&gt;</c> to <c>Ago.Chat.Module</c> sitting unused in the csproj compiles
+    /// to an assembly with no trace of it, while still dragging RabbitMQ, Redis, S3 and Keycloak into
+    /// this host's publish output. That is not a hypothetical here: <b>this branch had exactly that
+    /// stray reference</b>, committed by accident and removed in its own commit, and this test passed
+    /// the whole time. `17-12` fixed the migrator's copy of the check and left this one open as the
+    /// second half; this is that half.</para></summary>
     [Fact]
     public void TheBackfillHost_ReferencesPersistenceAndNothingAboveIt()
     {
         string[] forbidden =
             ["Ago.Chat.Module", "Ago.Chat.Api", "Ago.Chat.Worker", "Ago.Chat.Webhooks", "Ago.Chat.Migrator"];
 
-        var offenders = TestAssemblies.RoleAssignmentBackfill.Cecil.MainModule.AssemblyReferences
-            .Select(reference => reference.Name)
-            .Where(name => forbidden.Contains(name))
-            .ToList();
+        var backfillDirectory = Path.Combine(SourceTreeLocator.FindSrcDirectory(), "Ago.Chat.RoleAssignmentBackfill");
+        var offenders = ReferenceBoundaryRule.ForbiddenNamesPresent(backfillDirectory, forbidden);
 
         Assert.True(offenders.Count == 0,
-            $"Ago.Chat.RoleAssignmentBackfill references {string.Join(", ", offenders)} - `22-16` confines "
-            + "it to Ago.Chat.Infrastructure.Postgres and below, the same boundary adr/0056 draws for "
-            + "Ago.Chat.Migrator and for the identical reason.");
+            $"Ago.Chat.RoleAssignmentBackfill's restore graph resolves {string.Join(", ", offenders)} - "
+            + "`22-16` confines it to Ago.Chat.Infrastructure.Postgres and below, the same boundary "
+            + "adr/0056 draws for Ago.Chat.Migrator and for the identical reason. Checked against "
+            + "obj/project.assets.json (17-12), which is not fooled by an unused ProjectReference the "
+            + "way a compiled-assembly check is.");
     }
 
     /// <summary>The positive half - without this, deleting <c>RoleAssignmentProjectionBackfill</c>
