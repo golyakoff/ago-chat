@@ -6,6 +6,12 @@
 /// this codebase uses (`GetAllConversationsForSite.BeforeId`,
 /// `GetConversationHistoryAsOperator.BeforeSequence`).
 ///
+/// <para><paramref name="Query"/> (`23-14`): an optional name/id search, exactly as typed by the
+/// owner - trimming and "blank means no filter" are this record's own handler's job
+/// (<see cref="ListSitesForOwnerHandler"/>), not this record's, the same "the query carries what the
+/// caller said, the handler decides what it means" split every other query record in this codebase
+/// keeps.</para>
+///
 /// <para><b>No `RequestedBy` field</b>, unlike every other query record here. Those carry an
 /// <c>OperatorId</c> because their handler re-checks a permission against the `roles`/
 /// `operator_roles` tables (`GetAllConversationsForSiteHandler`). The platform owner is deliberately
@@ -25,4 +31,4 @@
 /// wants "the ten biggest tenants" is asking for a different, ranked query; that is real work for
 /// whoever needs it, not a parameter to bolt onto this one.</para>
 /// </summary>
-public sealed record ListSitesForOwner(Guid? Before, int? Limit);
+public sealed record ListSitesForOwner(string? Query, Guid? Before, int? Limit);

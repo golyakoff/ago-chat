@@ -29,4 +29,18 @@ public sealed class FakeEnabledModuleReadStore : IEnabledModuleReadStore
         SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<EnabledModuleSummary>>(
             _bySite.TryGetValue(siteId, out var list) ? [.. list] : []);
+
+    // `23-14`: interface parity only - no Application-layer handler test exercises the owner's
+    // detail read through this fake today (it is proven against real Postgres in
+    // Ago.Chat.Integration.Tests, the same split GetForSiteAsync's own remarks describe). Every
+    // seeded summary here was seeded with no expiry, so IsActive is always true and nothing seeded
+    // is ever excluded - the identical "no expiry filtering to fake" reasoning GetForSiteAsync's own
+    // remarks already give, restated for the unfiltered method.
+    public Task<IReadOnlyList<EnabledModuleDetailSummary>> GetAllForSiteAsync(
+        SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<EnabledModuleDetailSummary>>(
+            _bySite.TryGetValue(siteId, out var list)
+                ? [.. list.Select(s => new EnabledModuleDetailSummary(
+                    s.ModuleKey, s.TriggerWords, s.EntryPoint, s.GrantedByOwner, s.ExpiresAt, IsActive: true))]
+                : []);
 }

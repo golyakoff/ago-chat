@@ -1,4 +1,6 @@
-﻿namespace Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Domain;
+
+namespace Ago.Chat.Application.Abstractions;
 
 /// <summary>
 /// `12-02`: the read-side port behind `GET /api/v1/owner/sites` - hand-written SQL over the write
@@ -53,9 +55,40 @@ public interface IPlatformOverviewReadStore
     /// from <c>IClock</c>), not this port's: the SQL only needs it to be bounded, not to be any
     /// particular length.</para>
     ///
+    /// <para><paramref name="query"/> (`23-14`): an optional case-insensitive substring match against a
+    /// site's name or its own id (rendered as text), applied to the candidate set <b>before</b> paging -
+    /// so a search and the keyset cursor compose correctly instead of the cursor walking a set the
+    /// predicate has not yet narrowed. <see langword="null"/> or blank means "no filter", and the
+    /// resulting page is byte-for-byte the same one an unfiltered call would return - this is what
+    /// keeps `PlatformOwnerAsTenantTests` (which calls this port with no query at all) passing
+    /// unchanged. <b>The predicate never narrows silently</b> (this item's own "must not break"
+    /// clause): <see cref="SiteOverviewPage.MatchingSites"/> and
+    /// <see cref="SiteOverviewPage.TotalSites"/> report, on every call, how many of how many sites the
+    /// predicate matched - counted once per call from the same candidate set the page is drawn from,
+    /// never inferred from the page's own (bounded) row count, so a caller can always tell "the search
+    /// narrowed the list" apart from "the platform genuinely has fewer tenants than expected".</para>
+    ///
     /// <para><paramref name="before"/> <see langword="null"/> means "the first page" (the same
     /// convention <see cref="IConversationReadStore.GetAllForSiteAsync"/>'s `beforeId` uses).</para>
     /// </summary>
     Task<SiteOverviewPage> ListSitesAsync(
-        DateTimeOffset recentMessagesSince, Guid? before, int limit, CancellationToken cancellationToken);
+        DateTimeOffset recentMessagesSince, string? query, Guid? before, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `23-14`: the owner's per-tenant detail read - the identical eight usage signals
+    /// <see cref="ListSitesAsync"/> computes for a page of sites, computed for exactly one, named by
+    /// the caller. Still the one cross-tenant read this port exists for (this interface's own opening
+    /// remarks): the platform owner chooses <paramref name="siteId"/> directly, the same "`SiteId`
+    /// named by the caller, not resolved from a token" shape the owner's three cross-tenant writes
+    /// already have (`tenant-isolation.md`'s "the platform owner's four", now five).
+    ///
+    /// <para>Returns <see langword="null"/> when no such site exists - a genuine "not found", not the
+    /// info-hiding "wrong tenant reads like no row" shape every tenant-scoped route in this codebase
+    /// uses (`ChannelIdentityNotFound` and its siblings): there is no wrong-tenant case to hide behind
+    /// it, because the platform owner may legitimately name <i>any</i> site on the deployment. A plain
+    /// `Site.NotFound` is the honest answer to "this id does not exist", the same code `11-01` already
+    /// gave that meaning for the ordinary, single-tenant routes.</para>
+    /// </summary>
+    Task<SiteOverviewItem?> GetSiteAsync(
+        SiteId siteId, DateTimeOffset recentMessagesSince, CancellationToken cancellationToken);
 }

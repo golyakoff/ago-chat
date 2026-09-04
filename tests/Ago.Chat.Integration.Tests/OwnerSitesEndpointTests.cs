@@ -65,6 +65,64 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         // the owner identity has no `operators` row anywhere (`12-01`).
         Assert.Contains(body.Sites, s => s.SiteId == fixture.SeededSiteId.Value);
         Assert.Equal(ListSitesForOwnerHandler.RecentWindowDays, body.RecentWindowDays);
+        // `23-14`: present and consistent even on an unfiltered call - MatchingSites equals TotalSites
+        // whenever no search was sent, and both are at least the one seeded site this test just proved
+        // is present (this collection's database is shared, so ">=" is the honest assertion, not "=").
+        Assert.Equal(body.MatchingSites, body.TotalSites);
+        Assert.True(body.TotalSites >= 1);
+    }
+
+    /// <summary>`23-14`'s own Done-when: searching by part of a site's name returns it, and the
+    /// response states how many of how many - never a bare narrower page. Seeds a site with a
+    /// deliberately distinctive name so the search is unambiguous against whatever else this shared
+    /// collection's database holds.</summary>
+    [Fact]
+    public async Task OwnerToken_SearchingByPartOfAName_FindsTheSite_AndReportsMatchingOfTotal()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], "Quixotic Quokka Supplies", DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var unfiltered = await GetPageAsync(client, before: null, limit: 200);
+        var searched = await client.GetAsync($"{Route}?query=Quixotic&limit=200");
+        Assert.Equal(HttpStatusCode.OK, searched.StatusCode);
+        var body = await searched.Content.ReadFromJsonAsync<OwnerSitesResponse>();
+        Assert.NotNull(body);
+
+        Assert.Contains(body.Sites, s => s.SiteId == siteId.Value);
+        Assert.Equal(1L, body.MatchingSites);
+        // The claim the item's own author asked to be guarded: the total never disappears or shrinks
+        // to match the narrowed page - it is the same denominator the unfiltered call reports.
+        Assert.Equal(unfiltered.TotalSites, body.TotalSites);
+        Assert.True(body.MatchingSites < body.TotalSites, "The search must narrow the result for this test to prove anything.");
+    }
+
+    /// <summary>A search matching nothing: an empty `Sites` list, `MatchingSites` of zero, and
+    /// `TotalSites` still the real count - never conflated with "the platform has no tenants".</summary>
+    [Fact]
+    public async Task OwnerToken_SearchingForANameThatMatchesNothing_ReturnsAnEmptyPage_ButTheRealTotal()
+    {
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var unfiltered = await GetPageAsync(client, before: null, limit: 200);
+
+        var response = await client.GetAsync($"{Route}?query=no-such-tenant-anywhere-in-this-database&limit=200");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerSitesResponse>();
+        Assert.NotNull(body);
+
+        Assert.Empty(body.Sites);
+        Assert.Equal(0L, body.MatchingSites);
+        Assert.Equal(unfiltered.TotalSites, body.TotalSites);
     }
 
     /// <summary>The numbers, end to end over HTTP: a tenant seeded by this test with a deliberately

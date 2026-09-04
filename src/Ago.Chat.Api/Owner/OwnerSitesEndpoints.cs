@@ -1,4 +1,7 @@
-﻿using Ago.Chat.Application.UseCases.ListSitesForOwner;
+﻿using Ago.Chat.Application.UseCases.GetSiteForOwner;
+using Ago.Chat.Application.UseCases.ListSitesForOwner;
+using Ago.Chat.Api.Http;
+using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Owner;
 
@@ -19,6 +22,21 @@ namespace Ago.Chat.Api.Owner;
 /// check and could not (<see cref="ListSitesForOwnerHandler"/> says why), which is precisely why this
 /// route must never be mapped with any weaker policy, and why it is the only route in the
 /// application that resolves that handler.</para>
+///
+/// <para><b>`23-14`</b> gave the owner a per-tenant detail route, <c>GET /api/v1/owner/sites/{siteId:guid}</c>
+/// - the companion to the list above, same gate, same "no second check" shape
+/// (<see cref="GetSiteForOwnerHandler"/> says why). It is mapped by a **separate** method,
+/// <see cref="MapOwnerSiteDetailEndpoint"/>, rather than folded into <see cref="MapOwnerEndpoints"/> -
+/// the same "own file, own Map call" discipline `Program.cs` already applies to
+/// `SiteInstallationEndpoints` beside `SitesEndpoints`. Found live, building this item: several
+/// integration tests build a stripped-down `WebApplication` that calls `MapOwnerEndpoints()` alone to
+/// exercise the list endpoint without registering every handler the full host does
+/// (`PlatformOwnerAsTenantTests`, `OwnerSitesEndpointTests`) - folding the detail route into that same
+/// method made `GetSiteForOwnerHandler` an undeclared dependency of hosts that never intended to
+/// resolve it, and ASP.NET Core's Minimal API refuses to build *any* endpoint's metadata (a `GET`
+/// cannot infer a body parameter) once one endpoint's service parameter cannot be recognised - so the
+/// unrelated list endpoint failed too, in every test that never touches the detail route at all. Two
+/// map calls is what keeps a test host's registrations matching exactly the routes it maps.</para>
 /// </summary>
 public static class OwnerSitesEndpoints
 {
@@ -32,7 +50,19 @@ public static class OwnerSitesEndpoints
             .RequireAuthorization("RequirePlatformOwner");
     }
 
+    /// <summary>`23-14`: the per-tenant detail read, deliberately its own Map call - see this file's
+    /// own class remarks for why it is not folded into <see cref="MapOwnerEndpoints"/> above.
+    /// `{siteId:guid}` is what tells Minimal API's routing this segment is not another literal path
+    /// (there is no site named "sites"), the same constraint every other `{siteId:guid}` route in this
+    /// codebase already applies.</summary>
+    public static void MapOwnerSiteDetailEndpoint(this WebApplication app)
+    {
+        app.MapGet("/api/v1/owner/sites/{siteId:guid}", HandleGetSiteAsync)
+            .RequireAuthorization("RequirePlatformOwner");
+    }
+
     private static async Task<IResult> HandleListSitesAsync(
+        string? query,
         Guid? before,
         int? limit,
         ListSitesForOwnerHandler handler,
@@ -44,9 +74,26 @@ public static class OwnerSitesEndpoints
         // caller input that can be invalid - an out-of-range `limit` is clamped rather than rejected,
         // since a 400 for asking for too many rows would tell an operator nothing a page of results
         // does not. A failing query surfaces as the host's own problem-details 500, which is the
-        // truthful answer for "the database did not respond".
-        var response = await handler.HandleAsync(new ListSitesForOwner(before, limit), cancellationToken);
+        // truthful answer for "the database did not respond". `23-14`'s `query` fits the identical
+        // shape: any text at all is a legal (if perhaps zero-match) search, so there is nothing here to
+        // reject either.
+        var response = await handler.HandleAsync(new ListSitesForOwner(query, before, limit), cancellationToken);
 
         return Results.Ok(response);
+    }
+
+    /// <summary>`23-14`: unlike <see cref="HandleListSitesAsync"/>, this endpoint does have a real
+    /// failure mode - the named site may not exist - so it is the first handler on this file to go
+    /// through the ordinary <c>Result&lt;T&gt;</c>/<c>ToProblem</c> translation every other endpoint
+    /// file in this codebase already uses.</summary>
+    private static async Task<IResult> HandleGetSiteAsync(
+        Guid siteId,
+        GetSiteForOwnerHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(new GetSiteForOwner(new SiteId(siteId)), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 }
