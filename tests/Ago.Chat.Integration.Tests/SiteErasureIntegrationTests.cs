@@ -44,7 +44,21 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
 
         var (siteId, publicKey) = await SeedSiteAsync("erasure-site-1");
         var (adminOperatorId, subjectId) = await SeedAdminOperatorAsync(siteId);
-        var (conversationId, objectKey, thumbnailKey) = await SeedConversationWithAttachmentAsync(siteId);
+        var (conversationId, visitorId, objectKey, thumbnailKey) = await SeedConversationWithAttachmentAsync(siteId);
+
+        // `23-08`, Done-when #5: "deleting a site still cascades them, unchanged" - the visitor's
+        // contact detail reaches removal through the pre-existing FK chain (sites -> visitors ->
+        // visitor_contact_details, both ON DELETE CASCADE - VisitorContactDetailConfiguration's own
+        // remarks call this the backstop, not the primary mechanism), so no code in SiteErasureJob
+        // needed to change for this Done-when; only the assertion below is new.
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new VisitorContactDetailRepository(db).SaveAsync(
+                VisitorContactDetail.Record(
+                    new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Phone,
+                    "+7 000 000-00-04", adminOperatorId, Now),
+                CancellationToken.None);
+        }
 
         // `18-04`: a note and a tag - both personal data about this tenant's visitor, so both must be
         // gone once the whole account is erased, tag *vocabulary* included this time (unlike the
@@ -67,6 +81,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(1, await CountAsync("select count(*) from conversation_notes where conversation_id = @conversationId", conversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @conversationId", conversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from tags where id = @siteId", tagId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @siteId", visitorId.Value));
 
         // The real HTTP-facing write: permission-checked, one flag set, no deletion here.
         var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
@@ -111,6 +126,8 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(0, await CountAsync("select count(*) from operators where site_id = @siteId", siteId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from roles where site_id = @siteId", siteId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from visitors where site_id = @siteId", siteId.Value));
+        // `23-08`, Done-when #5: cascaded via visitors, unchanged from before this item.
+        Assert.Equal(0, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @siteId", visitorId.Value));
         // `18-04`: the note and the tag *association* are drained per-conversation by
         // ConversationErasureJob (the same table this test already proves for messages/attachments
         // above), and the tag *definition* itself is gone too - the only other conversation that could
@@ -195,7 +212,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
     /// actually uploaded to MinIO) - so the erasure assertions are about a tenant that genuinely held
     /// something, the same "a deletion proven only against empty tables proves that empty tables stay
     /// empty" reasoning <c>DemoTenantLifecycleTests.SeedConversationAsync</c>'s own remarks give.</summary>
-    private async Task<(ConversationId ConversationId, string ObjectKey, string ThumbnailKey)> SeedConversationWithAttachmentAsync(SiteId siteId)
+    private async Task<(ConversationId ConversationId, VisitorId VisitorId, string ObjectKey, string ThumbnailKey)> SeedConversationWithAttachmentAsync(SiteId siteId)
     {
         var visitorId = new VisitorId(Guid.NewGuid());
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
@@ -231,7 +248,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
                 thumbnailKey,
             });
 
-        return (conversation.Id, objectKey, thumbnailKey);
+        return (conversation.Id, visitorId, objectKey, thumbnailKey);
     }
 
     private async Task<TagId> SeedTagAsync(SiteId siteId, string name)
