@@ -98,5 +98,25 @@ public sealed class ConversationAssignmentConcurrencyTests(ConcurrencyTestFixtur
         var totalCapacity = operatorCount * operatorCapacity;
         Assert.Equal(Math.Min(conversationCount, totalCapacity), assigned.Count);
         Assert.Equal(assigned.Count, operators.Sum(o => o.ActiveChats));
+
+        // `23-03`'s own Done-when: "Two Worker replicas racing one conversation produce exactly one
+        // assignment and exactly one interval." Every assigned conversation has exactly one open,
+        // Assigned-sourced interval naming its own operator; a still-Waiting conversation - never
+        // claimed by anyone - has none. SkipLockedAssignmentClaimer writes the interval as raw SQL in
+        // the identical transaction as the claim (ConversationAssignmentIntervalSql's own remarks), so
+        // this is also the proof that the raw-SQL path is exactly as atomic as the port-based one.
+        var intervals = await verify.ConversationAssignments.AsNoTracking()
+            .Where(a => conversationIds.Contains(a.ConversationId))
+            .ToListAsync();
+        Assert.Equal(assigned.Count, intervals.Count);
+        foreach (var conversation in assigned)
+        {
+            var interval = Assert.Single(intervals, i => i.ConversationId == conversation.Id);
+            Assert.Equal(conversation.OperatorId, interval.OperatorId);
+            Assert.Equal(ConversationAssignmentSource.Assigned, interval.Source);
+            Assert.Null(interval.EndedAt);
+        }
+
+        Assert.DoesNotContain(intervals, i => stillWaiting.Select(c => c.Id).Contains(i.ConversationId));
     }
 }

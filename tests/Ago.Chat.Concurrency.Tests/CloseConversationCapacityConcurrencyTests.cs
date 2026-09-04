@@ -182,7 +182,7 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
             maxInjections: 1,
             () => SendConcurrentVisitorMessageAsync(seed, target));
         var handler = new CloseConversationHandler(
-            racing, new PermissionChecker(db), new OperatorCapacityStore(db),
+            racing, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
             NullLogger<CloseConversationHandler>.Instance);
 
@@ -488,9 +488,9 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         }
 
         var handler = new CloseConversationHandler(
-            new ConversationRepository(db), new PermissionChecker(db), new OperatorCapacityStore(db),
-            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
-            NullLogger<CloseConversationHandler>.Instance);
+            new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
+            new OperatorCapacityStore(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(),
+            new SystemClock(), NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, seed.SiteId),

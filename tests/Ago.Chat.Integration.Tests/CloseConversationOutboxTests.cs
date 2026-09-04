@@ -59,6 +59,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
         {
             var handler = new CloseConversationHandler(
                 new ConversationRepository(db),
+                new ConversationAssignmentLog(db),
                 new PermissionChecker(db),
                 new OperatorCapacityStore(db),
                 new EfOutboxWriter<AgoChatDbContext>(db),
@@ -126,6 +127,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
         {
             var handler = new CloseConversationHandler(
                 new ConversationRepository(db),
+                new ConversationAssignmentLog(db),
                 new PermissionChecker(db),
                 new OperatorCapacityStore(db),
                 new EfOutboxWriter<AgoChatDbContext>(db),
@@ -186,6 +188,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var handler = new CloseConversationHandler(
             new ConversationRepository(db),
+            new ConversationAssignmentLog(db),
             new PermissionChecker(db),
             new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db),

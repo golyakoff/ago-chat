@@ -94,5 +94,22 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
         var totalCapacity = operatorCount * operatorCapacity;
         Assert.Equal(Math.Min(conversationCount, totalCapacity), assigned.Count);
         Assert.Equal(assigned.Count, operators.Sum(o => o.ActiveChats));
+
+        // `23-03`'s own Done-when, mechanism B's own proof - see ConversationAssignmentConcurrencyTests'
+        // identical assertion for mechanism A. RedisLockAssignmentClaimer writes the interval as raw
+        // SQL in the same transaction as its own claim and save.
+        var intervals = await verify.ConversationAssignments.AsNoTracking()
+            .Where(a => conversationIds.Contains(a.ConversationId))
+            .ToListAsync();
+        Assert.Equal(assigned.Count, intervals.Count);
+        foreach (var conversation in assigned)
+        {
+            var interval = Assert.Single(intervals, i => i.ConversationId == conversation.Id);
+            Assert.Equal(conversation.OperatorId, interval.OperatorId);
+            Assert.Equal(ConversationAssignmentSource.Assigned, interval.Source);
+            Assert.Null(interval.EndedAt);
+        }
+
+        Assert.DoesNotContain(intervals, i => stillWaiting.Select(c => c.Id).Contains(i.ConversationId));
     }
 }

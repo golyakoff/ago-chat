@@ -32,6 +32,10 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<ConversationNote> ConversationNotes => Set<ConversationNote>();
     public DbSet<Tag> Tags => Set<Tag>();
     internal DbSet<ConversationTagRecord> ConversationTags => Set<ConversationTagRecord>();
+    // `23-03`: internal - reached through IConversationAssignmentLog (ConversationAssignmentLog's own
+    // Set<T>() calls) by every real caller; exposed here only so integration tests can seed/verify rows
+    // directly, the same visibility ConversationTags right above already has for the identical reason.
+    internal DbSet<ConversationAssignmentInterval> ConversationAssignments => Set<ConversationAssignmentInterval>();
     // `20-07`: EnabledModule has a real direct writer (EnabledModuleRepository); ModuleTask does not -
     // it is reached only through Conversation's own "_moduleTasks" navigation
     // (ConversationConfiguration), the identical "migration-scaffolding only" shape MessageArchives

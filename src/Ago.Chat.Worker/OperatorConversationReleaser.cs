@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Mapping;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -29,6 +30,10 @@ public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IC
 
         var conversations = new ConversationRepository(db);
         var capacity = new OperatorCapacityStore(db);
+        // `23-03`: uses the port (unlike the two claimers - see ConversationAssignmentIntervalSql's own
+        // remarks on why they do not), the same "instantiate directly, sharing this batch's own db"
+        // shape this method already uses for OperatorCapacityStore right above.
+        IConversationAssignmentLog assignmentLog = new ConversationAssignmentLog(db);
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
         var now = clock.UtcNow;
 
@@ -38,6 +43,11 @@ public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IC
             var siteId = conversation.SiteId;
             var visitorId = conversation.VisitorId;
             var consumedCapacityClaim = conversation.ReleaseToQueue(now);
+
+            // `23-03`: closes without opening - one of the two writers `23-03`'s own Scope names for
+            // this exact shape (the other is CloseConversationHandler). Staged on the same `db` this
+            // conversation's own SaveAsync flushes below, same as every other writer.
+            await assignmentLog.CloseOpenAsync(conversation.Id, now, cancellationToken);
 
             var domainEvent = conversation.DomainEvents.OfType<ConversationReleased>().Last();
             outbox.Enqueue(ConversationReleasedToQueueMapper.ToEnvelope(domainEvent, siteId, visitorId, idGenerator));

@@ -52,6 +52,7 @@ namespace Ago.Chat.Application.UseCases.CloseConversation;
 /// </summary>
 public sealed class CloseConversationHandler(
     IConversationRepository conversations,
+    IConversationAssignmentLog assignmentLog,
     IPermissionChecker permissions,
     IOperatorCapacity capacity,
     IOutboxWriter outbox,
@@ -117,10 +118,11 @@ public sealed class CloseConversationHandler(
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
         }
 
+        var now = clock.UtcNow;
         bool consumedCapacityClaim;
         try
         {
-            consumedCapacityClaim = conversation.Close(clock.UtcNow);
+            consumedCapacityClaim = conversation.Close(now);
         }
         catch (InvalidConversationStateException ex)
         {
@@ -131,10 +133,17 @@ public sealed class CloseConversationHandler(
         outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, idGenerator));
         conversation.ClearDomainEvents();
 
+        // `23-03`: closes without opening, one of the six writers `conversation_assignments` needs a
+        // real one for. A conversation assigned before this item shipped has no open interval to find
+        // (backfill is out of scope) - IConversationAssignmentLog.CloseOpenAsync's own contract makes
+        // that a silent no-op, not a failure.
+        await assignmentLog.CloseOpenAsync(conversation.Id, now, cancellationToken);
+
         // May throw ConversationConcurrencyConflictException (IConversationRepository's own contract,
         // `6-08`) - left to propagate to HandleAsync's retry wrapper rather than caught here, so this
         // method stays "the one attempt" and HandleAsync stays the one place that owns the
-        // retry-once policy.
+        // retry-once policy. The interval close staged above rides this same SaveChangesAsync - see
+        // IConversationAssignmentLog's own remarks.
         await conversations.SaveAsync(conversation, cancellationToken);
 
         // `6-09`: strictly after the save, never before. A release ahead of the save would be undone

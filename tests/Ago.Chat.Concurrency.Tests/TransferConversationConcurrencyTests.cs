@@ -474,9 +474,9 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
     {
         await using var db = fixture.CreateDbContext();
         var handler = new TransferConversationHandler(
-            new ConversationRepository(db), new OperatorRepository(db), new PermissionChecker(db),
-            new OperatorCapacityStore(db), new EfUnitOfWork(db), new EfOutboxWriter<AgoChatDbContext>(db),
-            new UuidV7Generator(), new SystemClock());
+            new ConversationRepository(db), new OperatorRepository(db), new ConversationAssignmentLog(db),
+            new PermissionChecker(db), new OperatorCapacityStore(db), new EfUnitOfWork(db),
+            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
 
         return await handler.HandleAsync(
             new TransferConversation(conversationId, from, to, seed.SiteId), cancellationToken);
@@ -496,9 +496,9 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
         }
 
         var handler = new Application.UseCases.CloseConversation.CloseConversationHandler(
-            new ConversationRepository(db), new PermissionChecker(db), new OperatorCapacityStore(db),
-            new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
-            NullLogger<Application.UseCases.CloseConversation.CloseConversationHandler>.Instance);
+            new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
+            new OperatorCapacityStore(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(),
+            new SystemClock(), NullLogger<Application.UseCases.CloseConversation.CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, seed.SiteId),

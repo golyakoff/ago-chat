@@ -106,7 +106,15 @@ public sealed class RedisLockAssignmentClaimer(
         {
             // `6-09`: holdsCapacityClaim: true - same reasoning as SkipLockedAssignmentClaimer's own
             // call, and the same transaction rolls both back together if this save loses on `xmin`.
-            conversation.AssignTo(operatorId, clock.UtcNow, holdsCapacityClaim: true);
+            var now = clock.UtcNow;
+            conversation.AssignTo(operatorId, now, holdsCapacityClaim: true);
+
+            // `23-03`: raw SQL, not IConversationAssignmentLog - ConversationAssignmentIntervalSql's
+            // own remarks explain why both claimers are the deliberate exception to that port.
+            await ConversationAssignmentIntervalSql.InsertOpenAsync(
+                db, idGenerator, conversation.SiteId, conversationId, operatorId, ConversationAssignmentSource.Assigned,
+                now, cancellationToken);
+
             var domainEvent = conversation.DomainEvents.OfType<ConversationAssigned>().Last();
             var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
             outbox.Enqueue(ConversationAssignedToOperatorMapper.ToEnvelope(domainEvent, conversation.SiteId, conversation.VisitorId, idGenerator));

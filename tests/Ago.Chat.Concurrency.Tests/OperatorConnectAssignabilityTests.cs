@@ -170,7 +170,9 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         SiteId siteId, OperatorId operatorId, string connectionId, IConnectionRegistry registry, LocalConnectionTracker tracker, NodeId node)
     {
         var db = fixture.CreateDbContext();
-        var assignConversation = new AssignConversationHandler(new ConversationRepository(db), new PermissionChecker(db), new SystemClock());
+        var assignConversation = new AssignConversationHandler(
+            new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
+            new UuidV7Generator(), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
             new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
         var getHistory = new GetConversationHistoryHandler(
