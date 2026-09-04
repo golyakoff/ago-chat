@@ -27,6 +27,7 @@ using Ago.Chat.Application.UseCases.UntagConversation;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
+using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.GenerateReplyDraft;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
@@ -78,6 +79,7 @@ using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeModuleForSite;
+using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RotateModuleCredential;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
@@ -540,6 +542,11 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RotateModuleCredentialHandler>();
         services.AddScoped<RevokeModuleForSiteHandler>();
         services.AddScoped<VerifyModuleRegistrationHandler>();
+        // `22-17`: the platform owner's own grant/revoke - a second caller of the identical `22-11`
+        // module-first registration mechanism above, gated entirely by RequirePlatformOwner at the
+        // route rather than by IPermissionChecker (OwnerModuleEndpoints' own remarks).
+        services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
+        services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();

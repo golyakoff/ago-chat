@@ -26,13 +26,15 @@ public class EnableModuleForSiteHandlerTests
         var readStore = new FakeEnabledModuleReadStore();
         var permissions = new FakePermissionChecker();
         var registrationGateway = new FakeModuleRegistrationGateway();
+        var sites = new FakeSiteRepository();
+        sites.Seed(new Site(SiteId, "test-public-key", allowedOrigins: [], name: "Barbershop"));
         if (permitted)
         {
             permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
         }
 
         var handler = new EnableModuleForSiteHandler(
-            modules, readStore, permissions, registrationGateway, new FakeClock(Now), new FakeIdGenerator());
+            modules, readStore, permissions, registrationGateway, sites, new FakeClock(Now), new FakeIdGenerator());
         return new Fixture(handler, modules, readStore, permissions, registrationGateway);
     }
 
@@ -75,7 +77,7 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_WhenATriggerWordAlreadyBelongsToAnotherEnabledModule_IsRejected()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential)));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential), GrantedByOwner: false, ExpiresAt: null));
 
         var result = await fixture.Handler.HandleAsync(Command("taxi", "/booking"), CancellationToken.None);
 
@@ -88,7 +90,7 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_TheConflictCheckIsCaseInsensitive()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/BOOKING"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential)));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/BOOKING"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential), GrantedByOwner: false, ExpiresAt: null));
 
         var result = await fixture.Handler.HandleAsync(Command("taxi", "/booking"), CancellationToken.None);
 
@@ -103,9 +105,9 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_ChecksEveryExistingModule_NotJustTheFirstOne()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("first"), ["/first"], new Uri("https://a.example.com"), new ModuleCredential(ValidCredential)));
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("second"), ["/second"], new Uri("https://b.example.com"), new ModuleCredential(ValidCredential)));
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("third"), ["/third"], new Uri("https://c.example.com"), new ModuleCredential(ValidCredential)));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("first"), ["/first"], new Uri("https://a.example.com"), new ModuleCredential(ValidCredential), GrantedByOwner: false, ExpiresAt: null));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("second"), ["/second"], new Uri("https://b.example.com"), new ModuleCredential(ValidCredential), GrantedByOwner: false, ExpiresAt: null));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("third"), ["/third"], new Uri("https://c.example.com"), new ModuleCredential(ValidCredential), GrantedByOwner: false, ExpiresAt: null));
 
         var result = await fixture.Handler.HandleAsync(Command("fourth", "/third"), CancellationToken.None);
 
@@ -118,7 +120,7 @@ public class EnableModuleForSiteHandlerTests
     public async Task HandleAsync_DoesNotConflictWithItself_WhenTheSameModuleKeyReRegisters()
     {
         var fixture = CreateFixture();
-        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential)));
+        fixture.ReadStore.Seed(SiteId, new EnabledModuleSummary(new ModuleKey("calendar"), ["/booking"], new Uri("https://calendar.example.com"), new ModuleCredential(ValidCredential), GrantedByOwner: false, ExpiresAt: null));
 
         var result = await fixture.Handler.HandleAsync(Command("calendar", "/booking"), CancellationToken.None);
 

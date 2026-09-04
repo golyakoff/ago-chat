@@ -37,10 +37,15 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSite;
 /// still-unregistered site succeeds the same way the first attempt would have). See this repository's
 /// own report for the fuller argument against an eventually-consistent, outbox-dispatched
 /// alternative.</para>
+///
+/// <para><b>`22-17`: this handler's own grant always carries <c>GrantedByOwner: false</c> and
+/// <c>ExpiresAt: null</c>.</b> A tenant configuring their own module is not a trial - see
+/// <see cref="EnabledModule.ExpiresAt"/>'s own remarks and <see cref="EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwnerHandler"/>,
+/// the sibling handler the platform owner's own grant goes through instead of this one.</para>
 /// </summary>
 public sealed class EnableModuleForSiteHandler(
     IEnabledModuleRepository modules, IEnabledModuleReadStore moduleReadStore, IPermissionChecker permissions,
-    IModuleRegistrationGateway registrationGateway, IClock clock, IIdGenerator idGenerator)
+    IModuleRegistrationGateway registrationGateway, ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
 {
     public async Task<Result<EnabledModuleId>> HandleAsync(
         EnableModuleForSite command, CancellationToken cancellationToken)
@@ -85,7 +90,8 @@ public sealed class EnableModuleForSiteHandler(
             return ConversationErrors.ModuleTriggerWordReserved(reservedConflict);
         }
 
-        var existingOnSite = await moduleReadStore.GetForSiteAsync(command.SiteId, cancellationToken);
+        var now = clock.UtcNow;
+        var existingOnSite = await moduleReadStore.GetForSiteAsync(command.SiteId, now, cancellationToken);
 
         foreach (var existing in existingOnSite)
         {
@@ -102,18 +108,24 @@ public sealed class EnableModuleForSiteHandler(
             }
         }
 
-        var now = clock.UtcNow;
         EnabledModule module;
         try
         {
             module = new EnabledModule(
                 new EnabledModuleId(idGenerator.NewId(now)), command.SiteId, moduleKey, command.TriggerWords,
-                entryPoint, credential, now);
+                entryPoint, credential, now, grantedByOwner: false, expiresAt: null);
         }
         catch (ArgumentException ex)
         {
             return ConversationErrors.ModuleInvalid(ex.Message);
         }
+
+        // `22-17`: an opaque display name for the module's own provisioning call - see
+        // IModuleRegistrationGateway.RegisterAsync's own remarks on why this is not "chat learning a
+        // product's name". A site with no name recorded (Site.Name's own remarks: optional, ~60
+        // legacy call sites) falls back to something a module's own admin surface can still show.
+        var site = await sites.GetByIdAsync(command.SiteId, cancellationToken);
+        var displayName = string.IsNullOrWhiteSpace(site?.Name) ? $"site-{command.SiteId.Value}" : site.Name;
 
         // `22-11`: the module deployment confirms the registration before this row is ever
         // persisted - see this handler's own remarks on the ordering.
@@ -121,7 +133,7 @@ public sealed class EnableModuleForSiteHandler(
         {
             await registrationGateway.RegisterAsync(
                 new ModuleRegistrationTarget(moduleKey, command.SiteId, entryPoint), credential, provisioningSecret,
-                cancellationToken);
+                displayName, cancellationToken);
         }
         catch (ModuleUnreachableException ex)
         {

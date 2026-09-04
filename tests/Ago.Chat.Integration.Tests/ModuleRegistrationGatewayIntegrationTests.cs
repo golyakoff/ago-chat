@@ -33,11 +33,14 @@ public class ModuleRegistrationGatewayIntegrationTests
         var gateway = new HttpModuleRegistrationGateway(new HttpClient());
         var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
 
-        await gateway.RegisterAsync(target, new ModuleCredential("a-shared-secret-of-sixteen-plus-chars"), ProvisioningSecret, CancellationToken.None);
+        await gateway.RegisterAsync(
+            target, new ModuleCredential("a-shared-secret-of-sixteen-plus-chars"), ProvisioningSecret, "Barbershop",
+            CancellationToken.None);
 
         var received = Assert.Single(server.ReceivedRegisterRequests);
         Assert.Equal(ProvisioningSecret.Value, received.ProvisioningSecretHeader);
         Assert.Equal("a-shared-secret-of-sixteen-plus-chars", received.Credential);
+        Assert.Equal("Barbershop", received.DisplayName);
         Assert.Equal($"/api/v1/module-registrations/{SiteId.Value}", received.Path);
     }
 
@@ -103,7 +106,8 @@ public class ModuleRegistrationGatewayIntegrationTests
         var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
 
         await Assert.ThrowsAsync<ModuleUnreachableException>(() => gateway.RegisterAsync(
-            target, new ModuleCredential("a-shared-secret-of-sixteen-plus-chars"), ProvisioningSecret, CancellationToken.None));
+            target, new ModuleCredential("a-shared-secret-of-sixteen-plus-chars"), ProvisioningSecret, "Barbershop",
+            CancellationToken.None));
     }
 
     [Fact]
@@ -117,7 +121,8 @@ public class ModuleRegistrationGatewayIntegrationTests
         var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
 
         await Assert.ThrowsAsync<ModuleUnreachableException>(() => gateway.RegisterAsync(
-            target, new ModuleCredential("a-shared-secret-of-sixteen-plus-chars"), ProvisioningSecret, CancellationToken.None));
+            target, new ModuleCredential("a-shared-secret-of-sixteen-plus-chars"), ProvisioningSecret, "Barbershop",
+            CancellationToken.None));
     }
 
     /// <summary>A minimal Kestrel host answering the generic registration contract - the identical
@@ -133,7 +138,7 @@ public class ModuleRegistrationGatewayIntegrationTests
 
         public string StatusResponseJson { get; set; } = """{"exists":false,"registeredAt":null,"hasCredentialInGracePeriod":false}""";
 
-        public List<(string Path, string ProvisioningSecretHeader, string Credential)> ReceivedRegisterRequests { get; } = [];
+        public List<(string Path, string ProvisioningSecretHeader, string Credential, string DisplayName)> ReceivedRegisterRequests { get; } = [];
 
         public List<(string Path, string NewCredential)> ReceivedRotateRequests { get; } = [];
 
@@ -161,7 +166,8 @@ public class ModuleRegistrationGatewayIntegrationTests
                     ReceivedRegisterRequests.Add((
                         context.Request.Path,
                         context.Request.Headers["X-Ago-Module-Provisioning-Secret"].ToString(),
-                        body.RootElement.GetProperty("credential").GetString()!));
+                        body.RootElement.GetProperty("credential").GetString()!,
+                        body.RootElement.TryGetProperty("displayName", out var name) ? name.GetString() ?? "" : ""));
                 }
             });
 

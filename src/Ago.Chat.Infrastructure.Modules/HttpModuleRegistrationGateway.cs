@@ -33,10 +33,12 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
 
     public async Task RegisterAsync(
         ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
-        CancellationToken cancellationToken)
+        string displayName, CancellationToken cancellationToken)
     {
         var uri = BuildUri(module.EntryPoint, $"api/v1/module-registrations/{module.SiteId.Value}");
-        await SendAsync(HttpMethod.Put, uri, new { credential = credential.Value }, module.ModuleKey, provisioningSecret, cancellationToken);
+        await SendAsync(
+            HttpMethod.Put, uri, new { credential = credential.Value, displayName }, module.ModuleKey,
+            provisioningSecret, cancellationToken);
     }
 
     public async Task RotateAsync(

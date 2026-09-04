@@ -284,5 +284,25 @@ internal static class TenantScopeExemptions
             + "SiteId is used only as a structural cross-check against the loaded ChannelIdentity's own real site - "
             + "refusing a caller who named the wrong site in the URL, never a claim this handler trusts to scope a "
             + "query.",
+        ["Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwnerHandler.HandleAsync"] =
+            "`22-17`, the platform owner's own deliberate cross-tenant write - granting a module to a named tenant "
+            + "with no payment (sales trials, and repairing a payment that succeeded without provisioning). The "
+            + "identical category as UnlinkChannelIdentityAsOwnerHandler right above: SiteId names the tenant being "
+            + "granted the module, not a resource the caller already owns, and the whole access-control story is "
+            + "the RequirePlatformOwner policy on OwnerModuleEndpoints - Ago.Chat.Application still has no port that "
+            + "can see a Keycloak realm-role claim, so a permission check here would be a second, weaker copy of a "
+            + "rule the policy already decided. Unlike UnlinkChannelIdentityAsOwnerHandler, there is no prior row to "
+            + "cross-check the SiteId against - granting is what brings the EnabledModule row into existence, the "
+            + "same 'no prior object to check ownership of' shape RegisterSiteHandler's own entry describes for "
+            + "creating a tenant.",
+        ["Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler.HandleAsync"] =
+            "`22-17`, the platform owner's own revoke - the mirror of EnableModuleForSiteAsOwnerHandler right above, "
+            + "proving a grant can be taken back. Same reasoning: SiteId names the tenant being acted on, not a "
+            + "resource the caller already owns, and RequirePlatformOwner on OwnerModuleEndpoints is the entire "
+            + "access-control story. The SiteId is used to load the EnabledModule row being revoked - "
+            + "modules.GetAsync(siteId, moduleKey) - so a caller cannot revoke a different site's registration by "
+            + "naming its module key against the wrong SiteId; the (site, module) pair is the row's own key, the "
+            + "same structural protection RevokeModuleForSiteHandler's own operator-gated sibling gets from its "
+            + "additional IPermissionChecker call.",
     };
 }
