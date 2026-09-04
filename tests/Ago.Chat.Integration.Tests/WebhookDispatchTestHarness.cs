@@ -92,6 +92,36 @@ internal static class WebhookDispatchTestHarness
         ResponseHeadersTimeout = responseHeadersTimeout ?? TimeSpan.FromSeconds(1),
     };
 
+    /// <summary>
+    /// `15-17`: a caller of <see cref="ResilienceOptions"/> that goes on to wait a bounded time for
+    /// real deliveries to land (`WebhookDispatchSharedQueueRegressionTests`,
+    /// `WebhookDispatchIdempotencyTests` - neither is `WebhookDispatchBreakerTests`' subject) must
+    /// call this immediately after, with the same wait it is about to make, so the two numbers cannot
+    /// drift apart silently again the way they did in the CI failure this item fixes: `BreakDuration`
+    /// defaulted to 30s, the test waited 20s, and a single slow call under load (`MinimumThroughput:
+    /// 2` against six messages is a hair trigger) opened the breaker for longer than the test could
+    /// ever wait out - a guaranteed `5/6`, not a flaky one.
+    ///
+    /// Deliberately a hard throw, not a comment next to each number: a comment is exactly what this
+    /// project already had, and it did not stop the two from drifting apart. Requiring
+    /// `BreakDuration` at most half of `wait` (not merely less than it) leaves room for the
+    /// mechanism's own polling granularity and for a second spurious trip inside the same window,
+    /// not just a single one landing exactly at the wire.
+    /// </summary>
+    public static void AssertBreakDurationFitsWithinWait(ResiliencePipelineOptions resilienceOptions, TimeSpan wait)
+    {
+        var breakDuration = resilienceOptions.CircuitBreaker!.BreakDuration;
+        if (wait < breakDuration * 2)
+        {
+            throw new InvalidOperationException(
+                $"This test's own BreakDuration ({breakDuration}) is not comfortably (2x) shorter than the " +
+                $"{wait} it is about to wait for real deliveries - a spurious circuit-open (this test is not " +
+                "WebhookDispatchBreakerTests, so a single slow call under load must self-heal quickly, not be " +
+                "prevented outright) could not recover before the wait gives up. Shorten BreakDuration or " +
+                "lengthen the wait deliberately, here, together - not by changing one without the other. (15-17)");
+        }
+    }
+
     public static async Task<SiteId> SeedSiteAsync(AgoChatDbContext db, SiteId? siteId = null)
     {
         var id = siteId ?? new SiteId(Guid.NewGuid());

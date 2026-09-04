@@ -28,7 +28,10 @@ public sealed class SiteCacheInvalidationConsumer(
     ILogger<SiteCacheInvalidationConsumer> logger) : BackgroundService
 {
     // `5-11`: this consumer's own stable identity - see `ConnectionFanoutConsumer`'s own remarks.
-    private const string ConsumerName = "site-cache-invalidation";
+    //
+    // `15-17`: `internal`, not `private` - see `ConnectionFanoutConsumer.ConsumerName`'s own remarks
+    // for why a test needs this exact value rather than a retyped copy of it.
+    internal const string ConsumerName = "site-cache-invalidation";
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
