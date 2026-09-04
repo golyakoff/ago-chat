@@ -50,6 +50,9 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Worker\Ago.Chat.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Webhooks\Ago.Chat.Webhooks.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Migrator\Ago.Chat.Migrator.csproj" />
+    <!-- `22-16`: the fifth deployable, and the second one-shot tool (Ago.Chat.Migrator is the first) -
+         RoleAssignmentProjectionBackfillHostTests needs its compiled output loadable the same way. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.RoleAssignmentBackfill\Ago.Chat.RoleAssignmentBackfill.csproj" />
   </ItemGroup>
 
 </Project>

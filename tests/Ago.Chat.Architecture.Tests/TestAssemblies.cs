@@ -29,6 +29,7 @@ internal static class TestAssemblies
     public static ProductAssembly Worker { get; } = Load("Ago.Chat.Worker");
     public static ProductAssembly Webhooks { get; } = Load("Ago.Chat.Webhooks");
     public static ProductAssembly Migrator { get; } = Load("Ago.Chat.Migrator");
+    public static ProductAssembly RoleAssignmentBackfill { get; } = Load("Ago.Chat.RoleAssignmentBackfill");
 
     /// <summary>The three hosts that serve traffic - `adr/0013`'s split. `8-08`'s rule is precisely
     /// that none of them may apply a schema migration; <see cref="Migrator"/> is deliberately not in
@@ -57,7 +58,7 @@ internal static class TestAssemblies
     /// reason nobody can attribute.</para>
     /// </summary>
     public static IReadOnlyList<ProductAssembly> EveryChatAssembly { get; } =
-        [Domain, Application, Contracts, InfrastructurePostgres, Module, Api, Worker, Webhooks, Migrator];
+        [Domain, Application, Contracts, InfrastructurePostgres, Module, Api, Worker, Webhooks, Migrator, RoleAssignmentBackfill];
 
     private static ProductAssembly Load(string simpleName)
     {

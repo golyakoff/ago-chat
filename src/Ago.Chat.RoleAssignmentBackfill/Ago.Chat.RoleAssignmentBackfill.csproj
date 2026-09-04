@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <!-- `22-16`/`adr/0056`'s own precedent (Ago.Chat.Migrator): "it opens a connection, does one thing,
+       reports what it did, and exits." References Ago.Chat.Infrastructure.Postgres and nothing above
+       it - not Ago.Chat.Module, which wires RabbitMQ, Redis, S3 and Keycloak and validates every one of
+       them at startup. Staging an outbox row needs none of that: the broker round trip is
+       Ago.Chat.Worker's own OutboxDispatcher, on its own schedule, unchanged by this project existing.
+       RoleAssignmentProjectionBackfillHostTests (Ago.Chat.Architecture.Tests) asserts this reference
+       list rather than trusting this comment, the same belt-and-braces SchemaMigrationTests already
+       applies to Ago.Chat.Migrator. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <ProjectReference Include="..\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+  </ItemGroup>
+
+  <!-- Microsoft.NET.Sdk, not Microsoft.NET.Sdk.Web like the three serving hosts: this one serves
+       nothing and has no port, exactly Ago.Chat.Migrator's own reasoning (adr/0056). -->
+
+</Project>
