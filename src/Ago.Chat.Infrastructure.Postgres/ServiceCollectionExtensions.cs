@@ -35,6 +35,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SchemaVersionCheck>();
 
         services.AddScoped<IConversationRepository, ConversationRepository>();
+        // `23-03`: scoped, sharing the request's own AgoChatDbContext with IConversationRepository -
+        // see ConversationAssignmentLog's own remarks on why that sharing is what lets its writes land
+        // in the same SaveChangesAsync as the conversation's.
+        services.AddScoped<IConversationAssignmentLog, ConversationAssignmentLog>();
         services.AddScoped<IAttachmentRepository, AttachmentRepository>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();

@@ -77,6 +77,7 @@ namespace Ago.Chat.Application.UseCases.TransferConversation;
 public sealed class TransferConversationHandler(
     IConversationRepository conversations,
     IOperatorRepository operators,
+    IConversationAssignmentLog assignmentLog,
     IPermissionChecker permissions,
     IOperatorCapacity capacity,
     IUnitOfWork unitOfWork,
@@ -229,9 +230,10 @@ public sealed class TransferConversationHandler(
             }
         }
 
+        var now = clock.UtcNow;
         try
         {
-            conversation.TransferTo(command.ToOperatorId, clock.UtcNow);
+            conversation.TransferTo(command.ToOperatorId, now);
         }
         catch (InvalidConversationStateException ex)
         {
@@ -243,6 +245,16 @@ public sealed class TransferConversationHandler(
             return ConversationErrors.InvalidState(ex.Message);
         }
 
+        // `23-03`: the one writer that closes an interval and opens another in the same transaction.
+        // Both stamped with the identical `now` TransferTo itself just used, so the departing
+        // operator's interval ends at the exact instant the receiving operator's begins - "they do not
+        // overlap beyond the transaction's own instant" (`23-03`'s own Done-when), by construction
+        // rather than by a second clock read that could disagree with the first by a tick.
+        await assignmentLog.CloseOpenAsync(conversation.Id, now, cancellationToken);
+        assignmentLog.Open(ConversationAssignmentInterval.Open(
+            new ConversationAssignmentId(idGenerator.NewId(now)), command.SiteId, conversation.Id,
+            command.ToOperatorId, ConversationAssignmentSource.Transferred, now));
+
         var domainEvent = conversation.DomainEvents.OfType<ConversationTransferred>().Single();
         outbox.Enqueue(ConversationTransferredMapper.ToEnvelope(
             domainEvent, command.SiteId, conversation.VisitorId, idGenerator));
@@ -250,8 +262,9 @@ public sealed class TransferConversationHandler(
 
         // May throw ConversationConcurrencyConflictException (IConversationRepository's own contract,
         // `6-08`) - left to propagate to HandleAsync's retry loop. Runs inside this method's ambient
-        // transaction exactly like the two capacity calls above: a conflict here aborts everything
-        // this attempt did, the same as a deadlock on either capacity statement would.
+        // transaction exactly like the two capacity calls above and the interval close/open just
+        // staged: a conflict here aborts everything this attempt did, the same as a deadlock on either
+        // capacity statement would.
         await conversations.SaveAsync(conversation, cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);

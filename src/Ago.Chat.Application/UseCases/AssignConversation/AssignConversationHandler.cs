@@ -12,10 +12,21 @@ namespace Ago.Chat.Application.UseCases.AssignConversation;
 /// its attachments, see the visitor's presence) is gated on being its *assigned* operator, so this
 /// is the choke point those checks all rest on: if a caller can become the assignee of another
 /// tenant's conversation, every one of those participant checks answers "yes" for them afterwards.
+///
+/// <para>`23-03`: also one of the six writers of <c>conversation_assignments</c> - opens an interval
+/// with <see cref="ConversationAssignmentSource.Assigned"/> whenever <see cref="Domain.Conversation.AssignTo"/>
+/// actually transitions the conversation, and stays silent for the same-operator reconnect no-op that
+/// method also handles (<c>OperatorHub.JoinConversationAsync</c> calls this on every join, including a
+/// reconnect - see <see cref="AssignAndSaveAsync"/>'s own remarks on how the two are told apart). Why
+/// <c>Assigned</c> and not a distinct value for a human's own deliberate claim: see
+/// <see cref="ConversationAssignmentSource.Assigned"/>'s own remarks - that distinction does not exist
+/// in the code yet, so this item does not invent one in the data either.</para>
 /// </summary>
 public sealed class AssignConversationHandler(
     IConversationRepository conversations,
+    IConversationAssignmentLog assignmentLog,
     IPermissionChecker permissions,
+    IIdGenerator idGenerator,
     IClock clock)
 {
     public async Task<Result> HandleAsync(AssignConversation command, CancellationToken cancellationToken)
@@ -91,18 +102,46 @@ public sealed class AssignConversationHandler(
     private async Task<Result> AssignAndSaveAsync(
         Conversation conversation, AssignConversation command, CancellationToken cancellationToken)
     {
+        var now = clock.UtcNow;
         try
         {
-            conversation.AssignTo(command.OperatorId, clock.UtcNow);
+            conversation.AssignTo(command.OperatorId, now);
         }
         catch (InvalidConversationStateException ex)
         {
             return ConversationErrors.InvalidState(ex.Message);
         }
 
+        // `23-03`: ConversationAssigned is only raised when AssignTo actually transitioned the
+        // conversation - its own same-operator reconnect no-op returns before adding it. Checking the
+        // event rather than, say, "was the conversation Waiting before this call" keeps this in step
+        // with the aggregate's own definition of "did anything happen" without this handler having to
+        // duplicate it (the identical event-as-signal idiom the two Ago.Chat.Worker claimers and
+        // TransferConversationHandler already use to decide what belongs in their own outbox rows).
+        if (conversation.DomainEvents.OfType<ConversationAssigned>().Any())
+        {
+            assignmentLog.Open(ConversationAssignmentInterval.Open(
+                new ConversationAssignmentId(idGenerator.NewId(now)), command.SiteId, conversation.Id,
+                command.OperatorId, ConversationAssignmentSource.Assigned, now));
+        }
+
+        // `23-03`: cleared unconditionally, even on the no-op path where nothing was added - every
+        // other reader of DomainEvents in this codebase (the two claimers, TransferConversationHandler,
+        // CloseConversationHandler) clears immediately after reading, and this handler had never needed
+        // to before now because it enqueued no outbox row. Skipping it here is a real bug, not a
+        // cosmetic one: SaveAsync does not clear on success (only on a concurrency-conflict retry,
+        // ConversationRepository's own remarks), so a *second* call against the identical in-memory
+        // aggregate - the reconnect no-op this whole check exists to recognise - would still see the
+        // *first* call's stale ConversationAssigned sitting in the list and open a second interval for
+        // it. Found by AssignConversationHandlerTests.HandleAsync_WhenTheSameOperatorReconnects_OpensNoSecondInterval
+        // failing against a repository that (correctly) hands back the same tracked instance twice.
+        conversation.ClearDomainEvents();
+
         // May throw ConversationConcurrencyConflictException (IConversationRepository's own contract,
         // `6-08`) - left to propagate to HandleAsync's retry wrapper, same reasoning as
-        // CloseConversationHandler.CloseAndSaveAsync.
+        // CloseConversationHandler.CloseAndSaveAsync. The interval Open above is staged, not committed,
+        // on the same AgoChatDbContext this SaveAsync flushes - see IConversationAssignmentLog's own
+        // remarks for why that is what keeps the two in one transaction (CLAUDE.md rule 4).
         await conversations.SaveAsync(conversation, cancellationToken);
         return Result.Success();
     }

@@ -19,6 +19,7 @@ public class CloseConversationHandlerTests
         FakePermissionChecker Permissions,
         FakeOutboxWriter Outbox,
         FakeOperatorCapacity Capacity,
+        FakeConversationAssignmentLog AssignmentLog,
         Conversation Conversation);
 
     private static Fixture CreateHandlerWithAssignedConversation(
@@ -43,10 +44,11 @@ public class CloseConversationHandlerTests
 
         var outbox = new FakeOutboxWriter();
         var capacity = new FakeOperatorCapacity();
+        var assignmentLog = new FakeConversationAssignmentLog();
         var handler = new CloseConversationHandler(
-            conversations, permissions, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now),
+            conversations, assignmentLog, permissions, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now),
             NullLogger<CloseConversationHandler>.Instance);
-        return new Fixture(handler, conversations, permissions, outbox, capacity, conversation);
+        return new Fixture(handler, conversations, permissions, outbox, capacity, assignmentLog, conversation);
     }
 
     [Fact]
@@ -222,7 +224,7 @@ public class CloseConversationHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationClose);
         var handler = new CloseConversationHandler(
-            conversations, permissions, new FakeOperatorCapacity(), new FakeOutboxWriter(),
+            conversations, new FakeConversationAssignmentLog(), permissions, new FakeOperatorCapacity(), new FakeOutboxWriter(),
             new FakeIdGenerator(), new FakeClock(Now), NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
@@ -231,5 +233,36 @@ public class CloseConversationHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+    }
+
+    /// <summary>
+    /// `23-03`'s own Done-when: "A conversation closed while held leaves no open interval." At the
+    /// handler-unit level this proves the decision (CloseOpenAsync was asked for, for this
+    /// conversation) rather than the real transactional atomicity, which
+    /// <c>Ago.Chat.Integration.Tests</c> proves against a real Postgres.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenPermittedAndAssignedToThisOperator_ClosesTheOpenInterval()
+    {
+        var fixture = CreateHandlerWithAssignedConversation();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(fixture.Conversation.Id, Assert.Single(fixture.AssignmentLog.ClosedFor));
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenNotPermitted_ClosesNoInterval()
+    {
+        var fixture = CreateHandlerWithAssignedConversation(grantPermission: false);
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.Empty(fixture.AssignmentLog.ClosedFor);
     }
 }

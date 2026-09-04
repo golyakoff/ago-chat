@@ -2,6 +2,7 @@
 using Ago.Chat.Worker;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 namespace Ago.Chat.Integration.Tests;
@@ -41,6 +42,13 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
                 // hand-picked case has its own test right underneath.
                 conversation.AssignTo(operatorId, Now, holdsCapacityClaim: true);
                 db.Conversations.Add(conversation);
+                // `23-03`: an open interval per assignment, standing in for what
+                // SkipLockedAssignmentClaimer/RedisLockAssignmentClaimer would really have written -
+                // this test seeds the conversation directly rather than through either claimer, so the
+                // interval has to be seeded the same deliberate way `active_chats` is seeded below.
+                db.ConversationAssignments.Add(ConversationAssignmentInterval.Open(
+                    new ConversationAssignmentId(Guid.NewGuid()), siteId, conversationId, operatorId,
+                    ConversationAssignmentSource.Assigned, Now));
                 conversationIds.Add(conversationId);
             }
 
@@ -77,6 +85,10 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
             var conversation = await verify.Conversations.FindAsync(conversationId);
             Assert.Equal(ConversationState.Waiting, conversation!.State);
             Assert.Null(conversation.OperatorId);
+
+            // `23-03`'s own Done-when: OperatorConversationReleaser closes without opening.
+            var interval = await verify.ConversationAssignments.SingleAsync(i => i.ConversationId == conversationId);
+            Assert.NotNull(interval.EndedAt);
         }
 
         await using var readConnection = await fixture.DataSource.OpenConnectionAsync();
@@ -105,6 +117,7 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
     {
         var siteId = new SiteId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationIds = new List<ConversationId>();
 
         await using (var db = fixture.CreateDbContext())
         {
@@ -115,9 +128,17 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
             {
                 var visitorId = new VisitorId(Guid.NewGuid());
                 db.Visitors.Add(new Visitor(visitorId, siteId, Now));
-                var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+                var conversationId = new ConversationId(Guid.NewGuid());
+                var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
                 conversation.AssignTo(operatorId, Now, holdsCapacityClaim);
                 db.Conversations.Add(conversation);
+                // `23-03`: every assigned conversation gets an interval regardless of whether it holds
+                // a capacity claim - CloseOpenAsync in the release loop is unconditional, only the
+                // capacity release itself is gated on the claim.
+                db.ConversationAssignments.Add(ConversationAssignmentInterval.Open(
+                    new ConversationAssignmentId(Guid.NewGuid()), siteId, conversationId, operatorId,
+                    ConversationAssignmentSource.Assigned, Now));
+                conversationIds.Add(conversationId);
             }
 
             await db.SaveChangesAsync();
@@ -140,6 +161,13 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
         await using var readCommand = new NpgsqlCommand("SELECT active_chats FROM operators WHERE id = @id", readConnection);
         readCommand.Parameters.AddWithValue("id", operatorId.Value);
         Assert.Equal(0, (int)(await readCommand.ExecuteScalarAsync())!);
+
+        await using var verify = fixture.CreateDbContext();
+        foreach (var conversationId in conversationIds)
+        {
+            var interval = await verify.ConversationAssignments.SingleAsync(i => i.ConversationId == conversationId);
+            Assert.NotNull(interval.EndedAt);
+        }
     }
 
     [Fact]

@@ -84,6 +84,12 @@ public sealed class SkipLockedAssignmentClaimer(NpgsqlDataSource dataSource, ICl
             // CloseConversationHandler has something exact to hand back on close.
             conversation.AssignTo(operatorId, now, holdsCapacityClaim: true);
 
+            // `23-03`: raw SQL, not IConversationAssignmentLog - see ConversationAssignmentIntervalSql's
+            // own remarks for why this claimer is one of the two deliberate exceptions to that port.
+            await ConversationAssignmentIntervalSql.InsertOpenAsync(
+                db, idGenerator, siteId, conversationId, operatorId, ConversationAssignmentSource.Assigned, now,
+                cancellationToken);
+
             var domainEvent = conversation.DomainEvents.OfType<ConversationAssigned>().Last();
             outbox.Enqueue(ConversationAssignedToOperatorMapper.ToEnvelope(domainEvent, siteId, conversation.VisitorId, idGenerator));
             conversation.ClearDomainEvents();

@@ -38,7 +38,7 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var racingRepository = new RacingConversationRepository(
             new ConversationRepository(db), maxInjections: 1, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new CloseConversationHandler(
-            racingRepository, new PermissionChecker(db), new OperatorCapacityStore(db),
+            racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
             NullLogger<CloseConversationHandler>.Instance);
 
@@ -76,7 +76,7 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var racingRepository = new RacingConversationRepository(
             new ConversationRepository(db), maxInjections: 2, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new CloseConversationHandler(
-            racingRepository, new PermissionChecker(db), new OperatorCapacityStore(db),
+            racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
             NullLogger<CloseConversationHandler>.Instance);
 
@@ -116,7 +116,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var racingRepository = new RacingConversationRepository(
             new ConversationRepository(db), maxInjections: 1, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
-        var handler = new AssignConversationHandler(racingRepository, new PermissionChecker(db), new SystemClock());
+        var handler = new AssignConversationHandler(
+            racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new UuidV7Generator(), new SystemClock());
 
         var result = await handler.HandleAsync(new AssignConversation(conversationId, operatorId, siteId), CancellationToken.None);
 

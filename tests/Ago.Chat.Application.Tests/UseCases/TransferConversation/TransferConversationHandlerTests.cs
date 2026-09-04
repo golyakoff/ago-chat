@@ -22,6 +22,7 @@ public class TransferConversationHandlerTests
         FakeOutboxWriter Outbox,
         FakeOperatorCapacity Capacity,
         FakeUnitOfWork UnitOfWork,
+        FakeConversationAssignmentLog AssignmentLog,
         Conversation Conversation);
 
     private static Fixture CreateHandlerWithAssignedConversation(
@@ -56,9 +57,10 @@ public class TransferConversationHandlerTests
         var outbox = new FakeOutboxWriter();
         var capacity = new FakeOperatorCapacity();
         var unitOfWork = new FakeUnitOfWork();
+        var assignmentLog = new FakeConversationAssignmentLog();
         var handler = new Application.UseCases.TransferConversation.TransferConversationHandler(
-            conversations, operators, permissions, capacity, unitOfWork, outbox, new FakeIdGenerator(), new FakeClock(Now));
-        return new Fixture(handler, conversations, operators, permissions, outbox, capacity, unitOfWork, conversation);
+            conversations, operators, assignmentLog, permissions, capacity, unitOfWork, outbox, new FakeIdGenerator(), new FakeClock(Now));
+        return new Fixture(handler, conversations, operators, permissions, outbox, capacity, unitOfWork, assignmentLog, conversation);
     }
 
     private static Application.UseCases.TransferConversation.TransferConversation Command(
@@ -196,6 +198,17 @@ public class TransferConversationHandlerTests
         var envelope = Assert.Single(fixture.Outbox.Enqueued);
         Assert.Equal(nameof(ConversationAssignedToOperator), envelope.Type);
         Assert.Equal(fixture.Conversation.Id.Value.ToString(), envelope.PartitionKey);
+
+        // `23-03`'s own Done-when: "A transfer leaves two rows: the first with an ended_at, the second
+        // open, and they do not overlap beyond the transaction's own instant." At the handler-unit
+        // level this proves the decision (close the departing operator's interval, open the receiving
+        // one, both stamped with the identical instant) - the real single-transaction guarantee is
+        // Ago.Chat.Integration.Tests' job, matching this test's own outbox assertion right above.
+        Assert.Equal(fixture.Conversation.Id, Assert.Single(fixture.AssignmentLog.ClosedFor));
+        var opened = Assert.Single(fixture.AssignmentLog.Opened);
+        Assert.Equal(ToOperatorId, opened.OperatorId);
+        Assert.Equal(ConversationAssignmentSource.Transferred, opened.Source);
+        Assert.Null(opened.EndedAt);
     }
 
     [Fact]
@@ -234,6 +247,10 @@ public class TransferConversationHandlerTests
         // transaction's own DisposeAsync is what a rolled-back Postgres transaction becomes here.
         Assert.Equal(1, fixture.UnitOfWork.TransactionsBegun);
         Assert.Equal(0, fixture.UnitOfWork.TransactionsCommitted);
+        // Refused before TransferTo ever ran (the capacity claim is the first statement in this
+        // branch), so the interval log was never touched either.
+        Assert.Empty(fixture.AssignmentLog.Opened);
+        Assert.Empty(fixture.AssignmentLog.ClosedFor);
     }
 
     /// <summary>`18-02`'s own instance of `6-10`'s shape: every attempt this handler is willing to make
@@ -267,8 +284,8 @@ public class TransferConversationHandlerTests
         var attempt = 0;
         var flakyCapacity = new FlakyOnceCapacity(fixture.Capacity, () => attempt++ == 0);
         var handler = new Application.UseCases.TransferConversation.TransferConversationHandler(
-            fixture.Conversations, fixture.Operators, fixture.Permissions, flakyCapacity, fixture.UnitOfWork,
-            fixture.Outbox, new FakeIdGenerator(), new FakeClock(Now));
+            fixture.Conversations, fixture.Operators, fixture.AssignmentLog, fixture.Permissions, flakyCapacity,
+            fixture.UnitOfWork, fixture.Outbox, new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(Command(fixture), CancellationToken.None);
 
