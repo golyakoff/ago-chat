@@ -137,14 +137,16 @@ public sealed class OfflineAutoReplyDeliveryEndToEndTests(ConnectionFanoutFixtur
         await fanoutConsumer.StartAsync(CancellationToken.None);
         await nodeConsumer.StartAsync(CancellationToken.None);
 
-        // `15-17`: wait for the fact each Competing subscription's own queue actually exists, not a
-        // fixed sleep - see WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync
-        // alone cannot be awaited for this. autoReplyConsumer and fanoutConsumer are two independent
-        // Competing subscribers of the *same* MessageAccepted topic (5-11's own shape) - each needs
-        // its own queue, so both are waited for explicitly rather than assuming one implies the other.
-        await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+        // `15-17`: wait for the fact each Competing subscription's own queue has a live consumer
+        // attached, not merely that the queue exists - see WebhookDispatchSharedQueueRegressionTests'
+        // own remarks for why StartAsync alone cannot be awaited for this, and
+        // RabbitMqSubscriptionTestHelpers' own remarks for why "the queue exists" is not enough.
+        // autoReplyConsumer and fanoutConsumer are two independent Competing subscribers of the *same*
+        // MessageAccepted topic (5-11's own shape) - each needs its own queue, so both are waited for
+        // explicitly rather than assuming one implies the other.
+        using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
         await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
-            subscriptionProbeConnection, TimeSpan.FromSeconds(10),
+            subscriptionManagementClient, TimeSpan.FromSeconds(10),
             (nameof(MessageAccepted), SendOfflineAutoReplyHandler.ConsumerName),
             (nameof(MessageAccepted), ConnectionFanoutConsumer.ConsumerName),
             (NodeTopics.For(node), RabbitMqSubscriptionTestHelpers.NodeDeliveryConsumerName));

@@ -62,16 +62,19 @@ public sealed class WebhookDispatchIdempotencyTests(WebhookDispatchFixture fixtu
         await consumer.StartAsync(CancellationToken.None);
         try
         {
-            // `15-17`: wait for the fact the subscription's own queue actually exists, not a fixed
-            // sleep - see WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync
-            // alone cannot be awaited for this.
-            await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+            // `15-17`: wait for the fact the subscription's own queue has a live consumer attached,
+            // not merely that the queue exists - see WebhookDispatchSharedQueueRegressionTests' own
+            // remarks for why StartAsync alone cannot be awaited for this, and why a passive-declare
+            // existence check is not enough either.
+            using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
             var subscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
-                subscriptionProbeConnection, nameof(ConversationAssignedToOperator),
+                subscriptionManagementClient, nameof(ConversationAssignedToOperator),
                 ConversationAssignmentWebhookDispatchConsumer.ConsumerName, TimeSpan.FromSeconds(10));
             Assert.True(subscriptionLanded,
                 $"The '{ConversationAssignmentWebhookDispatchConsumer.ConsumerName}' subscription to " +
-                $"'{nameof(ConversationAssignedToOperator)}' never landed - no queue with that name was bound within 10s.");
+                $"'{nameof(ConversationAssignedToOperator)}' never landed - queue " +
+                $"'{RabbitMqSubscriptionTestHelpers.CompetingQueueName(nameof(ConversationAssignedToOperator), ConversationAssignmentWebhookDispatchConsumer.ConsumerName)}' " +
+                "never reached a live consumer within 10s.");
 
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
             var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);

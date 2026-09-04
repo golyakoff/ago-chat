@@ -187,31 +187,31 @@ public sealed class OfflineAutoReplyEndToEndTests(ConnectionFanoutFixture fixtur
 
         // `15-17`: cacheInvalidationConsumer subscribes Broadcast, not Competing - its queue is
         // exclusive, auto-delete, and named with a random suffix generated inside SubscribeAsync
-        // (RabbitMqSubscriptionTestHelpers' own remarks), so there is no name to passively declare the
-        // way the Competing wait below uses. The only externally-observable fact is "how many queues
-        // are now bound to this topic's exchange" - captured *before* starting the consumer, so an
-        // unrelated queue left bound by an earlier test in this same collection fixture does not make
-        // the wait below pass before this test's own subscription has actually landed.
+        // (RabbitMqSubscriptionTestHelpers' own remarks), so there is no name to check a consumer
+        // count on directly the way the Competing wait below does. Snapshot the queue names already
+        // bound to the exchange *before* starting the consumer, so an unrelated queue left bound by an
+        // earlier test in this same collection fixture cannot be mistaken for this test's own new one.
         using var management = fixture.CreateRabbitMqManagementClient();
-        var cacheInvalidatedBindingsBeforeStart = await RabbitMqSubscriptionTestHelpers.CountQueuesBoundToExchangeAsync(
+        var cacheInvalidatedQueueNamesBeforeStart = await RabbitMqSubscriptionTestHelpers.GetQueueNamesBoundToExchangeAsync(
             management, CacheTopics.Invalidated, CancellationToken.None);
 
         await dispatcher.StartAsync(CancellationToken.None);
         await siteCacheInvalidationConsumer.StartAsync(CancellationToken.None);
         await cacheInvalidationConsumer.StartAsync(CancellationToken.None);
 
-        // `15-17`: wait for the fact each subscription's own queue (or, for the Broadcast one, a new
-        // binding) actually exists, not a fixed sleep - see WebhookDispatchSharedQueueRegressionTests'
-        // own remarks for why StartAsync alone cannot be awaited for this.
-        await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+        // `15-17`: wait for the fact each subscription's own queue has a live consumer attached, not
+        // merely that the queue exists (or, for the Broadcast one, is bound) - see
+        // WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync alone cannot be
+        // awaited for this, and RabbitMqSubscriptionTestHelpers' own remarks for why a weaker check
+        // (existence, or a binding) is not enough.
         await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
-            subscriptionProbeConnection, TimeSpan.FromSeconds(10),
+            management, TimeSpan.FromSeconds(10),
             (nameof(SiteSettingsChanged), SiteCacheInvalidationConsumer.ConsumerName));
         var cacheInvalidationLanded = await RabbitMqSubscriptionTestHelpers.WaitForNewBroadcastSubscriptionAsync(
-            management, CacheTopics.Invalidated, cacheInvalidatedBindingsBeforeStart, TimeSpan.FromSeconds(10));
+            management, CacheTopics.Invalidated, cacheInvalidatedQueueNamesBeforeStart, TimeSpan.FromSeconds(10));
         Assert.True(cacheInvalidationLanded,
             $"The Broadcast cache-invalidation subscription to '{CacheTopics.Invalidated}' never landed - no new " +
-            "queue was bound to its exchange within 10s.");
+            "queue bound to its exchange ever reached a live consumer within 10s.");
 
         try
         {

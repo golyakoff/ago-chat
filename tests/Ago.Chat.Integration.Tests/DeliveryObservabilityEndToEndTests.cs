@@ -112,12 +112,13 @@ public sealed class DeliveryObservabilityEndToEndTests(ConnectionFanoutFixture f
         await nodeConsumerA.StartAsync(CancellationToken.None);
         await nodeConsumerB.StartAsync(CancellationToken.None);
 
-        // `15-17`: wait for the fact each Competing subscription's own queue actually exists, not a
-        // fixed sleep - see WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync
-        // alone cannot be awaited for this.
-        await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+        // `15-17`: wait for the fact each Competing subscription's own queue has a live consumer
+        // attached, not merely that the queue exists - see WebhookDispatchSharedQueueRegressionTests'
+        // own remarks for why StartAsync alone cannot be awaited for this, and
+        // RabbitMqSubscriptionTestHelpers' own remarks for why "the queue exists" is not enough.
+        using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
         await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
-            subscriptionProbeConnection, TimeSpan.FromSeconds(10),
+            subscriptionManagementClient, TimeSpan.FromSeconds(10),
             (nameof(MessageAccepted), ConnectionFanoutConsumer.ConsumerName),
             (NodeTopics.For(nodeA), RabbitMqSubscriptionTestHelpers.NodeDeliveryConsumerName),
             (NodeTopics.For(nodeB), RabbitMqSubscriptionTestHelpers.NodeDeliveryConsumerName));
