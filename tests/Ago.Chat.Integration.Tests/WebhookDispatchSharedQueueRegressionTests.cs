@@ -87,23 +87,32 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
         await fanoutConsumer.StartAsync(CancellationToken.None);
         try
         {
-            // `15-17`: wait for the fact each Competing subscription's own queue actually exists,
-            // not a fixed sleep - awaiting StartAsync only awaits BackgroundService.StartAsync's
-            // synchronous kickoff, never the SubscribeAsync work it starts running in the background
-            // (.NET's own BackgroundService never awaits the task it hands to ExecuteAsync).
-            await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+            // `15-17`: wait for the fact each Competing subscription's own queue has a live consumer
+            // attached, not merely that the queue exists - awaiting StartAsync only awaits
+            // BackgroundService.StartAsync's synchronous kickoff, never the SubscribeAsync work it
+            // starts running in the background (.NET's own BackgroundService never awaits the task it
+            // hands to ExecuteAsync). A prior version of this fix checked queue existence via a
+            // passive AMQP declare, which succeeds as soon as the queue is declared - before it is
+            // bound - and still lost publishes into the declare-to-bind window under real CI load
+            // (golyakoff/ago-chat/actions/runs/33839119087); RabbitMqSubscriptionTestHelpers' own
+            // remarks cover why the consumer count is the right fact instead.
+            using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
             var webhookSubscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
-                subscriptionProbeConnection, nameof(ConversationAssignedToOperator),
+                subscriptionManagementClient, nameof(ConversationAssignedToOperator),
                 ConversationAssignmentWebhookDispatchConsumer.ConsumerName, TimeSpan.FromSeconds(10));
             Assert.True(webhookSubscriptionLanded,
                 $"The '{ConversationAssignmentWebhookDispatchConsumer.ConsumerName}' subscription to " +
-                $"'{nameof(ConversationAssignedToOperator)}' never landed - no queue with that name was bound within 10s.");
+                $"'{nameof(ConversationAssignedToOperator)}' never landed - queue " +
+                $"'{RabbitMqSubscriptionTestHelpers.CompetingQueueName(nameof(ConversationAssignedToOperator), ConversationAssignmentWebhookDispatchConsumer.ConsumerName)}' " +
+                "never reached a live consumer within 10s.");
             var fanoutSubscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
-                subscriptionProbeConnection, nameof(ConversationAssignedToOperator),
+                subscriptionManagementClient, nameof(ConversationAssignedToOperator),
                 ConversationAssignmentFanoutConsumer.ConsumerName, TimeSpan.FromSeconds(10));
             Assert.True(fanoutSubscriptionLanded,
                 $"The '{ConversationAssignmentFanoutConsumer.ConsumerName}' subscription to " +
-                $"'{nameof(ConversationAssignedToOperator)}' never landed - no queue with that name was bound within 10s.");
+                $"'{nameof(ConversationAssignedToOperator)}' never landed - queue " +
+                $"'{RabbitMqSubscriptionTestHelpers.CompetingQueueName(nameof(ConversationAssignedToOperator), ConversationAssignmentFanoutConsumer.ConsumerName)}' " +
+                "never reached a live consumer within 10s.");
 
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
             var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);

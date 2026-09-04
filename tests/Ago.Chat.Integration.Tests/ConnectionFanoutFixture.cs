@@ -25,10 +25,10 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
 
     // `15-17`: the RabbitMQ management API port. Not exposed by `RabbitMqBuilder` by default (only
     // 5672 is), even though `rabbitmq:4-management`'s own image always runs the plugin - explicit
-    // `WithPortBinding` is what actually publishes it to the host. Needed by
-    // `OfflineAutoReplyEndToEndTests`' `Broadcast` subscription wait
-    // (`RabbitMqSubscriptionTestHelpers.CountQueuesBoundToExchangeAsync`'s own remarks explain why
-    // plain AMQP cannot answer "is a Broadcast queue bound yet" at all).
+    // `WithPortBinding` is what actually publishes it to the host. Every subscription wait in this
+    // collection now goes through it - both the `Competing` case (a queue's own `consumers` count,
+    // `RabbitMqSubscriptionTestHelpers.GetQueueConsumerCountAsync`) and `OfflineAutoReplyEndToEndTests`'
+    // `Broadcast` one - since plain AMQP has no way to ask "is a consumer actually attached yet."
     private const int RabbitMqManagementPort = 15672;
 
     private PostgreSqlContainer _postgres = null!;

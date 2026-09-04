@@ -116,13 +116,15 @@ public sealed class TracingEndToEndTests(ConnectionFanoutFixture fixture)
         await fanoutConsumer.StartAsync(CancellationToken.None);
         await nodeConsumer.StartAsync(CancellationToken.None);
 
-        // `15-17`: wait for the fact each Competing subscription's own queue actually exists, not a
-        // fixed sleep - see WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync
-        // alone cannot be awaited for this. workerHost/flusherService are the in-process channel
-        // pipeline (concurrency.md) - no RabbitMQ subscription of their own, so nothing to wait for.
-        await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+        // `15-17`: wait for the fact each Competing subscription's own queue has a live consumer
+        // attached, not merely that the queue exists - see WebhookDispatchSharedQueueRegressionTests'
+        // own remarks for why StartAsync alone cannot be awaited for this, and
+        // RabbitMqSubscriptionTestHelpers' own remarks for why "the queue exists" is not enough.
+        // workerHost/flusherService are the in-process channel pipeline (concurrency.md) - no RabbitMQ
+        // subscription of their own, so nothing to wait for.
+        using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
         await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
-            subscriptionProbeConnection, TimeSpan.FromSeconds(10),
+            subscriptionManagementClient, TimeSpan.FromSeconds(10),
             (nameof(MessageAccepted), ConnectionFanoutConsumer.ConsumerName),
             (NodeTopics.For(node), RabbitMqSubscriptionTestHelpers.NodeDeliveryConsumerName));
 
