@@ -22,7 +22,12 @@ public sealed class AttachmentThumbnailConsumer(
     ILogger<AttachmentThumbnailConsumer> logger) : BackgroundService
 {
     // `5-11`: this consumer's own stable identity - see `ConnectionFanoutConsumer`'s own remarks.
-    private const string ConsumerName = "attachment-thumbnail";
+    // `internal`, not `private`, as of `15-20` - `AttachmentThumbnailEndToEndTests` (in-repo, covered
+    // by this project's own `InternalsVisibleTo`, `AssemblyInfo.cs`) needs it to compute this
+    // `Competing` subscription's exact queue name for `RabbitMqSubscriptionTestHelpers`'
+    // `WaitForCompetingSubscriptionAsync`, the same way `ConnectionFanoutConsumer.ConsumerName`
+    // already is for its own tests.
+    internal const string ConsumerName = "attachment-thumbnail";
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {

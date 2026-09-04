@@ -1,6 +1,9 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Net.Http.Headers;
+using System.Text;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -35,13 +38,22 @@ public sealed class UnreadCounterEndToEndTests
 {
     private const string Username = "ago-test";
     private const string Password = "ago-test-local-dev";
+
+    // `15-20`: the RabbitMQ management API port - `ConnectionFanoutFixture`'s own remarks on this
+    // same constant. Needed here because this test's own `RabbitMqSubscriptionTestHelpers` wait
+    // reads a queue's live `consumers` count, and plain AMQP has no way to ask that.
+    private const int RabbitMqManagementPort = 15672;
+
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public async Task VisitorMessage_SentThroughTheRealHandlerChain_IncrementsTheOperatorsUnreadCount()
     {
         var postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
-        var rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithUsername(Username).WithPassword(Password).Build();
+        var rabbitMq = new RabbitMqBuilder("rabbitmq:4-management")
+            .WithUsername(Username).WithPassword(Password)
+            .WithPortBinding(RabbitMqManagementPort, true)
+            .Build();
         await Task.WhenAll(postgres.StartAsync(), rabbitMq.StartAsync());
 
         try
@@ -91,19 +103,31 @@ public sealed class UnreadCounterEndToEndTests
                 Options.Create(new UnreadCounterConsumerOptions()),
                 NullLogger<UnreadCounterConsumer>.Instance);
 
+            using var management = CreateRabbitMqManagementClient(rabbitMq, Username, Password);
+
             await dispatcher.StartAsync(CancellationToken.None);
             await consumer.StartAsync(CancellationToken.None);
             try
             {
-                // Both StartAsync calls return once their BackgroundService.ExecuteAsync task has
-                // been kicked off, not once SubscribeAsync's queue declare+bind has actually landed
-                // on the broker - without this, the dispatcher's own NOTIFY-driven publish (as soon
-                // as the row below is inserted) can race ahead of the consumer's durable queue
-                // existing, and a fanout exchange drops a message published before any queue is
-                // bound to it rather than deferring it. 500ms measured flaky (failed roughly one run
-                // in three) when the rest of the suite's own containers were also starting up
-                // concurrently; 2s gave no further failures across repeated runs.
-                await Task.Delay(TimeSpan.FromSeconds(2));
+                // `15-20`: both StartAsync calls return once their BackgroundService.ExecuteAsync
+                // task has been kicked off, not once SubscribeAsync's queue declare+bind+consume has
+                // actually landed on the broker - without waiting for that, the dispatcher's own
+                // NOTIFY-driven publish (as soon as the row below is inserted) can race ahead of the
+                // consumer's durable queue existing, and a fanout exchange drops a message published
+                // before any queue is bound to it rather than deferring it. This used to be a fixed
+                // `Task.Delay(TimeSpan.FromSeconds(2))` - a guessed duration, not a check of the fact
+                // that actually matters - replaced with a poll of a live consumer being attached
+                // (`RabbitMqSubscriptionTestHelpers`' own remarks on why that is step 4, not step 1
+                // or step 2), the same wait `OfflineAutoReplyEndToEndTests`/
+                // `WidgetConfigCacheInvalidationEndToEndTests` already use for their own `Competing`
+                // subscriptions. `UnreadCounterConsumer` subscribes `Competing`
+                // (`UnreadCounterConsumer.ExecuteAsync`), so its queue name is computable in advance
+                // and pollable directly by name, unlike a `Broadcast` subscription.
+                var subscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
+                    management, nameof(MessageAccepted), RecordUnreadMessageHandler.ConsumerName, TimeSpan.FromSeconds(10));
+                Assert.True(subscriptionLanded,
+                    $"The '{RecordUnreadMessageHandler.ConsumerName}' subscription to '{nameof(MessageAccepted)}' " +
+                    "never reached a live consumer within 10s.");
 
                 // 2-02's real handler path - the same one an HTTP request would go through - stages
                 // the message and the outbox row in one SaveChangesAsync.
@@ -153,5 +177,21 @@ public sealed class UnreadCounterEndToEndTests
         services.AddSingleton<IClock, SystemClock>();
         services.AddScoped<RecordUnreadMessageHandler>();
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>`15-20`: a client against this test's own RabbitMQ management API - identical shape to
+    /// `ConnectionFanoutFixture.CreateRabbitMqManagementClient`/`WebhookDispatchFixture`'s own copy of
+    /// it, inlined here rather than through a fixture because this test (like
+    /// `AttachmentThumbnailEndToEndTests`) deliberately owns non-shared containers rather than using
+    /// one of the collection fixtures - see this class's own remarks on why.</summary>
+    private static HttpClient CreateRabbitMqManagementClient(RabbitMqContainer rabbitMq, string username, string password)
+    {
+        var client = new HttpClient
+        {
+            BaseAddress = new Uri($"http://{rabbitMq.Hostname}:{rabbitMq.GetMappedPublicPort(RabbitMqManagementPort)}"),
+        };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}")));
+        return client;
     }
 }

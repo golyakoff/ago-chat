@@ -1,5 +1,8 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Net.Http.Headers;
+using System.Text;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -43,13 +46,22 @@ public sealed class AttachmentThumbnailEndToEndTests
     private const string MinioUsername = "ago-test";
     private const string MinioPassword = "ago-test-local-dev";
     private const string Bucket = "attachments";
+
+    // `15-20`: the RabbitMQ management API port - `ConnectionFanoutFixture`'s own remarks on this
+    // same constant. Needed here because this test's own `RabbitMqSubscriptionTestHelpers` wait
+    // reads a queue's live `consumers` count, and plain AMQP has no way to ask that.
+    private const int RabbitMqManagementPort = 15672;
+
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public async Task ConfirmingAnImageAttachment_ProducesARealThumbnail_ViaTheRealOutboxAndConsumer()
     {
         var postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
-        var rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithUsername(RabbitUsername).WithPassword(RabbitPassword).Build();
+        var rabbitMq = new RabbitMqBuilder("rabbitmq:4-management")
+            .WithUsername(RabbitUsername).WithPassword(RabbitPassword)
+            .WithPortBinding(RabbitMqManagementPort, true)
+            .Build();
         var minio = new MinioBuilder("minio/minio:RELEASE.2025-09-07T16-13-09Z").WithUsername(MinioUsername).WithPassword(MinioPassword).Build();
         await Task.WhenAll(postgres.StartAsync(), rabbitMq.StartAsync(), minio.StartAsync());
 
@@ -129,14 +141,26 @@ public sealed class AttachmentThumbnailEndToEndTests
                 Options.Create(new AttachmentThumbnailConsumerOptions()),
                 NullLogger<AttachmentThumbnailConsumer>.Instance);
 
+            using var management = CreateRabbitMqManagementClient(rabbitMq, RabbitUsername, RabbitPassword);
+
             await dispatcher.StartAsync(CancellationToken.None);
             await consumer.StartAsync(CancellationToken.None);
             try
             {
-                // Same reasoning as UnreadCounterEndToEndTests: give the consumer's durable queue
-                // time to actually bind before the dispatcher's NOTIFY-driven publish can race ahead
-                // of it.
-                await Task.Delay(TimeSpan.FromSeconds(2));
+                // `15-20`: same reasoning as UnreadCounterEndToEndTests - wait for the fact this
+                // Competing subscription's own queue has a live consumer attached
+                // (RabbitMqSubscriptionTestHelpers' own remarks on why that is step 4, not step 1),
+                // replacing a fixed `Task.Delay(TimeSpan.FromSeconds(2))` that was a guess at how
+                // long SubscribeAsync's queue declare+bind+consume actually takes rather than a check
+                // of it - without this, the dispatcher's own NOTIFY-driven publish (as soon as the
+                // attachment is confirmed below) can race ahead of the consumer's durable queue
+                // existing, and a fanout exchange drops a message published before any queue is
+                // bound to it rather than deferring it.
+                var subscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
+                    management, nameof(AttachmentConfirmed), AttachmentThumbnailConsumer.ConsumerName, TimeSpan.FromSeconds(10));
+                Assert.True(subscriptionLanded,
+                    $"The '{AttachmentThumbnailConsumer.ConsumerName}' subscription to '{nameof(AttachmentConfirmed)}' " +
+                    "never reached a live consumer within 10s.");
 
                 await using var confirmDb = new AgoChatDbContext(dbOptions);
                 var confirmHandler = new ConfirmAttachmentHandler(
@@ -205,5 +229,21 @@ public sealed class AttachmentThumbnailEndToEndTests
         using var image = SKImage.FromBitmap(bitmap);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
+    }
+
+    /// <summary>`15-20`: a client against this test's own RabbitMQ management API - identical shape to
+    /// `ConnectionFanoutFixture.CreateRabbitMqManagementClient`/`WebhookDispatchFixture`'s own copy of
+    /// it, inlined here rather than through a fixture because this test (like
+    /// `UnreadCounterEndToEndTests`) deliberately owns non-shared containers rather than using one of
+    /// the collection fixtures - see this class's own remarks on why.</summary>
+    private static HttpClient CreateRabbitMqManagementClient(RabbitMqContainer rabbitMq, string username, string password)
+    {
+        var client = new HttpClient
+        {
+            BaseAddress = new Uri($"http://{rabbitMq.Hostname}:{rabbitMq.GetMappedPublicPort(RabbitMqManagementPort)}"),
+        };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}")));
+        return client;
     }
 }
