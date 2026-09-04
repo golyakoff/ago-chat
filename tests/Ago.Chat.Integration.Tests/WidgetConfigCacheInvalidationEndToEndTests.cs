@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -92,10 +93,35 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
         var cacheInvalidationConsumer = new CacheInvalidationConsumer(
             new RabbitMqEventConsumer(cacheInvalidationConsumerConnection), cache, NullLogger<CacheInvalidationConsumer>.Instance);
 
+        // `15-17`/`15-18`: cacheInvalidationConsumer subscribes Broadcast, not Competing - its queue is
+        // exclusive, auto-delete, and named with a random suffix generated inside SubscribeAsync
+        // (RabbitMqSubscriptionTestHelpers' own remarks), so there is no name to check a consumer count
+        // on directly the way the Competing wait below does. Snapshot the queue names already bound to
+        // the exchange *before* starting the consumer, so an unrelated queue left bound by an earlier
+        // test in this same collection fixture cannot be mistaken for this test's own new one.
+        using var management = fixture.CreateRabbitMqManagementClient();
+        var cacheInvalidatedQueueNamesBeforeStart = await RabbitMqSubscriptionTestHelpers.GetQueueNamesBoundToExchangeAsync(
+            management, CacheTopics.Invalidated, CancellationToken.None);
+
         await dispatcher.StartAsync(CancellationToken.None);
         await siteCacheInvalidationConsumer.StartAsync(CancellationToken.None);
         await cacheInvalidationConsumer.StartAsync(CancellationToken.None);
-        await Task.Delay(TimeSpan.FromMilliseconds(500)); // subscriptions to actually land - see NodeFanoutTests' own precedent
+
+        // `15-18`: wait for the fact each subscription's own queue has a live consumer attached, not
+        // merely that the queue exists (or, for the Broadcast one, is bound) - replacing the fixed
+        // Task.Delay(500) this test carried (the ninth of the eight `15-17` fixed). See
+        // RabbitMqSubscriptionTestHelpers' own remarks for why a weaker check (existence, or a
+        // binding) is not enough, and OfflineAutoReplyEndToEndTests for the identical two-subscription
+        // shape (the same SiteCacheInvalidationConsumer -> CacheInvalidationConsumer chain) this
+        // follows.
+        await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
+            management, TimeSpan.FromSeconds(10),
+            (nameof(SiteSettingsChanged), SiteCacheInvalidationConsumer.ConsumerName));
+        var cacheInvalidationLanded = await RabbitMqSubscriptionTestHelpers.WaitForNewBroadcastSubscriptionAsync(
+            management, CacheTopics.Invalidated, cacheInvalidatedQueueNamesBeforeStart, TimeSpan.FromSeconds(10));
+        Assert.True(cacheInvalidationLanded,
+            $"The Broadcast cache-invalidation subscription to '{CacheTopics.Invalidated}' never landed - no new " +
+            "queue bound to its exchange ever reached a live consumer within 10s.");
 
         try
         {
