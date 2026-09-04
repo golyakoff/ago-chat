@@ -57,12 +57,24 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
             return ConversationErrors.AnalyticsInvalidRange("The report range's start must be before its end.");
         }
 
-        var result = await readStore.GetSiteAnalyticsAsync(query.SiteId, from, to, cancellationToken);
+        // `23-16`: same shape `GetConversionReportForSiteHandler` establishes - the preceding window
+        // read through the identical single-window port, called a second time, both calls issued
+        // before either is awaited. Only the overall bucket gets a comparison - see
+        // `OperatorAnalyticsResponse.PreviousOverall`'s own remarks for why not every breakdown row.
+        var (previousFrom, previousTo) = PrecedingPeriod.Before(from, to);
+        var currentTask = readStore.GetSiteAnalyticsAsync(query.SiteId, from, to, cancellationToken);
+        var previousTask = readStore.GetSiteAnalyticsAsync(query.SiteId, previousFrom, previousTo, cancellationToken);
+        await Task.WhenAll(currentTask, previousTask);
+        var result = currentTask.Result;
+        var previousResult = previousTask.Result;
 
         return new OperatorAnalyticsResponse(
             from,
             to,
             ToDto(result.Overall),
+            previousFrom,
+            previousTo,
+            ToDto(previousResult.Overall),
             result.ByChannel.Select(c => new OperatorAnalyticsChannelBucketDto(c.Channel, ToDto(c.Bucket))).ToList(),
             result.ByOperator.Select(o => new OperatorAnalyticsOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList(),
             result.ByReferrer.Select(r => new OperatorAnalyticsReferrerBucketDto(r.ReferrerHost, ToDto(r.Bucket))).ToList(),

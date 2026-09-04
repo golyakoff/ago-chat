@@ -33,7 +33,8 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// twice, and this report runs at human frequency (`ITagBreakdownReadStore`'s own "not a caching
 /// concern" remarks), so that cost is not one this class needs to optimise away.</para>
 /// </summary>
-public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource) : ITagBreakdownReadStore
+public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource, AnalyticsOptions analyticsOptions)
+    : ITagBreakdownReadStore
 {
     // `18-10`'s own `nameof(...)` discipline, restated here rather than shared: a rename of
     // ConversationOutcome's members fails this class at compile time too, the same reason
@@ -104,6 +105,14 @@ public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource) : ITagBre
             ? null
             : (double)overall.TaggedConversationCount / overall.TotalConversationCount;
 
+        // `23-16`: the identical threshold-guarded rank `ConversionReportReadStore.byOperator` already
+        // establishes, applied here because a tag breakdown is exactly the same kind of ranking (a
+        // reader compares tags against each other on their own conversion rate) - tags whose
+        // `RecordedCount` meets `AnalyticsOptions.MinimumSampleForRate` rank first, by `ConversionRate`
+        // descending; the rest follow, by `ConversationCount` descending instead (a tag's own volume,
+        // which - unlike `RecordedCount` - is never zero for a tag that appears here at all, since
+        // `ByTagSql`'s own `inner join` only produces a row for a tag actually applied to a
+        // conversation). `TagName` is the final, fully deterministic tie-break for both groups.
         var byTag = rows
             .Select(r => new TagBreakdownBucket(
                 new TagId(r.TagId),
@@ -113,12 +122,18 @@ public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource) : ITagBre
                 r.NotConvertedCount,
                 r.ConvertedCount + r.NotConvertedCount,
                 BuildRate(r.ConvertedCount, r.NotConvertedCount)))
-            .OrderBy(b => b.TagName, StringComparer.Ordinal)
+            .OrderByDescending(b => MeetsSampleThreshold(b))
+            .ThenByDescending(b => MeetsSampleThreshold(b) ? b.ConversionRate : null)
+            .ThenByDescending(b => b.ConversationCount)
+            .ThenBy(b => b.TagName, StringComparer.Ordinal)
             .ToList();
 
         return new TagBreakdownResult(
             overall.TotalConversationCount, overall.TaggedConversationCount, percentageTagged, byTag);
     }
+
+    private bool MeetsSampleThreshold(TagBreakdownBucket bucket) =>
+        bucket.RecordedCount >= analyticsOptions.MinimumSampleForRate;
 
     private static double? BuildRate(long converted, long notConverted)
     {

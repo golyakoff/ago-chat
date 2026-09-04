@@ -89,8 +89,8 @@ public class GetModuleFlowReportForSiteHandlerTests
         var expectedFrom = Now.AddDays(-GetModuleFlowReportForSiteHandler.DefaultWindowDays);
         Assert.Equal(expectedFrom, result.Value.From);
         Assert.Equal(Now, result.Value.To);
-        Assert.Equal(expectedFrom, store.LastFrom);
-        Assert.Equal(Now, store.LastTo);
+        Assert.Equal(expectedFrom, store.Calls[0].From);
+        Assert.Equal(Now, store.Calls[0].To);
     }
 
     [Fact]
@@ -107,8 +107,8 @@ public class GetModuleFlowReportForSiteHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(from, result.Value.From);
         Assert.Equal(to, result.Value.To);
-        Assert.Equal(from, store.LastFrom);
-        Assert.Equal(to, store.LastTo);
+        Assert.Equal(from, store.Calls[0].From);
+        Assert.Equal(to, store.Calls[0].To);
     }
 
     [Fact]
@@ -122,6 +122,63 @@ public class GetModuleFlowReportForSiteHandlerTests
 
         Assert.Equal(SiteId, store.LastSiteId);
         Assert.NotEqual(OtherSiteId, store.LastSiteId);
+    }
+
+    /// <summary>`23-16`: same shape `GetConversionReportForSiteHandlerTests` establishes - the handler
+    /// now calls the read store twice per request, and both calls must carry the caller's own site (and
+    /// the identical configured module key).</summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheStoreTwice_BothCallsCarryingTheCallersOwnSite_NeverAnother()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        await handler.HandleAsync(
+            new Application.UseCases.GetModuleFlowReportForSite.GetModuleFlowReportForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.Equal(2, store.Calls.Count);
+        Assert.All(store.Calls, call => Assert.Equal(SiteId, call.SiteId));
+        Assert.All(store.Calls, call => Assert.NotEqual(OtherSiteId, call.SiteId));
+        Assert.All(store.Calls, call => Assert.Equal(new ModuleKey(ConfiguredModuleKey), call.ModuleKey));
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheSecondCall_IsThePrecedingWindowOfEqualLength()
+    {
+        var (handler, store) = CreateFixture();
+        var from = Now.AddDays(-10);
+        var to = Now.AddDays(-1);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetModuleFlowReportForSite.GetModuleFlowReportForSite(AdminId, SiteId, from, to),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(from, result.Value.PreviousTo);
+        Assert.Equal(from - (to - from), result.Value.PreviousFrom);
+        Assert.Equal(result.Value.PreviousFrom, store.Calls[1].From);
+        Assert.Equal(result.Value.PreviousTo, store.Calls[1].To);
+    }
+
+    [Fact]
+    public async Task HandleAsync_MapsThePreviousFlowsStartedAndClosed_FromTheStoresSecondCall()
+    {
+        var (handler, store) = CreateFixture();
+        store.SeedSequence(
+            new Application.Abstractions.ModuleFlowReportResult(FlowsStarted: 7, FlowsClosed: 4),
+            new Application.Abstractions.ModuleFlowReportResult(FlowsStarted: 5, FlowsClosed: 5));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetModuleFlowReportForSite.GetModuleFlowReportForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(7, result.Value.FlowsStarted);
+        Assert.Equal(4, result.Value.FlowsClosed);
+        Assert.Equal(5, result.Value.PreviousFlowsStarted);
+        Assert.Equal(5, result.Value.PreviousFlowsClosed);
     }
 
     /// <summary>The one thing this handler alone is responsible for translating: the configured raw

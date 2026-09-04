@@ -36,7 +36,8 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// handed an empty row sequence, so "no rows came back" and "the query ran over nothing" collapse into
 /// the same code path rather than needing a second one.</para>
 /// </summary>
-public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource) : IConversionReportReadStore
+public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource, AnalyticsOptions analyticsOptions)
+    : IConversionReportReadStore
 {
     // `18-08`'s own `nameof(...)` discipline: a rename of ConversationOutcome's members fails this
     // class at compile time rather than leaving the SQL's `GROUP BY` silently unmatched by C# code
@@ -79,15 +80,30 @@ public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource) : ICo
         // null` then drops that set's "never assigned to anyone" bucket - there is no operator to
         // report it under, the same exclusion `IOperatorAnalyticsReadStore`'s own remarks state for the
         // identical shape.
+        //
+        // `23-16`: this is a genuine *ranking* (a reader compares operators against each other on this
+        // number), so it is where `AnalyticsOptions.MinimumSampleForRate` actually bites - see that
+        // class's own remarks. Operators whose own `RecordedCount` meets the threshold sort first,
+        // ranked by their own `ConversionRate` descending; everyone else follows, ranked by
+        // `RecordedCount` descending instead - never by a rate built on too few conversations, even
+        // though that rate still renders, in full, next to its own fraction. `Operator.Value` is the
+        // final tie-break, both groups, so the order is fully deterministic rather than merely "usually
+        // stable" - Postgres's own row order for equal keys is not guaranteed.
         var byOperator = rows
             .Where(r => r.OperatorGrouping == 0 && r.OperatorId is not null)
             .GroupBy(r => r.OperatorId!.Value)
             .Select(g => new ConversionOperatorBucket(new OperatorId(g.Key), BuildBucket(g)))
-            .OrderBy(o => o.Operator.Value)
+            .OrderByDescending(o => MeetsSampleThreshold(o.Bucket))
+            .ThenByDescending(o => MeetsSampleThreshold(o.Bucket) ? o.Bucket.ConversionRate : null)
+            .ThenByDescending(o => o.Bucket.RecordedCount)
+            .ThenBy(o => o.Operator.Value)
             .ToList();
 
         return new ConversionReportResult(overall, byOperator);
     }
+
+    private bool MeetsSampleThreshold(ConversionBucket bucket) =>
+        bucket.RecordedCount >= analyticsOptions.MinimumSampleForRate;
 
     private static ConversionBucket BuildBucket(IEnumerable<ConversionReportRow> rows)
     {

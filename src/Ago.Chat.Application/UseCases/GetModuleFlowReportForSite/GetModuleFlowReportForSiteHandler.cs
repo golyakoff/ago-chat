@@ -55,8 +55,19 @@ public sealed class GetModuleFlowReportForSiteHandler(
         }
 
         var moduleKey = new ModuleKey(options.ModuleKey);
-        var result = await readStore.GetSiteModuleFlowReportAsync(query.SiteId, moduleKey, from, to, cancellationToken);
 
-        return new ModuleFlowReportResponse(from, to, result.FlowsStarted, result.FlowsClosed);
+        // `23-16`: same shape `GetConversionReportForSiteHandler` establishes - the preceding window
+        // read through the identical single-window port, called a second time, both calls issued
+        // before either is awaited.
+        var (previousFrom, previousTo) = PrecedingPeriod.Before(from, to);
+        var currentTask = readStore.GetSiteModuleFlowReportAsync(query.SiteId, moduleKey, from, to, cancellationToken);
+        var previousTask = readStore.GetSiteModuleFlowReportAsync(query.SiteId, moduleKey, previousFrom, previousTo, cancellationToken);
+        await Task.WhenAll(currentTask, previousTask);
+        var result = currentTask.Result;
+        var previousResult = previousTask.Result;
+
+        return new ModuleFlowReportResponse(
+            from, to, result.FlowsStarted, result.FlowsClosed,
+            previousFrom, previousTo, previousResult.FlowsStarted, previousResult.FlowsClosed);
     }
 }

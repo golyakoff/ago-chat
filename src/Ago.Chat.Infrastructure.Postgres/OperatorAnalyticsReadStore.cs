@@ -120,6 +120,20 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// an unambiguous fingerprint - the total row is the one where all four read `1` - rather than layering
 /// a fifth special case onto a null-value heuristic that was already at its limit.</item>
 /// </list>
+///
+/// <para><b>`23-16`: every `By*` list below is a stable, stated <em>listing</em>, never a
+/// <em>ranking</em>, and takes no dependency on <c>AnalyticsOptions.MinimumSampleForRate</c> because of
+/// that.</b> None of <see cref="OperatorAnalyticsBucket.ConversationCount"/>/
+/// <see cref="OperatorAnalyticsBucket.AverageFirstResponseSeconds"/>/
+/// <see cref="OperatorAnalyticsBucket.AverageDurationSeconds"/>/<see cref="OperatorAnalyticsBucket.MissedCount"/>
+/// is a rate with a denominator a thin sample could distort the way a conversion rate can - a duration
+/// average built on one conversation is a real number about that one conversation, not a fraction that
+/// misrepresents a population the way "100% (1 of 1)" can read as more confident than it is. So there is
+/// no thin-denominator ranking hazard here for a threshold to guard, and this class's existing
+/// alphabetical (channel/referrer/campaign) or id (operator) ordering already satisfies the item's own
+/// "stable, stated order" requirement for a report that does not rank - see
+/// <c>ConversionReportReadStore</c>/<c>TagBreakdownReadStore</c> for the sibling stores where a real
+/// rate-based ranking exists and the threshold actually applies.</para>
 /// </summary>
 public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IOperatorAnalyticsReadStore
 {

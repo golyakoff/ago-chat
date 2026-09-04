@@ -43,7 +43,15 @@ public sealed class GetTagBreakdownReportForSiteHandler(
             return ConversationErrors.AnalyticsInvalidRange("The report range's start must be before its end.");
         }
 
-        var result = await readStore.GetTagBreakdownAsync(query.SiteId, from, to, cancellationToken);
+        // `23-16`: same shape `GetConversionReportForSiteHandler` establishes - the preceding window
+        // read through the identical single-window port, called a second time, both calls issued
+        // before either is awaited.
+        var (previousFrom, previousTo) = PrecedingPeriod.Before(from, to);
+        var currentTask = readStore.GetTagBreakdownAsync(query.SiteId, from, to, cancellationToken);
+        var previousTask = readStore.GetTagBreakdownAsync(query.SiteId, previousFrom, previousTo, cancellationToken);
+        await Task.WhenAll(currentTask, previousTask);
+        var result = currentTask.Result;
+        var previousResult = previousTask.Result;
 
         return new TagBreakdownReportResponse(
             from,
@@ -51,6 +59,11 @@ public sealed class GetTagBreakdownReportForSiteHandler(
             result.TotalConversationCount,
             result.TaggedConversationCount,
             result.PercentageTagged,
+            previousFrom,
+            previousTo,
+            previousResult.TotalConversationCount,
+            previousResult.TaggedConversationCount,
+            previousResult.PercentageTagged,
             result.ByTag.Select(ToDto).ToList());
     }
 

@@ -42,12 +42,24 @@ public sealed class GetConversionReportForSiteHandler(
             return ConversationErrors.AnalyticsInvalidRange("The report range's start must be before its end.");
         }
 
-        var result = await readStore.GetConversionReportAsync(query.SiteId, from, to, cancellationToken);
+        // `23-16`: the preceding window is read through the identical single-window port, called a
+        // second time, rather than a second read-store method - `PrecedingPeriod`'s own remarks on why
+        // this stays application-layer orchestration instead of new SQL. Both calls are issued before
+        // either is awaited, so they run concurrently rather than doubling this handler's own latency.
+        var (previousFrom, previousTo) = PrecedingPeriod.Before(from, to);
+        var currentTask = readStore.GetConversionReportAsync(query.SiteId, from, to, cancellationToken);
+        var previousTask = readStore.GetConversionReportAsync(query.SiteId, previousFrom, previousTo, cancellationToken);
+        await Task.WhenAll(currentTask, previousTask);
+        var result = currentTask.Result;
+        var previousResult = previousTask.Result;
 
         return new ConversionReportResponse(
             from,
             to,
             ToDto(result.Overall),
+            previousFrom,
+            previousTo,
+            ToDto(previousResult.Overall),
             result.ByOperator.Select(o => new ConversionOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket))).ToList());
     }
 

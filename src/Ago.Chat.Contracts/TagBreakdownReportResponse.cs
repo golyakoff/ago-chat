@@ -12,6 +12,14 @@
 ///
 /// <b><see cref="ByTag"/>'s own counts will not sum to <see cref="TotalConversationCount"/> - say so
 /// wherever this renders.</b> A conversation with more than one tag counts once per tag it holds.
+///
+/// <b>`23-16`: the preceding-window figures, the same shape `ConversionReportResponse` already adds for
+/// its own report</b> - <see cref="PreviousFrom"/>/<see cref="PreviousTo"/> bound the immediately
+/// preceding window of equal length (<c>Ago.Chat.Application.Abstractions.PrecedingPeriod</c>), and
+/// <see cref="PreviousTotalConversationCount"/>/<see cref="PreviousTaggedConversationCount"/>/
+/// <see cref="PreviousPercentageTagged"/> are that window's own coverage figures, computed the identical
+/// way <see cref="TotalConversationCount"/>/<see cref="TaggedConversationCount"/>/<see cref="PercentageTagged"/>
+/// already are.
 /// </summary>
 public sealed record TagBreakdownReportResponse(
     DateTimeOffset From,
@@ -19,6 +27,11 @@ public sealed record TagBreakdownReportResponse(
     long TotalConversationCount,
     long TaggedConversationCount,
     double? PercentageTagged,
+    DateTimeOffset PreviousFrom,
+    DateTimeOffset PreviousTo,
+    long PreviousTotalConversationCount,
+    long PreviousTaggedConversationCount,
+    double? PreviousPercentageTagged,
     IReadOnlyList<TagBreakdownBucketDto> ByTag);
 
 /// <param name="TagId">The tag's own stable identity, unaffected by a later rename.</param>
