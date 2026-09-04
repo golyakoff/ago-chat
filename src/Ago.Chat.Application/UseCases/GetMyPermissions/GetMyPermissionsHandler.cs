@@ -20,8 +20,21 @@ namespace Ago.Chat.Application.UseCases.GetMyPermissions;
 /// operator's token being issued and this call - the same theoretical race every other reader of a
 /// cached `Site` shape tolerates) falls back to `Locale.En`, never a thrown exception over a
 /// display-language nicety this response's callers already treat as best-effort.
+///
+/// `23-21`: also resolves the caller's own site's enabled modules, through the same
+/// <see cref="IEnabledModuleReadStore.GetForSiteAsync"/> port `23-01`'s
+/// <c>ListEnabledModulesForSiteHandler</c> already uses - never the
+/// route-supplied <c>siteId</c> that handler takes, always <see cref="GetMyPermissions.SiteId"/>, the
+/// operator claim this query was constructed from at the endpoint
+/// (<c>OperatorsEndpoints.HandleGetMyPermissionsAsync</c>). That is what keeps this a read of the
+/// caller's own tenant rather than a second uncontrolled cross-tenant read - the exact failure `23-01`
+/// closed on the neighbouring route (see that handler's own remarks) - and it is why this method takes
+/// no new permission check of its own: "what has my own tenant switched on" needs nothing beyond being
+/// authenticated as an operator of it, the same reasoning this handler's own doc comment already gives
+/// for the permission list beside it.
 /// </summary>
-public sealed class GetMyPermissionsHandler(IPermissionChecker permissions, GetSiteConfigByIdHandler siteConfig)
+public sealed class GetMyPermissionsHandler(
+    IPermissionChecker permissions, GetSiteConfigByIdHandler siteConfig, IEnabledModuleReadStore moduleReadStore, IClock clock)
 {
     public async Task<Result<OperatorPermissionsResponse>> HandleAsync(
         GetMyPermissions query, CancellationToken cancellationToken)
@@ -30,6 +43,9 @@ public sealed class GetMyPermissionsHandler(IPermissionChecker permissions, GetS
         var config = await siteConfig.HandleAsync(
             new Ago.Chat.Application.UseCases.GetSiteConfigById.GetSiteConfigById(query.SiteId), cancellationToken);
         var locale = config?.WidgetLocale ?? Locale.En;
-        return new OperatorPermissionsResponse(query.OperatorId.Value, query.SiteId.Value, granted, locale.ToString());
+        var modules = await moduleReadStore.GetForSiteAsync(query.SiteId, clock.UtcNow, cancellationToken);
+        var enabledModules = modules.Select(m => m.ModuleKey.Value).ToArray();
+        return new OperatorPermissionsResponse(
+            query.OperatorId.Value, query.SiteId.Value, granted, locale.ToString(), enabledModules);
     }
 }

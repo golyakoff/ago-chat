@@ -18,5 +18,16 @@
 /// gain one for this - the same "the wire carries values, not vocabulary" shape <see cref="Permissions"/>
 /// already uses on this exact record, and `AuthEndpoints.VisitorSessionResponse`'s own precedent for
 /// this same enum on the widget's side of the wire.
+///
+/// `23-21`: <see cref="EnabledModules"/> is the second, deliberately separate fact this response now
+/// carries - what the tenant has switched on (raw <c>ModuleKey</c> values, e.g. <c>"calendar"</c>),
+/// read through the same <c>IEnabledModuleReadStore.GetForSiteAsync</c> port `23-01`'s
+/// <c>ListEnabledModulesForSiteHandler</c> already uses, scoped to <see cref="SiteId"/> - the caller's
+/// own site claim, never a caller-supplied value, so this cannot become a second cross-tenant read
+/// (`docs/architecture/tenant-isolation.md`). <b>Never merged into <see cref="Permissions"/></b>: one
+/// answers "what may I do", the other "what does this tenant have at all" - collapsing them into one
+/// list is exactly the bug `docs/backlog/23-21-*.md` exists to close, because a console that cannot
+/// tell "not entitled" from "does not exist for this tenant" has no way to render the difference.
 /// </summary>
-public sealed record OperatorPermissionsResponse(Guid OperatorId, Guid SiteId, IReadOnlyList<string> Permissions, string Locale);
+public sealed record OperatorPermissionsResponse(
+    Guid OperatorId, Guid SiteId, IReadOnlyList<string> Permissions, string Locale, IReadOnlyList<string> EnabledModules);
