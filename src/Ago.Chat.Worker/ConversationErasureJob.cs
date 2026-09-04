@@ -78,7 +78,8 @@ public sealed class ConversationErasureJob(
         {
             try
             {
-                if (await EraseConversationAsync(candidate.ConversationId, candidate.SiteId, cancellationToken))
+                if (await EraseConversationAsync(
+                    candidate.ConversationId, candidate.SiteId, candidate.VisitorId, cancellationToken))
                 {
                     erased++;
                 }
@@ -118,12 +119,22 @@ public sealed class ConversationErasureJob(
     /// it again and continues where this one left off.</item>
     /// <item><b>Attachment rows, then the conversation row</b> - only once every message is confirmed
     /// gone, so nothing can still reference an attachment that is about to disappear.</item>
+    /// <item><b>`23-08`: the visitor's own contact details</b>, deleted alongside the notes and tags -
+    /// see <see cref="ConversationErasureQuery.DeleteContactDetailsForVisitorAsync"/>'s own remarks for
+    /// why this reaches every contact detail the visitor has, not only ones tied to this conversation.
+    /// A person's erasure request takes the conversation <i>and</i> the contact - it is all their data
+    /// (`docs/design/decisions.md` §4) - which is why this step lives here, in the request-driven path,
+    /// and deliberately has no counterpart in <c>MessagePartitionPruneJob</c>'s retention sweep: that
+    /// job ages out transcripts on a timer with no request behind it, and sweeping a contact away with
+    /// an aged-out conversation would cost the tenant an asset every time a transcript's own window
+    /// closed - the "no cascade from retention" half of the same decision.</item>
     /// </list>
     /// </summary>
     /// <returns><see langword="true"/> if this conversation was fully erased (its row is gone);
     /// <see langword="false"/> if it was only partially drained this call and remains flagged for the
     /// next cycle.</returns>
-    internal async Task<bool> EraseConversationAsync(Guid conversationId, Guid siteId, CancellationToken cancellationToken)
+    internal async Task<bool> EraseConversationAsync(
+        Guid conversationId, Guid siteId, Guid visitorId, CancellationToken cancellationToken)
     {
         await using (var readConnection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
@@ -169,6 +180,10 @@ public sealed class ConversationErasureJob(
                 // ConversationErasureQuery.DeleteTagsForConversationAsync's own remarks.
                 await ConversationErasureQuery.DeleteNotesForConversationAsync(connection, conversationId, cancellationToken);
                 await ConversationErasureQuery.DeleteTagsForConversationAsync(connection, conversationId, cancellationToken);
+                // `23-08`: the visitor's own contact details - see this method's own remarks above and
+                // DeleteContactDetailsForVisitorAsync's for why this is keyed to the visitor rather than
+                // this conversation.
+                await ConversationErasureQuery.DeleteContactDetailsForVisitorAsync(connection, visitorId, cancellationToken);
                 await ConversationErasureQuery.DeleteConversationAsync(connection, conversationId, cancellationToken);
                 return true;
             }

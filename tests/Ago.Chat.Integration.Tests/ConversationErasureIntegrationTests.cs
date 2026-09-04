@@ -19,6 +19,12 @@ namespace Ago.Chat.Integration.Tests;
 /// own messages/attachment/objects, and the site itself are completely untouched. Real Postgres and
 /// real MinIO, the same <see cref="ErasureFixture"/> <see cref="SiteErasureIntegrationTests"/> uses -
 /// no Keycloak assertion needed here, since conversation erasure never touches an identity.
+///
+/// <para><b>`23-08`</b> adds the visitor's own contact details to the same completeness claim: the
+/// erased conversation's visitor had one recorded (`docs/design/decisions.md` §4 - "a person's erasure
+/// request takes the conversation and the contact, it is all their data"), and the kept conversation's
+/// visitor had one too, to prove the removal is scoped to the erased visitor and not to every contact
+/// detail on the site.</para>
 /// </summary>
 [Collection(ErasureCollection.Name)]
 public class ConversationErasureIntegrationTests(ErasureFixture fixture)
@@ -49,6 +55,11 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         await SeedNoteAsync(toErase.ConversationId, adminOperatorId, "erase-me note");
         await SeedNoteAsync(toKeep.ConversationId, adminOperatorId, "keep-me note");
 
+        // `23-08`: one contact detail per visitor - the operator's own annotation of a number a
+        // visitor said out loud (`VisitorContactDetail`'s own remarks), fake and obviously so.
+        await SeedContactDetailAsync(toErase.VisitorId, adminOperatorId, "+7 000 000-00-01");
+        await SeedContactDetailAsync(toKeep.VisitorId, adminOperatorId, "+7 000 000-00-02");
+
         // Both halves genuinely exist before erasure - the "narrower scope, same completeness" claim
         // is only interesting if there was something to distinguish in the first place.
         Assert.Equal(2, await CountAsync("select count(*) from messages where conversation_id = @id", toErase.ConversationId.Value));
@@ -57,6 +68,8 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(1, await CountAsync("select count(*) from conversation_notes where conversation_id = @id", toKeep.ConversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toErase.ConversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toKeep.ConversationId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @id", toErase.VisitorId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @id", toKeep.VisitorId.Value));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toErase.ObjectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toKeep.ObjectKey), CancellationToken.None));
 
@@ -90,6 +103,9 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(0, await CountAsync("select count(*) from conversation_notes where conversation_id = @id", toErase.ConversationId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from conversation_tags where conversation_id = @id", toErase.ConversationId.Value));
 
+        // `23-08`, Done-when #2: erasing a conversation removes that visitor's contact details.
+        Assert.Equal(0, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @id", toErase.VisitorId.Value));
+
         // The other conversation and the site itself: completely untouched.
         Assert.Equal(1, await CountAsync("select count(*) from conversations where id = @id", toKeep.ConversationId.Value));
         Assert.Equal(2, await CountAsync("select count(*) from messages where conversation_id = @id", toKeep.ConversationId.Value));
@@ -99,6 +115,10 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toKeep.ObjectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(toKeep.ThumbnailKey), CancellationToken.None));
         Assert.Equal(1, await CountAsync("select count(*) from sites where id = @id", siteId.Value));
+
+        // `23-08`, Done-when #3: erasing one visitor's conversation does not remove another visitor's
+        // contact details.
+        Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @id", toKeep.VisitorId.Value));
 
         // `18-04`: the tag *definition* itself survives - another conversation (toKeep) still carries
         // it, and a tag vocabulary entry is site-scoped, not conversation-scoped (TagConfiguration's
@@ -136,7 +156,7 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         return (operatorId, subjectId);
     }
 
-    private async Task<(ConversationId ConversationId, string ObjectKey, string ThumbnailKey)> SeedConversationWithAttachmentAsync(SiteId siteId)
+    private async Task<(ConversationId ConversationId, VisitorId VisitorId, string ObjectKey, string ThumbnailKey)> SeedConversationWithAttachmentAsync(SiteId siteId)
     {
         var visitorId = new VisitorId(Guid.NewGuid());
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
@@ -172,7 +192,19 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
                 thumbnailKey,
             });
 
-        return (conversation.Id, objectKey, thumbnailKey);
+        return (conversation.Id, visitorId, objectKey, thumbnailKey);
+    }
+
+    /// <summary>`23-08`: through the real repository, exercising the same write path
+    /// `RecordVisitorContactDetailHandler` uses, rather than a raw insert - the object under test is
+    /// whether erasure reaches a row shaped the way production actually writes it.</summary>
+    private async Task SeedContactDetailAsync(VisitorId visitorId, OperatorId recordedByOperatorId, string value)
+    {
+        var detail = VisitorContactDetail.Record(
+            new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Phone, value,
+            recordedByOperatorId, Now);
+        await using var db = fixture.CreateDbContext();
+        await new VisitorContactDetailRepository(db).SaveAsync(detail, CancellationToken.None);
     }
 
     private async Task<TagId> SeedTagAsync(SiteId siteId, string name)

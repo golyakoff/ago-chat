@@ -24,8 +24,12 @@ namespace Ago.Chat.Worker;
 /// <summary>`15-09`/`adr/0087`: one pending conversation, with the `site_id` its own erasure needs to
 /// scope <see cref="ConversationErasureQuery.DeleteMessageBatchAsync"/> against - `messages` is now
 /// `PARTITION BY HASH (site_id)`, so a delete keyed on `conversation_id` alone would still have to probe
-/// all 64 buckets to find the rows before restricting to one conversation's worth.</summary>
-public sealed record PendingConversationErasure(Guid ConversationId, Guid SiteId);
+/// all 64 buckets to find the rows before restricting to one conversation's worth. <b>`23-08`</b> adds
+/// <paramref name="VisitorId"/>: the erased conversation's own visitor, which is what
+/// <see cref="DeleteContactDetailsForVisitorAsync"/> needs to reach that visitor's contact details -
+/// read here, in the same row, rather than as a second round trip, since `conversations` already carries
+/// the column.</summary>
+public sealed record PendingConversationErasure(Guid ConversationId, Guid SiteId, Guid VisitorId);
 
 public static class ConversationErasureQuery
 {
@@ -33,7 +37,7 @@ public static class ConversationErasureQuery
         NpgsqlConnection connection, int limit, CancellationToken cancellationToken)
     {
         const string sql = """
-            select id, site_id
+            select id, site_id, visitor_id
             from conversations
             where erasure_requested_at is not null
             order by erasure_requested_at
@@ -47,7 +51,7 @@ public static class ConversationErasureQuery
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            pending.Add(new PendingConversationErasure(reader.GetGuid(0), reader.GetGuid(1)));
+            pending.Add(new PendingConversationErasure(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2)));
         }
 
         return pending;
@@ -165,6 +169,30 @@ public static class ConversationErasureQuery
         await using var command = new NpgsqlCommand(
             "delete from conversation_tags where conversation_id = @conversationId", connection);
         command.Parameters.AddWithValue("conversationId", conversationId);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// `23-08`/`decisions.md` §4: the contact belongs to the visitor, and the request being erased is
+    /// the visitor's, so every <c>visitor_contact_details</c> row this visitor has - across every
+    /// conversation of theirs, not only the one being erased right now - goes. That is a deliberate
+    /// scope decision, not an oversight: a second, still-live conversation of the same visitor is a
+    /// second erasure request and is untouched by this one (its own row, messages, notes and tags stay),
+    /// but the contact detail is keyed to the visitor rather than to the conversation
+    /// (<see cref="Ago.Chat.Domain.VisitorContactDetail"/>'s own remarks on why it is its own aggregate,
+    /// not a value object on <c>Conversation</c>), so "erase this visitor's data" cannot be scoped any
+    /// narrower than "this visitor" without leaving a phone number behind that the person asked removed.
+    /// Drained explicitly here - the same "primary mechanism is explicit, cascade is defence in depth"
+    /// shape <see cref="DeleteNotesForConversationAsync"/>/<see cref="DeleteTagsForConversationAsync"/>
+    /// already use, so the removal is a step this job's own sequence performs and its caller can count,
+    /// not a side effect of the later `visitors` cascade that a reader would have to go looking for.
+    /// </summary>
+    public static async Task<int> DeleteContactDetailsForVisitorAsync(
+        NpgsqlConnection connection, Guid visitorId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "delete from visitor_contact_details where visitor_id = @visitorId", connection);
+        command.Parameters.AddWithValue("visitorId", visitorId);
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

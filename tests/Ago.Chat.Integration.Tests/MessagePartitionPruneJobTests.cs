@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Worker;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -225,6 +226,72 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
         await job.PruneAsync(CancellationToken.None);
 
         Assert.False(await MessageExistsAsync(messageId));
+    }
+
+    /// <summary>
+    /// `23-08`/`docs/design/decisions.md` §4, Done-when #4: "a retention sweep of messages removes no
+    /// contact detail." This is a <b>guard</b>, not a fix - true today by construction, since nothing in
+    /// <see cref="MessagePartitionPruneJob"/> reads or writes <c>visitor_contact_details</c> at all, and
+    /// the fails-before table records that this test cannot be made to fail by mutating this job's own
+    /// code (there is no code path from prune to that table to break). It exists so a future retention
+    /// change - a cascade added for convenience, a "clean up everything old" pass - cannot quietly
+    /// collapse the two clocks decision 4 is explicit must never collapse: the contact has no timer, the
+    /// transcript ages out on this job's own schedule, and this test is what would catch the day someone
+    /// wires the second into the first.
+    /// </summary>
+    [Fact]
+    public async Task PruneAsync_RemovesTheExpiredMessage_ButLeavesTheVisitorsContactDetailsStanding()
+    {
+        var (siteId, messageId, visitorId) = await SeedExpiredMessageWithContactDetailAsync(2000, 1);
+
+        var job = CreateJob(referenceNow: new DateTimeOffset(2000, 6, 1, 0, 0, 0, TimeSpan.Zero), gate: new FakeArchiveGate(confirmed: true));
+        await job.PruneAsync(CancellationToken.None);
+
+        Assert.False(await MessageExistsAsync(messageId));
+        Assert.Equal(1, await ContactDetailCountForVisitorAsync(visitorId));
+    }
+
+    private async Task<(SiteId SiteId, Guid MessageId, VisitorId VisitorId)> SeedExpiredMessageWithContactDetailAsync(int year, int month)
+    {
+        var (siteId, messageId) = await SeedExpiredMessageAsync(year, month);
+
+        // The visitor id is not returned by SeedExpiredMessageAsync, so it is re-read the same way any
+        // caller outside this file would have to: through the message's own conversation.
+        Guid conversationId;
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand("select conversation_id from messages where id = @id", connection))
+        {
+            command.Parameters.AddWithValue("id", messageId);
+            conversationId = (Guid)(await command.ExecuteScalarAsync())!;
+        }
+
+        Guid visitorGuid;
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand("select visitor_id from conversations where id = @id", connection))
+        {
+            command.Parameters.AddWithValue("id", conversationId);
+            visitorGuid = (Guid)(await command.ExecuteScalarAsync())!;
+        }
+
+        var visitorId = new VisitorId(visitorGuid);
+        var detail = VisitorContactDetail.Record(
+            new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Phone,
+            "+7 000 000-00-03", new OperatorId(Guid.NewGuid()), new DateTimeOffset(year, month, 15, 0, 0, 0, TimeSpan.Zero));
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new VisitorContactDetailRepository(db).SaveAsync(detail, CancellationToken.None);
+        }
+
+        return (siteId, messageId, visitorId);
+    }
+
+    private async Task<int> ContactDetailCountForVisitorAsync(VisitorId visitorId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            "select count(*) from visitor_contact_details where visitor_id = @visitorId", connection);
+        command.Parameters.AddWithValue("visitorId", visitorId.Value);
+        return (int)(long)(await command.ExecuteScalarAsync())!;
     }
 
     private MessagePartitionPruneJob CreateJob(DateTimeOffset referenceNow, IMessageArchiveGate gate) =>
