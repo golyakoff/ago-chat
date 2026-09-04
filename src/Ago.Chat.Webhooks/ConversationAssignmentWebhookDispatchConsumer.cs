@@ -37,7 +37,12 @@ public sealed class ConversationAssignmentWebhookDispatchConsumer(
     IOptions<ConversationAssignmentWebhookDispatchConsumerOptions> options,
     ILogger<ConversationAssignmentWebhookDispatchConsumer> logger) : BackgroundService
 {
-    private const string ConsumerName = "conversation-assignment-webhook-dispatch";
+    // `15-17`: `internal`, not `private` - `Ago.Chat.Integration.Tests` (`AssemblyInfo.cs`, granted
+    // alongside `Ago.Chat.Concurrency.Tests`) computes this `Competing` subscription's exact queue
+    // name (`{topic}.{ConsumerName}`) to poll for instead of guessing at a fixed sleep; see
+    // `Ago.Chat.Worker.ConnectionFanoutConsumer.ConsumerName`'s own remarks for why a retyped copy of
+    // this literal would be worse.
+    internal const string ConsumerName = "conversation-assignment-webhook-dispatch";
 
     private ConcurrentWebhookDispatchPump? _pump;
 

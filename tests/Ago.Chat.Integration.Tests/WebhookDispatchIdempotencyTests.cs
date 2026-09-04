@@ -41,10 +41,16 @@ public sealed class WebhookDispatchIdempotencyTests(WebhookDispatchFixture fixtu
         var endpoint = await WebhookDispatchTestHarness.RegisterEndpointAsync(
             seedDb, siteId, new Uri(crm.BaseAddress, "webhooks/deliver"), Now);
 
-        var (services, _) = WebhookDispatchTestHarness.BuildConsumerServices(
-            fixture,
-            WebhookDispatchTestHarness.ResilienceOptions(),
-            WebhookDispatchTestHarness.HttpOptions());
+        // `15-17`: this test is not WebhookDispatchBreakerTests either - see
+        // WebhookDispatchSharedQueueRegressionTests' own remarks for the full reasoning. Two
+        // deliveries (the original and its forced duplicate) hit the *same* endpoint pipeline
+        // (GetEndpointPipeline is keyed by WebhookEndpointId), and MinimumThroughput: 2 means even
+        // this test's own retry loop around a single slow call could reach it alone.
+        var deliveryWait = TimeSpan.FromSeconds(15);
+        var resilienceOptions = WebhookDispatchTestHarness.ResilienceOptions(breakDuration: TimeSpan.FromSeconds(2));
+        WebhookDispatchTestHarness.AssertBreakDurationFitsWithinWait(resilienceOptions, deliveryWait);
+
+        var (services, _) = WebhookDispatchTestHarness.BuildConsumerServices(fixture, resilienceOptions, WebhookDispatchTestHarness.HttpOptions());
         await using var servicesDisposable = services;
 
         await using var consumerConnection = fixture.CreateRabbitMqConnection();
@@ -56,7 +62,16 @@ public sealed class WebhookDispatchIdempotencyTests(WebhookDispatchFixture fixtu
         await consumer.StartAsync(CancellationToken.None);
         try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(500)); // subscription to actually land
+            // `15-17`: wait for the fact the subscription's own queue actually exists, not a fixed
+            // sleep - see WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync
+            // alone cannot be awaited for this.
+            await using var subscriptionProbeConnection = fixture.CreateRabbitMqConnection();
+            var subscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
+                subscriptionProbeConnection, nameof(ConversationAssignedToOperator),
+                ConversationAssignmentWebhookDispatchConsumer.ConsumerName, TimeSpan.FromSeconds(10));
+            Assert.True(subscriptionLanded,
+                $"The '{ConversationAssignmentWebhookDispatchConsumer.ConsumerName}' subscription to " +
+                $"'{nameof(ConversationAssignedToOperator)}' never landed - no queue with that name was bound within 10s.");
 
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
             var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
@@ -77,8 +92,10 @@ public sealed class WebhookDispatchIdempotencyTests(WebhookDispatchFixture fixtu
                     var db = scope.ServiceProvider.GetRequiredService<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>();
                     return db.WebhookDeliveries.Count(d => d.EndpointId == endpoint.Id) >= 1;
                 },
-                TimeSpan.FromSeconds(15));
-            Assert.True(delivered, "Timed out waiting for the first delivery to be recorded.");
+                deliveryWait);
+            Assert.True(delivered,
+                "Timed out waiting for the first delivery to be recorded - a real signed HTTP call to a real " +
+                "FakeCrm process either never completed within this wait, or a still-open circuit breaker refused it.");
 
             // Give the second (duplicate) publish every reasonable chance to also be processed and
             // (wrongly) produce a second row, rather than asserting the count immediately after the
