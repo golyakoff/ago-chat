@@ -6,6 +6,7 @@ using Ago.Chat.Application.UseCases.RevokeModuleForSite;
 using Ago.Chat.Application.UseCases.RotateModuleCredential;
 using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Ago.Chat.Api.Modules;
@@ -46,11 +47,12 @@ public static class ModuleEndpoints
     }
 
     private static async Task<IResult> HandleGetAsync(
-        Guid siteId, IEnabledModuleReadStore readStore, CancellationToken cancellationToken)
+        Guid siteId, IEnabledModuleReadStore readStore, IClock clock, CancellationToken cancellationToken)
     {
-        var modules = await readStore.GetForSiteAsync(new SiteId(siteId), cancellationToken);
+        var modules = await readStore.GetForSiteAsync(new SiteId(siteId), clock.UtcNow, cancellationToken);
         return Results.Ok(new EnabledModulesResponse(
-            [.. modules.Select(m => new EnableModuleResponse(m.ModuleKey.Value, m.TriggerWords, m.EntryPoint.ToString()))]));
+            [.. modules.Select(m => new EnableModuleResponse(
+                m.ModuleKey.Value, m.TriggerWords, m.EntryPoint.ToString(), m.GrantedByOwner, m.ExpiresAt))]));
     }
 
     private static async Task<IResult> HandlePutAsync(
@@ -142,7 +144,14 @@ public static class ModuleEndpoints
         string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, string Credential,
         string ProvisioningSecret);
 
-    public sealed record EnableModuleResponse(string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint);
+    /// <param name="GrantedByOwner">`22-17`: <see langword="true"/> when the platform owner enabled this
+    /// module rather than the tenant's own operator - the wire-visible half of this item's own audit
+    /// distinction. Always <see langword="false"/> on <see cref="HandlePutAsync"/>'s own response,
+    /// which only ever writes a self-service grant.</param>
+    /// <param name="ExpiresAt"><see langword="null"/> for a grant that does not expire.</param>
+    public sealed record EnableModuleResponse(
+        string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, bool GrantedByOwner = false,
+        DateTimeOffset? ExpiresAt = null);
 
     public sealed record EnabledModulesResponse(IReadOnlyList<EnableModuleResponse> Modules);
 

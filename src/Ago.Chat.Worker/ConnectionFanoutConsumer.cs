@@ -29,7 +29,13 @@ public sealed class ConnectionFanoutConsumer(
     // `5-11`: this consumer's own stable identity - `UnreadCounterConsumer` subscribes `Competing` to
     // this same `MessageAccepted` topic too, and before this name existed the two silently shared one
     // RabbitMQ queue, splitting messages between them instead of each seeing every one.
-    private const string ConsumerName = "connection-fanout";
+    //
+    // `15-17`: `internal`, not `private` - `Ago.Chat.Integration.Tests` (already granted
+    // `InternalsVisibleTo`, `AssemblyInfo.cs`) computes this `Competing` subscription's exact queue
+    // name (`{topic}.{ConsumerName}`, `RabbitMqEventConsumer`'s own naming) to poll for instead of
+    // guessing at a fixed sleep - the alternative, retyping this same literal into the test, would be
+    // exactly the kind of two-copies-of-one-fact drift `5-11`'s own doc comment above warns about.
+    internal const string ConsumerName = "connection-fanout";
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {

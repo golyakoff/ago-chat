@@ -95,7 +95,11 @@ public static class ErrorExtensions
                 // `14-15`: the caller's own mistake to fix - an unparsable phone number, or a code that
                 // did not match (ConversationErrors.PhoneVerificationWrongCode's own remarks on why the
                 // message never names a remaining-attempts count).
-                or "PhoneVerification.InvalidNumber" or "PhoneVerification.WrongCode" => StatusCodes.Status400BadRequest,
+                or "PhoneVerification.InvalidNumber" or "PhoneVerification.WrongCode"
+                // `22-17`: the owner's own mistake to fix - an ExpiresAt that is not strictly in the
+                // future, or reaches further out than EnableModuleForSiteAsOwnerHandler.MaxGrantDuration
+                // allows.
+                or "Module.GrantExpiryInvalid" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

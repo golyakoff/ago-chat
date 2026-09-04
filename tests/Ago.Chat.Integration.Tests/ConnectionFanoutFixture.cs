@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Infrastructure.Postgres.Persistence;
+﻿using System.Net.Http.Headers;
+using System.Text;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Messaging.RabbitMq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,6 +23,14 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
     private const string RabbitMqUsername = "ago-test";
     private const string RabbitMqPassword = "ago-test-local-dev";
 
+    // `15-17`: the RabbitMQ management API port. Not exposed by `RabbitMqBuilder` by default (only
+    // 5672 is), even though `rabbitmq:4-management`'s own image always runs the plugin - explicit
+    // `WithPortBinding` is what actually publishes it to the host. Every subscription wait in this
+    // collection now goes through it - both the `Competing` case (a queue's own `consumers` count,
+    // `RabbitMqSubscriptionTestHelpers.GetQueueConsumerCountAsync`) and `OfflineAutoReplyEndToEndTests`'
+    // `Broadcast` one - since plain AMQP has no way to ask "is a consumer actually attached yet."
+    private const int RabbitMqManagementPort = 15672;
+
     private PostgreSqlContainer _postgres = null!;
     private RabbitMqContainer _rabbitMq = null!;
     private RedisContainer _redis = null!;
@@ -35,7 +45,10 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
         _dockerLock = await DockerResourceLock.AcquireAsync();
 
         _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
-        _rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithUsername(RabbitMqUsername).WithPassword(RabbitMqPassword).Build();
+        _rabbitMq = new RabbitMqBuilder("rabbitmq:4-management")
+            .WithUsername(RabbitMqUsername).WithPassword(RabbitMqPassword)
+            .WithPortBinding(RabbitMqManagementPort, true)
+            .Build();
         _redis = new RedisBuilder("redis:7-alpine").Build();
 
         await Task.WhenAll(_postgres.StartAsync(), _rabbitMq.StartAsync(), _redis.StartAsync());
@@ -68,6 +81,21 @@ public sealed class ConnectionFanoutFixture : IAsyncLifetime
         UserName = RabbitMqUsername,
         Password = RabbitMqPassword,
     }), NullLogger<RabbitMqConnection>.Instance);
+
+    /// <summary>`15-17`: a client against this container's own RabbitMQ management API - see
+    /// <see cref="RabbitMqManagementPort"/>'s own remarks. Basic auth, the same credentials
+    /// <see cref="CreateRabbitMqConnection"/> already uses over AMQP; the management plugin accepts
+    /// the same user/password pair over HTTP.</summary>
+    public HttpClient CreateRabbitMqManagementClient()
+    {
+        var client = new HttpClient
+        {
+            BaseAddress = new Uri($"http://{_rabbitMq.Hostname}:{_rabbitMq.GetMappedPublicPort(RabbitMqManagementPort)}"),
+        };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{RabbitMqUsername}:{RabbitMqPassword}")));
+        return client;
+    }
 }
 
 [CollectionDefinition(Name)]

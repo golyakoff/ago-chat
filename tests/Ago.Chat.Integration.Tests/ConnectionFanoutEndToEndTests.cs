@@ -3,6 +3,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -87,7 +88,17 @@ public sealed class ConnectionFanoutEndToEndTests(ConnectionFanoutFixture fixtur
         await fanoutConsumer.StartAsync(CancellationToken.None);
         await nodeConsumerA.StartAsync(CancellationToken.None);
         await nodeConsumerB.StartAsync(CancellationToken.None);
-        await Task.Delay(TimeSpan.FromMilliseconds(500)); // subscriptions to actually land - see NodeFanoutTests
+
+        // `15-17`: wait for the fact each Competing subscription's own queue has a live consumer
+        // attached, not merely that the queue exists - see WebhookDispatchSharedQueueRegressionTests'
+        // own remarks for why StartAsync alone cannot be awaited for this, and
+        // RabbitMqSubscriptionTestHelpers' own remarks for why "the queue exists" is not enough.
+        using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
+        await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
+            subscriptionManagementClient, TimeSpan.FromSeconds(10),
+            (nameof(MessageAccepted), ConnectionFanoutConsumer.ConsumerName),
+            (NodeTopics.For(nodeA), RabbitMqSubscriptionTestHelpers.NodeDeliveryConsumerName),
+            (NodeTopics.For(nodeB), RabbitMqSubscriptionTestHelpers.NodeDeliveryConsumerName));
 
         try
         {

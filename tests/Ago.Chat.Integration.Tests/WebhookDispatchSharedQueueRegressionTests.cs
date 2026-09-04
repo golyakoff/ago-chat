@@ -46,10 +46,20 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
         var endpoint = await WebhookDispatchTestHarness.RegisterEndpointAsync(
             seedDb, siteId, new Uri(crm.BaseAddress, "webhooks/deliver"), Now);
 
+        // `15-17`: this test is not WebhookDispatchBreakerTests - its own subject is the shared-queue
+        // fix, not breaker behaviour - so BreakDuration is deliberately far shorter than the wait
+        // below rather than left at the 30s production default. All six messages go to the same
+        // endpoint, and GetEndpointPipeline's breaker is keyed by WebhookEndpointId (shared across
+        // all six), so a single slow call under CI load is enough to open it (MinimumThroughput: 2)
+        // - a spurious trip must self-heal well inside DeliveryWait, not be waited out at 1:1 odds.
+        var deliveryWait = TimeSpan.FromSeconds(20);
+        var resilienceOptions = WebhookDispatchTestHarness.ResilienceOptions(breakDuration: TimeSpan.FromSeconds(2));
+        WebhookDispatchTestHarness.AssertBreakDurationFitsWithinWait(resilienceOptions, deliveryWait);
+
         // The webhook-dispatch consumer, real end to end (real Postgres write, real signed HTTP
         // call to the real FakeCrm process) - the same stack WebhookDispatchIdempotencyTests uses.
         var (webhookServices, _) = WebhookDispatchTestHarness.BuildConsumerServices(
-            fixture, WebhookDispatchTestHarness.ResilienceOptions(), WebhookDispatchTestHarness.HttpOptions());
+            fixture, resilienceOptions, WebhookDispatchTestHarness.HttpOptions());
         await using var webhookServicesDisposable = webhookServices;
         await using var webhookConsumerConnection = fixture.CreateRabbitMqConnection();
         var webhookConsumer = new ConversationAssignmentWebhookDispatchConsumer(
@@ -77,7 +87,32 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
         await fanoutConsumer.StartAsync(CancellationToken.None);
         try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(500)); // both subscriptions to actually land
+            // `15-17`: wait for the fact each Competing subscription's own queue has a live consumer
+            // attached, not merely that the queue exists - awaiting StartAsync only awaits
+            // BackgroundService.StartAsync's synchronous kickoff, never the SubscribeAsync work it
+            // starts running in the background (.NET's own BackgroundService never awaits the task it
+            // hands to ExecuteAsync). A prior version of this fix checked queue existence via a
+            // passive AMQP declare, which succeeds as soon as the queue is declared - before it is
+            // bound - and still lost publishes into the declare-to-bind window under real CI load
+            // (golyakoff/ago-chat/actions/runs/33839119087); RabbitMqSubscriptionTestHelpers' own
+            // remarks cover why the consumer count is the right fact instead.
+            using var subscriptionManagementClient = fixture.CreateRabbitMqManagementClient();
+            var webhookSubscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
+                subscriptionManagementClient, nameof(ConversationAssignedToOperator),
+                ConversationAssignmentWebhookDispatchConsumer.ConsumerName, TimeSpan.FromSeconds(10));
+            Assert.True(webhookSubscriptionLanded,
+                $"The '{ConversationAssignmentWebhookDispatchConsumer.ConsumerName}' subscription to " +
+                $"'{nameof(ConversationAssignedToOperator)}' never landed - queue " +
+                $"'{RabbitMqSubscriptionTestHelpers.CompetingQueueName(nameof(ConversationAssignedToOperator), ConversationAssignmentWebhookDispatchConsumer.ConsumerName)}' " +
+                "never reached a live consumer within 10s.");
+            var fanoutSubscriptionLanded = await RabbitMqSubscriptionTestHelpers.WaitForCompetingSubscriptionAsync(
+                subscriptionManagementClient, nameof(ConversationAssignedToOperator),
+                ConversationAssignmentFanoutConsumer.ConsumerName, TimeSpan.FromSeconds(10));
+            Assert.True(fanoutSubscriptionLanded,
+                $"The '{ConversationAssignmentFanoutConsumer.ConsumerName}' subscription to " +
+                $"'{nameof(ConversationAssignedToOperator)}' never landed - queue " +
+                $"'{RabbitMqSubscriptionTestHelpers.CompetingQueueName(nameof(ConversationAssignedToOperator), ConversationAssignmentFanoutConsumer.ConsumerName)}' " +
+                "never reached a live consumer within 10s.");
 
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
             var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
@@ -93,12 +128,20 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
                     var db = scope.ServiceProvider.GetRequiredService<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>();
                     return db.WebhookDeliveries.Count(d => d.EndpointId == endpoint.Id) >= MessageCount;
                 },
-                TimeSpan.FromSeconds(20));
+                deliveryWait);
             var fanoutCaughtUp = await OutboxTestHelpers.WaitUntilAsync(
-                () => fanoutPublisher.Calls.Count >= MessageCount, TimeSpan.FromSeconds(20));
+                () => fanoutPublisher.Calls.Count >= MessageCount, deliveryWait);
 
-            Assert.True(webhookCaughtUp, $"Webhook-dispatch consumer only received {AwaitDeliveryCount(fixture, endpoint.Id)}/{MessageCount} messages - the shared-queue bug would show up as a split total less than {MessageCount}.");
-            Assert.True(fanoutCaughtUp, $"Fanout consumer only received {fanoutPublisher.Calls.Count}/{MessageCount} messages - the shared-queue bug would show up as a split total less than {MessageCount}.");
+            // Three different findings this assertion must not collapse into one wording (the CI
+            // failure this item fixes produced both, on separate runs, of what used to be one shared
+            // message describing neither): 0 received is a lost publish (subscription raced ahead of
+            // the publish - defect `15-17` fixes above); a partial, non-split count is what the wait
+            // simply timing out looks like (e.g. a breaker still recovering); a split total *less
+            // than* MessageCount *summed across both* consumer types is the actual shared-queue bug
+            // this test exists to catch.
+            var webhookReceived = AwaitDeliveryCount(fixture, endpoint.Id);
+            Assert.True(webhookCaughtUp, DescribeShortfall("Webhook-dispatch", webhookReceived, fanoutPublisher.Calls.Count));
+            Assert.True(fanoutCaughtUp, DescribeShortfall("Fanout", fanoutPublisher.Calls.Count, webhookReceived));
         }
         finally
         {
@@ -116,6 +159,34 @@ public sealed class WebhookDispatchSharedQueueRegressionTests(WebhookDispatchFix
     {
         using var db = fixture.CreateDbContext();
         return db.WebhookDeliveries.Count(d => d.EndpointId == endpointId);
+    }
+
+    /// <summary>`15-17`: the CI failure this item fixes produced two different shapes on two
+    /// different runs of the same commit (0/6, then 5/6 on a re-run) - and the assertion message this
+    /// replaced ("the shared-queue bug would show up as a split total less than 6") described
+    /// neither. This distinguishes all three findings a shortfall here can actually mean, so the next
+    /// person reading a failure is pointed at the right one instead of at the property this test was
+    /// written to prove.</summary>
+    private static string DescribeShortfall(string consumerLabel, int received, int otherReceived)
+    {
+        if (received == 0)
+        {
+            return $"{consumerLabel} consumer received 0/{MessageCount} messages - a lost publish (the exchange had no " +
+                   "queue bound to it yet when the messages were published, so RabbitMQ discarded them), not the " +
+                   "shared-queue bug this test exists to catch.";
+        }
+
+        if (received + otherReceived == MessageCount)
+        {
+            return $"{consumerLabel} consumer received {received}/{MessageCount} messages, and the other consumer type " +
+                   $"received {otherReceived} - together summing to exactly {MessageCount} rather than each independently " +
+                   "receiving every message. This is the shared-queue bug this test exists to catch: the two consumer " +
+                   "types split one queue instead of each holding its own.";
+        }
+
+        return $"{consumerLabel} consumer received only {received}/{MessageCount} messages within the wait (the two " +
+               "counts do not sum to the published total, so this is not a split either) - most likely a still-recovering " +
+               "circuit breaker or a slow delivery, not the shared-queue bug this test exists to catch.";
     }
 
     private static EventEnvelope BuildEnvelope(SiteId siteId, VisitorId visitorId, OperatorId operatorId)

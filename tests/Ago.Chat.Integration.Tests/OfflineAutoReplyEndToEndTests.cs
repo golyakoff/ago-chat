@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -184,10 +185,33 @@ public sealed class OfflineAutoReplyEndToEndTests(ConnectionFanoutFixture fixtur
         var cacheInvalidationConsumer = new CacheInvalidationConsumer(
             new RabbitMqEventConsumer(cacheInvalidationConsumerConnection), cache, NullLogger<CacheInvalidationConsumer>.Instance);
 
+        // `15-17`: cacheInvalidationConsumer subscribes Broadcast, not Competing - its queue is
+        // exclusive, auto-delete, and named with a random suffix generated inside SubscribeAsync
+        // (RabbitMqSubscriptionTestHelpers' own remarks), so there is no name to check a consumer
+        // count on directly the way the Competing wait below does. Snapshot the queue names already
+        // bound to the exchange *before* starting the consumer, so an unrelated queue left bound by an
+        // earlier test in this same collection fixture cannot be mistaken for this test's own new one.
+        using var management = fixture.CreateRabbitMqManagementClient();
+        var cacheInvalidatedQueueNamesBeforeStart = await RabbitMqSubscriptionTestHelpers.GetQueueNamesBoundToExchangeAsync(
+            management, CacheTopics.Invalidated, CancellationToken.None);
+
         await dispatcher.StartAsync(CancellationToken.None);
         await siteCacheInvalidationConsumer.StartAsync(CancellationToken.None);
         await cacheInvalidationConsumer.StartAsync(CancellationToken.None);
-        await Task.Delay(TimeSpan.FromMilliseconds(500)); // subscriptions to actually land
+
+        // `15-17`: wait for the fact each subscription's own queue has a live consumer attached, not
+        // merely that the queue exists (or, for the Broadcast one, is bound) - see
+        // WebhookDispatchSharedQueueRegressionTests' own remarks for why StartAsync alone cannot be
+        // awaited for this, and RabbitMqSubscriptionTestHelpers' own remarks for why a weaker check
+        // (existence, or a binding) is not enough.
+        await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
+            management, TimeSpan.FromSeconds(10),
+            (nameof(SiteSettingsChanged), SiteCacheInvalidationConsumer.ConsumerName));
+        var cacheInvalidationLanded = await RabbitMqSubscriptionTestHelpers.WaitForNewBroadcastSubscriptionAsync(
+            management, CacheTopics.Invalidated, cacheInvalidatedQueueNamesBeforeStart, TimeSpan.FromSeconds(10));
+        Assert.True(cacheInvalidationLanded,
+            $"The Broadcast cache-invalidation subscription to '{CacheTopics.Invalidated}' never landed - no new " +
+            "queue bound to its exchange ever reached a live consumer within 10s.");
 
         try
         {

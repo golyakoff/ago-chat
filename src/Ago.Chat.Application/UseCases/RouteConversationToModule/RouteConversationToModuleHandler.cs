@@ -104,7 +104,7 @@ public sealed class RouteConversationToModuleHandler(
         }
 
         var now = clock.UtcNow;
-        var modulesForSite = await moduleReadStore.GetForSiteAsync(command.SiteId, cancellationToken);
+        var modulesForSite = await moduleReadStore.GetForSiteAsync(command.SiteId, now, cancellationToken);
 
         return conversation.ActiveModuleTask is { } active
             ? await ContinueActiveTaskAsync(conversation, active, trigger, modulesForSite, now, command, cancellationToken)

@@ -31,9 +31,17 @@ namespace Ago.Chat.Application.Abstractions;
 /// </summary>
 public interface IModuleRegistrationGateway
 {
+    /// <param name="displayName">`22-17`: an opaque, human-readable label for whoever
+    /// <paramref name="module"/>'s <see cref="ModuleRegistrationTarget.SiteId"/> names - Chat's own
+    /// <see cref="Site.Name"/>, carried along unopened. Not a fact about "calendar" or "faq": every
+    /// module product may need *some* human-readable name for the account it is provisioning a row
+    /// for, the same way it already needs the coordinates <see cref="ModuleRegistrationTarget"/>
+    /// carries, so this is one more opaque string on an already-opaque contract, not a new kind of
+    /// knowledge Chat is handing across the boundary. See <c>RegisterChatModuleHandler</c>'s own
+    /// remarks on the calendar side for what it is used for there.</param>
     Task RegisterAsync(
         ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
-        CancellationToken cancellationToken);
+        string displayName, CancellationToken cancellationToken);
 
     Task RotateAsync(
         ModuleRegistrationTarget module, ModuleCredential newCredential, ModuleProvisioningSecret provisioningSecret,

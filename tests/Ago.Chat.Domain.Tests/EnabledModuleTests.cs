@@ -74,4 +74,56 @@ public class EnabledModuleTests
         Assert.Equal(module.EntryPoint, result.EntryPoint);
         Assert.Equal(module.EnabledAt, result.EnabledAt);
     }
+
+    /// <summary>`22-17`: not on <see cref="EnabledModule.WithCredential"/>'s own contract, but its
+    /// own remarks state the promise explicitly - a rotation is not a re-grant, so it must not
+    /// silently clear an owner grant's own end date or reset who granted it.</summary>
+    [Fact]
+    public void WithCredential_PreservesGrantedByOwnerAndExpiresAt()
+    {
+        var expiresAt = Now.AddDays(30);
+        var module = new EnabledModule(
+            new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, ["/booking"], EntryPoint, Credential, Now,
+            grantedByOwner: true, expiresAt: expiresAt);
+
+        var result = module.WithCredential(new ModuleCredential("rotated-secret-of-sixteen-plus-chars-x"));
+
+        Assert.True(result.GrantedByOwner);
+        Assert.Equal(expiresAt, result.ExpiresAt);
+    }
+
+    [Fact]
+    public void Constructor_DefaultsToNotGrantedByOwner_AndNoExpiry()
+    {
+        var module = Build();
+
+        Assert.False(module.GrantedByOwner);
+        Assert.Null(module.ExpiresAt);
+    }
+
+    [Fact]
+    public void Constructor_WithAFutureExpiry_Succeeds()
+    {
+        var module = new EnabledModule(
+            new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, ["/booking"], EntryPoint, Credential, Now,
+            grantedByOwner: true, expiresAt: Now.AddDays(1));
+
+        Assert.Equal(Now.AddDays(1), module.ExpiresAt);
+    }
+
+    /// <summary>`22-17`'s own construction-time guard - see this constructor's own remarks for why
+    /// this is refused here rather than left for a caller to discover as a silently-already-expired
+    /// row. Fails-before: before this guard existed, this call succeeded and produced a row that was
+    /// dead on arrival, which <see cref="EnabledModuleReadStore"/>'s own expiry filter would have
+    /// hidden from every caller the moment it was written - see this item's own report for the
+    /// captured pre-guard behaviour.</summary>
+    [Theory]
+    [InlineData(0)] // exactly EnabledAt
+    [InlineData(-1)] // strictly before EnabledAt
+    public void Constructor_WithAnExpiryAtOrBeforeEnabledAt_Throws(int secondsBeforeEnabledAt)
+    {
+        Assert.Throws<ArgumentException>(() => new EnabledModule(
+            new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, ["/booking"], EntryPoint, Credential, Now,
+            grantedByOwner: true, expiresAt: Now.AddSeconds(secondsBeforeEnabledAt)));
+    }
 }
