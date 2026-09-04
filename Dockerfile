@@ -44,6 +44,11 @@ COPY src/Ago.Chat.Api/Ago.Chat.Api.csproj src/Ago.Chat.Api/
 COPY src/Ago.Chat.Worker/Ago.Chat.Worker.csproj src/Ago.Chat.Worker/
 COPY src/Ago.Chat.Webhooks/Ago.Chat.Webhooks.csproj src/Ago.Chat.Webhooks/
 COPY src/Ago.Chat.Migrator/Ago.Chat.Migrator.csproj src/Ago.Chat.Migrator/
+# `22-26`: added because it was missing. `22-16` shipped Ago.Chat.RoleAssignmentBackfill as a
+# one-shot host to be run on the node, and adding a project here is what makes it buildable at all -
+# this list is enumerated rather than globbed so the restore layer caches per project file, and a
+# project absent from it fails with MSB1009, not with anything that names the omission.
+COPY src/Ago.Chat.RoleAssignmentBackfill/Ago.Chat.RoleAssignmentBackfill.csproj src/Ago.Chat.RoleAssignmentBackfill/
 COPY src/Ago.Chat.Module/Ago.Chat.Module.csproj src/Ago.Chat.Module/
 COPY src/Ago.Chat.Application/Ago.Chat.Application.csproj src/Ago.Chat.Application/
 COPY src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.csproj src/Ago.Chat.Infrastructure.Postgres/
