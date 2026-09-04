@@ -23,7 +23,10 @@ public sealed class ConversationAssignmentFanoutConsumer(
     // `5-11`: this consumer's own stable identity, required so a second Competing subscriber of
     // ConversationAssignedToOperator (added later) gets its own queue instead of silently sharing
     // this one - see `ConnectionFanoutConsumer`'s own remarks for the live bug this pattern fixes.
-    private const string ConsumerName = "conversation-assignment-fanout";
+    //
+    // `15-17`: `internal`, not `private` - see `ConnectionFanoutConsumer.ConsumerName`'s own remarks
+    // for why a test needs this exact value rather than a retyped copy of it.
+    internal const string ConsumerName = "conversation-assignment-fanout";
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
