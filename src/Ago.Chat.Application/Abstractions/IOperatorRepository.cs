@@ -99,4 +99,19 @@ public interface IOperatorRepository
     /// (`OperatorConfiguration`), so unlike `IConversationRepository.SaveAsync` there is nothing here to
     /// retry.</summary>
     Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `23-02`: the sign-in refresh `decisions.md` §1 requires - "rewritten at every sign-in" - wired
+    /// at the one point a sign-in is actually observable (`GetMyPermissionsHandler`,
+    /// `GET /api/v1/operators/me`). A conditional `UPDATE`, never a load-mutate-save through the
+    /// aggregate: <see cref="Operator.DisplayName"/>/<see cref="Operator.Email"/> have no invariant to
+    /// enforce, the same "no invariant, no reason to load the aggregate" reasoning
+    /// <c>OperatorCapacityStore</c>'s own `active_chats` compare-and-set already established for a
+    /// different column on this same table. Returns <see langword="true"/> only when a row was
+    /// actually written - the caller's own claims matched what was already stored costs one statement
+    /// and no write, and that fact is observable here rather than requiring a caller to compare values
+    /// by eye.
+    /// </summary>
+    Task<bool> RefreshIdentityAsync(
+        OperatorId operatorId, string? displayName, string? email, CancellationToken cancellationToken);
 }

@@ -76,7 +76,13 @@ public static class OperatorInviteEndpoints
             return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "Token carries no subject claim.");
         }
 
-        var result = await handler.HandleAsync(new RedeemOperatorInvite(externalSubjectId, request.Code), cancellationToken);
+        // `23-02`: captured at redemption - decisions.md §1. Same token, same claims, read the same
+        // way `OperatorsEndpoints.HandleGetMyPermissionsAsync` reads them for the sign-in refresh.
+        var name = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Name);
+        var email = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Email);
+
+        var result = await handler.HandleAsync(
+            new RedeemOperatorInvite(externalSubjectId, request.Code, name, email), cancellationToken);
 
         if (result.IsFailure)
         {

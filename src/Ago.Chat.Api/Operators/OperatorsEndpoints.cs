@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Api.Auth;
+﻿using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
@@ -46,8 +48,15 @@ public static class OperatorsEndpoints
         GetMyPermissionsHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
         var user = httpContext.User;
+        // `23-02`: the token's own `name`/`email` claims - the console already requests the `openid
+        // profile email` scope (`decisions.md` §1's own "found while deciding"), so every real sign-in
+        // carries both. Read here, not resolved by `OperatorIdentityClaimsTransformation`: that class
+        // must stay a pure read (this item's own Scope), and these two values exist only to be written
+        // by the handler this call reaches, not to gate anything.
+        var name = user.FindFirstValue(JwtRegisteredClaimNames.Name);
+        var email = user.FindFirstValue(JwtRegisteredClaimNames.Email);
         var result = await handler.HandleAsync(
-            new GetMyPermissions(user.GetOperatorId(), user.GetSiteId()), cancellationToken);
+            new GetMyPermissions(user.GetOperatorId(), user.GetSiteId(), name, email), cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }

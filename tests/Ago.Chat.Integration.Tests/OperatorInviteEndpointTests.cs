@@ -105,6 +105,35 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.OK, operatorOnlyResponse.StatusCode);
     }
 
+    /// <summary>`23-02`'s own Done-when: "an operator redeeming an invite ends with `display_name` and
+    /// `email` on their row" - asserted against a token carrying real `name`/`email` claims
+    /// (`CreateFreshUserAccessTokenAsync`'s own `firstName: "Self", lastName: "Register"`, which the
+    /// realm's built-in "full name" mapper turns into a `name` claim of `"Self Register"`).</summary>
+    [Fact]
+    public async Task Redeem_ARealTokenCarryingNameAndEmailClaims_EndsWithBothOnTheOperatorRow()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+        Assert.Equal(HttpStatusCode.OK, redeemResponse.StatusCode);
+        var redeemed = await redeemResponse.Content.ReadFromJsonAsync<OperatorInviteEndpoints.RedeemOperatorInviteResponse>();
+        Assert.NotNull(redeemed);
+
+        await using var db = fixture.CreateDbContext();
+        var operatorRow = await db.Operators.SingleAsync(o => o.Id == new OperatorId(redeemed.OperatorId));
+        Assert.Equal("Self Register", operatorRow.DisplayName);
+        Assert.Equal($"{redeemerUsername}@example.test", operatorRow.Email);
+    }
+
     [Fact]
     public async Task Redeem_ASecondRedemptionOfTheSameCode_IsRejectedAlreadyRedeemed()
     {

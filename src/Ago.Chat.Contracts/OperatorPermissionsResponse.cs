@@ -29,5 +29,13 @@
 /// list is exactly the bug `docs/backlog/23-21-*.md` exists to close, because a console that cannot
 /// tell "not entitled" from "does not exist for this tenant" has no way to render the difference.
 /// </summary>
+/// <param name="DisplayName">`23-02`: the caller's own name, exactly as the token's `name` claim
+/// carried it on this call - the same value this call just (re)wrote onto the caller's own
+/// `operators` row (`GetMyPermissionsHandler`'s own remarks on the refresh). <see langword="null"/>
+/// for an identity with no name to show - the demo tenant's minted operators, or a token issued with
+/// no `name` claim at all. Placed after <see cref="EnabledModules"/>, not before it - C# requires a
+/// defaulted parameter to follow every non-defaulted one, and `EnabledModules` carries no default
+/// (`23-21`'s own contract: a caller must always state what the tenant has).</param>
 public sealed record OperatorPermissionsResponse(
-    Guid OperatorId, Guid SiteId, IReadOnlyList<string> Permissions, string Locale, IReadOnlyList<string> EnabledModules);
+    Guid OperatorId, Guid SiteId, IReadOnlyList<string> Permissions, string Locale,
+    IReadOnlyList<string> EnabledModules, string? DisplayName = null);

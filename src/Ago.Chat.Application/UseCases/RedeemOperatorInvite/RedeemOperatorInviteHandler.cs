@@ -22,7 +22,8 @@ public sealed class RedeemOperatorInviteHandler(IOperatorInviteRedemptionReposit
         var codeHash = SHA256.HashData(Encoding.UTF8.GetBytes(command.Code));
 
         var outcome = await redemptions.RedeemAsync(
-            new RedeemOperatorInviteAttempt(codeHash, command.ExternalSubjectId, clock.UtcNow), cancellationToken);
+            new RedeemOperatorInviteAttempt(codeHash, command.ExternalSubjectId, clock.UtcNow, command.Name, command.Email),
+            cancellationToken);
 
         return outcome switch
         {

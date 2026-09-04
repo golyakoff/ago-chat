@@ -7,4 +7,8 @@
 /// <see cref="OperatorId"/> can still be a genuine <see langword="null"/> - an outcome recorded on a
 /// conversation nobody was ever assigned to). See <see cref="ConversionReportReadStore"/>'s own class
 /// doc comment for why this disambiguator is needed at all.</summary>
-internal sealed record ConversionReportRow(Guid? OperatorId, string Outcome, long Count, int OperatorGrouping);
+/// <summary>`23-02`: <see cref="OperatorName"/> is that operator's own display name, `max(...)`-
+/// aggregated in the SQL over the two-column-plus-outcome grouping the same way
+/// <c>OperatorAnalyticsRow.OperatorName</c> is over its own wider grouping set.</summary>
+internal sealed record ConversionReportRow(
+    Guid? OperatorId, string Outcome, long Count, int OperatorGrouping, string? OperatorName = null);

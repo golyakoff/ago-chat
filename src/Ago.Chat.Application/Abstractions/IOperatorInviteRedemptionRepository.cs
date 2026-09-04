@@ -43,7 +43,12 @@ public abstract record OperatorInviteRedemptionResult
     public sealed record Success(OperatorId OperatorId, SiteId SiteId) : OperatorInviteRedemptionResult;
 }
 
-public sealed record RedeemOperatorInviteAttempt(byte[] CodeHash, string ExternalSubjectId, DateTimeOffset Now);
+/// <summary>`23-02`: <paramref name="Name"/>/<paramref name="Email"/> are the token's own `name`/
+/// `email` claims, carried through so <see cref="IOperatorInviteRedemptionRepository.RedeemAsync"/> can
+/// stamp them onto the new <c>Operator</c> row it creates - optional, appended at the end rather than
+/// inserted, so every existing positional construction of this record keeps compiling.</summary>
+public sealed record RedeemOperatorInviteAttempt(
+    byte[] CodeHash, string ExternalSubjectId, DateTimeOffset Now, string? Name = null, string? Email = null);
 
 /// <summary>
 /// `13-01`: the one write path that can ever add a second, third, ... `Operator` to a `Site` - the gap

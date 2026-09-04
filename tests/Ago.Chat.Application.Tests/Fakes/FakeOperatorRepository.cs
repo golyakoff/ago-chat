@@ -47,5 +47,39 @@ public sealed class FakeOperatorRepository : IOperatorRepository
 
     public Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken) => Task.CompletedTask;
 
+    /// <summary>`23-02`: mirrors `OperatorRepository.RefreshIdentityAsync`'s own "wrote, or matched
+    /// already" semantics without mutating the seeded <see cref="Operator"/> itself - that aggregate
+    /// exposes no setter for <see cref="Operator.DisplayName"/>/<see cref="Operator.Email"/> by design
+    /// (the port's own remarks: the refresh is raw SQL, never a load-mutate-save), so this fake tracks
+    /// the "as of the last refresh" values in a side table instead, seeded from whatever the seeded
+    /// row itself started with.</summary>
+    private readonly Dictionary<OperatorId, (string? DisplayName, string? Email)> _identities = [];
+
+    public Task<bool> RefreshIdentityAsync(
+        OperatorId operatorId, string? displayName, string? email, CancellationToken cancellationToken)
+    {
+        var current = _identities.TryGetValue(operatorId, out var tracked)
+            ? tracked
+            : _all.Find(o => o.Id == operatorId) is { } seeded
+                ? (seeded.DisplayName, seeded.Email)
+                : (null, null);
+
+        if (current.DisplayName == displayName && current.Email == email)
+        {
+            return Task.FromResult(false);
+        }
+
+        _identities[operatorId] = (displayName, email);
+        return Task.FromResult(true);
+    }
+
+    /// <summary>What the last <see cref="RefreshIdentityAsync"/> call (or the seeded row, if none)
+    /// left this identity holding - the fake's own way of letting a test assert the effective value
+    /// without a real Postgres row to query back.</summary>
+    public (string? DisplayName, string? Email) CurrentIdentity(OperatorId operatorId) =>
+        _identities.TryGetValue(operatorId, out var tracked)
+            ? tracked
+            : _all.Find(o => o.Id == operatorId) is { } seeded ? (seeded.DisplayName, seeded.Email) : (null, null);
+
     public void Seed(Operator @operator) => _all.Add(@operator);
 }

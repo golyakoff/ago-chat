@@ -12,10 +12,14 @@
 /// `5-07` additions). The queue view's two lists never needed it (`Waiting` has none by definition,
 /// `AssignedToMe` is always the caller's own id); the admin's site-wide list is the first caller that
 /// does, since "who (if anyone) is handling this conversation" is the whole point of that view.
+///
+/// <para>`23-02`: <paramref name="OperatorName"/> is that operator's own display name, additive the
+/// same way - <see langword="null"/> for the queue view (which never joins it in) and for a row that
+/// predates the column. The console falls back to the id, never the other way round.</para>
 /// </summary>
 public sealed record ConversationSummaryDto(
     Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
-    Guid? OperatorId = null);
+    Guid? OperatorId = null, string? OperatorName = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

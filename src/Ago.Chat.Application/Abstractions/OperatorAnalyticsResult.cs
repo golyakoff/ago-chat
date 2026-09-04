@@ -66,8 +66,15 @@ public sealed record OperatorAnalyticsBucket(
 public sealed record OperatorAnalyticsChannelBucket(string Channel, OperatorAnalyticsBucket Bucket);
 
 /// <summary>`18-09`: one operator's bucket - see <see cref="IOperatorAnalyticsReadStore"/> for exactly
-/// which conversations attribute to <paramref name="Operator"/> and why.</summary>
-public sealed record OperatorAnalyticsOperatorBucket(Domain.OperatorId Operator, OperatorAnalyticsBucket Bucket);
+/// which conversations attribute to <paramref name="Operator"/> and why.
+///
+/// <para>`23-02`: <paramref name="OperatorName"/> is that operator's own `operators.display_name`,
+/// joined in by the read store - <see langword="null"/> for an operator who has never signed in since
+/// the column existed (a row that predates it, or one `MintDemoTenantHandler` created), which the
+/// console falls back to the raw id for, the same "the id itself when there is nothing else" shape
+/// this field is replacing.</para></summary>
+public sealed record OperatorAnalyticsOperatorBucket(
+    Domain.OperatorId Operator, OperatorAnalyticsBucket Bucket, string? OperatorName = null);
 
 /// <param name="ReferrerHost">The referring page's host, or the literal <c>"Direct"</c> for a
 /// conversation whose visitor carried no <c>document.referrer</c> at all - see

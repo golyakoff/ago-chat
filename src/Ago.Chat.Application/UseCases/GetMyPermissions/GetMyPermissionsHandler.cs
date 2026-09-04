@@ -32,9 +32,22 @@ namespace Ago.Chat.Application.UseCases.GetMyPermissions;
 /// no new permission check of its own: "what has my own tenant switched on" needs nothing beyond being
 /// authenticated as an operator of it, the same reasoning this handler's own doc comment already gives
 /// for the permission list beside it.
+///
+/// <para>`23-02`: this is now also where `decisions.md` §1's "rewritten at every sign-in" happens -
+/// the console calls this endpoint once per session, from `PermissionsProvider`
+/// (`ago-console`), which is the one point a sign-in is actually observable server-side
+/// (`OperatorIdentityClaimsTransformation` itself must stay a pure read - the backlog item's own
+/// Scope). <see cref="IOperatorRepository.RefreshIdentityAsync"/> is a conditional `UPDATE`, so a
+/// session that changed nothing about the caller's name/email costs one statement and writes no row -
+/// fired and awaited before the response is built, never a fire-and-forget, so a caller cannot
+/// observe a permissions response for an identity whose refresh has not yet landed.</para>
 /// </summary>
 public sealed class GetMyPermissionsHandler(
-    IPermissionChecker permissions, GetSiteConfigByIdHandler siteConfig, IEnabledModuleReadStore moduleReadStore, IClock clock)
+    IPermissionChecker permissions,
+    GetSiteConfigByIdHandler siteConfig,
+    IEnabledModuleReadStore moduleReadStore,
+    IClock clock,
+    IOperatorRepository operators)
 {
     public async Task<Result<OperatorPermissionsResponse>> HandleAsync(
         GetMyPermissions query, CancellationToken cancellationToken)
@@ -45,7 +58,10 @@ public sealed class GetMyPermissionsHandler(
         var locale = config?.WidgetLocale ?? Locale.En;
         var modules = await moduleReadStore.GetForSiteAsync(query.SiteId, clock.UtcNow, cancellationToken);
         var enabledModules = modules.Select(m => m.ModuleKey.Value).ToArray();
+
+        await operators.RefreshIdentityAsync(query.OperatorId, query.Name, query.Email, cancellationToken);
+
         return new OperatorPermissionsResponse(
-            query.OperatorId.Value, query.SiteId.Value, granted, locale.ToString(), enabledModules);
+            query.OperatorId.Value, query.SiteId.Value, granted, locale.ToString(), enabledModules, query.Name);
     }
 }

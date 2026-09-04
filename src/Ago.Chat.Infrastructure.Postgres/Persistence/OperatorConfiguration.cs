@@ -30,6 +30,18 @@ internal sealed class OperatorConfiguration : IEntityTypeConfiguration<Operator>
             .IsUnique()
             .HasFilter("external_subject_id IS NOT NULL");
 
+        // `23-02`: nullable, no default, no index - neither column is ever queried by value (nothing
+        // looks an operator up by name or email; identity is still `ExternalSubjectId` alone), so this
+        // is exactly the "no invariant, one column" shape `HoldsSeat`/`RemovedAt` above already use,
+        // not a second lookup key. Written only by `OperatorInviteRedemptionRepository`/
+        // `RegisterSiteHandler` at creation and by `IOperatorRepository.RefreshIdentityAsync`'s raw SQL
+        // at sign-in - never through this aggregate's own SaveChanges path, so this column's presence
+        // here is purely "EF must know the table has it," the same reason `active_chats` is a shadow
+        // property a few lines down, except these two are real CLR properties with nothing to hide from
+        // ordinary reads.
+        builder.Property(o => o.DisplayName).HasColumnName("display_name");
+        builder.Property(o => o.Email).HasColumnName("email");
+
         // `13-03`: the seat-assignment and operator-removal columns - see each property's own remarks
         // on Operator for who writes them and why. HoldsSeat defaults true at the database level too,
         // matching the CLR default (`Operator`'s own constructor default) - belt and braces for any

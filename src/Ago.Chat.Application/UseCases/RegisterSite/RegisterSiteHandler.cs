@@ -137,7 +137,8 @@ public sealed class RegisterSiteHandler(
         // matches the same seed script's own value - a starting default, not a measured one
         // (`CLAUDE.md`).
         var operatorEntity = new Operator(
-            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: command.ExternalSubjectId);
+            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: command.ExternalSubjectId,
+            displayName: command.Name, email: command.Email);
 
         var operatorRole = new RoleSeed(idGenerator.NewId(now), "Operator", OperatorRolePermissions);
         var adminRole = new RoleSeed(idGenerator.NewId(now), "Admin", AdminRolePermissions);

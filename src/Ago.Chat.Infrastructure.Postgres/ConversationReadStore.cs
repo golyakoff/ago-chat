@@ -71,15 +71,20 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // @TagId (null when unfiltered), and `@TagId is null or exists(...)` short-circuits to a plain
     // site-scoped scan for the unfiltered case, the same "one statement handles both" shape
     // `GetHistoryAsync`'s own `@BeforeSequence is null or ...` clause already uses on this file.
+    // `23-02`: the one `ConversationSummaryItem` caller that renders an operator's name to a human
+    // (the admin/supervisor site-wide list) - `left join`, not inner, so a conversation whose operator
+    // has since been removed still lists, with a blank name rather than vanishing from the page.
     private const string AllForSiteSql = """
-        select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
-               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount", outcome as "Outcome"
+        select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
+               c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
+               op.display_name as "OperatorName"
         from conversations c
-        where site_id = @SiteId
-          and (@BeforeId is null or id < @BeforeId)
+        left join operators op on op.id = c.operator_id
+        where c.site_id = @SiteId
+          and (@BeforeId is null or c.id < @BeforeId)
           and (@TagId is null or exists(
               select 1 from conversation_tags ct where ct.conversation_id = c.id and ct.tag_id = @TagId))
-        order by id desc
+        order by c.id desc
         limit @PageSize
         """;
 
@@ -115,11 +120,17 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // `16-02`: the same row shape as AllForSiteSql above, filtered to one id instead of paged - see
     // IConversationReadStore.GetByIdAsync's own remarks on why this is a separate statement rather
     // than GetAllForSiteAsync with an extra filter bolted on.
+    // `23-02`: the same `left join operators` `AllForSiteSql` above gains - added here too rather than
+    // left to Dapper's own optional-constructor-parameter default, so `ConversationSummaryRow` never
+    // depends on that behaviour going unverified for a single-row query where the join costs nothing
+    // real.
     private const string ByIdSql = """
-        select id as "Id", visitor_id as "VisitorId", operator_id as "OperatorId", state as "State",
-               created_at as "CreatedAt", operator_unread_count as "OperatorUnreadCount", outcome as "Outcome"
-        from conversations
-        where id = @ConversationId and site_id = @SiteId
+        select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
+               c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
+               op.display_name as "OperatorName"
+        from conversations c
+        left join operators op on op.id = c.operator_id
+        where c.id = @ConversationId and c.site_id = @SiteId
         """;
 
     public async Task<ConversationSummaryItem?> GetByIdAsync(
@@ -211,7 +222,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.State,
         new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
         r.OperatorUnreadCount,
-        r.Outcome);
+        r.Outcome,
+        r.OperatorName);
 
     private static VisitorHistoryItem ToVisitorHistoryItem(VisitorHistoryRow r) => new(
         new ConversationId(r.Id),

@@ -16,8 +16,16 @@ public class GetMyPermissionsHandlerTests
     }
 
     private static GetMyPermissionsHandler HandlerFor(
-        Site site, FakePermissionChecker? permissions = null, FakeEnabledModuleReadStore? modules = null) =>
-        new(permissions ?? new FakePermissionChecker(), SiteConfigFor(site), modules ?? new FakeEnabledModuleReadStore(), new FakeClock(DateTimeOffset.UtcNow));
+        Site site,
+        FakePermissionChecker? permissions = null,
+        FakeEnabledModuleReadStore? modules = null,
+        FakeOperatorRepository? operators = null) =>
+        new(
+            permissions ?? new FakePermissionChecker(),
+            SiteConfigFor(site),
+            modules ?? new FakeEnabledModuleReadStore(),
+            new FakeClock(DateTimeOffset.UtcNow),
+            operators ?? new FakeOperatorRepository());
 
     [Fact]
     public async Task HandleAsync_ReturnsEveryPermissionTheOperatorsRolesGrantForThatSite()
@@ -123,5 +131,41 @@ public class GetMyPermissionsHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Empty(result.Value.EnabledModules);
+    }
+
+    /// <summary>`23-02`: `decisions.md` §1's "rewritten at every sign-in" - this call is where it
+    /// happens, so the response it returns must carry the value it just wrote, not a stale one.</summary>
+    [Fact]
+    public async Task HandleAsync_RefreshesTheOperatorsIdentity_AndReturnsTheNameFromTheCall()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+        var handler = HandlerFor(new Site(siteId, "shop_test", []), operators: operators);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetMyPermissions.GetMyPermissions(operatorId, siteId, "Ivan Petrov", "ivan@example.test"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Ivan Petrov", result.Value.DisplayName);
+        Assert.Equal(("Ivan Petrov", "ivan@example.test"), operators.CurrentIdentity(operatorId));
+    }
+
+    /// <summary>A caller that supplies no name/email (a token minted without them, or a test that does
+    /// not care) must not crash the response - `DisplayName` is simply absent.</summary>
+    [Fact]
+    public async Task HandleAsync_WithNoNameClaim_ReturnsANullDisplayName()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var handler = HandlerFor(new Site(siteId, "shop_test", []));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetMyPermissions.GetMyPermissions(operatorId, siteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.DisplayName);
     }
 }

@@ -55,5 +55,10 @@ public sealed record ConversionBucket(
 /// <summary>`18-10`'s own per-operator breakdown - see <see cref="IConversionReportReadStore"/> for
 /// which conversations attribute to <paramref name="Operator"/> and why (a genuinely simpler question
 /// than `18-09`'s first-reply attribution: there is no "who deserves credit" ambiguity to resolve
-/// here).</summary>
-public sealed record ConversionOperatorBucket(Domain.OperatorId Operator, ConversionBucket Bucket);
+/// here).
+///
+/// <para>`23-02`: <paramref name="OperatorName"/> is that operator's own display name, joined in by
+/// the read store - the same "null for a row that predates it" shape
+/// <c>OperatorAnalyticsOperatorBucket.OperatorName</c> already establishes.</para></summary>
+public sealed record ConversionOperatorBucket(
+    Domain.OperatorId Operator, ConversionBucket Bucket, string? OperatorName = null);

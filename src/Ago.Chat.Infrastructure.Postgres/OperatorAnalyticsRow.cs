@@ -25,10 +25,20 @@
 /// own columns, and <see cref="ChannelGrouping"/>/<see cref="ReferrerGrouping"/>/
 /// <see cref="CampaignGrouping"/> are their `grouping()` flags - see
 /// <see cref="OperatorAnalyticsReadStore"/>'s class remarks for why every dimension needs its own flag
-/// now that there are five grouping sets rather than three.</para></summary>
+/// now that there are five grouping sets rather than three.</para>
+///
+/// <para>`23-02`: <see cref="OperatorName"/> is placed right after <see cref="OperatorId"/>, matching
+/// `SiteAnalyticsSql`'s own `select` order - found live, correcting this file's own paragraph above:
+/// a record parameter with a default value (`= null`) breaks Dapper's constructor selection when it
+/// does not also sit at the position its column occupies in the reader (`OperatorAnalyticsReadStoreTests`
+/// caught it - every test calling `GetSiteAnalyticsAsync` failed with "no matching signature" until
+/// this was reordered). <see cref="AverageDurationSeconds"/> above has no default value and genuinely
+/// does bind by name regardless of position, which is why that paragraph's claim was never wrong for
+/// every column but this one.</para></summary>
 internal sealed record OperatorAnalyticsRow(
     string? Channel,
     Guid? OperatorId,
+    string? OperatorName,
     string? ReferrerHost,
     string? UtmCampaign,
     long ConversationCount,

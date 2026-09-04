@@ -8,6 +8,14 @@
 /// and per-IP") - `Application` may not reference `HttpContext`, so the endpoint reads it and passes
 /// it through as a plain string, the same shape every other command in this codebase already uses for
 /// values a handler needs but must not resolve itself.</summary>
-public sealed record RegisterSite(string ExternalSubjectId, string RequestIp, string SiteName, string InitialAllowedOrigin);
+/// <summary>`23-02`: <paramref name="Name"/>/<paramref name="Email"/> are the same validated token's
+/// own `name`/`email` claims, carried through for the identical reason
+/// <paramref name="ExternalSubjectId"/> already is - this bootstrap endpoint creates an `Operator`
+/// from a real human's token too, not only `13-01`'s invite redemption, so it must "pass whatever it
+/// has" the same way (`23-02`'s own backlog note). Optional, appended at the end so every existing
+/// caller keeps compiling.</summary>
+public sealed record RegisterSite(
+    string ExternalSubjectId, string RequestIp, string SiteName, string InitialAllowedOrigin,
+    string? Name = null, string? Email = null);
 
 public sealed record RegisteredSite(Guid SiteId, Guid OperatorId);

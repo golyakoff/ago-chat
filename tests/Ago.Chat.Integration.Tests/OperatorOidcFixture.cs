@@ -239,6 +239,27 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
     public Task<string> RefreshAccessTokenAsync(string username) =>
         GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword);
 
+    /// <summary>`23-02`: changes a user's `firstName`/`lastName` in the IdP itself - what
+    /// `OperatorIdentityRefreshEndpointTests` needs to prove "changing the name in the IdP and signing
+    /// in again updates the row." The realm's own "full name" mapper (`${firstName} ${lastName}`,
+    /// `operatorDisplayName.ts`'s own remarks, `ago-console`) is what turns this into a different
+    /// `name` claim on the *next* token minted for this user - the current one, already issued, is
+    /// unaffected, which is why every caller mints a fresh token via <see cref="RefreshAccessTokenAsync"/>
+    /// afterward rather than reusing one taken before this call.</summary>
+    public async Task UpdateUserNameAsync(string username, string firstName, string lastName)
+    {
+        var adminToken = await GetAdminTokenAsync();
+        var userId = await GetUserIdAsync(username);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, $"{_keycloakBaseAddress}/admin/realms/{RealmName}/users/{userId}")
+        {
+            Content = JsonContent.Create(new { firstName, lastName }),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", adminToken);
+        var response = await Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
     private const string FreshUserPassword = "self-register-password";
 
     /// <summary>`17-06`: a raw password-grant attempt whose *failure* is the point, so unlike every

@@ -51,12 +51,16 @@ public sealed record OperatorAnalyticsChannelBucketDto(string Channel, OperatorA
 /// attribute to - the one who replied first, or (only for a conversation nobody ever replied to) the
 /// one holding it when it closed unanswered; see <c>IOperatorAnalyticsReadStore</c>'s own remarks
 /// (`ago-chat`) for the full reasoning, including why a conversation transferred after being answered
-/// still credits whoever answered it, never whoever it was transferred to. The console has no operator
-/// display name to render - <c>Ago.Chat.Domain.Operator</c> carries none today - so this is the raw id,
-/// the same "no name, so the id itself" precedent `AdminConversationsPage`'s own assigned-operator
-/// column already sets on the console side.
+/// still credits whoever answered it, never whoever it was transferred to.
+///
+/// <para>`23-02`: <see cref="OperatorName"/> is that operator's own display name -
+/// <see langword="null"/> for a row that predates the column (or an operator `MintDemoTenantHandler`
+/// minted, which carries none by design). The console renders this with the id as its own fallback,
+/// never the other way round - <see cref="OperatorId"/> stays present on every row regardless, so a
+/// caller never loses the ability to tell two same-named operators apart.</para>
 /// </summary>
-public sealed record OperatorAnalyticsOperatorBucketDto(Guid OperatorId, OperatorAnalyticsBucketDto Bucket);
+public sealed record OperatorAnalyticsOperatorBucketDto(
+    Guid OperatorId, OperatorAnalyticsBucketDto Bucket, string? OperatorName = null);
 
 /// <summary>`18-12`: one referrer host's bucket - see <see cref="OperatorAnalyticsResponse.ByReferrer"/>.
 /// </summary>
