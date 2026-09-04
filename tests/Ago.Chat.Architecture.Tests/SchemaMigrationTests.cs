@@ -87,10 +87,15 @@ public class SchemaMigrationTests
 
     /// <summary>
     /// `adr/0056`: "It references <c>Ago.Chat.Infrastructure.Postgres</c> and nothing above it." Stated
-    /// in the csproj as a comment, and here as a fact. <c>Ago.Chat.Module</c> is the one that matters:
-    /// it wires RabbitMQ, Redis, S3 and Keycloak and validates all of them at startup, so a migrator
-    /// built on it could not run against a database while the broker was down - and an environment
-    /// mid-incident is exactly where somebody needs to apply a migration.
+    /// in the csproj as a comment, and here as a fact - checked against <c>Ago.Chat.Migrator</c>'s own
+    /// resolved NuGet restore graph (<see cref="ReferenceBoundaryRule"/>), not its compiled assembly's
+    /// metadata: the compiler elides a <c>ProjectReference</c> nothing in the code calls, so a stray,
+    /// unused reference to <c>Ago.Chat.Module</c> would satisfy an assembly-metadata check while still
+    /// dragging that project - and everything it wires (RabbitMQ, Redis, S3, Keycloak) - into the
+    /// migrator's publish output. `17-12` found and closed that gap; see
+    /// <see cref="ReferenceBoundaryRule"/>'s own remarks for the full argument and
+    /// <see cref="TheRule_FlagsAForbiddenNamePresentOnlyInTheRestoreGraph"/> for the proof that this
+    /// version, unlike the one it replaced, actually catches an unused reference.
     /// </summary>
     [Fact]
     public void TheMigrator_ReferencesPersistenceAndNothingAboveIt()
@@ -98,14 +103,53 @@ public class SchemaMigrationTests
         string[] forbidden =
             ["Ago.Chat.Module", "Ago.Chat.Api", "Ago.Chat.Worker", "Ago.Chat.Webhooks"];
 
-        var offenders = TestAssemblies.Migrator.Cecil.MainModule.AssemblyReferences
-            .Select(reference => reference.Name)
-            .Where(name => forbidden.Contains(name))
-            .ToList();
+        var migratorDirectory = Path.Combine(SourceTreeLocator.FindSrcDirectory(), "Ago.Chat.Migrator");
+        var offenders = ReferenceBoundaryRule.ForbiddenNamesPresent(migratorDirectory, forbidden);
 
         Assert.True(offenders.Count == 0,
-            $"Ago.Chat.Migrator references {string.Join(", ", offenders)} - adr/0056 confines it to "
-            + "Ago.Chat.Infrastructure.Postgres and below.");
+            $"Ago.Chat.Migrator's restore graph resolves {string.Join(", ", offenders)} - adr/0056 "
+            + "confines it to Ago.Chat.Infrastructure.Postgres and below. Checked against "
+            + "obj/project.assets.json (17-12), which is not fooled by an unused ProjectReference the "
+            + "way a compiled-assembly check is.");
+    }
+
+    /// <summary>
+    /// <b>The rule, proven able to fail</b> - the same permanent-fixture-style reasoning
+    /// <see cref="ModuleKeyLiteralGuardTests.TheRule_FlagsAStringLiteralOfAKnownModuleKey"/> uses: a rule
+    /// that has only ever been observed passing is not evidence. This is the in-process form of the
+    /// proof; the real-world form is adding <c>&lt;ProjectReference Include="..\Ago.Chat.Module\..." /&gt;</c>
+    /// to <c>Ago.Chat.Migrator.csproj</c> alone (no code using it) and re-running
+    /// <see cref="TheMigrator_ReferencesPersistenceAndNothingAboveIt"/> - which is exactly what `17-12`'s
+    /// report demonstrates, because a synthetic <c>project.assets.json</c> cannot by itself show that the
+    /// real restore step actually writes a forbidden project's name into the real file.
+    /// </summary>
+    [Fact]
+    public void TheRule_FlagsAForbiddenNamePresentOnlyInTheRestoreGraph()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), $"ReferenceBoundaryRuleTests_{Guid.NewGuid():N}");
+        var objDirectory = Path.Combine(tempDirectory, "obj");
+        Directory.CreateDirectory(objDirectory);
+        try
+        {
+            File.WriteAllText(Path.Combine(objDirectory, "project.assets.json"), """
+                {
+                  "libraries": {
+                    "Ago.Chat.Infrastructure.Postgres/1.0.0": { "type": "project" },
+                    "Ago.Chat.Module/1.0.0": { "type": "project" },
+                    "Npgsql/10.0.3": { "type": "package" }
+                  }
+                }
+                """);
+
+            var offenders = ReferenceBoundaryRule.ForbiddenNamesPresent(
+                tempDirectory, ["Ago.Chat.Module", "Ago.Chat.Api", "Ago.Chat.Worker", "Ago.Chat.Webhooks"]);
+
+            Assert.Equal(["Ago.Chat.Module"], offenders);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
     }
 
     /// <summary>
