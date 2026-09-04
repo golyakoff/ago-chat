@@ -56,6 +56,7 @@ using Ago.Chat.Application.UseCases.ListModuleTaskChannelPriorityList;
 using Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
+using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.ListMyTenancies;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
@@ -542,6 +543,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RotateModuleCredentialHandler>();
         services.AddScoped<RevokeModuleForSiteHandler>();
         services.AddScoped<VerifyModuleRegistrationHandler>();
+        // `23-01`: the console's own read of this route group - see the handler's own remarks for why
+        // it exists at all (the endpoint used to call IEnabledModuleReadStore directly, ungated).
+        services.AddScoped<ListEnabledModulesForSiteHandler>();
         // `22-17`: the platform owner's own grant/revoke - a second caller of the identical `22-11`
         // module-first registration mechanism above, gated entirely by RequirePlatformOwner at the
         // route rather than by IPermissionChecker (OwnerModuleEndpoints' own remarks).

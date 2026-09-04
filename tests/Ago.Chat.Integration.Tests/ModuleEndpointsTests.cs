@@ -5,6 +5,7 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Modules;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
+using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -15,6 +16,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -159,6 +161,67 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// `23-01`: the fix itself, over real HTTP. Before this item, <c>HandleGetAsync</c> read
+    /// <c>IEnabledModuleReadStore</c> straight from the endpoint with the route's <c>siteId</c>
+    /// compared against nothing, so any authenticated operator of any site could list another
+    /// tenant's enabled modules - including <c>EntryPoint</c>, <c>GrantedByOwner</c> and
+    /// <c>ExpiresAt</c> - by naming its <c>siteId</c> in the URL. <c>demo-admin</c> genuinely holds
+    /// <c>site:configure</c>, just not on the victim's site, the same "privileged caller, wrong
+    /// tenant" shape <see cref="CrossTenantRouteIsolationTests"/> uses throughout - a refusal from an
+    /// operator holding no permissions anywhere would prove nothing about tenant scoping
+    /// specifically.
+    /// </summary>
+    [Fact]
+    public async Task DemoAdminToken_CannotListAnotherTenantsEnabledModules()
+    {
+        var victimSiteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(victimSiteId, $"site_{victimSiteId.Value:N}", []));
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), victimSiteId, new ModuleKey("victim-faq"), ["/victim"],
+                new Uri("https://victim.example.com"), new ModuleCredential("a-victim-secret-of-sixteen-plus-chars"),
+                DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var response = await client.GetAsync($"/api/v1/sites/{victimSiteId.Value}/modules");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        // The readable half - a real RFC 7807 problem body, the same shape OperatorInviteEndpointTests
+        // reads: `title` (and `type`) carry ConversationErrors' own stable code, `Conversation.Forbidden`
+        // here - never a JSON `code` field, which this vocabulary does not have.
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("Conversation.Forbidden", problem.Title);
+    }
+
+    /// <summary>The other half of the same proof: the identical caller, naming their <b>own</b> site,
+    /// still succeeds - so the 403 above is "this site, not you", not this server refusing everyone
+    /// or this route having quietly stopped working.</summary>
+    [Fact]
+    public async Task DemoAdminToken_CanStillListTheirOwnSitesEnabledModules()
+    {
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+        await client.PutAsJsonAsync(
+            Route, new ModuleEndpoints.EnableModuleRequest(
+                "faq-own-site-read-test", ["/faq-own-site-read-test"], "https://faq.example.com",
+                "a-shared-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
+
+        var response = await client.GetAsync(Route);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ModuleEndpoints.EnabledModulesResponse>();
+        Assert.Contains(body!.Modules, m => m.ModuleKey == "faq-own-site-read-test");
+    }
+
     [Fact]
     public async Task NoToken_IsRejected()
     {
@@ -219,6 +282,9 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<Application.UseCases.RotateModuleCredential.RotateModuleCredentialHandler>();
         builder.Services.AddScoped<Application.UseCases.RevokeModuleForSite.RevokeModuleForSiteHandler>();
         builder.Services.AddScoped<Application.UseCases.VerifyModuleRegistration.VerifyModuleRegistrationHandler>();
+        // `23-01`: the GET route's own handler - unregistered before this item, because the endpoint
+        // used to call IEnabledModuleReadStore directly instead of dispatching to one.
+        builder.Services.AddScoped<ListEnabledModulesForSiteHandler>();
 
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();

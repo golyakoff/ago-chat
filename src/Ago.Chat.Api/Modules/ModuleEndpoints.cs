@@ -1,12 +1,11 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
-using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
+using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.RevokeModuleForSite;
 using Ago.Chat.Application.UseCases.RotateModuleCredential;
 using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
 using Ago.Chat.Domain;
-using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Ago.Chat.Api.Modules;
@@ -46,12 +45,19 @@ public static class ModuleEndpoints
         group.MapPost("/{moduleKey}/verify", HandleVerifyAsync);
     }
 
+    /// <summary>`23-01`: dispatches to <see cref="ListEnabledModulesForSiteHandler"/> rather than
+    /// reading <c>IEnabledModuleReadStore</c> straight from the endpoint - see that handler's own
+    /// remarks for why an endpoint-level read store call was the live cross-tenant hole this route
+    /// group otherwise had, and why a handler is the shape every other read on this codebase's
+    /// <c>/sites/{siteId}/...</c> routes already uses.</summary>
     private static async Task<IResult> HandleGetAsync(
-        Guid siteId, IEnabledModuleReadStore readStore, IClock clock, CancellationToken cancellationToken)
+        Guid siteId, ListEnabledModulesForSiteHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
-        var modules = await readStore.GetForSiteAsync(new SiteId(siteId), clock.UtcNow, cancellationToken);
-        return Results.Ok(new EnabledModulesResponse(
-            [.. modules.Select(m => new EnableModuleResponse(
+        var result = await handler.HandleAsync(
+            new ListEnabledModulesForSite(httpContext.User.GetOperatorId(), new SiteId(siteId)), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(new EnabledModulesResponse(
+            [.. result.Value.Select(m => new EnableModuleResponse(
                 m.ModuleKey.Value, m.TriggerWords, m.EntryPoint.ToString(), m.GrantedByOwner, m.ExpiresAt))]));
     }
 

@@ -7,6 +7,7 @@ using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeModuleForSite;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
@@ -330,6 +331,11 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<EnableModuleForSiteHandler>();
         builder.Services.AddScoped<RotateModuleCredentialHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteHandler>();
+        // `23-01`: MapModuleEndpoints maps the whole self-service group at once, including
+        // the GET route's own handler - an unregistered handler here fails endpoint
+        // construction for the group as a whole (ModuleEndpointsTests's own remarks), which
+        // is exactly what this file's own fails-before run demonstrated.
+        builder.Services.AddScoped<ListEnabledModulesForSiteHandler>();
         builder.Services.AddScoped<VerifyModuleRegistrationHandler>();
         builder.Services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
