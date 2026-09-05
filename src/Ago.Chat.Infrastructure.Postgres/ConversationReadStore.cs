@@ -215,6 +215,28 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return new ConversationListPage(items, nextCursor);
     }
 
+    // `23-06`: `id` ordering, not `created_at` - `GetAllForSiteAsync`'s own remarks already state the
+    // precedent this leans on (conversation ids are UUID v7, so id order is creation order), which is
+    // what lets this be served by the existing `ix_conversations_site_all (site_id, id)` index with no
+    // new index of its own. `LIMIT 1` against an index that already orders by `(site_id, id)` is an
+    // index-only lookup for the newest row, not a scan.
+    private const string MostRecentCreatedAtSql = """
+        select created_at
+        from conversations
+        where site_id = @SiteId
+        order by id desc
+        limit 1
+        """;
+
+    public async Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var createdAt = await connection.QuerySingleOrDefaultAsync<DateTime?>(new CommandDefinition(
+            MostRecentCreatedAtSql, new { SiteId = siteId.Value }, cancellationToken: cancellationToken));
+
+        return createdAt is { } value ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)) : null;
+    }
+
     private static ConversationSummaryItem ToSummaryItem(ConversationSummaryRow r) => new(
         new ConversationId(r.Id),
         new VisitorId(r.VisitorId),

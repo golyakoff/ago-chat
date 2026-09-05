@@ -77,4 +77,28 @@ public interface IConversationReadStore
     Task<VisitorHistoryPage> GetVisitorHistoryAsync(
         VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `23-06`: the second of the install screen's two facts - "the product was used", read from
+    /// `conversations` rather than stored anywhere new (this item's own Scope: "nothing new is stored
+    /// for it, which is the point: the data already exists and only the question is new"). <see
+    /// langword="null"/> when this site has never had a conversation at all.
+    ///
+    /// <para><b>Why this returns a timestamp and not a bool already compared against a window.</b> The
+    /// window (`SiteInstallationOptions.RecentlyThresholdDays`) is configuration the caller (
+    /// <c>GetSiteInstallationHandler</c>) already holds and a moment (<c>IClock</c>) this read store has
+    /// no business reading on its own (`clean-architecture.md`: no <c>DateTime.Now</c> outside
+    /// Infrastructure, and this is a Dapper adapter, not the boundary that decides what "recent" means) -
+    /// returning the raw fact and letting the caller apply its own threshold keeps this store answering
+    /// only "what is true", never "what should we conclude".</para>
+    ///
+    /// <para><b>Why <c>ORDER BY id DESC LIMIT 1</c> rather than <c>MAX(created_at)</c> or a
+    /// <c>WHERE created_at &gt;=</c> filter.</b> Conversation ids are UUID v7 (<see
+    /// cref="IIdGenerator"/>), so id order already is creation order - <see cref="GetAllForSiteAsync"/>'s
+    /// own remarks state this precedent first. That means this query is served by the existing
+    /// `ix_conversations_site_all (site_id, id)` index with no new index to add: one index-only lookup
+    /// for the newest row per site, not a sequential scan bounded by an unindexed `created_at`
+    /// predicate.</para>
+    /// </summary>
+    Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken);
 }

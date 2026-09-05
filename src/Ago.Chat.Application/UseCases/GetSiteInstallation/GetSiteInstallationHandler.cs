@@ -12,8 +12,23 @@ namespace Ago.Chat.Application.UseCases.GetSiteInstallation;
 /// low-frequency admin read, not wrapped in `ICache.GetOrCreateAsync` for the identical reason that
 /// handler's own remarks give (this is the console's own installation screen checking what the site is
 /// currently configured with, not something every visitor's page load hits).
+///
+/// <para><b>`23-06`: two more reads join the original two.</b> <see cref="ISiteInstallationSignalRepository.GetAsync"/>
+/// answers "was the widget seen" and <see cref="IConversationReadStore.GetMostRecentCreatedAtAsync"/>
+/// answers "was the product used" - both go straight to Postgres, uncached, for the identical reason
+/// `caching.md` gives for every other admin read in this handler: a stale answer on the one screen that
+/// exists to tell a tenant the truth about their own install would be the exact defect this item
+/// closes elsewhere reappearing here. <see cref="SiteInstallationStateResolver.Resolve"/> is then the
+/// one place both facts are folded into a single <see cref="Domain.SiteInstallationState"/> - pure
+/// Domain logic, no I/O of its own, called from here rather than duplicated at the console.</para>
 /// </summary>
-public sealed class GetSiteInstallationHandler(ISiteRepository sites, IPermissionChecker permissions)
+public sealed class GetSiteInstallationHandler(
+    ISiteRepository sites,
+    IPermissionChecker permissions,
+    ISiteInstallationSignalRepository signals,
+    IConversationReadStore conversations,
+    IClock clock,
+    SiteInstallationOptions options)
 {
     public async Task<Result<SiteInstallationDto>> HandleAsync(GetSiteInstallation query, CancellationToken cancellationToken)
     {
@@ -30,6 +45,19 @@ public sealed class GetSiteInstallationHandler(ISiteRepository sites, IPermissio
             return ConversationErrors.SiteNotFound(query.SiteId.Value);
         }
 
-        return new SiteInstallationDto(site.PublicKey, site.AllowedOrigins);
+        var signal = await signals.GetAsync(query.SiteId, cancellationToken);
+        var mostRecentConversationAt = await conversations.GetMostRecentCreatedAtAsync(query.SiteId, cancellationToken);
+
+        var now = clock.UtcNow;
+        var threshold = TimeSpan.FromDays(options.RecentlyThresholdDays);
+        var usedRecently = mostRecentConversationAt is { } createdAt && now - createdAt <= threshold;
+
+        var state = SiteInstallationStateResolver.Resolve(
+            signal.LastSeenAt, signal.LastRefusedOrigin, signal.LastRefusedOriginAt, usedRecently);
+
+        return new SiteInstallationDto(
+            site.PublicKey, site.AllowedOrigins,
+            signal.FirstSeenAt, signal.LastSeenAt, signal.LastRefusedOrigin, signal.LastRefusedOriginAt,
+            usedRecently, state);
     }
 }

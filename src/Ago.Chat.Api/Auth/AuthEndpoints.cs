@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -50,6 +51,7 @@ public static class AuthEndpoints
     public static async Task<IResult> HandleVisitorSessionAsync(
         VisitorSessionRequest request,
         GetSiteConfigByPublicKeyHandler getSite,
+        ISiteInstallationSignalRepository installationSignals,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRateLimitOptions> rateLimitOptions,
         IIdGenerator idGenerator,
@@ -88,9 +90,22 @@ public static class AuthEndpoints
         var origin = httpContext.Request.Headers.Origin.ToString();
         if (!string.IsNullOrEmpty(origin) && !site.AllowedOrigins.Contains(origin))
         {
+            // `23-06`: the half of §3's amendment an implementation drops most easily. The common
+            // failure is not a tenant spreading the script over extra sites - it is `www.` against the
+            // bare domain, `http` against `https`, or a staging subdomain, where *every* request is
+            // refused and RecordSightingAsync below never once runs. Without this, the install screen
+            // would tell somebody whose script is installed and running that it has never seen their
+            // site - decisions.md §3's own "the wrong one is the discouraging one."
+            await installationSignals.RecordRefusedOriginAsync(new SiteId(site.SiteId), origin, clock.UtcNow, cancellationToken);
             return Results.Problem(
                 title: "Origin not allowed for this site", statusCode: StatusCodes.Status403Forbidden, type: "origin-not-allowed");
         }
+
+        // `23-06`: the one fact this item exists to start recording - "the widget was seen." Recorded
+        // only once every check above (rate limit, site lookup, origin) has passed, so a rejected
+        // request never counts as a sighting; throttled to at most one row write per site per minute
+        // inside RecordSightingAsync itself, not here.
+        await installationSignals.RecordSightingAsync(new SiteId(site.SiteId), clock.UtcNow, cancellationToken);
 
         var visitorId = new VisitorId(idGenerator.NewId(clock.UtcNow));
         var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
@@ -113,6 +128,13 @@ public static class AuthEndpoints
     /// visitor's cached widget colour/position is now at most one renewal window stale rather than
     /// frozen at the moment their identity was first minted.
     ///
+    /// `23-06`'s own stated limitation, not fixed here: `ago-widget/src/session.ts`'s `start()` only
+    /// calls this endpoint when `isInRenewalWindow` says the stored token is close enough to expiry to
+    /// need it - a returning visitor whose token needs no renewal makes no call at all, on either
+    /// endpoint, so <c>last_seen_at</c> under-reports exactly that visitor. Tolerable for a
+    /// once-a-minute freshness signal (this item's own Out of scope), and closed properly by `23-07`'s
+    /// beacon, which fires on every widget mount regardless of token freshness.
+    ///
     /// A named method, matching <see cref="HandleVisitorSessionAsync"/>'s shape rather than an inline
     /// lambda. Its own tests (<c>VisitorSessionRenewalTests</c>) go through a real request pipeline,
     /// not around it - two of the five cases that matter (an expired token, an anonymous caller) are
@@ -122,8 +144,10 @@ public static class AuthEndpoints
     public static async Task<IResult> HandleVisitorSessionRenewalAsync(
         VisitorSessionRequest request,
         GetSiteConfigByPublicKeyHandler getSite,
+        ISiteInstallationSignalRepository installationSignals,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRenewalRateLimitOptions> rateLimitOptions,
+        IClock clock,
         JwtTokenService tokens,
         HttpContext httpContext,
         CancellationToken cancellationToken)
@@ -190,9 +214,18 @@ public static class AuthEndpoints
         var origin = httpContext.Request.Headers.Origin.ToString();
         if (!string.IsNullOrEmpty(origin) && !site.AllowedOrigins.Contains(origin))
         {
+            // `23-06`: the identical refusal recording the mint endpoint above does, and for the
+            // identical reason - a returning visitor whose origin now mismatches (a domain rename, a
+            // staging deploy) must not silently stop updating last_seen_at with no trace of why.
+            await installationSignals.RecordRefusedOriginAsync(tokenSiteId, origin, clock.UtcNow, cancellationToken);
             return Results.Problem(
                 title: "Origin not allowed for this site", statusCode: StatusCodes.Status403Forbidden, type: "origin-not-allowed");
         }
+
+        // `23-06`: a returning visitor renews rather than mints (this item's own Scope), so this is the
+        // sighting write for that path - the mint endpoint's own comment on why this comes only after
+        // every check above has passed applies here verbatim.
+        await installationSignals.RecordSightingAsync(tokenSiteId, clock.UtcNow, cancellationToken);
 
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
         return Results.Ok(new VisitorSessionResponse(

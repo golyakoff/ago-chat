@@ -172,7 +172,8 @@ public sealed class SelfRegisteredSiteOriginTests(SiteCachingFixture fixture)
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
             new AuthEndpoints.VisitorSessionRequest(publicKey),
-            getSite, rateLimiter, rateLimitOptions, new UuidV7Generator(), new SystemClock(), tokens, httpContext, CancellationToken.None);
+            getSite, new SiteInstallationSignalRepository(fixture.DataSource), rateLimiter, rateLimitOptions,
+            new UuidV7Generator(), new SystemClock(), tokens, httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);
         return httpContext.Response.StatusCode;
     }

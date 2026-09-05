@@ -852,6 +852,14 @@ public sealed class ChatModule : IProductModule
         // closes - a site's own public key and allowed origins, returned to that site's operators so
         // the console can render an installable snippet. Same registration shape, same reason, as the
         // pair right above.
+        //
+        // `23-06`: the "recently" threshold this handler now also needs - see SiteInstallationOptions'
+        // own remarks for why it is configuration rather than a literal `7`.
+        services
+            .AddOptions<SiteInstallationOptions>()
+            .Bind(configuration.GetSection(SiteInstallationOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteInstallationOptions>>().Value);
         services.AddScoped<GetSiteInstallationHandler>();
 
         // `16-02`: the erase-request writes, and the completion-poll read the console needs since no
