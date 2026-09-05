@@ -2,12 +2,15 @@
 using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Sites;
@@ -65,6 +68,30 @@ public static class SitesEndpoints
         app.MapGet(
                 "/api/v1/sites/{siteId:guid}/message-archives/{retentionClass}/{period}/download",
                 HandleGetMessageArchiveDownloadUrlAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+    }
+
+    /// <summary>
+    /// `24-12`: `GET /api/v1/sites/{siteId}/access-records` - deliberately its own <c>Map</c> call,
+    /// not folded into <see cref="MapSitesEndpoints"/> above. The same "own file, own Map call" seam
+    /// <c>OwnerSitesEndpoints</c>'s own class remarks describe for <c>MapOwnerSiteDetailEndpoint</c>,
+    /// for the identical reason found running this item: several integration tests build a
+    /// stripped-down <see cref="WebApplication"/> that calls <see cref="MapSitesEndpoints"/> to
+    /// exercise routes that predate this one, without ever registering <see cref="GetAccessRecordsForSiteHandler"/>
+    /// in their own DI container. ASP.NET Core's Minimal API cannot build *any* endpoint's metadata
+    /// once one endpoint's service parameter cannot be recognised as a service - so folding this route
+    /// into <see cref="MapSitesEndpoints"/> broke every other route in that method, in every test host
+    /// that never touches this one at all (35 failing tests across
+    /// <c>SiteRegistrationTests</c>/<c>OperatorInviteEndpointTests</c>/<c>ActiveSiteResolutionTests</c>/
+    /// <c>PlatformOwnerAsTenantTests</c>/<c>OwnerSiteDetailEndpointTests</c>/<c>OwnerModuleEndpointsTests</c>,
+    /// all with the identical "Body was inferred but the method does not allow inferred body
+    /// parameters" exception, found by running the full suite rather than this file's own tests in
+    /// isolation). Two map calls is what keeps a test host's registrations matching exactly the routes
+    /// it maps.
+    /// </summary>
+    public static void MapAccessRecordsEndpoint(this WebApplication app)
+    {
+        app.MapGet("/api/v1/sites/{siteId:guid}/access-records", HandleGetAccessRecordsAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -208,6 +235,33 @@ public static class SitesEndpoints
         return Results.Ok(new SiteExportStatusResponse(
             item.ExportId, item.Status.ToString(), item.RequestedAt, item.CompletedAt, item.DownloadUrl, item.FailureReason));
     }
+
+    /// <summary>
+    /// `24-12`: `GET /api/v1/sites/{siteId}/access-records` - the tenant's own read of who accessed
+    /// their data, per this item's own Scope ("reachable by the tenant for their own site, not only by
+    /// AGO"). `?before=&limit=` matches `api-design.md`'s pagination convention, the same spelling
+    /// `OwnerSitesEndpoints`'s own cross-tenant list uses.
+    /// </summary>
+    private static async Task<IResult> HandleGetAccessRecordsAsync(
+        Guid siteId, Guid? before, int? limit, GetAccessRecordsForSiteHandler handler, HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetAccessRecordsForSite(new SiteId(siteId), user.GetOperatorId(), before, limit), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var page = result.Value;
+        return Results.Ok(new AccessRecordsResponse(page.Items.Select(ToDto).ToList(), page.NextBeforeId));
+    }
+
+    private static AccessRecordDto ToDto(AccessRecordItem item) => new(
+        item.Id, item.OccurredAt, item.AccessKind.ToString(), item.ActorKind.ToString(), item.ActorId,
+        item.ResourceKind?.ToString(), item.ResourceId);
 
     /// <summary>`13-06`: `GET /api/v1/sites/{siteId}/message-archives` - every retention period this
     /// site currently has an archive object for, newest first.</summary>

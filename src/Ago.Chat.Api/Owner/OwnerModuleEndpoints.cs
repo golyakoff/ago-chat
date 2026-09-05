@@ -1,7 +1,9 @@
 ﻿using Ago.Chat.Api.Http;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Api.Owner;
 
@@ -41,6 +43,9 @@ public static class OwnerModuleEndpoints
         Guid siteId,
         GrantModuleRequest request,
         EnableModuleForSiteAsOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -50,8 +55,18 @@ public static class OwnerModuleEndpoints
                 request.ProvisioningSecret, request.ExpiresAt),
             cancellationToken);
 
-        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(new GrantModuleResponse(
-            request.ModuleKey, request.TriggerWords, request.EntryPoint, request.ExpiresAt));
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        // `24-12`: resourceId is the freshly minted EnabledModuleId - the row this write actually
+        // brought into existence, the same id GrantModuleResponse never echoes back today.
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerModuleGrant,
+            new SiteId(siteId), AccessRecordResourceKind.EnabledModule, result.Value.Value, cancellationToken);
+
+        return Results.Ok(new GrantModuleResponse(request.ModuleKey, request.TriggerWords, request.EntryPoint, request.ExpiresAt));
     }
 
     private static async Task<IResult> HandleRevokeAsync(
@@ -61,13 +76,29 @@ public static class OwnerModuleEndpoints
         // parameter, found running by that item's own integration test.
         [Microsoft.AspNetCore.Mvc.FromBody] RevokeModuleAsOwnerRequest request,
         RevokeModuleForSiteAsOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(
             new RevokeModuleForSiteAsOwner(new SiteId(siteId), moduleKey, request.ProvisioningSecret), cancellationToken);
 
-        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok();
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        // `24-12`: no resourceId here, deliberately - RevokeModuleForSiteAsOwner names the row it acts
+        // on by (SiteId, moduleKey), not by EnabledModuleId, and resolving the id first would be a
+        // second lookup this item does not otherwise need. ResourceKind alone (plus SiteId, already on
+        // the row) still says which kind of thing was revoked, even without the specific row's own id.
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerModuleRevoke,
+            new SiteId(siteId), AccessRecordResourceKind.EnabledModule, resourceId: null, cancellationToken);
+
+        return Results.Ok();
     }
 
     /// <summary>

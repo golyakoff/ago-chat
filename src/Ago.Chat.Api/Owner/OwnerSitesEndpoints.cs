@@ -1,7 +1,9 @@
-﻿using Ago.Chat.Application.UseCases.GetSiteForOwner;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetSiteForOwner;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Api.Owner;
 
@@ -66,6 +68,10 @@ public static class OwnerSitesEndpoints
         Guid? before,
         int? limit,
         ListSitesForOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
+        HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         // No Result<T>/ToProblem branch here, unlike the endpoints around it: this query has no
@@ -79,6 +85,14 @@ public static class OwnerSitesEndpoints
         // reject either.
         var response = await handler.HandleAsync(new ListSitesForOwner(query, before, limit), cancellationToken);
 
+        // `24-12`: recorded unconditionally reaching here - this call has no failure branch of its own
+        // (see this method's own remarks above), so "reached this line" already means "succeeded".
+        // SiteId is null: this read spans every tenant, not one - AccessRecordKind.OwnerSiteList's own
+        // remarks.
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerSiteList,
+            siteId: null, resourceKind: null, resourceId: null, cancellationToken);
+
         return Results.Ok(response);
     }
 
@@ -89,11 +103,26 @@ public static class OwnerSitesEndpoints
     private static async Task<IResult> HandleGetSiteAsync(
         Guid siteId,
         GetSiteForOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(new GetSiteForOwner(new SiteId(siteId)), cancellationToken);
 
-        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        // `24-12`: only on the real Site.NotFound-free path - a caller who named a site that does not
+        // exist read nothing, so nothing is recorded (this item's own "a read that fails authorisation
+        // is not an access", extended to the identical "failed for any reason" case).
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerSiteDetail,
+            new SiteId(siteId), resourceKind: null, resourceId: null, cancellationToken);
+
+        return Results.Ok(result.Value);
     }
 }

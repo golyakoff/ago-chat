@@ -248,6 +248,10 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
         builder.Services.AddScoped<GetSiteForOwnerHandler>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
+        // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves these
+        // straight from DI, the same way the production host does.
+        builder.Services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();
+        builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 

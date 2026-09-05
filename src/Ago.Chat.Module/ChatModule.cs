@@ -57,6 +57,7 @@ using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
+using Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
@@ -828,6 +829,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetTagBreakdownReportForSiteHandler>();
         // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
         services.AddScoped<GetVisitorHistoryHandler>();
+        // `24-12`: the tenant's own read of who accessed their data - see the handler's own remarks.
+        services.AddScoped<GetAccessRecordsForSiteHandler>();
         services.AddScoped<DeleteAttachmentHandler>();
         services.AddScoped<GetMyPermissionsHandler>();
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.

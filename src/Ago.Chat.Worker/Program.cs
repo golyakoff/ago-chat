@@ -254,6 +254,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<InboxPruneJob>();
 
+// `24-12`: the access record's own stated retention, enforced by something that runs - the item's
+// own Done-when, and the same registration shape as every prune job on this page.
+builder.Services
+    .AddOptions<AccessRecordPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(AccessRecordPruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<AccessRecordPruneJob>();
+
 builder.Services
     .AddOptions<MessagePartitionPruneJobOptions>()
     .Bind(builder.Configuration.GetSection(MessagePartitionPruneJobOptions.SectionName))

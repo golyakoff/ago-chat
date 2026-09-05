@@ -85,6 +85,9 @@ public sealed class MintDemoTenantHandler(
             // `22-05`/`adr/0093`: calendar:configure joins the Admin set - the configuration-shaped
             // action, the same category SiteConfigure already occupies here.
             Permission.CalendarConfigure.Value,
+            // `24-12`: the tenant's own read of who accessed their data - the same Admin-only,
+            // compliance-shaped placement SiteErase/SiteExport already have.
+            Permission.AccessRecordRead.Value,
         ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(

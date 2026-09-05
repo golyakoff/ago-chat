@@ -131,6 +131,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
         // `16-03`: the export-request read/write - see IExportRequestRepository's own remarks.
         services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
+        // `24-12`: the boundary-crossing-access write/read - see IAccessRecordRepository's own
+        // remarks for why this single port serves both GetVisitorHistoryHandler (Ago.Chat.Application)
+        // and the platform-owner endpoints (Ago.Chat.Api) directly.
+        services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();
         // `24-11`: the subject-scoped export archive builder - see IPersonExportArchiveWriter's own
         // remarks on why this is a second, smaller writer rather than SiteExportArchiveWriter widened.
         services.AddScoped<IPersonExportArchiveWriter, PersonExportArchiveWriter>();

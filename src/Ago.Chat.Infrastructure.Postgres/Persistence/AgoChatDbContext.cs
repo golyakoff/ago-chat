@@ -29,6 +29,8 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     internal DbSet<MessageArchiveEntity> MessageArchives => Set<MessageArchiveEntity>();
     // `24-13`: migration-scaffolding only, the same shape - ErasureRecordEntity's own remarks.
     internal DbSet<ErasureRecordEntity> ErasureRecords => Set<ErasureRecordEntity>();
+    // `24-12`: migration-scaffolding only, the same shape - AccessRecordEntity's own remarks.
+    internal DbSet<AccessRecordEntity> AccessRecords => Set<AccessRecordEntity>();
     // `18-04`: ConversationNote/Tag's own EF-backed tables - see each type's own remarks on why they
     // are real tables and not owned collections on Conversation/Site.
     public DbSet<ConversationNote> ConversationNotes => Set<ConversationNote>();

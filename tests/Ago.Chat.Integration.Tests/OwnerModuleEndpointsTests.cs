@@ -339,6 +339,10 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<VerifyModuleRegistrationHandler>();
         builder.Services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
+        // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves this
+        // straight from DI, the same way the production host does. IClock/IIdGenerator are already
+        // registered above (AddPlatformKernel).
+        builder.Services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();
 
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
