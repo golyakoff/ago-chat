@@ -339,6 +339,10 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IWebhookEndpointRepository, WebhookEndpointRepository>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IWebhookDeliveryReadStore, WebhookDeliveryReadStore>();
+        // `23-06`: GetSiteInstallationHandler's own two new reads.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IConversationReadStore, ConversationReadStore>();
+        builder.Services.AddSingleton(new Ago.Chat.Application.UseCases.GetSiteInstallation.SiteInstallationOptions());
         builder.Services.AddSingleton<Ago.Chat.Application.Abstractions.IWebhookSecretGenerator, WebhookSecretGenerator>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IWebhookSecretCipher, WebhookSecretCipher>();
         builder.Services.AddOutboxInbox<AgoChatDbContext>();

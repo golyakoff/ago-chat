@@ -319,6 +319,10 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddScoped<GetSiteConfigByPublicKeyHandler>();
+        // `23-06`: both mint and renewal endpoints now record a sighting/refusal through this port -
+        // the real Postgres-backed implementation, the same "real dependency, not a fake" posture
+        // every other registration in this test host already takes.
+        builder.Services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
         builder.Services.AddSingleton<ICache>(new RedisCache(
             fixture.RedisMultiplexer,
             new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(),

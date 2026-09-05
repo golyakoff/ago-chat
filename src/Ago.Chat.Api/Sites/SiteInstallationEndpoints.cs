@@ -40,7 +40,26 @@ public static class SiteInstallationEndpoints
     }
 
     private static SiteInstallationResponse ToResponse(SiteInstallationDto dto) =>
-        new(dto.PublicKey, dto.AllowedOrigins);
+        new(
+            dto.PublicKey, dto.AllowedOrigins, dto.FirstSeenAt, dto.LastSeenAt, dto.LastRefusedOrigin,
+            dto.LastRefusedOriginAt, dto.UsedRecently, dto.State.ToString());
 
-    public sealed record SiteInstallationResponse(string PublicKey, IReadOnlyList<string> AllowedOrigins);
+    /// <summary>
+    /// `23-06`: six more fields alongside `10-06`'s original two - the four raw facts, the second fact
+    /// (<see cref="UsedRecently"/>), and the one resolved <see cref="State"/> a tenant's install screen
+    /// leads with. <see cref="State"/> crosses the wire as its enum member's own name (`"NotSeenYet"`,
+    /// `"SeenAndQuiet"`, `"EveryRequestRefused"`, `"NeverSeenButInUse"`) via <c>ToString()</c>, the same
+    /// convention <see cref="SitesEndpoints.SiteExportStatusResponse"/> already established for
+    /// `Domain.ExportStatus` - a client reads a name, not an ordinal it would have to keep in sync with
+    /// this enum's own declaration order.
+    /// </summary>
+    public sealed record SiteInstallationResponse(
+        string PublicKey,
+        IReadOnlyList<string> AllowedOrigins,
+        DateTimeOffset? FirstSeenAt,
+        DateTimeOffset? LastSeenAt,
+        string? LastRefusedOrigin,
+        DateTimeOffset? LastRefusedOriginAt,
+        bool UsedRecently,
+        string State);
 }

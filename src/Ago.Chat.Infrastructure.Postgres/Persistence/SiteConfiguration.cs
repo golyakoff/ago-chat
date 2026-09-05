@@ -131,5 +131,28 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // "no backfill needed" shape the paragraph above describes, because it is not.
         builder.Property(s => s.Tier).HasColumnName("tier").IsRequired().HasDefaultValue("free");
         builder.Property(s => s.SeatLimit).HasColumnName("seat_limit").HasDefaultValue(2);
+
+        // `23-06`: four shadow properties, the identical shape `ErasureRequestedAt` already
+        // establishes just above for the identical reason - each has exactly one legitimate writer
+        // (`ISiteInstallationSignalRepository`, via raw Npgsql conditional `UPDATE`s) and is read only
+        // through that same port's own `GetAsync`, never through `Site`'s load-mutate-SaveChangesAsync
+        // path. Routing a visitor-session mint's sighting through the aggregate would mean loading the
+        // whole `Site` (widget config, offline auto-reply, canned responses and all) just to move one
+        // timestamp forward, on the single hottest, highest-concurrency write path in this product.
+        //
+        // No CHECK constraint on any of the four - unlike `widget_position`/`widget_locale` above,
+        // none of these is a closed enum-like set: three are plain timestamps and
+        // `last_refused_origin` is free text (an Origin header value), the same "nothing here for SQL
+        // to enumerate" boundary `widget_notice_text`/`widget_notice_url`'s own comment already draws.
+        //
+        // All nullable, no database default, no backfill - `12-02`'s own `CreatedAt` precedent:
+        // stamping every existing row with the migration's own run time would be exactly the invented
+        // fact `CLAUDE.md` forbids, and "null" already means the true thing for a site nothing has
+        // written a signal for yet ("not recorded"), which `SiteInstallationSignals.None` reads back
+        // as.
+        builder.Property<DateTimeOffset?>("FirstSeenAt").HasColumnName("first_seen_at");
+        builder.Property<DateTimeOffset?>("LastSeenAt").HasColumnName("last_seen_at");
+        builder.Property<string?>("LastRefusedOrigin").HasColumnName("last_refused_origin");
+        builder.Property<DateTimeOffset?>("LastRefusedOriginAt").HasColumnName("last_refused_origin_at");
     }
 }

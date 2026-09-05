@@ -121,4 +121,20 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
         return Task.FromResult(new VisitorHistoryPage(items, nextCursor));
     }
+
+    /// <summary>`23-06`: the newest conversation's own `CreatedAt` for this site, or <see
+    /// langword="null"/> when it has none - mirrors the real store's `ORDER BY id DESC LIMIT 1`
+    /// (conversation ids are UUID v7, so the seeded aggregate's own `CreatedAt` and its `Id` order
+    /// agree, the same assumption <see cref="IConversationReadStore.GetMostRecentCreatedAtAsync"/>'s
+    /// own remarks state for the real query).</summary>
+    public Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        var mostRecent = _bySource.Values
+            .Where(c => c.SiteId == siteId)
+            .OrderByDescending(c => c.Id.Value)
+            .Select(c => (DateTimeOffset?)c.CreatedAt)
+            .FirstOrDefault();
+
+        return Task.FromResult(mostRecent);
+    }
 }

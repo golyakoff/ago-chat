@@ -122,6 +122,9 @@ public static class ServiceCollectionExtensions
         // `16-02`: the erase-request write - see IErasureRequestRepository's own remarks on why it is
         // its own port rather than a method on ISiteRepository/IConversationRepository.
         services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `23-06`: the install screen's own two facts - see ISiteInstallationSignalRepository's own
+        // remarks for why this is a third port taking the identical shape as the one directly above.
+        services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
         // `16-03`: the export-request read/write - see IExportRequestRepository's own remarks.
         services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
         // `13-06`: the archive manifest, and the real (object-storage-backed) gate that replaces
