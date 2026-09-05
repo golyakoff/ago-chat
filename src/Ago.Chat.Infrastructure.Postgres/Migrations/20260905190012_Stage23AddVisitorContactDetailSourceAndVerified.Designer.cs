@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905190012_Stage23AddVisitorContactDetailSourceAndVerified")]
+    partial class Stage23AddVisitorContactDetailSourceAndVerified
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -291,73 +294,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("channel_credentials", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Domain.ChannelDelivery", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("AttemptedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("attempted_at");
-
-                    b.Property<Guid>("ChannelIdentityId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("channel_identity_id");
-
-                    b.Property<string>("ChannelKind")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("channel_kind");
-
-                    b.Property<Guid>("ConversationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("conversation_id");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)")
-                        .HasColumnName("failure_reason");
-
-                    b.Property<Guid>("MessageId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("message_id");
-
-                    b.Property<string>("ProviderMessageId")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("provider_message_id");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasColumnName("status");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AttemptedAt")
-                        .HasDatabaseName("ix_channel_deliveries_attempted_at");
-
-                    b.HasIndex("ChannelIdentityId");
-
-                    b.HasIndex("MessageId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_channel_deliveries_message_id");
-
-                    b.HasIndex("SiteId");
-
-                    b.HasIndex("ConversationId", "SiteId", "AttemptedAt")
-                        .HasDatabaseName("ix_channel_deliveries_conversation_id_site_id_attempted_at");
-
-                    b.ToTable("channel_deliveries", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Domain.ChannelIdentity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -578,7 +514,7 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.ToTable("conversation_assignments", null, t =>
                         {
-                            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken', 'Additional')");
+                            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken')");
                         });
                 });
 
@@ -1200,12 +1136,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<int>("AssignmentPenaltySeconds")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(120)
-                        .HasColumnName("assignment_penalty_seconds");
-
                     b.Property<DateTimeOffset?>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -1804,43 +1734,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("message_archives", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.ModuleRevokeOverrideEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ModuleKey")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("module_key");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("reason");
-
-                    b.Property<DateTimeOffset>("RevokedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("revoked_at");
-
-                    b.Property<string>("RevokedBy")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("revoked_by");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SiteId")
-                        .HasDatabaseName("ix_module_revoke_overrides_site_id");
-
-                    b.ToTable("module_revoke_overrides", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.OperatorRoleRecord", b =>
                 {
                     b.Property<Guid>("OperatorId")
@@ -1985,21 +1878,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
             modelBuilder.Entity("Ago.Chat.Domain.ChannelCredential", b =>
                 {
-                    b.HasOne("Ago.Chat.Domain.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.ChannelDelivery", b =>
-                {
-                    b.HasOne("Ago.Chat.Domain.ChannelIdentity", null)
-                        .WithMany()
-                        .HasForeignKey("ChannelIdentityId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("Ago.Chat.Domain.Site", null)
                         .WithMany()
                         .HasForeignKey("SiteId")

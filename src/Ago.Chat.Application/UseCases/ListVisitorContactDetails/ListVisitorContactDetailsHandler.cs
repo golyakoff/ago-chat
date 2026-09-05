@@ -35,7 +35,8 @@ public sealed class ListVisitorContactDetailsHandler(
         var items = await contactDetails.GetForVisitorAsync(conversation.VisitorId, cancellationToken);
         IReadOnlyList<VisitorContactDetailDto> dtos = items
             .Select(d => new VisitorContactDetailDto(
-                d.Id.Value, d.Kind.ToString(), d.Value, d.RecordedByOperatorId.Value, d.RecordedAt))
+                d.Id.Value, d.Kind.ToString(), d.Value, d.RecordedByOperatorId?.Value, d.Source.ToString(),
+                d.Verified, d.RecordedAt))
             .ToList();
 
         return Result<IReadOnlyList<VisitorContactDetailDto>>.Success(dtos);

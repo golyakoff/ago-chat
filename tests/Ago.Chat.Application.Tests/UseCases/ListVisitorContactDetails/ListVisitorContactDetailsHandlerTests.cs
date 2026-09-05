@@ -77,6 +77,35 @@ public class ListVisitorContactDetailsHandlerTests
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
     }
 
+    /// <summary>`23-09`: the read DTO must distinguish the two sources and surface a visitor-supplied
+    /// row's null operator id rather than defaulting or throwing - `RecordedVisitorContactDetail`'s
+    /// own remarks on why a null is never rendered as a fabricated name.</summary>
+    [Fact]
+    public async Task HandleAsync_DistinguishesOperatorAndVisitorSourcedRows()
+    {
+        var fixture = CreateFixture();
+        var byOperator = VisitorContactDetail.Record(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Phone, "+1 555 0100",
+            OperatorId, Now);
+        var byVisitor = VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Phone, "+1 555 0177",
+            Now.AddMinutes(1));
+        await fixture.ContactDetails.SaveAsync(byOperator, CancellationToken.None);
+        await fixture.ContactDetails.SaveAsync(byVisitor, CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(Query(fixture.ConversationId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var operatorRow = result.Value.Single(d => d.Id == byOperator.Id.Value);
+        var visitorRow = result.Value.Single(d => d.Id == byVisitor.Id.Value);
+        Assert.Equal("Operator", operatorRow.Source);
+        Assert.Equal(OperatorId.Value, operatorRow.RecordedByOperatorId);
+        Assert.False(operatorRow.Verified);
+        Assert.Equal("Visitor", visitorRow.Source);
+        Assert.Null(visitorRow.RecordedByOperatorId);
+        Assert.False(visitorRow.Verified);
+    }
+
     /// <summary>Cross-site isolation: a conversation from a different site reads like no such
     /// conversation, and its visitor's own contact details are never listed for this requester.</summary>
     [Fact]

@@ -36,7 +36,17 @@ internal sealed class VisitorContactDetailConfiguration : IEntityTypeConfigurati
             .HasMaxLength(VisitorContactDetail.MaxValueLength)
             .IsRequired();
 
-        builder.Property(d => d.RecordedByOperatorId).HasColumnName("recorded_by_operator_id").HasConversion(IdConverters.Operator);
+        // `23-09`: nullable - a visitor-supplied row has no operator behind it.
+        // `IdConverters.NullableOperator`, the same converter `ConversationConfiguration.OperatorId`
+        // already uses for its own nullable operator column, not the non-nullable `Operator` this
+        // property used before this item widened it.
+        builder.Property(d => d.RecordedByOperatorId).HasColumnName("recorded_by_operator_id").HasConversion(IdConverters.NullableOperator);
+
+        // `23-09`: stored as the CLR member name, the same default-string-conversion choice `Kind`
+        // above already makes for itself - no CHECK constraint, so the plain conversion is honest.
+        builder.Property(d => d.Source).HasColumnName("source").HasConversion<string>().HasMaxLength(16);
+        builder.Property(d => d.Verified).HasColumnName("verified");
+
         builder.Property(d => d.RecordedAt).HasColumnName("recorded_at");
 
         // The only real read (GetForVisitorAsync) filters on visitor_id alone, ordered by

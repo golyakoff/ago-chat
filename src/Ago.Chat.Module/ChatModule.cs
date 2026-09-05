@@ -995,6 +995,13 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RecordVisitorContactDetailHandler>();
         services.AddScoped<ListVisitorContactDetailsHandler>();
         services.AddScoped<DeleteVisitorContactDetailHandler>();
+        // `23-09`: rate limiting for RecordVisitorContactDetailHandler.HandleAsVisitorAsync only - the
+        // same registration shape PhoneVerificationRateLimitOptions uses below for its own handler.
+        services
+            .AddOptions<ContactDetailRateLimitOptions>()
+            .Bind(configuration.GetSection(ContactDetailRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ContactDetailRateLimitOptions>>().Value);
 
         // `14-15`/`adr/0079`: phone verification via a proactive SMS/voice code - see this item's own
         // backlog file, "Why this cannot reuse 14-12's mechanism". Both handlers share one options
