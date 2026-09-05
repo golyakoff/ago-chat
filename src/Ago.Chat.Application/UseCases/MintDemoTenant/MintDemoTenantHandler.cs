@@ -162,7 +162,13 @@ public sealed class MintDemoTenantHandler(
                 site,
                 operatorEntity,
                 new RoleSeed(idGenerator.NewId(now), "Operator", OperatorRolePermissions),
-                new RoleSeed(idGenerator.NewId(now), "Admin", AdminRolePermissions)),
+                new RoleSeed(idGenerator.NewId(now), "Admin", AdminRolePermissions),
+                // `24-03`: no acceptances - this identity was minted, not registered by a real person
+                // clicking through a form (the same "no token, no claims to copy" reasoning this
+                // method's own remarks already give for leaving `displayName`/`email` empty above).
+                // There is nobody who "accepted" anything here to record, and the whole site is
+                // deleted within a day regardless.
+                Acceptances: []),
             cancellationToken);
         if (!registered)
         {
