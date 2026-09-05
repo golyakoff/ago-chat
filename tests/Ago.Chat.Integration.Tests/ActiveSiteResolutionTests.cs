@@ -175,6 +175,10 @@ public sealed class ActiveSiteResolutionTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
+        // `24-03`: RegisterSiteHandler's own two new dependencies - SiteRegistrationTests' own
+        // remarks on why every handler this host maps must resolve from its own container.
+        builder.Services.AddScoped<IRequiredDocumentRepository, RequiredDocumentRepository>();
+        builder.Services.AddScoped<IDocumentRepository, DocumentRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         // `16-03`: SitesEndpoints now also maps the export routes - see SiteRegistrationTests'

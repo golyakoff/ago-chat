@@ -56,6 +56,15 @@ public sealed class SiteRegistrationRepository(AgoChatDbContext db, IOutboxWrite
             RoleId = registration.AdminRole.Id,
         });
 
+        // `24-03`: zero or more AcceptanceRecord rows, staged onto the same DbContext so they land
+        // with the five rows above or not at all - SiteRegistration's own remarks on why this must not
+        // be a second, independent SaveChangesAsync. No FK to Site (adr/0111), so there is no ordering
+        // constraint between these inserts and Site's own - see AcceptanceRecordConfiguration.
+        foreach (var acceptance in registration.Acceptances)
+        {
+            db.AcceptanceRecords.Add(acceptance);
+        }
+
         // `22-05`/`adr/0093`: the account owner's projected fact for whichever product reads it - the
         // union of both seeded roles, because RegisterSiteHandler grants the owner both. Staged onto
         // this same DbContext, so it lands with the five rows above or not at all (rule 4) - not a

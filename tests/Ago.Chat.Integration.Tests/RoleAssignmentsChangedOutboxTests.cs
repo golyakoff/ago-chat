@@ -43,7 +43,8 @@ public sealed class RoleAssignmentsChangedOutboxTests(PostgresFixture fixture)
                     new Site(siteId, $"site_{siteId.Value:N}", []),
                     new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId),
                     new RoleSeed(operatorRoleId, "Operator", [Permission.ConversationRead.Value, Permission.BookingConfirm.Value]),
-                    new RoleSeed(adminRoleId, "Admin", [Permission.SiteConfigure.Value, Permission.CalendarConfigure.Value])),
+                    new RoleSeed(adminRoleId, "Admin", [Permission.SiteConfigure.Value, Permission.CalendarConfigure.Value]),
+                    Acceptances: []),
                 CancellationToken.None);
 
             Assert.True(registered);

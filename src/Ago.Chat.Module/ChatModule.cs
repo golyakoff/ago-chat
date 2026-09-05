@@ -19,6 +19,7 @@ using Ago.Chat.Application.UseCases.RecordAcceptance;
 using Ago.Chat.Application.UseCases.GetAcceptancesForSubject;
 using Ago.Chat.Application.UseCases.PublishDocumentVersion;
 using Ago.Chat.Application.UseCases.GetDocumentVersion;
+using Ago.Chat.Application.UseCases.GetRequiredDocumentsForSubjectKind;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.CreateTag;
 using Ago.Chat.Application.UseCases.DeleteTag;
@@ -981,6 +982,11 @@ public sealed class ChatModule : IProductModule
         // handler on this page is.
         services.AddScoped<PublishDocumentVersionHandler>();
         services.AddScoped<GetDocumentVersionHandler>();
+        // `24-03`: "which documents must this subject kind accept, and what does each currently say" -
+        // the read a pre-account registration screen needs, backing DocumentEndpoints's own second
+        // unauthenticated route (`GET /api/v1/documents/required/{subjectKind}`), registered here the
+        // same way every other handler on this page is.
+        services.AddScoped<GetRequiredDocumentsForSubjectKindHandler>();
         services.AddScoped<CreateTagHandler>();
         services.AddScoped<RenameTagHandler>();
         services.AddScoped<DeleteTagHandler>();
