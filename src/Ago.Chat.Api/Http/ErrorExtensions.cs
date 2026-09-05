@@ -109,6 +109,10 @@ public static class ErrorExtensions
                 // purchase that adds room to one specific operator right now (ConversationErrors'
                 // own remarks on why).
                 or "Conversation.TransferTargetAtCapacity" or "Conversation.TransferContended"
+                // `23-04`: the identical "retry the request" shape as Conversation.TransferContended,
+                // for a deliberate take's own transaction losing every attempt against write
+                // contention - ConversationErrors.ClaimContended's own remarks.
+                or "Conversation.ClaimContended"
                 // `18-04`: a real conflict with existing data (a duplicate name), not a malformed
                 // request - ConversationErrors.TagAlreadyExists's own remarks.
                 or "Tag.AlreadyExists"

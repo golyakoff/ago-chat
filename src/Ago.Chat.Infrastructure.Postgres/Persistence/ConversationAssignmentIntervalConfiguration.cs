@@ -14,11 +14,16 @@ internal sealed class ConversationAssignmentIntervalConfiguration : IEntityTypeC
     {
         // The closed-vocabulary backstop, the same reasoning ConversationConfiguration's own
         // ck_conversations_outcome constraint states: anything enforcing a guarantee ConversationAssignmentSource
-        // already makes gets a constraint too, not just application code. Two members today - see that
-        // enum's own remarks on why a third and fourth are not added in advance.
+        // already makes gets a constraint too, not just application code. `23-04`: widened to three -
+        // Taken's own first real writer (AssignConversationHandler) landed without this constraint
+        // widened alongside it in the same wave (reported rather than worked around, adr/0105's own
+        // Alternatives considered), so this statement and Taken's first writer were, for one wave,
+        // genuinely out of step - fixed here, in the next available migration slot. A fourth
+        // (Additional, 23-05) is still not added in advance - see ConversationAssignmentSource's own
+        // remarks.
         builder.ToTable("conversation_assignments", t =>
         {
-            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred')");
+            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken')");
         });
         builder.HasKey(a => a.Id);
         builder.Property(a => a.Id).HasColumnName("id").HasConversion(IdConverters.ConversationAssignment).ValueGeneratedNever();

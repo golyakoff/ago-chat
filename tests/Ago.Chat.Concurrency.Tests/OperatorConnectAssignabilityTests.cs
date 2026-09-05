@@ -172,7 +172,7 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         var db = fixture.CreateDbContext();
         var assignConversation = new AssignConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-            new UuidV7Generator(), new SystemClock());
+            new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
             new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
         var getHistory = new GetConversationHistoryHandler(

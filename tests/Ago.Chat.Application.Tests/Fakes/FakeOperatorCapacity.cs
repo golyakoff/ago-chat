@@ -15,6 +15,7 @@ public sealed class FakeOperatorCapacity : IOperatorCapacity
 {
     private readonly List<OperatorId> _releases = [];
     private readonly List<OperatorId> _claims = [];
+    private readonly List<OperatorId> _unconditionalClaims = [];
 
     public IReadOnlyList<OperatorId> Releases => _releases;
 
@@ -23,6 +24,19 @@ public sealed class FakeOperatorCapacity : IOperatorCapacity
     /// a transfer tried to charge, the same role <see cref="Releases"/> already plays for the other
     /// side.</summary>
     public IReadOnlyList<OperatorId> Claims => _claims;
+
+    /// <summary>`23-04`: every operator <see cref="ClaimAsync"/> was actually asked to charge, the same
+    /// role <see cref="Claims"/> plays for <see cref="TryClaimAsync"/> - kept as its own list rather
+    /// than folded into <see cref="Claims"/> so a test can assert which of the two methods a handler
+    /// called without inferring it from an outcome that, for this one, is always the same.</summary>
+    public IReadOnlyList<OperatorId> UnconditionalClaims => _unconditionalClaims;
+
+    /// <summary>`23-04`: makes <see cref="ClaimAsync"/> behave the way the real store does inside a
+    /// caller-owned transaction that loses a Postgres deadlock - the port's declared failure, never a
+    /// raw <c>PostgresException</c>. The identical role <see cref="ClaimAlwaysLosesToContention"/>
+    /// plays for <see cref="TryClaimAsync"/>, kept separate so a test can pin which of the two calls
+    /// fails.</summary>
+    public bool UnconditionalClaimAlwaysLosesToContention { get; set; }
 
     public bool NextClaimSucceeds { get; set; } = true;
 
@@ -60,6 +74,14 @@ public sealed class FakeOperatorCapacity : IOperatorCapacity
         _releases.Add(operatorId);
         return ReleaseAlwaysLosesToContention
             ? Task.FromException(new OperatorCapacityContentionException(operatorId, attempts: 5, new InvalidOperationException("40P01")))
+            : Task.CompletedTask;
+    }
+
+    public Task ClaimAsync(OperatorId operatorId, CancellationToken cancellationToken)
+    {
+        _unconditionalClaims.Add(operatorId);
+        return UnconditionalClaimAlwaysLosesToContention
+            ? Task.FromException(new OperatorCapacityContentionException(operatorId, attempts: 1, new InvalidOperationException("40P01")))
             : Task.CompletedTask;
     }
 }

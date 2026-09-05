@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -401,6 +402,77 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         }
 
         return (reports, releaseVictims);
+    }
+
+    /// <summary>
+    /// `23-04`'s own Done-when: "Closing a taken conversation releases exactly one slot (`6-09`'s
+    /// existing test, extended)." Every test above this one proves the release for an *engine-made*
+    /// claim; this is the same invariant for the other real writer of `HoldsCapacityClaim` -
+    /// `AssignConversationHandler`'s own unconditional charge, reached the same way the console's rail
+    /// reaches it now. Seeded independently of `SeedAsync`'s shared role (which grants only
+    /// `conversation:close`) because this scenario needs `conversation:assign` too.
+    /// </summary>
+    [Fact]
+    public async Task ClosingATakenConversation_ReleasesExactlyOneSlot()
+    {
+        const int capacity = 3;
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            seed.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity));
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationAssign.Value, Permission.ConversationClose.Value],
+            });
+            seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+            seed.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var handler = new AssignConversationHandler(
+                new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
+                new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+
+            var result = await handler.HandleAsync(
+                new AssignConversation(conversationId, operatorId, siteId), CancellationToken.None);
+            Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : string.Empty);
+        }
+
+        Assert.Equal(1, await ActiveChatsAsync(operatorId));
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var handler = new CloseConversationHandler(
+                new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
+                new OperatorCapacityStore(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(),
+                new SystemClock(), NullLogger<CloseConversationHandler>.Instance);
+
+            var result = await handler.HandleAsync(
+                new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, siteId),
+                CancellationToken.None);
+            Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : string.Empty);
+        }
+
+        // Exactly one slot released - not zero (the leak `6-09` fixed) and not more than one (an
+        // over-release, which `ReleaseAsync`'s own floor at zero would otherwise mask).
+        Assert.Equal(0, await ActiveChatsAsync(operatorId));
+
+        await using var verify = fixture.CreateDbContext();
+        var interval = await verify.ConversationAssignments.AsNoTracking().SingleAsync(i => i.ConversationId == conversationId);
+        Assert.Equal(ConversationAssignmentSource.Taken, interval.Source);
+        Assert.NotNull(interval.EndedAt);
     }
 
     private sealed record Seed(SiteId SiteId, IReadOnlyList<OperatorId> OperatorIds, VisitorId VisitorId);
