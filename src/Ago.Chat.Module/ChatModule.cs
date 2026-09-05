@@ -28,6 +28,8 @@ using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.ExportConversation;
+using Ago.Chat.Application.UseCases.ExportVisitor;
 using Ago.Chat.Application.UseCases.GenerateReplyDraft;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
@@ -240,6 +242,19 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(SiteExportOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportOptions>>().Value);
+        // `24-11`: the person-scoped export's own bucket and its attachment-link lifetime - see
+        // PersonExportRateLimitOptions'/PersonExportOptions' own remarks for why each is its own
+        // class rather than a reuse of SiteExportRateLimitOptions/SiteExportJobOptions.
+        services
+            .AddOptions<PersonExportRateLimitOptions>()
+            .Bind(configuration.GetSection(PersonExportRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<PersonExportRateLimitOptions>>().Value);
+        services
+            .AddOptions<PersonExportOptions>()
+            .Bind(configuration.GetSection(PersonExportOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<PersonExportOptions>>().Value);
         // `13-06`: the identical shape, one setting, for the retention-archive download read.
         services
             .AddOptions<MessageArchiveOptions>()
@@ -887,6 +902,12 @@ public sealed class ChatModule : IProductModule
         // above.
         services.AddScoped<RequestSiteExportHandler>();
         services.AddScoped<GetSiteExportStatusHandler>();
+
+        // `24-11`: the subject-scoped export pair - synchronous, no request/status row, see
+        // ExportConversationHandler's own remarks for why. Registered for every host, the same
+        // "only Ago.Chat.Api maps routes for them today" shape as the export pair right above.
+        services.AddScoped<ExportConversationHandler>();
+        services.AddScoped<ExportVisitorHandler>();
 
         // `13-06`: the retrieval half of tenant retention archives - list what is available, then mint
         // a download URL for one period. No request/write handler alongside these two (unlike the

@@ -81,6 +81,7 @@ public sealed class MintDemoTenantHandler(
         [
             Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
             Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
+            Permission.ConversationExport.Value,
             // `22-05`/`adr/0093`: calendar:configure joins the Admin set - the configuration-shaped
             // action, the same category SiteConfigure already occupies here.
             Permission.CalendarConfigure.Value,

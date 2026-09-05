@@ -131,6 +131,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
         // `16-03`: the export-request read/write - see IExportRequestRepository's own remarks.
         services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
+        // `24-11`: the subject-scoped export archive builder - see IPersonExportArchiveWriter's own
+        // remarks on why this is a second, smaller writer rather than SiteExportArchiveWriter widened.
+        services.AddScoped<IPersonExportArchiveWriter, PersonExportArchiveWriter>();
         // `13-06`: the archive manifest, and the real (object-storage-backed) gate that replaces
         // `15-04`'s AlwaysConfirmedMessageArchiveGate stand-in - see IMessageArchiveRepository's and
         // MessageArchiveGate's own remarks. Singleton, not Scoped like most repositories on this page:

@@ -137,4 +137,18 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 
         return Task.FromResult(mostRecent);
     }
+
+    /// <summary>`24-11`: every conversation for this visitor, oldest first, unpaginated - mirrors the
+    /// real store's own shape.</summary>
+    public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(
+        VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ConversationId> ids = _bySource.Values
+            .Where(c => c.VisitorId == visitorId)
+            .OrderBy(c => c.CreatedAt)
+            .Select(c => c.Id)
+            .ToList();
+
+        return Task.FromResult(ids);
+    }
 }
