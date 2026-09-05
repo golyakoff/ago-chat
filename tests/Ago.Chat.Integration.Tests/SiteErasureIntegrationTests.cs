@@ -153,12 +153,119 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.All(recordingPublisher.Published, e => Assert.Equal(CacheTopics.Invalidated, e.Type));
     }
 
-    private ConversationErasureJob CreateConversationJob(IClock clock) =>
-        new(fixture.DataSource, fixture.FileStorage, clock,
-            Options.Create(new ConversationErasureJobOptions()), NullLogger<ConversationErasureJob>.Instance);
+    /// <summary>
+    /// `24-09`'s own second Done-when for this job: "the same question for `SiteErasureJob` - a
+    /// `message_archives` row cascades with the site, and `personal-data.md` records that the `.zip` is
+    /// then orphaned in storage." One site with exactly one conversation, archived for real before the
+    /// site is erased - by the time this method's own convergence loop finishes,
+    /// <see cref="ConversationErasureJob"/> has already scrubbed this conversation's lines out of the
+    /// archive object (the same mechanism <c>ConversationErasureIntegrationTests</c> proves directly),
+    /// so what is left standing is an empty shell this job must now delete itself, since a foreign key
+    /// cannot reach into object storage. Proves both halves: the manifest row is gone (the ordinary
+    /// cascade) <i>and</i> the object it named is gone too (the new, explicit step).
+    /// </summary>
+    [Fact]
+    public async Task ErasingASite_DeletesItsArchiveObjectToo_NotOnlyTheManifestRow()
+    {
+        var referenceNow = new DateTimeOffset(2010, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var archivedAt = new DateTimeOffset(2010, 1, 15, 12, 0, 0, TimeSpan.Zero);
+        const int retentionHorizonMonths = 3;
+
+        var (siteId, _) = await SeedSiteAsync("archive-site-erasure-site");
+        var (adminOperatorId, subjectId) = await SeedAdminOperatorAsync(siteId);
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, referenceNow);
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, referenceNow));
+            await db.SaveChangesAsync();
+            db.Conversations.Add(conversation);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        {
+            await connection.ExecuteAsync(
+                """
+                insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
+                values (@id, @conversationId, 1, 'Visitor', @authorId, @body, @createdAt, @retentionClass, @siteId)
+                """,
+                new
+                {
+                    id = Guid.NewGuid(),
+                    conversationId = conversation.Id.Value,
+                    authorId = Guid.NewGuid(),
+                    body = "archived before the site is erased",
+                    createdAt = archivedAt,
+                    retentionClass = RetentionClass.Free.Value,
+                    siteId = siteId.Value,
+                });
+        }
+
+        var archiveJob = CreateArchiveJob(new SettableClock(referenceNow), retentionHorizonMonths);
+        Assert.Equal(1, await archiveJob.ArchiveAsync(CancellationToken.None));
+
+        var archiveRepository = new MessageArchiveRepository(fixture.DataSource);
+        var archivedPeriod = Assert.Single(await archiveRepository.ListForSiteAsync(siteId, CancellationToken.None));
+        Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(archivedPeriod.ObjectKey), CancellationToken.None));
+
+        var clock = new SettableClock(referenceNow);
+        var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
+        await using (var permissionDb = fixture.CreateDbContext())
+        {
+            var requestHandler = new RequestSiteErasureHandler(
+                erasureRequests, new PermissionChecker(permissionDb), clock);
+            var requested = await requestHandler.HandleAsync(
+                new RequestSiteErasure(siteId, adminOperatorId), CancellationToken.None);
+            Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
+        }
+
+        var recordingPublisher = new RecordingEventPublisher();
+        var cacheInvalidation = new CacheInvalidationPublisher(recordingPublisher, clock);
+        var provisioner = CreateProvisioner();
+        var conversationJob = CreateConversationJob(clock);
+        var siteJob = CreateSiteJob(clock, provisioner, cacheInvalidation);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await conversationJob.SweepAsync(CancellationToken.None);
+            await siteJob.SweepAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(0, await CountAsync("select count(*) from sites where id = @siteId", siteId.Value));
+        // The manifest row: gone via the ordinary sites cascade.
+        Assert.Equal(0, await CountAsync("select count(*) from message_archives where site_id = @siteId", siteId.Value));
+        // `24-09`'s own new step: the object the row named is gone too, not merely orphaned.
+        Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(archivedPeriod.ObjectKey), CancellationToken.None));
+
+        Assert.False(await fixture.UserExistsAsync(subjectId));
+    }
+
+    private MessageArchiveJob CreateArchiveJob(IClock clock, int retentionHorizonMonths)
+    {
+        var archiveOptions = new MessageArchiveJobOptions();
+        var writer = new MessageArchiveWriter(fixture.FileStorage, archiveOptions);
+        return new MessageArchiveJob(
+            fixture.DataSource, fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource), writer, clock,
+            new UuidV7Generator(),
+            Options.Create(new MessagePartitionPruneJobOptions { RetentionHorizonMonths = retentionHorizonMonths }),
+            Options.Create(archiveOptions), NullLogger<MessageArchiveJob>.Instance);
+    }
+
+    private ConversationErasureJob CreateConversationJob(IClock clock)
+    {
+        var erasureOptions = new ConversationErasureJobOptions();
+        var archiveEraser = new ConversationArchiveEraser(
+            fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource), erasureOptions,
+            NullLogger<ConversationArchiveEraser>.Instance);
+        return new ConversationErasureJob(
+            fixture.DataSource, fixture.FileStorage, archiveEraser, clock,
+            Options.Create(erasureOptions), NullLogger<ConversationErasureJob>.Instance);
+    }
 
     private SiteErasureJob CreateSiteJob(IClock clock, IDemoIdentityProvisioner identities, CacheInvalidationPublisher cacheInvalidation) =>
-        new(fixture.DataSource, identities, cacheInvalidation, new UuidV7Generator(), clock,
+        new(fixture.DataSource, identities, fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource),
+            cacheInvalidation, new UuidV7Generator(), clock,
             Options.Create(new SiteErasureJobOptions()), NullLogger<SiteErasureJob>.Instance);
 
     /// <summary>The real adapter (`KeycloakDemoIdentityProvisioner`), not a double - `IDemoIdentityProvisioner.DeleteAsync`

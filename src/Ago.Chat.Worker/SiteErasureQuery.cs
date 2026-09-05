@@ -105,10 +105,11 @@ public static class SiteErasureQuery
     /// attached to it, the identical "one line, not a hand-ordered list of deletes" reasoning
     /// `DemoTenantRepository.DeleteSiteAsync`'s own remarks give in full: `operators` (and
     /// `operator_roles` through it), `roles` (and `operator_roles` through it too), `visitors`,
-    /// `channel_identities`, `webhook_endpoints` (and `webhook_deliveries` through it), and - `18-04`
-    /// - `tags` (`TagConfiguration`'s own required FK, `ON DELETE CASCADE`) - every one a required
-    /// foreign key to `sites`. By the time this runs, `conversations`/`messages`/`attachments` are
-    /// already empty for this site (<see cref="HasAnyConversationAsync"/> gates it), and so are
+    /// `channel_identities`, `webhook_endpoints` (and `webhook_deliveries` through it), `message_archives`
+    /// (`24-09`, `MessageArchiveEntityConfiguration`'s own required FK) and - `18-04` - `tags`
+    /// (`TagConfiguration`'s own required FK, `ON DELETE CASCADE`) - every one a required foreign key to
+    /// `sites`. By the time this runs, `conversations`/`messages`/`attachments` are already empty for
+    /// this site (<see cref="HasAnyConversationAsync"/> gates it), and so are
     /// `conversation_notes`/`conversation_tags` (drained per-conversation by
     /// <see cref="ConversationErasureQuery.DeleteNotesForConversationAsync"/>/
     /// <see cref="ConversationErasureQuery.DeleteTagsForConversationAsync"/> before each conversation
@@ -117,6 +118,11 @@ public static class SiteErasureQuery
     /// is what actually did that work, batch by batch. `tags` is the one table in this cascade list
     /// that genuinely still has rows at this point: the tag *vocabulary* itself, which nothing drains
     /// per-conversation because a tag definition outlives any one conversation that carried it.
+    /// `message_archives`' own rows are also genuinely non-empty here in general (one row survives per
+    /// archived period, even once a period's content is fully stripped) - this cascade removes the
+    /// *manifest rows*; the objects they name are a separate concern <see cref="SiteErasureJob.ProcessSiteAsync"/>
+    /// handles explicitly, before this method runs, because a foreign key cannot reach into object
+    /// storage.
     /// </summary>
     public static async Task<int> DeleteSiteAsync(
         NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)

@@ -2,6 +2,7 @@
 using Ago.Chat.Application.Caching;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
@@ -32,6 +33,8 @@ namespace Ago.Chat.Worker;
 public sealed class SiteErasureJob(
     NpgsqlDataSource dataSource,
     IDemoIdentityProvisioner identities,
+    IFileStorage fileStorage,
+    IMessageArchiveRepository archives,
     CacheInvalidationPublisher cacheInvalidation,
     IIdGenerator idGenerator,
     IClock clock,
@@ -98,14 +101,34 @@ public sealed class SiteErasureJob(
     /// <summary>
     /// One site, one tick: (a) idempotently stamp every conversation that does not carry the flag yet,
     /// (b) bail out this tick if any conversation still exists - <see cref="ConversationErasureJob"/>'s
-    /// own ticks are what drains them - and only once none remain does this method (c) collect operator
-    /// subject ids, delete the site row (cascading operators/roles/operator_roles/visitors/
-    /// channel_identities/webhook_endpoints/webhook_deliveries - <see cref="SiteErasureQuery.DeleteSiteAsync"/>'s
-    /// own remarks), invalidate the cached site config under both keys, and finally delete each
-    /// Keycloak user - last, for the identical reason `DemoTenantExpiryJob.RemoveAsync`'s own remarks
-    /// give: it is the step most likely to fail and the least harmful to leave for a retry, since the
-    /// sweeper re-finds nothing more to retry once the site row itself is gone - but the identities are
-    /// collected *before* that delete runs, precisely so they are still known afterward.
+    /// own ticks are what drains them, and (`24-09`) each one that drains has already had its own rows
+    /// stripped out of every archive object the site has, via that job's own
+    /// <see cref="ConversationArchiveEraser"/> step - and only once none remain does this method
+    /// (c) collect operator subject ids, (d) delete each of this site's own <c>message_archives</c>
+    /// objects from storage (`24-09` - see below), (e) delete the site row (cascading operators/roles/
+    /// operator_roles/visitors/channel_identities/webhook_endpoints/webhook_deliveries/
+    /// <c>message_archives</c> itself - <see cref="SiteErasureQuery.DeleteSiteAsync"/>'s own remarks),
+    /// invalidate the cached site config under both keys, and finally delete each Keycloak user - last,
+    /// for the identical reason `DemoTenantExpiryJob.RemoveAsync`'s own remarks give: it is the step
+    /// most likely to fail and the least harmful to leave for a retry, since the sweeper re-finds
+    /// nothing more to retry once the site row itself is gone - but the identities are collected
+    /// *before* that delete runs, precisely so they are still known afterward.
+    ///
+    /// <para><b>`24-09`: why the archive objects are deleted here rather than left to the row's own
+    /// cascade.</b> <c>message_archives</c> cascades with the site the same as every other table in
+    /// (e)'s list, but that only removes the manifest *row* - the `.zip` object it names is a separate
+    /// thing in object storage that no foreign key reaches. By the time this method gets here, step
+    /// (b)'s own gate guarantees every conversation this site ever had has been drained by
+    /// <see cref="ConversationErasureJob"/>, which means every one of them has already had its own
+    /// content stripped from every period this site has archived - so each archive object left standing
+    /// holds no message content at all, only an empty (or untouched-because-genuinely-empty) manifest
+    /// and jsonl shell. Deleting the object here removes that shell outright, rather than leaving
+    /// `personal-data.md`'s previously-named gap ("the archive .zip is then orphaned in storage") to
+    /// recur in a smaller form. The delete is read-before-delete (<see cref="IMessageArchiveRepository.ListForSiteAsync"/>
+    /// runs first, since the row naming an object is gone the moment (e) runs) and tolerant of a storage
+    /// failure - logged, not thrown - because by construction there is no personal data left in these
+    /// objects for a failure here to expose; an orphaned empty shell is a smaller and different problem
+    /// than the one this item exists to close.</para>
     /// </summary>
     /// <returns><see langword="true"/> if the site was fully erased this call.</returns>
     internal async Task<bool> ProcessSiteAsync(Guid siteId, CancellationToken cancellationToken)
@@ -121,6 +144,32 @@ public sealed class SiteErasureJob(
                 // Not an error and not a stall: ConversationErasureJob's own independent ticks are
                 // draining these in bounded batches. Nothing more for this tick to do for this site.
                 return false;
+            }
+        }
+
+        // `24-09`: read every archive object this site has *before* the site row goes - message_archives
+        // cascades with sites (MessageArchiveEntityConfiguration's own remarks), so the object keys are
+        // unreachable the instant DeleteSiteAsync below commits. Every conversation this site had is
+        // already drained by this point (the HasAnyConversationAsync gate above), so each of these
+        // objects has already been stripped of message content by ConversationErasureJob's own
+        // ConversationArchiveEraser step - what is deleted here is an empty shell, not personal data.
+        var archiveRecords = await archives.ListForSiteAsync(new SiteId(siteId), cancellationToken);
+        foreach (var archiveRecord in archiveRecords)
+        {
+            try
+            {
+                await fileStorage.DeleteAsync(new ObjectKey(archiveRecord.ObjectKey), cancellationToken);
+            }
+            catch (FileStorageUnavailableException ex)
+            {
+                // Tolerated, not swallowed silently: by construction this object no longer holds any
+                // conversation's content (every one of the site's conversations already went through
+                // ConversationArchiveEraser), so the residual is an orphaned empty shell, the same
+                // "storage hiccup must not abandon the whole erasure" tolerance
+                // ConversationErasureJob's own attachment-object delete already applies.
+                logger.LogWarning(
+                    ex, "Could not delete archive object {ObjectKey} for site {SiteId} being erased; it may now be an orphan.",
+                    archiveRecord.ObjectKey, siteId);
             }
         }
 
