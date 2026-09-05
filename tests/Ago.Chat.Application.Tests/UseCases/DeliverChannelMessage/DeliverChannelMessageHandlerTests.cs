@@ -20,7 +20,8 @@ public class DeliverChannelMessageHandlerTests
         FakeChannelIdentityRepository Identities,
         FakeVisitorRepository Visitors,
         FakeModuleTaskChannelPreferenceRepository ModuleTaskPreferences,
-        FakeInboundChannelAdapterRegistry Adapters);
+        FakeInboundChannelAdapterRegistry Adapters,
+        FakeChannelDeliveryRepository Deliveries);
 
     private static Harness CreateHarness(out Conversation conversation, out FakeInboundChannelAdapter maxAdapter)
     {
@@ -29,6 +30,7 @@ public class DeliverChannelMessageHandlerTests
         var visitors = new FakeVisitorRepository();
         var moduleTaskPreferences = new FakeModuleTaskChannelPreferenceRepository();
         var adapters = new FakeInboundChannelAdapterRegistry();
+        var deliveries = new FakeChannelDeliveryRepository();
         maxAdapter = new FakeInboundChannelAdapter(ChannelKind.Max);
         adapters.Register(maxAdapter);
 
@@ -39,9 +41,10 @@ public class DeliverChannelMessageHandlerTests
         visitors.Seed(new Visitor(visitorId, SiteId, Now));
 
         var handler = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler(
-            conversations, identities, visitors, moduleTaskPreferences, adapters);
+            conversations, identities, visitors, moduleTaskPreferences, adapters,
+            deliveries, new FakeIdGenerator(), new FakeClock(Now));
 
-        return new Harness(handler, conversations, identities, visitors, moduleTaskPreferences, adapters);
+        return new Harness(handler, conversations, identities, visitors, moduleTaskPreferences, adapters, deliveries);
     }
 
     private static Task LinkMaxIdentity(FakeChannelIdentityRepository identities, VisitorId visitorId, string address = "555000") =>
@@ -65,6 +68,36 @@ public class DeliverChannelMessageHandlerTests
         var sent = Assert.Single(maxAdapter.Sent);
         Assert.Equal("hi there", sent.Body.Value);
         Assert.Equal(message.Id, sent.MessageId);
+
+        // `23-19`: the fact §9 says was "already in hand and thrown away" is now recorded.
+        var delivery = Assert.Single(harness.Deliveries.Saved);
+        Assert.Equal(message.Id, delivery.MessageId);
+        Assert.Equal(SiteId, delivery.SiteId);
+        Assert.Equal(conversation.Id, delivery.ConversationId);
+        Assert.Equal(ChannelKind.Max, delivery.ChannelKind);
+        Assert.Equal(ChannelDeliveryStatus.Delivered, delivery.Status);
+        Assert.Equal("fake-1", delivery.ProviderMessageId);
+        Assert.Null(delivery.FailureReason);
+    }
+
+    /// <summary>`23-19`'s own Done-when: a redelivered broker message must not grow a second row - one
+    /// triggering operator message is one outbound send, and <see cref="ChannelDelivery.MessageId"/> is
+    /// this table's own idempotency key.</summary>
+    [Fact]
+    public async Task HandleAsync_CalledTwiceForTheSameTriggerMessage_CollapsesOntoOneDeliveryRow()
+    {
+        var harness = CreateHarness(out var conversation, out _);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi there"), Now);
+        var command = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+            SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence);
+
+        var firstOutcome = await harness.Handler.HandleAsync(command, CancellationToken.None);
+        var secondOutcome = await harness.Handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, firstOutcome);
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, secondOutcome);
+        Assert.Single(harness.Deliveries.Saved);
     }
 
     /// <summary>
@@ -335,6 +368,7 @@ public class DeliverChannelMessageHandlerTests
 
         Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.NotAnOperatorMessage, outcome);
         Assert.Empty(maxAdapter.Sent);
+        Assert.Empty(harness.Deliveries.Saved);
     }
 
     /// <summary>Out of this item's scope (14-03's own job) - see the handler's own remarks.</summary>
@@ -351,8 +385,11 @@ public class DeliverChannelMessageHandlerTests
 
         Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.NotAnOperatorMessage, outcome);
         Assert.Empty(maxAdapter.Sent);
+        Assert.Empty(harness.Deliveries.Saved);
     }
 
+    /// <summary>`23-19`'s own Done-when: "a conversation with no linked channel writes nothing at all -
+    /// the no-linked-channel outcome is not a delivery failure and must not be reported as one."</summary>
     [Fact]
     public async Task HandleAsync_WhenTheVisitorHasNoLinkedChannel_DoesNotRelayIt()
     {
@@ -366,6 +403,7 @@ public class DeliverChannelMessageHandlerTests
 
         Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.NoLinkedChannel, outcome);
         Assert.Empty(maxAdapter.Sent);
+        Assert.Empty(harness.Deliveries.Saved);
     }
 
     [Fact]
@@ -383,14 +421,18 @@ public class DeliverChannelMessageHandlerTests
         await LinkMaxIdentity(identities, visitorId);
         var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
 
+        var deliveries = new FakeChannelDeliveryRepository();
         var handler = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler(
-            conversations, identities, visitors, new FakeModuleTaskChannelPreferenceRepository(), adapters);
+            conversations, identities, visitors, new FakeModuleTaskChannelPreferenceRepository(), adapters,
+            deliveries, new FakeIdGenerator(), new FakeClock(Now));
         var outcome = await handler.HandleAsync(
             new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
                 SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),
             CancellationToken.None);
 
         Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.NoAdapterRegistered, outcome);
+        // Nothing was attempted - this item's own Done-when: only Delivered/Refused ever write a row.
+        Assert.Empty(deliveries.Saved);
     }
 
     /// <summary>A provider's terminal refusal (`Domain.ChannelSendOutcome.Refused`, e.g. a revoked bot
@@ -410,6 +452,13 @@ public class DeliverChannelMessageHandlerTests
             CancellationToken.None);
 
         Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Refused, outcome);
+
+        // `23-19`'s own Done-when: a refused send writes a row saying refused, with the provider's own
+        // detail - failure is a recorded outcome, not an absence.
+        var delivery = Assert.Single(harness.Deliveries.Saved);
+        Assert.Equal(ChannelDeliveryStatus.Refused, delivery.Status);
+        Assert.Equal("no active bot", delivery.FailureReason);
+        Assert.Null(delivery.ProviderMessageId);
     }
 
     /// <summary>A transient fault (thrown, per `IInboundChannelAdapter.SendAsync`'s own contract) must

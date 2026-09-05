@@ -12,6 +12,7 @@ using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
+using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
@@ -294,6 +295,9 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // resolve as a registered service.
         builder.Services.AddScoped<ITagBreakdownReadStore, TagBreakdownReadStore>();
         builder.Services.AddScoped<GetTagBreakdownReportForSiteHandler>();
+        // `23-19`: same reason again - MapConversationsEndpoints now also maps GET .../channel-deliveries.
+        builder.Services.AddScoped<IChannelDeliveryReadStore, ChannelDeliveryReadStore>();
+        builder.Services.AddScoped<GetChannelDeliveriesForConversationHandler>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();

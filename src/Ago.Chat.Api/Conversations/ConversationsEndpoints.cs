@@ -8,6 +8,7 @@ using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
+using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
@@ -183,6 +184,12 @@ public static class ConversationsEndpoints
         // Its one real caller is the console polling this route until it 404s, after requesting the
         // erasure above.
         app.MapGet("/api/v1/conversations/{conversationId:guid}", HandleGetByIdAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-19`: the console's own thread-badge read - see GetChannelDeliveriesForConversationHandler's
+        // own remarks for the gate (the same one `/visitor-history`/history reads already use: this
+        // conversation's own assigned operator, not merely conversation:read anywhere on the site).
+        app.MapGet("/api/v1/conversations/{conversationId:guid}/channel-deliveries", HandleGetChannelDeliveriesAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -553,6 +560,22 @@ public static class ConversationsEndpoints
         var result = await handler.HandleAsOperatorAsync(
             new GetVisitorHistory(
                 new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 20),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`23-19`: `docs/design/decisions.md` §9 - see `GetChannelDeliveriesForConversationHandler`'s
+    /// own remarks for the gate.</summary>
+    private static async Task<IResult> HandleGetChannelDeliveriesAsync(
+        Guid conversationId,
+        GetChannelDeliveriesForConversationHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetChannelDeliveriesForConversation(new ConversationId(conversationId), user.GetSiteId(), user.GetOperatorId()),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);

@@ -69,6 +69,10 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // rather than always loading the parent aggregate - IDocumentRepository's own remarks.
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<PublishedDocumentVersion> PublishedDocumentVersions => Set<PublishedDocumentVersion>();
+    // `23-19`: ChannelDelivery's own table - see ChannelDeliveryConfiguration's own remarks for the
+    // address-versus-reference decision and why this one, unlike AcceptanceRecord/ErasureRecord/
+    // AccessRecord above, does carry real foreign keys.
+    public DbSet<ChannelDelivery> ChannelDeliveries => Set<ChannelDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
