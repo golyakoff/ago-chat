@@ -18,6 +18,7 @@ public class GetVisitorHistoryHandlerTests
         FakeConversationReadStore ReadStore,
         FakeChannelIdentityRepository ChannelIdentities,
         FakePermissionChecker Permissions,
+        FakeAccessRecordRepository AccessRecords,
         Conversation CurrentConversation);
 
     private static Fixture CreateFixture(bool grantConversationRead = true)
@@ -26,6 +27,7 @@ public class GetVisitorHistoryHandlerTests
         var readStore = new FakeConversationReadStore();
         var channelIdentities = new FakeChannelIdentityRepository();
         var permissions = new FakePermissionChecker();
+        var accessRecords = new FakeAccessRecordRepository();
         if (grantConversationRead)
         {
             permissions.Grant(AssignedOperatorId, SiteId, Permission.ConversationRead);
@@ -37,8 +39,9 @@ public class GetVisitorHistoryHandlerTests
         conversations.Seed(current);
         readStore.Seed(current);
 
-        var handler = new GetVisitorHistoryHandler(conversations, readStore, channelIdentities, permissions);
-        return new Fixture(handler, conversations, readStore, channelIdentities, permissions, current);
+        var handler = new GetVisitorHistoryHandler(
+            conversations, readStore, channelIdentities, permissions, accessRecords, new FakeClock(Now), new FakeIdGenerator());
+        return new Fixture(handler, conversations, readStore, channelIdentities, permissions, accessRecords, current);
     }
 
     private static void LinkChannelIdentity(FakeChannelIdentityRepository channelIdentities, DateTimeOffset lastSeenAt)
@@ -168,10 +171,21 @@ public class GetVisitorHistoryHandlerTests
         Assert.True(result.IsSuccess);
         var message = Assert.Single(result.Value.Messages);
         Assert.Equal("handled by someone else", message.Body);
+
+        // `24-12`'s own Done-when: this boundary-crossing read leaves exactly one access_records row,
+        // naming the operator who read it, the historical conversation that was opened, and the site -
+        // never a copy of the message body it just returned.
+        var recorded = Assert.Single(fixture.AccessRecords.Recorded);
+        Assert.Equal(AccessRecordKind.CrossConversationHistoryRead, recorded.AccessKind);
+        Assert.Equal(SiteId, recorded.SiteId);
+        Assert.Equal(AccessRecordActorKind.Operator, recorded.ActorKind);
+        Assert.Equal(AssignedOperatorId.Value.ToString(), recorded.ActorId);
+        Assert.Equal(AccessRecordResourceKind.Conversation, recorded.ResourceKind);
+        Assert.Equal(historical.Id.Value, recorded.ResourceId);
     }
 
     [Fact]
-    public async Task HandleHistoricalConversationAsOperatorAsync_ForAConversationOfADifferentVisitor_ReturnsForbidden()
+    public async Task HandleHistoricalConversationAsOperatorAsync_ForAConversationOfADifferentVisitor_ReturnsForbidden_AndRecordsNothing()
     {
         var fixture = CreateFixture();
         var otherVisitorConversation = Conversation.Start(
@@ -188,10 +202,13 @@ public class GetVisitorHistoryHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+        // `24-12`'s own "a read that fails authorisation is not an access" - nothing was read, so
+        // nothing is recorded.
+        Assert.Empty(fixture.AccessRecords.Recorded);
     }
 
     [Fact]
-    public async Task HandleHistoricalConversationAsOperatorAsync_WhenTheCallerIsNotAssignedToTheirOwnStandingConversation_ReturnsForbidden()
+    public async Task HandleHistoricalConversationAsOperatorAsync_WhenTheCallerIsNotAssignedToTheirOwnStandingConversation_ReturnsForbidden_AndRecordsNothing()
     {
         var fixture = CreateFixture();
         var historical = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now.AddDays(-1));
@@ -206,10 +223,11 @@ public class GetVisitorHistoryHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+        Assert.Empty(fixture.AccessRecords.Recorded);
     }
 
     [Fact]
-    public async Task HandleHistoricalConversationAsOperatorAsync_ForAnUnknownHistoricalConversation_ReturnsNotFound()
+    public async Task HandleHistoricalConversationAsOperatorAsync_ForAnUnknownHistoricalConversation_ReturnsNotFound_AndRecordsNothing()
     {
         var fixture = CreateFixture();
 
@@ -220,5 +238,24 @@ public class GetVisitorHistoryHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+        Assert.Empty(fixture.AccessRecords.Recorded);
+    }
+
+    /// <summary>`24-12`'s own scoping decision, locked in by a test: the summary-list read
+    /// (<see cref="GetVisitorHistoryHandler.HandleAsOperatorAsync"/>) never writes an access record,
+    /// only opening one historical conversation does - see that handler's own remarks for why.</summary>
+    [Fact]
+    public async Task HandleAsOperatorAsync_ForAChannelIdentifiedVisitor_RecordsNothing()
+    {
+        var fixture = CreateFixture();
+        LinkChannelIdentity(fixture.ChannelIdentities, Now);
+
+        var result = await fixture.Handler.HandleAsOperatorAsync(
+            new Application.UseCases.GetVisitorHistory.GetVisitorHistory(
+                fixture.CurrentConversation.Id, AssignedOperatorId, SiteId, null, 50),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(fixture.AccessRecords.Recorded);
     }
 }

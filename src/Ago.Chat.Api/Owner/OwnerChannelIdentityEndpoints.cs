@@ -1,6 +1,8 @@
 ﻿using Ago.Chat.Api.Http;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Api.Owner;
 
@@ -32,6 +34,9 @@ public static class OwnerChannelIdentityEndpoints
         Guid siteId,
         Guid channelIdentityId,
         UnlinkChannelIdentityAsOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -39,6 +44,19 @@ public static class OwnerChannelIdentityEndpoints
             new UnlinkChannelIdentityAsOwner(new SiteId(siteId), new ChannelIdentityId(channelIdentityId)),
             cancellationToken);
 
-        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        // `24-12`: the historical record of an already-inactive identity (this handler's own idempotent
+        // no-op branch) still reaches here as a success - recorded anyway, since the caller genuinely
+        // asked and was told it succeeded; recording is keyed to "the endpoint reported success", not
+        // to "a row's own state actually changed this call".
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerChannelIdentityUnlink,
+            new SiteId(siteId), AccessRecordResourceKind.ChannelIdentity, channelIdentityId, cancellationToken);
+
+        return Results.NoContent();
     }
 }

@@ -131,6 +131,17 @@ public readonly record struct Permission(string Value)
     // into AGO Calendar's own database (`RoleAssignmentsChanged`, `Ago.Chat.Application.Mapping`) will
     // eventually let that product act on - see that event's own remarks for why a projection and not a
     // token claim (rule 8: a write decision may not read a cache, and a claim is exactly that).
+    // `24-12`: dedicated, not a reuse of SiteConfigure - the same granular-permission reasoning
+    // SiteErase/SiteExport's own remarks give for their own blast radii. Reading who accessed this
+    // tenant's data (including AGO's own platform-owner accesses, `24-12`'s own open question) is a
+    // compliance-shaped capability, not a reversible-config-change one; bundling it into SiteConfigure
+    // would let anyone who may tweak a widget's colour also read this tenant's own access log.
+    // Admin-role-only, the same restatements SiteErase/ConversationErase/SiteExport/ConversationExport
+    // already need (RegisterSiteHandler.AdminRolePermissions, MintDemoTenantHandler.AdminRolePermissions)
+    // - the `ago-deploy` seed script gap already noted for those siblings applies here too and is not
+    // fixed by this item either.
+    public static readonly Permission AccessRecordRead = new("access_record:read");
+
     public static readonly Permission BookingConfirm = new("booking:confirm");
     public static readonly Permission BookingReject = new("booking:reject");
     public static readonly Permission BookingCancel = new("booking:cancel");

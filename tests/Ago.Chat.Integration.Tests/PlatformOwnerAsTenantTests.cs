@@ -191,6 +191,10 @@ public sealed class PlatformOwnerAsTenantTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
+        // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves this
+        // straight from DI, the same way the production host does. IClock/IIdGenerator are already
+        // registered below.
+        builder.Services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();
         // `16-03`: SitesEndpoints now also maps the export routes - see SiteRegistrationTests'
         // own remarks (this file's own precedent for a stripped-down host).
         builder.Services.AddScoped<IExportRequestRepository, ExportRequestRepository>();

@@ -45,12 +45,28 @@ namespace Ago.Chat.Application.UseCases.GetVisitorHistory;
 /// visible to an operator who was never a party to the conversation that contains it -
 /// `docs/architecture/personal-data.md` is updated in this same change to say so, per this backlog
 /// item's own Context section and `16-02`'s erasure guarantees, which must keep covering it.</para>
+///
+/// <para><b>`24-12`: <see cref="HandleHistoricalConversationAsOperatorAsync"/>'s own success path now
+/// writes an <c>access_records</c> row; <see cref="HandleAsOperatorAsync"/> deliberately does not.</b>
+/// The historical read is the one this codebase already singles out, in the paragraph directly above,
+/// as "a message becomes visible to an operator who was never a party to the conversation" - the exact
+/// boundary-crossing read `24-12`'s own Scope names. The summary list one paragraph up returns only
+/// previews of conversations the same visitor had, gated on the identical two checks; recording both
+/// would be two rows for what a reader experiences as one action ("show me this visitor's history,
+/// then let me open one"), and `24-12`'s own Scope warns against exactly that kind of doubling
+/// ("recording everything is a second copy of the traffic"). The row is written only after every
+/// check above has already passed - a <c>Forbidden</c>/<c>NotFound</c> return never reaches
+/// <see cref="IAccessRecordRepository.RecordAsync"/>, per this item's own "a read that fails
+/// authorisation is not an access."</para>
 /// </summary>
 public sealed class GetVisitorHistoryHandler(
     IConversationRepository conversations,
     IConversationReadStore readStore,
     IChannelIdentityRepository channelIdentities,
-    IPermissionChecker permissions)
+    IPermissionChecker permissions,
+    IAccessRecordRepository accessRecords,
+    IClock clock,
+    IIdGenerator idGenerator)
 {
     public async Task<Result<VisitorHistoryResponse>> HandleAsOperatorAsync(
         GetVisitorHistory query, CancellationToken cancellationToken)
@@ -128,8 +144,29 @@ public sealed class GetVisitorHistoryHandler(
             return ConversationErrors.Forbidden("This conversation does not belong to the same visitor.");
         }
 
-        return await readStore.GetHistoryAsync(
+        var page = await readStore.GetHistoryAsync(
             query.HistoricalConversationId, historical.SiteId, query.BeforeSequence, query.PageSize, cancellationToken);
+
+        // `24-12`: only now, after every check above has actually let the read through - see this
+        // type's own remarks for why this call and not HandleAsOperatorAsync's own list is the one
+        // that writes a row, and why a Forbidden/NotFound return anywhere above never reaches this
+        // line. GetHistoryAsync itself has no failure branch once `historical` is loaded (it reads the
+        // one conversation this method has already confirmed exists and belongs to this visitor), so
+        // reaching this line already means the read succeeded.
+        var now = clock.UtcNow;
+        await accessRecords.RecordAsync(
+            new AccessRecordToWrite(
+                idGenerator.NewId(now),
+                now,
+                AccessRecordKind.CrossConversationHistoryRead,
+                historical.SiteId,
+                AccessRecordActorKind.Operator,
+                query.RequestedBy.Value.ToString(),
+                AccessRecordResourceKind.Conversation,
+                query.HistoricalConversationId.Value),
+            cancellationToken);
+
+        return page;
     }
 
     private static VisitorHistoryConversationDto ToDto(VisitorHistoryItem item) => new(

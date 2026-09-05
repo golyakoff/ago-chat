@@ -67,6 +67,8 @@ public class RegisterSiteHandlerTests
                 Permission.ConversationExport.Value,
                 // `22-05`/`adr/0093`: the calendar's own configuration permission, joined here unchanged.
                 Permission.CalendarConfigure.Value,
+                // `24-12`: the tenant's own read of who accessed their data.
+                Permission.AccessRecordRead.Value,
             ],
             registration.AdminRole.Permissions);
     }

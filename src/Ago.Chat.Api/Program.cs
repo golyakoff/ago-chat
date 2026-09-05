@@ -426,6 +426,11 @@ app.MapContactDetailEndpoints();
 // after AttachmentEndpoints.
 app.MapPhoneVerificationEndpoints();
 app.MapSitesEndpoints();
+// `24-12`: own Map call, not folded into MapSitesEndpoints above - see SitesEndpoints'
+// MapAccessRecordsEndpoint's own remarks for why (a test host that maps only MapSitesEndpoints must
+// never be made to resolve GetAccessRecordsForSiteHandler just because this route happened to share
+// its file).
+app.MapAccessRecordsEndpoint();
 // `10-06`: own file, own Map call - see SiteInstallationEndpoints' own remarks on why it is not
 // folded into MapSitesEndpoints above.
 app.MapSiteInstallationEndpoints();

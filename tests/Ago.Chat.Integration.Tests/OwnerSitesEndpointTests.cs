@@ -11,6 +11,7 @@ using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Kernel;
+using Dapper;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -70,6 +71,45 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         // is present (this collection's database is shared, so ">=" is the honest assertion, not "=").
         Assert.Equal(body.MatchingSites, body.TotalSites);
         Assert.True(body.TotalSites >= 1);
+    }
+
+    /// <summary>`24-12`'s own Done-when for the owner surfaces: the cross-tenant list write its own
+    /// access_records row through the real HTTP pipeline - `OwnerAccessRecorder` reads the caller's
+    /// real Keycloak `sub` off the real token, not a stand-in.</summary>
+    [Fact]
+    public async Task OwnerToken_GetsTheCrossTenantList_AndLeavesAnAccessRecord_NamingTheRealOwnerSubject()
+    {
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        var ownerSubject = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler()
+            .ReadJwtToken(token).Subject;
+
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var before = await CountAccessRecordsAsync(AccessRecordKind.OwnerSiteList, ownerSubject);
+
+        var response = await client.GetAsync($"{Route}?limit=200");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var after = await CountAccessRecordsAsync(AccessRecordKind.OwnerSiteList, ownerSubject);
+        Assert.Equal(before + 1, after);
+
+        // `AccessRecordKind.OwnerSiteList`'s own shape: this read spans every tenant, so the row it
+        // wrote names no single site - proven over the real row, not merely asserted about the type.
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        var siteId = await connection.ExecuteScalarAsync<Guid?>(
+            "select site_id from access_records where access_kind = 'OwnerSiteList' and actor_id = @actorId "
+            + "order by id desc limit 1",
+            new { actorId = ownerSubject });
+        Assert.Null(siteId);
+    }
+
+    private async Task<long> CountAccessRecordsAsync(AccessRecordKind kind, string actorId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        return await connection.ExecuteScalarAsync<long>(
+            "select count(*) from access_records where access_kind = @kind and actor_id = @actorId",
+            new { kind = kind.ToString(), actorId });
     }
 
     /// <summary>`23-14`'s own Done-when: searching by part of a site's name returns it, and the
@@ -363,6 +403,10 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
+        // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves these
+        // three straight from DI, the same way the production host does.
+        builder.Services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();
+        builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         // Registered exactly as the real host registers it - the owner token must be accepted while
         // this transformation runs and resolves nothing, since a platform owner has no `operators`
         // row (`12-01`).
