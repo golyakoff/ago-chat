@@ -122,7 +122,7 @@ public sealed class RoleAssignmentProjectionBackfillOrderingConcurrencyTests(Con
             await gate.Task;
             await using var db = fixture.CreateDbContext();
             var handler = new RemoveOperatorHandler(
-                new OperatorRepository(db), new PermissionChecker(db), new EfOutboxWriter<AgoChatDbContext>(db),
+                new OperatorRepository(db), new PermissionChecker(db), new EfUnitOfWork(db), new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(), new RealClock());
             return await handler.HandleAsync(new RemoveOperator(requestedById, siteId, operatorId), CancellationToken.None);
         });

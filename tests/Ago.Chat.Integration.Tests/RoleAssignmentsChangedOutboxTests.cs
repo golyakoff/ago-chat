@@ -89,8 +89,8 @@ public sealed class RoleAssignmentsChangedOutboxTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var handler = new RemoveOperatorHandler(
-                new OperatorRepository(db), new PermissionChecker(db), new EfOutboxWriter<AgoChatDbContext>(db),
-                new UuidV7Generator(), new FixedClock(Now));
+                new OperatorRepository(db), new PermissionChecker(db), new EfUnitOfWork(db),
+                new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new FixedClock(Now));
 
             var result = await handler.HandleAsync(new RemoveOperator(requestedById, siteId, operatorId), CancellationToken.None);
             Assert.True(result.IsSuccess);
