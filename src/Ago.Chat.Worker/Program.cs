@@ -296,10 +296,16 @@ builder.Services.AddHostedService<MessageArchiveJob>();
 // anyway. Not fixed here (widening AddKeycloakDemoIdentities's validation gate is a shared,
 // cross-feature change this item did not set out to make); flagged so it does not surprise the first
 // deployment that erases a real tenant with the demo feature off.
+// `24-09`: ConversationArchiveEraser needs the same options instance as a plain singleton value (not
+// IOptions<T>) - the identical "unwrap once, inject the value" shape MessageArchiveWriter's own
+// registration above already establishes, and for the same reason: it lives in ConversationErasureJob's
+// own dependency graph, not behind a scope.
 builder.Services
     .AddOptions<ConversationErasureJobOptions>()
     .Bind(builder.Configuration.GetSection(ConversationErasureJobOptions.SectionName))
     .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ConversationErasureJobOptions>>().Value);
+builder.Services.AddSingleton<ConversationArchiveEraser>();
 builder.Services.AddHostedService<ConversationErasureJob>();
 
 builder.Services
