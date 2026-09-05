@@ -56,6 +56,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // ModuleTaskChannelPreferenceRepository queries it directly, keyed on ModuleTaskId by value rather than
     // reached through Conversation's own encapsulated navigation.
     public DbSet<ModuleTaskChannelPreference> ModuleTaskChannelPreferences => Set<ModuleTaskChannelPreference>();
+    // `24-01`: AcceptanceRecord's own table - see AcceptanceRecordConfiguration's own remarks for why
+    // it carries no foreign key to any subject's own table.
+    public DbSet<AcceptanceRecord> AcceptanceRecords => Set<AcceptanceRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -322,5 +322,28 @@ internal static class TenantScopeExemptions
             + "naming its module key against the wrong SiteId; the (site, module) pair is the row's own key, the "
             + "same structural protection RevokeModuleForSiteHandler's own operator-gated sibling gets from its "
             + "additional IPermissionChecker call.",
+
+        // ---------------------------------------------------------------------------------------
+        // `24-01`: the acceptance record's own two handlers. Neither carries a SiteId at all - not
+        // an omission, a deliberate consequence of what an acceptance is. Recording your own
+        // acceptance is not an act on a tenant-scoped resource the way writing a conversation note
+        // is; it is closer to "the caller asserts a fact about themselves" - the same self-service
+        // shape a login or a token refresh already has, and RecordAcceptance's own remarks make the
+        // same argument in the command's own doc comment. Which caller may invoke either handler at
+        // all, and under what authentication, is deliberately left to `24-03`/`24-04`/`24-05` - this
+        // item builds no host endpoint for either (Scope: "showing anything to anybody" is those
+        // items' job), so there is no route yet for a permission policy to sit behind either.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.RecordAcceptance.RecordAcceptanceHandler.HandleAsync"] =
+            "`24-01`. Subject-agnostic by design: the command names its own subject (Tenant/Operator/Visitor, "
+            + "AcceptanceSubjectKind) rather than a site, and recording an acceptance is a self-service assertion "
+            + "about the caller, not an operation gated on a tenant's own permission set. No host endpoint exists "
+            + "yet - 24-03/24-04/24-05 build the real entry points and their own authentication, at which point "
+            + "each of those callers is responsible for only ever invoking this with the caller's own subject id.",
+        ["Ago.Chat.Application.UseCases.GetAcceptancesForSubject.GetAcceptancesForSubjectHandler.HandleAsync"] =
+            "`24-01`. The read-back half of RecordAcceptanceHandler right above, same reasoning: no SiteId, because "
+            + "an acceptance's subject is not a site. Deliberately unauthenticated at this layer - this item's own "
+            + "Scope excludes showing anything to anybody, so no host endpoint calls this yet; it exists so the "
+            + "record-then-read-back round trip is provable in a test.",
     };
 }

@@ -156,6 +156,9 @@ public static class ServiceCollectionExtensions
         // every other repository and yet reachable from only two handlers in the whole codebase.
         services.AddScoped<INoteRepository, NoteRepository>();
         services.AddScoped<ITagRepository, TagRepository>();
+        // `24-01`: no delete method - IAcceptanceRepository's own remarks on why that omission is the
+        // erasure decision (adr/0111) made structural rather than merely documented.
+        services.AddScoped<IAcceptanceRepository, AcceptanceRepository>();
         // `20-07`: the registry's own EF write port and Dapper read store - adr/0004's split, the same
         // shape every other repository/read-store pair on this page follows.
         services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
