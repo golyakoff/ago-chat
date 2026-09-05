@@ -123,24 +123,16 @@ public readonly record struct Permission(string Value)
     // action.
     public static readonly Permission ChannelIdentityUnlink = new("channel_identity:unlink");
 
-    // `22-05`/`adr/0093`: AGO Calendar's own seven-string catalogue, joined here unchanged rather than
-    // renamed. `adr/0027` drew two independent vocabularies on purpose (`booking:*`/`calendar:*`/
-    // `customer:*` against this file's `conversation:*`/`site:*`); `adr/0093` unifies *where the
-    // catalogue lives*, not what the strings mean, and the two prefixes never collided, so nothing
-    // here was renamed to make room for them. A permission granted here is what a projection replicated
-    // into AGO Calendar's own database (`RoleAssignmentsChanged`, `Ago.Chat.Application.Mapping`) will
-    // eventually let that product act on - see that event's own remarks for why a projection and not a
-    // token claim (rule 8: a write decision may not read a cache, and a claim is exactly that).
-    // `24-12`: dedicated, not a reuse of SiteConfigure - the same granular-permission reasoning
-    // SiteErase/SiteExport's own remarks give for their own blast radii. Reading who accessed this
-    // tenant's data (including AGO's own platform-owner accesses, `24-12`'s own open question) is a
-    // compliance-shaped capability, not a reversible-config-change one; bundling it into SiteConfigure
-    // would let anyone who may tweak a widget's colour also read this tenant's own access log.
-    // Admin-role-only, the same restatements SiteErase/ConversationErase/SiteExport/ConversationExport
-    // already need (RegisterSiteHandler.AdminRolePermissions, MintDemoTenantHandler.AdminRolePermissions)
-    // - the `ago-deploy` seed script gap already noted for those siblings applies here too and is not
-    // fixed by this item either.
-    public static readonly Permission AccessRecordRead = new("access_record:read");
+    // `24-12` deliberately adds **no** permission for reading the access log, and the reasoning is the
+    // one `WebhookManage` and `ChannelManage` right above already state for their own reads: a read is
+    // not given its own capability when the reader already has access to the thing being read about.
+    // `GetAllConversationsForSiteHandler` is gated on SiteConfigure, so a holder of that permission
+    // already reads every conversation on the site, contacts included. A separate permission over the
+    // *log of who read them* would guard nothing from that holder while adding a capability every
+    // future custom role has to reason about. The granular permissions above exist for a different
+    // shape entirely - irreversible destruction (SiteErase/ConversationErase/AttachmentDelete) or a
+    // complete copy leaving the system (SiteExport/ConversationExport) - not for "this data feels
+    // sensitive", which is the trap this note exists to mark.
 
     public static readonly Permission BookingConfirm = new("booking:confirm");
     public static readonly Permission BookingReject = new("booking:reject");

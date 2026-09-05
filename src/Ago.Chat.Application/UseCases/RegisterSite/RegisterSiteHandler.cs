@@ -76,7 +76,6 @@ public sealed class RegisterSiteHandler(
             Permission.CalendarConfigure.Value,
             // `24-12`: the tenant's own read of who accessed their data - the same Admin-only,
             // compliance-shaped placement SiteErase/SiteExport already have.
-            Permission.AccessRecordRead.Value,
         ];
 
     public async Task<Result<RegisteredSite>> HandleAsync(RegisterSite command, CancellationToken cancellationToken)
