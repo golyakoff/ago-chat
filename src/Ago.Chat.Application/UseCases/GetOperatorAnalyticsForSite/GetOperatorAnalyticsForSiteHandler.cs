@@ -76,33 +76,12 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
         await Task.WhenAll(currentTask, previousTask, loadTask);
         var result = currentTask.Result;
         var previousResult = previousTask.Result;
-        var loadByOperator = loadTask.Result.ToDictionary(l => l.Operator);
 
-        // `23-17`: the union of both operator sets - "held" (this report) and "attributed to" (the
-        // existing report) do not always name the same operators (`OperatorLoadSummaryDto`'s own
-        // remarks on the real "no data" case), and Done-when requires an operator who never exceeded
-        // capacity to show a real zero, not to be silently absent because their only conversations this
-        // window happened to be answered by someone else. `OperatorId.Value` orders both halves
-        // identically to `IOperatorAnalyticsReadStore`'s own existing ascending-by-id order.
-        var operatorIds = result.ByOperator.Select(o => o.Operator)
-            .Concat(loadByOperator.Keys)
-            .Distinct()
-            .OrderBy(id => id.Value)
-            .ToList();
-        var byOperatorById = result.ByOperator.ToDictionary(o => o.Operator);
-        var zeroBucket = new OperatorAnalyticsBucket(0, null, null, 0);
-
-        var byOperator = operatorIds.Select(operatorId =>
-        {
-            var attributed = byOperatorById.GetValueOrDefault(operatorId);
-            var load = loadByOperator.GetValueOrDefault(operatorId);
-            var operatorName = attributed?.OperatorName ?? load?.OperatorName;
-            return new OperatorAnalyticsOperatorBucketDto(
-                operatorId.Value,
-                ToDto(attributed?.Bucket ?? zeroBucket),
-                operatorName,
-                load is null ? null : ToLoadDto(load));
-        }).ToList();
+        // `23-18`: the merge itself now lives in `OperatorAnalyticsMerge`, shared with
+        // `GetOwnAnalyticsForOperatorHandler` - see that type's own remarks for why sharing it, rather
+        // than restating the union logic a second time, is what makes an operator's own row and this
+        // report's row for the same operator provably the same computation.
+        var byOperator = OperatorAnalyticsMerge.ComposeByOperator(result, loadTask.Result);
 
         return new OperatorAnalyticsResponse(
             from,
@@ -119,13 +98,4 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
 
     private static OperatorAnalyticsBucketDto ToDto(OperatorAnalyticsBucket bucket) => new(
         bucket.ConversationCount, bucket.AverageFirstResponseSeconds, bucket.AverageDurationSeconds, bucket.MissedCount);
-
-    private static OperatorLoadSummaryDto ToLoadDto(OperatorLoadSummary summary) => new(
-        summary.ConversationsHeld,
-        summary.IntervalsHeld,
-        summary.StandardIntervals,
-        summary.AdditionalIntervals,
-        summary.ByLoad
-            .Select(b => new OperatorLoadBucketEntryDto(b.BucketLabel, b.IntervalCount, b.ReplyCount, b.AverageFirstReplySeconds))
-            .ToList());
 }

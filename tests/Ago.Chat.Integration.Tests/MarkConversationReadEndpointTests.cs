@@ -15,6 +15,7 @@ using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
@@ -262,6 +263,10 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // whose GetOperatorAnalyticsForSiteHandler parameter must resolve as a registered service.
         builder.Services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
         builder.Services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
+        // `23-18`: same reason again - MapConversationsEndpoints now also maps GET .../analytics/me,
+        // whose GetOwnAnalyticsForOperatorHandler parameter must resolve as a registered service. No
+        // test in this file exercises that route.
+        builder.Services.AddScoped<GetOwnAnalyticsForOperatorHandler>();
         // `18-14`: same reason again - MapConversationsEndpoints now also maps
         // GET .../module-flow-report, whose GetModuleFlowReportForSiteHandler parameter must
         // resolve as a registered service. No test in this file exercises that route, so the
