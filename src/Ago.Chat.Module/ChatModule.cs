@@ -47,6 +47,7 @@ using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetSiteForOwner;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
+using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
@@ -819,6 +820,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ToggleOperatorSeatHandler>();
         services.AddScoped<RemoveOperatorHandler>();
         services.AddScoped<GetSeatAssignmentSummaryHandler>();
+        // `23-22`: the team screen's own bootstrap read - see the handler's own remarks.
+        services.AddScoped<GetOperatorTeamHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
         // `12-01`'s owner policy), registered here for the same reason as everything else on this
         // page - ChatModule is where handler registration lives, and a host that never maps the route
