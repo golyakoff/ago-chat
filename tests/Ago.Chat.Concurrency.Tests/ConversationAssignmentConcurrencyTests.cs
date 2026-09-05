@@ -19,7 +19,12 @@ namespace Ago.Chat.Concurrency.Tests;
 [Collection(ConcurrencyCollection.Name)]
 public sealed class ConversationAssignmentConcurrencyTests(ConcurrencyTestFixture fixture)
 {
-    private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    // `23-05`: real, rounded UtcNow rather than a fixed historical date - the assignment claimers
+    // now compare a conversation's own age against the site's `assignment_penalty_seconds` (default
+    // 120s) using the real clock, so a fixed date far in the past would make every conversation here
+    // look old enough for that second, capacity-ignoring pass and silently change what this test is
+    // actually asserting.
+    private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
     [Fact]
     public async Task MultipleConcurrentJobInstances_NeverExceedCapacity_AndNeverDoubleAssign()

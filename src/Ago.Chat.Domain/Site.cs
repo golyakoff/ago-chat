@@ -163,6 +163,29 @@ public sealed class Site
     /// give.</para></summary>
     public int SeatLimit { get; private set; } = 2;
 
+    /// <summary>`23-05`: how long a `Waiting` conversation may sit with nobody having taken it before
+    /// the assignment engine assigns it anyway, capacity ignored - `decisions.md` §2's own words, "two
+    /// minutes is the default, not the rule." A plain scalar with a private setter, the identical shape
+    /// <see cref="Tier"/>/<see cref="SeatLimit"/> already establish just above and for the same
+    /// reason: there is no cross-field invariant here to justify a wrapping value object the way
+    /// <see cref="WidgetConfig"/>/<see cref="OfflineAutoReplySettings"/> need one, so nothing routes
+    /// through a `Property&lt;T&gt;("_field")` shadow mapping either.
+    ///
+    /// <para><b>120, not a value every existing row must be migrated to.</b> The database column
+    /// carries the same default, so a row written before this column existed reads back `120` without
+    /// a backfill - the identical "additive column, database default, no data migration" shape
+    /// <see cref="Tier"/>'s own remarks describe for itself (not <see cref="SeatLimit"/>'s: that one
+    /// needed `13-08`'s backfill because its default changed after rows already existed; this default
+    /// has never changed).</para>
+    ///
+    /// <para><b>Read by the claimer, never through the site-settings cache.</b> `CLAUDE.md` rule 8:
+    /// this is configuration a write decision depends on - <c>SkipLockedAssignmentClaimer</c> and
+    /// <c>RedisLockAssignmentClaimer</c> both query this column directly, inside the same transaction
+    /// that performs the compare-free claim, through <c>SiteAssignmentPenaltyQuery</c> rather than
+    /// loading a whole <see cref="Site"/> aggregate or reading the cached <c>SiteConfigDto</c> - see
+    /// that type's own remarks.</para></summary>
+    public int AssignmentPenaltySeconds { get; private set; } = 120;
+
     // `18-03`: a fourth flat-backing-field list, the same shape `14-04`'s _offlineAutoReplyRules
     // established just above - opaque to SQL, read and written as a unit, mapped through a converter
     // to one column (CannedResponseConverters' own remarks restate OfflineAutoReplyConverters' - text,
@@ -275,6 +298,31 @@ public sealed class Site
     {
         _locale = locale;
         _domainEvents.Add(new SiteLocaleUpdated(Id, PublicKey, now));
+    }
+
+    /// <summary>
+    /// `23-05`: the console's own write for <see cref="AssignmentPenaltySeconds"/> -
+    /// <c>UpdateAssignmentPenaltyHandler</c> is this method's only caller, gated the same
+    /// `site:configure` way every other settings write on this aggregate already is.
+    /// <paramref name="seconds"/> arrives pre-validated (positive, the handler's own job matching
+    /// <see cref="UpdateWidgetConfig"/>'s split), so this method's only job is applying it and
+    /// recording that it happened.
+    ///
+    /// <para>Raises <see cref="SiteAssignmentPenaltyUpdated"/>, mapped to the same
+    /// `SiteSettingsChanged` integration event every other write path on this aggregate converges on -
+    /// see that event's own remarks for why this still holds even though the one real consumer that
+    /// matters (the assignment claimers) never reads the cache this eviction clears.</para>
+    /// </summary>
+    public void UpdateAssignmentPenalty(int seconds, DateTimeOffset now)
+    {
+        if (seconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(seconds), seconds, "Assignment penalty must be a positive number of seconds.");
+        }
+
+        AssignmentPenaltySeconds = seconds;
+        _domainEvents.Add(new SiteAssignmentPenaltyUpdated(Id, PublicKey, now));
     }
 
     /// <summary>

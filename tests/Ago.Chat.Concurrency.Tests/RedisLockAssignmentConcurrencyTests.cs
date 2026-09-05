@@ -21,7 +21,9 @@ namespace Ago.Chat.Concurrency.Tests;
 [Collection(SiteCachingConcurrencyCollection.Name)]
 public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFixture fixture)
 {
-    private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    // `23-05`: real, rounded UtcNow rather than a fixed historical date - see
+    // ConversationAssignmentConcurrencyTests's own remarks on this identical field for why.
+    private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
     [Fact]
     public async Task MultipleConcurrentJobInstances_NeverExceedCapacity_AndNeverDoubleAssign()

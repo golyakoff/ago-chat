@@ -26,6 +26,7 @@ using Ago.Chat.Api.ReplyDraft;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.Modules;
+using Ago.Chat.Api.AssignmentPenalty;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Contracts;
@@ -417,6 +418,7 @@ app.MapDocumentEndpoints();
 app.MapModuleEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();
+app.MapAssignmentPenaltyEndpoints();
 // `18-03`
 app.MapCannedResponseEndpoints();
 // `18-04`

@@ -163,6 +163,12 @@ public static class ConversationErrors
     public static Error OfflineAutoReplyInvalid(string reason) =>
         new("OfflineAutoReply.Invalid", reason);
 
+    /// <summary>`23-05`: a non-positive `assignment_penalty_seconds` - `Site.UpdateAssignmentPenalty`'s
+    /// own guard, translated here the same "validate the value, translate the throw at the Application
+    /// boundary" way <see cref="OfflineAutoReplyInvalid"/> already does for its own field.</summary>
+    public static Error AssignmentPenaltyInvalid(string reason) =>
+        new("AssignmentPenalty.Invalid", reason);
+
     /// <summary>`18-03`: a canned response `CannedResponse` refused - an empty or oversized title or
     /// body, or too many in the list. Same "one code, the message carries the detail" reasoning
     /// `OfflineAutoReplyInvalid` states for itself.</summary>
