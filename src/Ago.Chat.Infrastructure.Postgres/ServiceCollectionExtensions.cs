@@ -75,6 +75,10 @@ public static class ServiceCollectionExtensions
         // `23-22`: the team screen's own read - a sibling to IOperatorAnalyticsReadStore over the same
         // table, not a fourth method on IOperatorRepository (that port's own remarks on why).
         services.AddScoped<IOperatorTeamReadStore, OperatorTeamReadStore>();
+
+        // `23-17`: an operator's own work, reported against the load they carried it under - its own
+        // port, not a fifth method here (IOperatorLoadReportReadStore's own remarks on why).
+        services.AddScoped<IOperatorLoadReportReadStore, OperatorLoadReportReadStore>();
         // `18-10`: the site owner's own conversion report, a sibling read store rather than a fourth
         // method on IOperatorAnalyticsReadStore - see that interface's own remarks for why.
         services.AddScoped<IConversionReportReadStore, ConversionReportReadStore>();

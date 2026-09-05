@@ -12,10 +12,11 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     private static readonly OperatorId AdminId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 6, 15, 12, 0, 0, TimeSpan.Zero);
 
-    private static (GetOperatorAnalyticsForSiteHandler Handler, FakeOperatorAnalyticsReadStore Store) CreateFixture(
+    private static (GetOperatorAnalyticsForSiteHandler Handler, FakeOperatorAnalyticsReadStore Store, FakeOperatorLoadReportReadStore LoadStore) CreateFixture(
         bool grantPermission = true)
     {
         var store = new FakeOperatorAnalyticsReadStore();
+        var loadStore = new FakeOperatorLoadReportReadStore();
         var permissions = new FakePermissionChecker();
         if (grantPermission)
         {
@@ -23,13 +24,13 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         }
 
         var clock = new FakeClock(Now);
-        return (new GetOperatorAnalyticsForSiteHandler(store, permissions, clock), store);
+        return (new GetOperatorAnalyticsForSiteHandler(store, loadStore, permissions, clock), store, loadStore);
     }
 
     [Fact]
     public async Task HandleAsync_WithoutSiteConfigure_ReturnsForbidden()
     {
-        var (handler, _) = CreateFixture(grantPermission: false);
+        var (handler, _, _) = CreateFixture(grantPermission: false);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
@@ -42,7 +43,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_WhenFromIsNotBeforeTo_ReturnsAnalyticsInvalidRange()
     {
-        var (handler, _) = CreateFixture();
+        var (handler, _, _) = CreateFixture();
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(
@@ -56,7 +57,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_WhenFromEqualsTo_ReturnsAnalyticsInvalidRange()
     {
-        var (handler, _) = CreateFixture();
+        var (handler, _, _) = CreateFixture();
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, Now, Now),
@@ -73,7 +74,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_WhenNoRangeIsSupplied_DefaultsToTheTrailingWindow_AndEchoesItBack()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
@@ -90,7 +91,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_WhenARangeIsSupplied_PassesItThroughUnchanged()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         var from = Now.AddDays(-10);
         var to = Now.AddDays(-1);
 
@@ -108,7 +109,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_PassesTheCallersOwnSiteId_NeverAnother()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
 
         await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
@@ -124,7 +125,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_CallsTheStoreTwice_BothCallsCarryingTheCallersOwnSite_NeverAnother()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         var from = Now.AddDays(-10);
         var to = Now.AddDays(-1);
 
@@ -140,7 +141,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_TheSecondCall_IsThePrecedingWindowOfEqualLength()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         var from = Now.AddDays(-10);
         var to = Now.AddDays(-1);
 
@@ -158,7 +159,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_MapsThePreviousOverallBucket_FromTheStoresSecondCall()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         store.SeedSequence(
             new OperatorAnalyticsResult(new OperatorAnalyticsBucket(5, 42.5, 300.0, 1), [], [], [], []),
             new OperatorAnalyticsResult(new OperatorAnalyticsBucket(3, 60.0, 200.0, 0), [], [], [], []));
@@ -177,7 +178,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_MapsTheOverallAndPerChannelBucketsFromTheStore()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         store.Seed(new OperatorAnalyticsResult(
             new OperatorAnalyticsBucket(ConversationCount: 5, AverageFirstResponseSeconds: 42.5, AverageDurationSeconds: 300.0, MissedCount: 1),
             [
@@ -214,7 +215,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_MapsThePerOperatorBucketsFromTheStore()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         var operatorA = new OperatorId(Guid.NewGuid());
         var operatorB = new OperatorId(Guid.NewGuid());
         store.Seed(new OperatorAnalyticsResult(
@@ -252,7 +253,7 @@ public class GetOperatorAnalyticsForSiteHandlerTests
     [Fact]
     public async Task HandleAsync_MapsThePerReferrerAndPerCampaignBucketsFromTheStore()
     {
-        var (handler, store) = CreateFixture();
+        var (handler, store, _) = CreateFixture();
         store.Seed(new OperatorAnalyticsResult(
             new OperatorAnalyticsBucket(3, 45.0, 250.0, 0),
             [],
@@ -280,5 +281,101 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         var campaign = result.Value.ByCampaign.Single();
         Assert.Equal("summer_sale", campaign.UtmCampaign);
         Assert.Equal(1, campaign.Bucket.ConversationCount);
+    }
+
+    /// <summary>`23-17`: the handler's own merge - an operator present in both the attribution report
+    /// and the load report gets both halves on the one row, and an operator who never exceeded capacity
+    /// in the window carries a real, present <c>0</c> for <c>AdditionalIntervals</c> - Done-when's own
+    /// words: "shows zero additional and is not thereby made to look worse or better."</summary>
+    [Fact]
+    public async Task HandleAsync_MergesTheLoadReport_OntoTheMatchingOperatorRow()
+    {
+        var (handler, store, loadStore) = CreateFixture();
+        var operatorA = new OperatorId(Guid.NewGuid());
+        store.Seed(new OperatorAnalyticsResult(
+            new OperatorAnalyticsBucket(1, 45.0, 250.0, 0),
+            [],
+            [new OperatorAnalyticsOperatorBucket(operatorA, new OperatorAnalyticsBucket(1, 45.0, 250.0, 0), "Ada")],
+            [],
+            []));
+        loadStore.Seed([
+            new OperatorLoadSummary(
+                operatorA,
+                "Ada",
+                ConversationsHeld: 4,
+                IntervalsHeld: 4,
+                StandardIntervals: 4,
+                AdditionalIntervals: 0,
+                ByLoad: [new OperatorLoadBucketEntry("1", 4, 4, 45.0)]),
+        ]);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var row = result.Value.ByOperator.Single(o => o.OperatorId == operatorA.Value);
+        Assert.NotNull(row.Load);
+        Assert.Equal(4, row.Load!.ConversationsHeld);
+        Assert.Equal(4, row.Load.IntervalsHeld);
+        Assert.Equal(4, row.Load.StandardIntervals);
+        Assert.Equal(0, row.Load.AdditionalIntervals);
+        Assert.Single(row.Load.ByLoad);
+        Assert.Equal("1", row.Load.ByLoad[0].BucketLabel);
+    }
+
+    /// <summary>An operator the load report names but the attribution report never mentions (every
+    /// conversation they held this window was answered by someone else, or never answered at all)
+    /// still gets a row - the union, not the intersection, of the two operator sets - with a real zero
+    /// bucket rather than being silently dropped.</summary>
+    [Fact]
+    public async Task HandleAsync_AddsARow_ForAnOperatorTheLoadReportNamesButAttributionDoesNot()
+    {
+        var (handler, store, loadStore) = CreateFixture();
+        var operatorOnlyInLoad = new OperatorId(Guid.NewGuid());
+        store.Seed(new OperatorAnalyticsResult(new OperatorAnalyticsBucket(0, null, null, 0), [], [], [], []));
+        loadStore.Seed([
+            new OperatorLoadSummary(
+                operatorOnlyInLoad, "Grace", ConversationsHeld: 2, IntervalsHeld: 2,
+                StandardIntervals: 1, AdditionalIntervals: 1,
+                ByLoad: [new OperatorLoadBucketEntry("2-3", 2, 0, null)]),
+        ]);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var row = result.Value.ByOperator.Single(o => o.OperatorId == operatorOnlyInLoad.Value);
+        Assert.Equal("Grace", row.OperatorName);
+        Assert.Equal(0, row.Bucket.ConversationCount);
+        Assert.NotNull(row.Load);
+        Assert.Equal(1, row.Load!.AdditionalIntervals);
+    }
+
+    /// <summary>The reverse: an operator the attribution report names but who started no assignment
+    /// interval in the window (data predating `23-03`, or every conversation they answered this window
+    /// was started and handed to them entirely outside it) carries <see langword="null"/> - not a zero,
+    /// a real "no data" - `OperatorLoadSummaryDto`'s own remarks on why the two are different facts.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_LeavesLoadNull_ForAnOperatorWithNoAssignmentIntervalInTheWindow()
+    {
+        var (handler, store, _) = CreateFixture();
+        var operatorA = new OperatorId(Guid.NewGuid());
+        store.Seed(new OperatorAnalyticsResult(
+            new OperatorAnalyticsBucket(1, 45.0, 250.0, 0),
+            [],
+            [new OperatorAnalyticsOperatorBucket(operatorA, new OperatorAnalyticsBucket(1, 45.0, 250.0, 0), "Ada")],
+            [],
+            []));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var row = result.Value.ByOperator.Single(o => o.OperatorId == operatorA.Value);
+        Assert.Null(row.Load);
     }
 }

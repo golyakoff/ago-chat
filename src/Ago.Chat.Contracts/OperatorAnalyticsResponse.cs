@@ -58,9 +58,60 @@ public sealed record OperatorAnalyticsChannelBucketDto(string Channel, OperatorA
 /// minted, which carries none by design). The console renders this with the id as its own fallback,
 /// never the other way round - <see cref="OperatorId"/> stays present on every row regardless, so a
 /// caller never loses the ability to tell two same-named operators apart.</para>
+///
+/// <para>`23-17`: <see cref="Load"/> is a second, independent view of this same operator - "held", from
+/// `conversation_assignments`, rather than "attributed to", from message authorship
+/// (<see cref="Bucket"/>'s own definition, `IOperatorAnalyticsReadStore`'s remarks). <see langword="null"/>
+/// when the operator has no assignment interval starting in the window at all - a row that predates
+/// `23-03`'s own table, or (this window's own edge case) an operator who holds a conversation started
+/// and answered entirely before the window but never took on anything new inside it. That is a real
+/// "no data", not a zero: see <see cref="OperatorLoadSummaryDto"/>'s own remarks for why it is shown
+/// differently from an operator whose load report says zero additional.</para>
 /// </summary>
 public sealed record OperatorAnalyticsOperatorBucketDto(
-    Guid OperatorId, OperatorAnalyticsBucketDto Bucket, string? OperatorName = null);
+    Guid OperatorId, OperatorAnalyticsBucketDto Bucket, string? OperatorName = null, OperatorLoadSummaryDto? Load = null);
+
+/// <summary>`23-17`: one operator's load summary - see `Ago.Chat.Application.Abstractions.IOperatorLoadReportReadStore`
+/// for the full "why this shape" statement. A distinct type from <see cref="OperatorAnalyticsBucketDto"/>
+/// on purpose: the two answer different questions over different windows of the same underlying data
+/// (conversations this operator was credited with answering, versus conversations this operator's own
+/// assignment intervals say they held), and folding load counts into the existing bucket shape would
+/// make a reader guess which of the two "conversation count" on a combined record actually meant.
+/// </summary>
+/// <param name="ConversationsHeld">Distinct conversations with at least one interval starting in the
+/// window - a conversation transferred away and back to this same operator counts once here.</param>
+/// <param name="IntervalsHeld">Every assignment interval, so the same transferred-away-and-back
+/// conversation counts twice here. Never less than <see cref="ConversationsHeld"/>; equal to it exactly
+/// when nothing in the window was ever held twice by the same operator.</param>
+/// <param name="StandardIntervals">Intervals where this operator's own concurrent load, counting the
+/// interval itself, did not exceed their capacity when it started.</param>
+/// <param name="AdditionalIntervals">Intervals where it did - `docs/design/decisions.md` §2's naming
+/// amendment: computed from interval overlap against capacity, never a stored flag, and never labelled
+/// "forced" anywhere a person reads it. <see cref="StandardIntervals"/> + <see cref="AdditionalIntervals"/>
+/// == <see cref="IntervalsHeld"/> always - an operator who never exceeded capacity in the window shows
+/// <c>0</c> here, exactly as real a fact as a non-zero count, never rendered as a criticism.</param>
+/// <param name="ByLoad">Response time bucketed by the operator's own concurrent load at the moment each
+/// reply was owed - ordered by bucket ascending, a listing, never a ranking (this report never sorts
+/// operators against each other).</param>
+public sealed record OperatorLoadSummaryDto(
+    long ConversationsHeld,
+    long IntervalsHeld,
+    long StandardIntervals,
+    long AdditionalIntervals,
+    IReadOnlyList<OperatorLoadBucketEntryDto> ByLoad);
+
+/// <param name="BucketLabel">E.g. <c>"1"</c>, <c>"2-3"</c>, <c>"9+"</c> -
+/// `Ago.Chat.Application.Abstractions.OperatorLoadBuckets.Label`'s own output for
+/// `Analytics:LoadBucketUpperBounds`'s configured boundaries. A display string, not a value to parse
+/// back apart.</param>
+/// <param name="IntervalCount">Intervals that started at this bucket's own load.</param>
+/// <param name="ReplyCount">How many of those ever saw a reply from the operator who held them - the
+/// denominator <see cref="AverageFirstReplySeconds"/> is averaged over, always shown alongside it
+/// rather than left implicit.</param>
+/// <param name="AverageFirstReplySeconds"><see langword="null"/> when <see cref="ReplyCount"/> is zero -
+/// never zero itself.</param>
+public sealed record OperatorLoadBucketEntryDto(
+    string BucketLabel, long IntervalCount, long ReplyCount, double? AverageFirstReplySeconds);
 
 /// <summary>`18-12`: one referrer host's bucket - see <see cref="OperatorAnalyticsResponse.ByReferrer"/>.
 /// </summary>
