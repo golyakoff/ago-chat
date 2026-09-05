@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
+using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.RemoveOperator;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
@@ -41,6 +42,15 @@ public static class OperatorsEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapGet("/api/v1/sites/{siteId:guid}/operators/seat-assignment-summary", HandleGetSeatAssignmentSummaryAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-22`: the team screen's own listing - every operator this site still has, by name. Mapped
+        // as its own route, not folded into `seat-assignment-summary`'s response: that endpoint answers
+        // a site's aggregate seat numbers (a derived read over a count, `GetSeatAssignmentSummaryHandler`'s
+        // own remarks), never per-operator rows - the two answer genuinely different questions over the
+        // same table, the same "sibling read store, not a widened one" judgment
+        // `IOperatorTeamReadStore`'s own remarks make on the Infrastructure side.
+        app.MapGet("/api/v1/sites/{siteId:guid}/operators", HandleGetOperatorTeamAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -96,6 +106,15 @@ public static class OperatorsEndpoints
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(new GetSeatAssignmentSummary(user.GetOperatorId(), new SiteId(siteId)), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleGetOperatorTeamAsync(
+        Guid siteId, GetOperatorTeamHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(new GetOperatorTeam(user.GetOperatorId(), new SiteId(siteId)), cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }

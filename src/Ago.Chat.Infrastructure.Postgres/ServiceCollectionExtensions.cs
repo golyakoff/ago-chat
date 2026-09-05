@@ -72,6 +72,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         // `18-08`: the console's own site-scoped "how am I doing" report.
         services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
+        // `23-22`: the team screen's own read - a sibling to IOperatorAnalyticsReadStore over the same
+        // table, not a fourth method on IOperatorRepository (that port's own remarks on why).
+        services.AddScoped<IOperatorTeamReadStore, OperatorTeamReadStore>();
         // `18-10`: the site owner's own conversion report, a sibling read store rather than a fourth
         // method on IOperatorAnalyticsReadStore - see that interface's own remarks for why.
         services.AddScoped<IConversionReportReadStore, ConversionReportReadStore>();
