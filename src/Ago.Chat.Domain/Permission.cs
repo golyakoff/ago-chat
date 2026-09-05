@@ -79,6 +79,17 @@ public readonly record struct Permission(string Value)
     // notes for why the seed script's restatement was not reached by this change.
     public static readonly Permission SiteExport = new("site:export");
 
+    // `24-11`: the narrower sibling of SiteExport - the same ConversationErase/SiteErase granularity
+    // split, applied to export. A tenant honouring one visitor's access request needs to hand over
+    // that visitor's data, not the power to walk out with every other visitor's transcript too;
+    // bundling the narrow case into SiteExport would mean granting the whole-tenant blast radius to
+    // answer a single person's request, exactly the gap `24-11`'s own backlog item exists to close.
+    // Admin-role-only for now, same restatements as its siblings above
+    // (RegisterSiteHandler.AdminRolePermissions, MintDemoTenantHandler.AdminRolePermissions); the
+    // `ago-deploy` seed script gap already noted for SiteErase/ConversationErase/SiteExport applies
+    // here too and is not fixed by this item either.
+    public static readonly Permission ConversationExport = new("conversation:export");
+
     // `18-04`: dedicated, not a reuse of ConversationSend - the same granular-permission reasoning
     // ConversationClose/ConversationAssign already draw for themselves. A note is never sent to the
     // visitor, so "may send a message" is not the same capability as "may write about this

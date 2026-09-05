@@ -266,6 +266,15 @@ public static class ConversationErrors
     public static Error ExportRateLimited(TimeSpan retryAfter) =>
         new("Export.RateLimited", $"Too many export requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
 
+    /// <summary>`24-11`: distinct from <see cref="ExportRateLimited"/> even though the shape is
+    /// identical, the same reasoning that code's own remarks give - a person-scoped export is a
+    /// separate, deliberately smaller bucket (<c>PersonExportRateLimitOptions</c>'s own remarks: it
+    /// must not become a way to reconstruct a whole site's data by iterating conversation ids
+    /// unthrottled by the heavier whole-site bucket, and must not itself be starved by a burst of
+    /// whole-site export attempts), so a client needs to tell the two apart.</summary>
+    public static Error PersonExportRateLimited(TimeSpan retryAfter) =>
+        new("PersonExport.RateLimited", $"Too many export requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
     // `18-01`: same shared vocabulary, same reason - SearchConversationsHandler adds its own code here
     // rather than a separate error class.
     /// <summary>An empty search phrase, or a caller-supplied range whose start is not before its end -

@@ -199,6 +199,28 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return new VisitorHistoryPage(items, nextCursor);
     }
 
+    // `24-11`: unpaginated by design - ListAllForVisitorAsync's own remarks on why a visitor-scoped
+    // export needs every id in one round trip rather than a page at a time.
+    private const string AllConversationIdsForVisitorSql = """
+        select id as "Id"
+        from conversations
+        where visitor_id = @VisitorId
+        order by created_at
+        """;
+
+    public async Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(
+        VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var ids = await connection.QueryAsync<Guid>(new CommandDefinition(
+            AllConversationIdsForVisitorSql,
+            new { VisitorId = visitorId.Value },
+            cancellationToken: cancellationToken));
+
+        return ids.Select(id => new ConversationId(id)).ToList();
+    }
+
     public async Task<ConversationListPage> GetAllForSiteAsync(
         SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken)
     {

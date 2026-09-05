@@ -408,6 +408,9 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
 
         public Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
     }
 
     private sealed class NeverCalledReplyDraftGenerator : IReplyDraftGenerator

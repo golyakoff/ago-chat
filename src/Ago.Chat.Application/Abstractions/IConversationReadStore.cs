@@ -101,4 +101,20 @@ public interface IConversationReadStore
     /// predicate.</para>
     /// </summary>
     Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken);
+    /// `24-11`: every conversation this visitor has ever had, oldest first, unpaginated - the read
+    /// behind a visitor-scoped export. Deliberately not <see cref="GetVisitorHistoryAsync"/> with its
+    /// exclusion and paging dropped: that method exists for an operator's own convenience panel and is
+    /// gated by nothing this method needs to repeat (see <c>ExportVisitorHandler</c>'s own remarks on
+    /// why an export's completeness question is not the same as that panel's authorization-scope
+    /// question). Unbounded rather than keyset-paginated - the same "small and bounded, one person's
+    /// own history" reasoning <see cref="IVisitorContactDetailRepository.GetForVisitorAsync"/> already
+    /// gives for itself: nobody accumulates thousands of conversations, so a subject-access export can
+    /// read every id in one round trip rather than paging through its own source data.
+    ///
+    /// <para>No separate <c>siteId</c> parameter - the same reasoning <see cref="GetVisitorHistoryAsync"/>
+    /// already states for itself: a <see cref="Visitor"/>, and therefore every conversation hanging off
+    /// one, belongs to exactly one site, and the caller only ever holds a <see cref="VisitorId"/> it
+    /// already resolved from a conversation it proved belongs to the caller's own site.</para>
+    /// </summary>
+    Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken);
 }

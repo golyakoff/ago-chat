@@ -64,6 +64,7 @@ public class RegisterSiteHandlerTests
             [
                 Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
                 Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
+                Permission.ConversationExport.Value,
                 // `22-05`/`adr/0093`: the calendar's own configuration permission, joined here unchanged.
                 Permission.CalendarConfigure.Value,
             ],

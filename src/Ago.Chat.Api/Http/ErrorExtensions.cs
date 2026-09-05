@@ -164,7 +164,10 @@ public static class ErrorExtensions
             // into this method's own `retryAfter` parameter below, which is where the header is actually
             // set. PhoneVerification.LockedOut still carries none, deliberately - see its own remarks two
             // lines up.
-            "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "ReplyDraft.RateLimited"
+            // `24-11`: PersonExport.RateLimited joins the same group - ConversationErrors.PersonExportRateLimited's
+            // own remarks on why it is a distinct code from Export.RateLimited rather than a reuse.
+            "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "PersonExport.RateLimited"
+                or "ReplyDraft.RateLimited"
                 or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut" or "demo.rate_limited"
                 => StatusCodes.Status429TooManyRequests,
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's

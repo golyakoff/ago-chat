@@ -5,6 +5,8 @@ using System.Text.Encodings.Web;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.ExportConversation;
+using Ago.Chat.Application.UseCases.ExportVisitor;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
@@ -239,6 +241,14 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<RequestConversationErasureHandler>();
         builder.Services.AddScoped<GetConversationByIdHandler>();
         builder.Services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `24-11`: same reason again - MapConversationsEndpoints now also maps
+        // POST .../exports and POST .../visitor-export, whose ExportConversationHandler/
+        // ExportVisitorHandler parameters, and the PersonExportRateLimitOptions parameter their
+        // endpoint methods take directly, must all resolve as registered services or the whole
+        // route table fails to build - found live exactly the way this comment predicts.
+        builder.Services.AddScoped<ExportConversationHandler>();
+        builder.Services.AddScoped<ExportVisitorHandler>();
+        builder.Services.AddSingleton(new PersonExportRateLimitOptions());
         // `18-07`: same reason as the three above it - MapConversationsEndpoints now also maps
         // GET .../visitor-history, whose GetVisitorHistoryHandler parameter must resolve as a
         // registered service or the whole route table fails to build.

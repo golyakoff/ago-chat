@@ -2,6 +2,8 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
+using Ago.Chat.Application.UseCases.ExportConversation;
+using Ago.Chat.Application.UseCases.ExportVisitor;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
@@ -136,6 +138,20 @@ public static class ConversationsEndpoints
         // which any operator holding `conversation:assign`'s sibling `conversation:close` may do on
         // their own assigned conversation.
         app.MapPost("/api/v1/conversations/{conversationId:guid}/erase", HandleEraseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `24-11`: a tenant honouring one visitor's access request exports that conversation and
+        // nothing else - synchronous, no completion poll to wire (ExportConversationHandler's own
+        // remarks on why this scope does not need `16-03`'s Pending/Ready/Failed job shape). Same
+        // sub-resource pattern as `/erase` right above - `conversation:export`, the same granularity
+        // split as `conversation:erase`/`site:erase`.
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/exports", HandleExportConversationAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `24-11`: the visitor-scoped sibling - every conversation the same visitor has, not only this
+        // one. See ExportVisitorHandler's own remarks on why this is not gated on a channel identity
+        // the way `/visitor-history` above is.
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/visitor-export", HandleExportVisitorAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `18-07`: the returning-visitor-history panel's own sub-resource - same shape as `/close` and
@@ -407,6 +423,63 @@ public static class ConversationsEndpoints
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Accepted();
+    }
+
+    /// <summary>`24-11`: builds and returns one conversation's export archive in the same request - no
+    /// `202`, no completion poll. See `ExportConversationHandler`'s own remarks for why this scope does
+    /// not need `16-03`'s asynchronous job shape.</summary>
+    private static async Task<IResult> HandleExportConversationAsync(
+        Guid conversationId,
+        ExportConversationHandler handler,
+        PersonExportRateLimitOptions rateLimitOptions,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new ExportConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            var error = result.Error!.Value;
+            // `ago-root#353`'s own shape: one bucket, so this is the exact wait, computed from
+            // configuration this endpoint already holds, never a second IRateLimiter.CheckAsync.
+            var retryAfter = error.Code == "PersonExport.RateLimited"
+                ? RateLimitRetryAfter.Conservative(rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
+        }
+
+        var archive = result.Value;
+        return Results.File(archive.Content, "application/zip", archive.FileName);
+    }
+
+    /// <summary>`24-11`: the visitor-scoped sibling of <see cref="HandleExportConversationAsync"/> -
+    /// same shape, resolves every conversation for the same visitor first.</summary>
+    private static async Task<IResult> HandleExportVisitorAsync(
+        Guid conversationId,
+        ExportVisitorHandler handler,
+        PersonExportRateLimitOptions rateLimitOptions,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new ExportVisitor(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            var error = result.Error!.Value;
+            var retryAfter = error.Code == "PersonExport.RateLimited"
+                ? RateLimitRetryAfter.Conservative(rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
+        }
+
+        var archive = result.Value;
+        return Results.File(archive.Content, "application/zip", archive.FileName);
     }
 
     /// <summary>`16-02`: the completion-poll target for `/erase` above - a `404 Conversation.NotFound`

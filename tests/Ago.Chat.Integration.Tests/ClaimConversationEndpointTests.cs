@@ -6,6 +6,8 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
+using Ago.Chat.Application.UseCases.ExportConversation;
+using Ago.Chat.Application.UseCases.ExportVisitor;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
@@ -199,6 +201,14 @@ public class ClaimConversationEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<RequestConversationErasureHandler>();
         builder.Services.AddScoped<GetConversationByIdHandler>();
         builder.Services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `24-11`: same reason again - MapConversationsEndpoints now also maps
+        // POST .../exports and POST .../visitor-export, whose ExportConversationHandler/
+        // ExportVisitorHandler parameters, and the PersonExportRateLimitOptions parameter their
+        // endpoint methods take directly, must all resolve as registered services or the whole
+        // route table fails to build - found live exactly the way this comment predicts.
+        builder.Services.AddScoped<ExportConversationHandler>();
+        builder.Services.AddScoped<ExportVisitorHandler>();
+        builder.Services.AddSingleton(new PersonExportRateLimitOptions());
         builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         builder.Services.AddScoped<GetVisitorHistoryHandler>();
         builder.Services.AddScoped<IConversationSearchStore, ConversationSearchStore>();
