@@ -18,6 +18,8 @@ internal static class IdConverters
     public static readonly ValueConverter<AttachmentId, Guid> Attachment = new(id => id.Value, value => new AttachmentId(value));
     public static readonly ValueConverter<WebhookEndpointId, Guid> WebhookEndpoint = new(id => id.Value, value => new WebhookEndpointId(value));
     public static readonly ValueConverter<WebhookDeliveryId, Guid> WebhookDelivery = new(id => id.Value, value => new WebhookDeliveryId(value));
+    // `23-19`
+    public static readonly ValueConverter<ChannelDeliveryId, Guid> ChannelDelivery = new(id => id.Value, value => new ChannelDeliveryId(value));
     public static readonly ValueConverter<ChannelIdentityId, Guid> ChannelIdentity = new(id => id.Value, value => new ChannelIdentityId(value));
     // `14-12`
     public static readonly ValueConverter<PendingChannelLinkRequestId, Guid> PendingChannelLinkRequest = new(

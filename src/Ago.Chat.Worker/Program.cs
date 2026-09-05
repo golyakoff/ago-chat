@@ -248,6 +248,13 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<WebhookDeliveryPruneJob>();
 
+// `23-19`
+builder.Services
+    .AddOptions<ChannelDeliveryPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(ChannelDeliveryPruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ChannelDeliveryPruneJob>();
+
 builder.Services
     .AddOptions<InboxPruneJobOptions>()
     .Bind(builder.Configuration.GetSection(InboxPruneJobOptions.SectionName))

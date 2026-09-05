@@ -100,6 +100,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWebhookEndpointRepository, WebhookEndpointRepository>();
         services.AddScoped<IWebhookDeliveryRepository, WebhookDeliveryRepository>();
         services.AddScoped<IWebhookDeliveryReadStore, WebhookDeliveryReadStore>();
+        // `23-19`
+        services.AddScoped<IChannelDeliveryRepository, ChannelDeliveryRepository>();
+        services.AddScoped<IChannelDeliveryReadStore, ChannelDeliveryReadStore>();
         services.AddSingleton<IWebhookSecretGenerator, WebhookSecretGenerator>();
         // Scoped, not singleton, so a missing/malformed Webhooks:SecretEncryptionKey surfaces on the
         // first request rather than only if something resolves it eagerly at startup - ChatModule's

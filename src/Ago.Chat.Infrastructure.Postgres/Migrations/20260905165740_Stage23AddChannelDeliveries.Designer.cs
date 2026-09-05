@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905165740_Stage23AddChannelDeliveries")]
+    partial class Stage23AddChannelDeliveries
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -578,7 +581,7 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.ToTable("conversation_assignments", null, t =>
                         {
-                            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken', 'Additional')");
+                            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken')");
                         });
                 });
 
@@ -612,37 +615,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasDatabaseName("ix_conversation_notes_conversation");
 
                     b.ToTable("conversation_notes", (string)null);
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.Document", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("DocumentKey")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("document_key");
-
-                    b.Property<int>("LastSequence")
-                        .HasColumnType("integer")
-                        .HasColumnName("last_sequence");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentKey")
-                        .IsUnique()
-                        .HasDatabaseName("ix_documents_key");
-
-                    b.ToTable("documents", (string)null);
                 });
 
             modelBuilder.Entity("Ago.Chat.Domain.EmailThreadState", b =>
@@ -1137,74 +1109,11 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("pending_phone_verifications", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Domain.PublishedDocumentVersion", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("Body")
-                        .IsRequired()
-                        .HasMaxLength(100000)
-                        .HasColumnType("character varying(100000)")
-                        .HasColumnName("body");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("document_id");
-
-                    b.Property<string>("DocumentKey")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("document_key");
-
-                    b.Property<DateTimeOffset>("PublishedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("published_at");
-
-                    b.Property<int>("Sequence")
-                        .HasColumnType("integer")
-                        .HasColumnName("sequence");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("title");
-
-                    b.Property<string>("Version")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("version");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentId");
-
-                    b.HasIndex("DocumentKey", "Sequence")
-                        .IsUnique()
-                        .HasDatabaseName("ix_published_document_versions_key_sequence");
-
-                    b.HasIndex("DocumentKey", "Version")
-                        .IsUnique()
-                        .HasDatabaseName("ix_published_document_versions_key_version");
-
-                    b.ToTable("published_document_versions", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Domain.Site", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
-
-                    b.Property<int>("AssignmentPenaltySeconds")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(120)
-                        .HasColumnName("assignment_penalty_seconds");
 
                     b.Property<DateTimeOffset?>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -2135,15 +2044,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Ago.Chat.Domain.PublishedDocumentVersion", b =>
-                {
-                    b.HasOne("Ago.Chat.Domain.Document", null)
-                        .WithMany("_versions")
-                        .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("Ago.Chat.Domain.Tag", b =>
                 {
                     b.HasOne("Ago.Chat.Domain.Site", null)
@@ -2255,11 +2155,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Navigation("_messages");
 
                     b.Navigation("_moduleTasks");
-                });
-
-            modelBuilder.Entity("Ago.Chat.Domain.Document", b =>
-                {
-                    b.Navigation("_versions");
                 });
 #pragma warning restore 612, 618
         }

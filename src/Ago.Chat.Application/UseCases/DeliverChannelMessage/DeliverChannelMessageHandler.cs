@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.DeliverChannelMessage;
 
@@ -60,13 +61,30 @@ namespace Ago.Chat.Application.UseCases.DeliverChannelMessage;
 /// <see cref="ResolveModuleTaskChannelPriorityIdentityAsync"/> tries each entry in the visitor's own priority order
 /// and skips a since-unlinked one rather than abandoning the whole list at the first miss, so a lower-
 /// ranked but still-verified entry can still win over `14-13`'s preference.</para>
+///
+/// <para><b>`23-19`: the outcome is now recorded, not only decided.</b> `docs/design/decisions.md` §9 -
+/// this handler already received <see cref="ChannelSendOutcome"/> and threw it away; the only change
+/// this item makes here is a single <see cref="IChannelDeliveryRepository.SaveAsync"/> call once the
+/// provider has actually answered. Only the two terminal branches write a row -
+/// <see cref="DeliverChannelMessageOutcome.NoLinkedChannel"/>/<see cref="DeliverChannelMessageOutcome.NoAdapterRegistered"/>/
+/// <see cref="DeliverChannelMessageOutcome.NotAnOperatorMessage"/> mean nothing was ever attempted, and
+/// this item's own Done-when is explicit that a no-linked-channel conversation "writes nothing at all -
+/// the no-linked-channel outcome is not a delivery failure and must not be reported as one." No new
+/// transaction, no outbox: this row is not a state change anything else in the system reacts to
+/// (`ChannelMessageDeliveryConsumer` keeps deciding ack vs retry exactly as before, off the returned
+/// enum, never off this table), so it does not need rule 4's write-then-publish shape - it is closer to
+/// <c>UnreadCounterConsumer</c>'s own plain write than to anything that mints an integration
+/// event.</para>
 /// </summary>
 public sealed class DeliverChannelMessageHandler(
     IConversationRepository conversations,
     IChannelIdentityRepository identities,
     IVisitorRepository visitors,
     IModuleTaskChannelPreferenceRepository moduleTaskPreferences,
-    IInboundChannelAdapterRegistry adapters)
+    IInboundChannelAdapterRegistry adapters,
+    IChannelDeliveryRepository deliveries,
+    IIdGenerator idGenerator,
+    IClock clock)
 {
     public async Task<DeliverChannelMessageOutcome> HandleAsync(
         DeliverChannelMessage command, CancellationToken cancellationToken)
@@ -119,6 +137,28 @@ public sealed class DeliverChannelMessageHandler(
             new OutboundChannelMessage(
                 identity.Kind, identity.Address, command.ConversationId, command.TriggerMessageId, trigger.Body),
             cancellationToken);
+
+        var now = clock.UtcNow;
+        var status = outcome.Delivered ? ChannelDeliveryStatus.Delivered : ChannelDeliveryStatus.Refused;
+        var delivery = ChannelDelivery.Record(
+            new ChannelDeliveryId(idGenerator.NewId(now)),
+            command.SiteId,
+            command.ConversationId,
+            command.TriggerMessageId,
+            identity.Kind,
+            identity.Id,
+            status,
+            outcome.ProviderMessageId,
+            outcome.FailureReason,
+            now);
+
+        // Insert-only, collapses on MessageId (ChannelDelivery's own remarks) - a redelivered
+        // MessageAccepted that reaches this point a second time (the send already having happened and
+        // this row already having been written the first time round; see this handler's own class
+        // remarks) skips the write rather than growing a second row. Never awaited for its return value
+        // - there is no caller-visible difference between "recorded" and "already recorded", both mean
+        // the row exists.
+        await deliveries.SaveAsync(delivery, cancellationToken);
 
         return outcome.Delivered ? DeliverChannelMessageOutcome.Delivered : DeliverChannelMessageOutcome.Refused;
     }

@@ -30,6 +30,7 @@ using Ago.Chat.Application.UseCases.TagConversation;
 using Ago.Chat.Application.UseCases.UntagConversation;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
+using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.ExportConversation;
@@ -317,6 +318,8 @@ public sealed class ChatModule : IProductModule
         // channel the visitor was reached by. See DeliverChannelMessageHandler's own remarks for why it
         // is driven off MessageAccepted rather than the send path.
         services.AddScoped<DeliverChannelMessageHandler>();
+        // `23-19`: the per-conversation read of what DeliverChannelMessageHandler now records.
+        services.AddScoped<GetChannelDeliveriesForConversationHandler>();
 
         // `14-12`/`adr/0079`: verified channel-identity linking and unlinking - bound here, with
         // OperatorInviteOptions right below, the same shape. Both originators

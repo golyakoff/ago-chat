@@ -13,6 +13,7 @@ using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
+using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
@@ -232,6 +233,11 @@ public class ClaimConversationEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<GetConversationOutcomeHandler>();
         builder.Services.AddScoped<ITagBreakdownReadStore, TagBreakdownReadStore>();
         builder.Services.AddScoped<GetTagBreakdownReportForSiteHandler>();
+        // `23-19`: `MapConversationsEndpoints` now also maps `GET .../channel-deliveries` - the same
+        // "registered even though no test here calls it" reasoning as every other handler on this
+        // page (see the comment above `GetOperatorQueueHandler`'s own registration).
+        builder.Services.AddScoped<IChannelDeliveryReadStore, ChannelDeliveryReadStore>();
+        builder.Services.AddScoped<GetChannelDeliveriesForConversationHandler>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
