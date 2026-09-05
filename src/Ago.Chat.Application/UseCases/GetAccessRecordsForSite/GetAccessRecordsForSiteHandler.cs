@@ -10,7 +10,7 @@ namespace Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
 /// caller genuinely is an operator acting on their own site's own row set, so `adr/0016`'s RBAC model
 /// is the correct check to make, not a second, weaker copy of a policy decided elsewhere the way it
 /// would be for `ListSitesForOwnerHandler`/`GetSiteForOwnerHandler`. Gated on
-/// <see cref="Permission.AccessRecordRead"/>, a dedicated permission rather than a reuse of
+/// <see cref="Permission.SiteConfigure"/>, a dedicated permission rather than a reuse of
 /// <see cref="Permission.SiteConfigure"/> - see that permission's own remarks for the blast-radius
 /// argument.
 ///
@@ -32,7 +32,7 @@ public sealed class GetAccessRecordsForSiteHandler(IAccessRecordRepository acces
         GetAccessRecordsForSite query, CancellationToken cancellationToken)
     {
         var allowed = await permissions.HasPermissionAsync(
-            query.RequestedBy, query.SiteId, Permission.AccessRecordRead, cancellationToken);
+            query.RequestedBy, query.SiteId, Permission.SiteConfigure, cancellationToken);
         if (!allowed)
         {
             return ConversationErrors.Forbidden("Operator does not have permission to read this site's access records.");

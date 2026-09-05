@@ -19,13 +19,13 @@ public class GetAccessRecordsForSiteHandlerTests
     private static (GetAccessRecordsForSiteHandler Handler, FakeAccessRecordRepository AccessRecords) CreateFixture()
     {
         var permissions = new FakePermissionChecker();
-        permissions.Grant(AdminOperatorId, SiteId, Permission.AccessRecordRead);
+        permissions.Grant(AdminOperatorId, SiteId, Permission.SiteConfigure);
         var accessRecords = new FakeAccessRecordRepository();
         return (new GetAccessRecordsForSiteHandler(accessRecords, permissions), accessRecords);
     }
 
     [Fact]
-    public async Task HandleAsync_WithoutAccessRecordReadPermission_ReturnsForbidden()
+    public async Task HandleAsync_WithoutSiteConfigurePermission_ReturnsForbidden()
     {
         var (handler, _) = CreateFixture();
 
