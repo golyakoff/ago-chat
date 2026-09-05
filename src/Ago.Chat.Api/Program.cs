@@ -12,6 +12,7 @@ using Ago.Chat.Api.Channels;
 using Ago.Chat.Api.Conversations;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Demo;
+using Ago.Chat.Api.Documents;
 using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Infrastructure.Keycloak;
 using Microsoft.Extensions.Options;
@@ -162,6 +163,14 @@ builder.Services
 builder.Services
     .AddOptions<VisitorSessionRenewalRateLimitOptions>()
     .Bind(builder.Configuration.GetSection(VisitorSessionRenewalRateLimitOptions.SectionName))
+    .ValidateOnStart();
+
+// `24-02`: the published surface's own per-IP bucket - bound here, not ChatModule, the same
+// "DocumentEndpoints is the only consumer and lives in Ago.Chat.Api itself" reasoning
+// VisitorSessionRateLimitOptions's own remarks give right above.
+builder.Services
+    .AddOptions<PublishedDocumentReadRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(PublishedDocumentReadRateLimitOptions.SectionName))
     .ValidateOnStart();
 
 // 3-06: a per-process random key (this project's original Stage 1 choice) only tolerates a single
@@ -401,6 +410,9 @@ app.MapWhatsAppChannelEndpoints();
 // console connect/disconnect flow to manage at all, unlike every channel above.
 app.MapEmailWebhookEndpoints();
 app.MapWidgetConfigEndpoints();
+// `24-02`: the published surface's own unauthenticated read routes - see DocumentEndpoints' own
+// remarks for why they are mapped without any RequireAuthorization policy at all.
+app.MapDocumentEndpoints();
 // `19-03`: the console-facing surface for `EnableModuleForSite`, left unbuilt by `20-07`.
 app.MapModuleEndpoints();
 // `14-04`
@@ -453,6 +465,9 @@ app.MapOwnerChannelIdentityEndpoints();
 // `22-17`: the platform owner's own module grant/revoke - a deliberate cross-tenant write, gated by
 // RequirePlatformOwner exactly as the two owner surfaces above are (OwnerModuleEndpoints' own remarks).
 app.MapOwnerModuleEndpoints();
+// `24-02`: the named owner's own publish route - see OwnerDocumentEndpoints' own remarks for why
+// RequirePlatformOwner is the entire access-control story here too.
+app.MapOwnerDocumentEndpoints();
 // `13-02`: checkout-session creation (operator-authenticated) and the ЮKassa webhook receiver
 // (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
 // why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.

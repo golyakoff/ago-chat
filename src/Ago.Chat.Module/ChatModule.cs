@@ -17,6 +17,8 @@ using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.AddConversationNote;
 using Ago.Chat.Application.UseCases.RecordAcceptance;
 using Ago.Chat.Application.UseCases.GetAcceptancesForSubject;
+using Ago.Chat.Application.UseCases.PublishDocumentVersion;
+using Ago.Chat.Application.UseCases.GetDocumentVersion;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.CreateTag;
 using Ago.Chat.Application.UseCases.DeleteTag;
@@ -962,6 +964,12 @@ public sealed class ChatModule : IProductModule
         // them the same way every other handler on this page is resolved.
         services.AddScoped<RecordAcceptanceHandler>();
         services.AddScoped<GetAcceptancesForSubjectHandler>();
+        // `24-02`: the two handlers behind the published surface - PublishDocumentVersionHandler backs
+        // OwnerDocumentEndpoints's own RequirePlatformOwner-gated write; GetDocumentVersionHandler backs
+        // DocumentEndpoints's own unauthenticated read, both registered here the same way every other
+        // handler on this page is.
+        services.AddScoped<PublishDocumentVersionHandler>();
+        services.AddScoped<GetDocumentVersionHandler>();
         services.AddScoped<CreateTagHandler>();
         services.AddScoped<RenameTagHandler>();
         services.AddScoped<DeleteTagHandler>();
