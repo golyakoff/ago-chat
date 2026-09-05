@@ -99,7 +99,11 @@ public static class ErrorExtensions
                 // `22-17`: the owner's own mistake to fix - an ExpiresAt that is not strictly in the
                 // future, or reaches further out than EnableModuleForSiteAsOwnerHandler.MaxGrantDuration
                 // allows.
-                or "Module.GrantExpiryInvalid" => StatusCodes.Status400BadRequest,
+                or "Module.GrantExpiryInvalid"
+                // `23-13`: the caller's own mistake to fix - Force was set with no non-blank reason, or
+                // one longer than RevokeModuleForSiteAsOwnerHandler.MaxReasonLength allows. The same
+                // "decide, don't default" shape Module.GrantExpiryInvalid already gives its own guard.
+                or "Module.RevokeReasonRequired" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -127,7 +131,12 @@ public static class ErrorExtensions
                 // would leave nobody who can manage operators), not a malformed request - the same
                 // "retry makes no sense, the remedy is a different action first" shape every other code
                 // in this group already gives for its own conflict.
-                or "Operator.IsLastManager" => StatusCodes.Status409Conflict,
+                or "Operator.IsLastManager"
+                // `23-13`: a real conflict with the row's own current state (it is a tenant's own
+                // self-service purchase, not a grant), resolved by an explicit second statement of
+                // intent rather than by fixing the request body - the same shape
+                // ChannelCredential.AlreadyConnected already gives its own conflict.
+                or "Module.RevokePurchaseRequiresForce" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
