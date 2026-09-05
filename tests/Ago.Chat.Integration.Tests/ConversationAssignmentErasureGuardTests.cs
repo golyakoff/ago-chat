@@ -77,7 +77,7 @@ public sealed class ConversationAssignmentErasureGuardTests(PostgresFixture fixt
         // Called directly rather than through SweepAsync's own claim query - this test does not need
         // erasure_requested_at set, since EraseConversationAsync itself has no opinion about that flag;
         // claiming pending rows is SweepAsync's own job, not this method's precondition.
-        var erased = await job.EraseConversationAsync(conversationId.Value, siteId.Value, visitorId.Value, CancellationToken.None);
+        var erased = await job.EraseConversationAsync(conversationId.Value, siteId.Value, visitorId.Value, null, CancellationToken.None);
         Assert.True(erased);
 
         await using var verify = fixture.CreateDbContext();

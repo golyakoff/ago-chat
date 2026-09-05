@@ -24,9 +24,13 @@ namespace Ago.Chat.Application.UseCases.RequestConversationErasure;
 /// answers <c>Conversation.NotFound</c> here, never <c>Conversation.Forbidden</c> - the same
 /// not-found-not-forbidden choice every other per-conversation check in this codebase makes for a
 /// resource outside the caller's tenant (existence itself is not exposed cross-tenant).</para>
+///
+/// <para><b>`24-13`: also mints this erasure's own receipt id</b> - see
+/// <see cref="Ago.Chat.Application.UseCases.RequestSiteErasure.RequestSiteErasureHandler"/>'s own
+/// remarks for the identical reasoning applied to the site-scoped sibling.</para>
 /// </summary>
 public sealed class RequestConversationErasureHandler(
-    IErasureRequestRepository erasureRequests, IPermissionChecker permissions, IClock clock)
+    IErasureRequestRepository erasureRequests, IPermissionChecker permissions, IIdGenerator idGenerator, IClock clock)
 {
     public async Task<Result> HandleAsync(RequestConversationErasure command, CancellationToken cancellationToken)
     {
@@ -37,8 +41,11 @@ public sealed class RequestConversationErasureHandler(
             return ConversationErrors.Forbidden("Operator does not have permission to erase conversations for this site.");
         }
 
+        var now = clock.UtcNow;
+        var erasureRecordId = idGenerator.NewId(now);
+
         var found = await erasureRequests.RequestConversationErasureAsync(
-            command.ConversationId, command.SiteId, clock.UtcNow, cancellationToken);
+            command.ConversationId, command.SiteId, command.RequestedBy, erasureRecordId, now, cancellationToken);
         if (!found)
         {
             return ConversationErrors.NotFound(command.ConversationId.Value);

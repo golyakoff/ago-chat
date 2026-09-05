@@ -7,13 +7,22 @@ namespace Ago.Chat.Worker;
 /// <see cref="ConversationErasureQuery"/> and `Ago.Chat.Infrastructure.Postgres`'s own
 /// `DemoTenantRepository` already establish for exactly this kind of cross-aggregate removal.
 /// </summary>
+/// <summary>`24-13`: one pending site, with the <paramref name="ErasureRecordId"/> its own erasure
+/// needs to update its `erasure_records` receipt - always non-null in practice (every site erasure is
+/// requested through <c>IErasureRequestRepository.RequestSiteErasureAsync</c>, which mints one
+/// unconditionally), kept nullable anyway so this record has the identical shape and the identical
+/// no-op-when-null contract as <see cref="ConversationErasureQuery.PendingConversationErasure"/>'s own
+/// <c>ErasureRecordId</c>, rather than one nullable-by-necessity type and one that asserts a fact no
+/// column-level constraint actually enforces.</summary>
+public sealed record PendingSiteErasure(Guid SiteId, Guid? ErasureRecordId);
+
 public static class SiteErasureQuery
 {
-    public static async Task<IReadOnlyList<Guid>> ListPendingAsync(
+    public static async Task<IReadOnlyList<PendingSiteErasure>> ListPendingAsync(
         NpgsqlConnection connection, int limit, CancellationToken cancellationToken)
     {
         const string sql = """
-            select id
+            select id, erasure_record_id
             from sites
             where erasure_requested_at is not null
             order by erasure_requested_at
@@ -23,14 +32,14 @@ public static class SiteErasureQuery
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("limit", limit);
 
-        var ids = new List<Guid>();
+        var pending = new List<PendingSiteErasure>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            ids.Add(reader.GetGuid(0));
+            pending.Add(new PendingSiteErasure(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1)));
         }
 
-        return ids;
+        return pending;
     }
 
     /// <summary>Idempotently stamps every conversation belonging to this site that does not already
@@ -38,7 +47,15 @@ public static class SiteErasureQuery
     /// is null`) and safe to repeat every tick, including for a conversation created *after* the site's
     /// own erasure was requested: this call re-finds it on the very next tick, which is what makes a
     /// visitor starting a new conversation mid-erasure self-healing rather than a race the site erasure
-    /// can complete around.</summary>
+    /// can complete around.
+    ///
+    /// <para>`24-13`: deliberately does **not** set `erasure_requested_by`/`erasure_record_id` on the
+    /// conversations it stamps - each one erased this way is proof of the *site's* own erasure, not a
+    /// standalone request of its own, so it gets no `erasure_records` receipt of its own
+    /// (`ConversationConfiguration`'s own remarks). The site's own receipt counts how many conversations
+    /// this call stamped instead, via <see cref="SiteErasureJob"/>'s own call to
+    /// <c>ErasureRecordQuery.AddConversationsMarkedAsync</c> with this method's return value.</para>
+    /// </summary>
     public static async Task<int> StampConversationsAsync(
         NpgsqlConnection connection, Guid siteId, DateTimeOffset requestedAt, CancellationToken cancellationToken)
     {

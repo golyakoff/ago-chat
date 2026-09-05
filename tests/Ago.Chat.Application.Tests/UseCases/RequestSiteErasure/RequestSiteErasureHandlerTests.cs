@@ -26,7 +26,7 @@ public class RequestSiteErasureHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.SiteErase);
         }
 
-        var handler = new RequestSiteErasureHandler(erasures, permissions, new FakeClock(Now));
+        var handler = new RequestSiteErasureHandler(erasures, permissions, new FakeIdGenerator(), new FakeClock(Now));
         return new Fixture(handler, erasures);
     }
 
@@ -41,6 +41,19 @@ public class RequestSiteErasureHandlerTests
         Assert.Equal(Now, fixture.Erasures.SiteErasureRequestedAt[SiteId]);
     }
 
+    // `24-13`: the receipt this erasure will be provable by - minted the same call that sets the
+    // flag, never a second one (IErasureRequestRepository's own remarks on why one statement).
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_MintsAnErasureReceiptForTheRequestingOperator()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(new Application.UseCases.RequestSiteErasure.RequestSiteErasure(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.Equal(OperatorId, fixture.Erasures.SiteErasureRequestedBy[SiteId]);
+        Assert.NotEqual(Guid.Empty, fixture.Erasures.SiteErasureRecordIds[SiteId]);
+    }
+
     // 16-02's own idempotency contract: a second request does not push the timestamp forward - the
     // 30-day backup-completeness window is measured from the first request, not the last.
     [Fact]
@@ -48,13 +61,18 @@ public class RequestSiteErasureHandlerTests
     {
         var fixture = CreateFixture();
         var laterClock = new FakeClock(Now.AddHours(1));
-        var laterHandler = new RequestSiteErasureHandler(fixture.Erasures, MakeGrantedChecker(), laterClock);
+        var laterHandler = new RequestSiteErasureHandler(fixture.Erasures, MakeGrantedChecker(), new FakeIdGenerator(), laterClock);
 
         await fixture.Handler.HandleAsync(new Application.UseCases.RequestSiteErasure.RequestSiteErasure(SiteId, OperatorId), CancellationToken.None);
+        var firstRecordId = fixture.Erasures.SiteErasureRecordIds[SiteId];
         var second = await laterHandler.HandleAsync(new Application.UseCases.RequestSiteErasure.RequestSiteErasure(SiteId, OperatorId), CancellationToken.None);
 
         Assert.True(second.IsSuccess);
         Assert.Equal(Now, fixture.Erasures.SiteErasureRequestedAt[SiteId]);
+        // `24-13`: the second call's own freshly-minted record id is discarded, not persisted - one
+        // receipt per erasure request, ever, the same "must not grow a row per attempt" idempotency
+        // ErasureRecordQuery's own remarks require of the completion side.
+        Assert.Equal(firstRecordId, fixture.Erasures.SiteErasureRecordIds[SiteId]);
     }
 
     [Fact]

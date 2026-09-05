@@ -16,9 +16,15 @@ namespace Ago.Chat.Application.UseCases.RequestSiteErasure;
 /// <para>Gated by <see cref="Permission.SiteErase"/>, not <see cref="Permission.SiteConfigure"/> - see
 /// that permission's own remarks for why a single, dedicated permission earns its place here rather
 /// than folding into the existing, broader one.</para>
+///
+/// <para><b>`24-13`: also mints this erasure's own receipt id.</b> The same "handler generates the
+/// id, repository just persists it" shape
+/// <see cref="Ago.Chat.Application.UseCases.RequestSiteExport.RequestSiteExportHandler"/> already
+/// uses for <c>export_requests</c> - <see cref="IErasureRequestRepository.RequestSiteErasureAsync"/>'s
+/// own remarks explain why the receipt is created by that same call rather than a second one.</para>
 /// </summary>
 public sealed class RequestSiteErasureHandler(
-    IErasureRequestRepository erasureRequests, IPermissionChecker permissions, IClock clock)
+    IErasureRequestRepository erasureRequests, IPermissionChecker permissions, IIdGenerator idGenerator, IClock clock)
 {
     public async Task<Result> HandleAsync(RequestSiteErasure command, CancellationToken cancellationToken)
     {
@@ -29,8 +35,11 @@ public sealed class RequestSiteErasureHandler(
             return ConversationErrors.Forbidden("Operator does not have permission to erase this site.");
         }
 
+        var now = clock.UtcNow;
+        var erasureRecordId = idGenerator.NewId(now);
+
         var found = await erasureRequests.RequestSiteErasureAsync(
-            command.SiteId, clock.UtcNow, cancellationToken);
+            command.SiteId, command.RequestedBy, erasureRecordId, now, cancellationToken);
         if (!found)
         {
             return ConversationErrors.SiteNotFound(command.SiteId.Value);

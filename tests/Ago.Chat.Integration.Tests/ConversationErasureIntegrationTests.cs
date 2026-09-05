@@ -79,7 +79,7 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         await using (var permissionDb = fixture.CreateDbContext())
         {
             var requestHandler = new RequestConversationErasureHandler(
-                erasureRequests, new PermissionChecker(permissionDb), clock);
+                erasureRequests, new PermissionChecker(permissionDb), new UuidV7Generator(), clock);
             var requested = await requestHandler.HandleAsync(
                 new RequestConversationErasure(toErase.ConversationId, adminOperatorId, siteId), CancellationToken.None);
             Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
@@ -174,7 +174,7 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         await using (var permissionDb = fixture.CreateDbContext())
         {
             var requestHandler = new RequestConversationErasureHandler(
-                erasureRequests, new PermissionChecker(permissionDb), erasureClock);
+                erasureRequests, new PermissionChecker(permissionDb), new UuidV7Generator(), erasureClock);
             var requested = await requestHandler.HandleAsync(
                 new RequestConversationErasure(toEraseConversationId, adminOperatorId, siteId), CancellationToken.None);
             Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
