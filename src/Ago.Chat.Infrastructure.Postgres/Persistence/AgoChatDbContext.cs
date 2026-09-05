@@ -63,6 +63,12 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `24-01`: AcceptanceRecord's own table - see AcceptanceRecordConfiguration's own remarks for why
     // it carries no foreign key to any subject's own table.
     public DbSet<AcceptanceRecord> AcceptanceRecords => Set<AcceptanceRecord>();
+    // `24-02`: Document is the aggregate root (DocumentRepository's own write path);
+    // PublishedDocumentVersions is a real DbSet too, unlike Conversation's own Messages, because
+    // IDocumentRepository's public read path (FindVersionAsync/FindCurrentAsync) queries it directly
+    // rather than always loading the parent aggregate - IDocumentRepository's own remarks.
+    public DbSet<Document> Documents => Set<Document>();
+    public DbSet<PublishedDocumentVersion> PublishedDocumentVersions => Set<PublishedDocumentVersion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

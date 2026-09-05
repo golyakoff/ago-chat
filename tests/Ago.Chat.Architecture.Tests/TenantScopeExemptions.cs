@@ -377,5 +377,22 @@ internal static class TenantScopeExemptions
             + "an acceptance's subject is not a site. Deliberately unauthenticated at this layer - this item's own "
             + "Scope excludes showing anything to anybody, so no host endpoint calls this yet; it exists so the "
             + "record-then-read-back round trip is provable in a test.",
+
+        // ---------------------------------------------------------------------------------------
+        // `24-02`: the published-document pair. Neither carries a SiteId - a document is not tenant
+        // data at all, it is AGO's own (`24-02`'s own "the text is ago-business's and a lawyer's; the
+        // mechanism is ours"), so there is no tenant to scope either call to.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.PublishDocumentVersion.PublishDocumentVersionHandler.HandleAsync"] =
+            "`24-02`. No SiteId because a document is not a tenant's resource - the entire access-control story is "
+            + "OwnerDocumentEndpoints's own RequirePlatformOwner gate (the same single-gate shape OwnerModuleEndpoints "
+            + "already uses), which this handler has no way to see or duplicate: Ago.Chat.Application still has no "
+            + "port onto a Keycloak realm-role claim, the identical reasoning EnableModuleForSiteAsOwnerHandler's own "
+            + "entry gives.",
+        ["Ago.Chat.Application.UseCases.GetDocumentVersion.GetDocumentVersionHandler.HandleAsync"] =
+            "`24-02`. Deliberately unauthenticated - the whole point of this handler is the published surface a "
+            + "caller with no account (nobody has accepted anything yet) can read, `24-02`'s own Scope: \"somebody "
+            + "who has not yet accepted anything has no account to read it from.\" No SiteId for the same reason as "
+            + "PublishDocumentVersionHandler right above: a document is not a tenant's resource.",
     };
 }

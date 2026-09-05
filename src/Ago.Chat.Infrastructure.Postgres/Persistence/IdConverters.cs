@@ -30,6 +30,10 @@ internal static class IdConverters
 
     // `24-01`
     public static readonly ValueConverter<AcceptanceRecordId, Guid> AcceptanceRecord = new(id => id.Value, value => new AcceptanceRecordId(value));
+    // `24-02`
+    public static readonly ValueConverter<DocumentId, Guid> Document = new(id => id.Value, value => new DocumentId(value));
+    public static readonly ValueConverter<PublishedDocumentVersionId, Guid> PublishedDocumentVersion = new(
+        id => id.Value, value => new PublishedDocumentVersionId(value));
     // `23-03`
     public static readonly ValueConverter<ConversationAssignmentId, Guid> ConversationAssignment = new(
         id => id.Value, value => new ConversationAssignmentId(value));
