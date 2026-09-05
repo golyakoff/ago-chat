@@ -16,6 +16,7 @@ using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
@@ -215,6 +216,11 @@ public class ClaimConversationEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<SearchConversationsHandler>();
         builder.Services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();
         builder.Services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
+        // `23-18`: `MapConversationsEndpoints` now also maps `GET .../analytics/me` -
+        // `GetOwnAnalyticsForOperatorHandler` must resolve as a registered service for the same
+        // "minimal API infers an unregistered complex parameter as a body parameter" reason every
+        // other handler in this list is here for, even though no test in this file calls that route.
+        builder.Services.AddScoped<GetOwnAnalyticsForOperatorHandler>();
         builder.Services.AddScoped<IModuleFlowReadStore, ModuleFlowReadStore>();
         builder.Services.AddSingleton(new ModuleFlowReportOptions { ModuleKey = "test-module" });
         builder.Services.AddScoped<GetModuleFlowReportForSiteHandler>();

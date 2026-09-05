@@ -46,6 +46,7 @@ using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
@@ -803,6 +804,11 @@ public sealed class ChatModule : IProductModule
         // `18-08`: the console's own basic self-service report - see the handler's own remarks for
         // why it shares GetAllConversationsForSiteHandler/SearchConversationsHandler's permission gate.
         services.AddScoped<GetOperatorAnalyticsForSiteHandler>();
+        // `23-18`: the operator's own row of the report right above, and of `18-10`'s conversion
+        // report - no new read store, no new permission gate (the handler's own remarks state why),
+        // reusing the two read stores already registered for GetOperatorAnalyticsForSiteHandler plus
+        // ConversionReportReadStore registered below for `18-10`.
+        services.AddScoped<GetOwnAnalyticsForOperatorHandler>();
         // `18-10`: the outcome/conversion report - found missing here while landing `18-11` (its own
         // GetTagBreakdownReportForSiteHandler registration, right below, is what surfaced the gap by
         // comparison). The read-store (ConversionReportReadStore) was registered by `18-10` in

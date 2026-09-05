@@ -192,6 +192,27 @@ internal static class TenantScopeExemptions
             + "a single Site is joined in. Structurally the same category as ResolveOperatorIdentityHandler right "
             + "above - both are `sub`-keyed lookups feeding an identity's own tenancy, not a cross-tenant read the "
             + "way ListSitesForOwnerHandler below genuinely is.",
+        ["Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator.GetOwnAnalyticsForOperatorHandler.HandleAsync"] =
+            "`23-18`. Carries a SiteId (unlike ResolveOperatorIdentityHandler/ListMyTenanciesHandler right above, "
+            + "which carry none at all) but no IPermissionChecker call, by deliberate design rather than omission: "
+            + "the backlog item's own words are \"a grant would be a thing a tenant could withhold - which is the "
+            + "failure this item exists to prevent.\" What replaces the permission check is narrower than one, the "
+            + "same shape ListMyTenanciesHandler's own remarks describe: GetOwnAnalyticsForOperator.RequestedBy is "
+            + "the only identifier this query carries - there is no second, operator-scoping parameter anywhere on "
+            + "it for a caller to substitute another operator's id into - and every read this handler issues is "
+            + "filtered, after the fact, down to exactly the row matching that same RequestedBy "
+            + "(OperatorAnalyticsMerge.ComposeByOperator(...).SingleOrDefault(o => o.OperatorId == "
+            + "query.RequestedBy.Value), and the identical filter on the conversion read). SiteId itself is not "
+            + "the scope boundary here - RequireOperatorIdentity already fixed the (OperatorId, SiteId) pair "
+            + "together from the caller's own validated token before this handler is ever constructed "
+            + "(ConversationsEndpoints.HandleGetOwnAnalyticsAsync), so there is no combination of the two this "
+            + "caller could supply that names anyone but themselves, on any site but their own. The three "
+            + "underlying reads (IOperatorAnalyticsReadStore/IOperatorLoadReportReadStore/IConversionReportReadStore) "
+            + "are the identical site-scoped ports GetOperatorAnalyticsForSiteHandler/GetConversionReportForSiteHandler "
+            + "call under a real SiteConfigure gate - this handler adds no new query shape, only a narrower filter "
+            + "on the same rows, which is why sharing the merge rather than restating it "
+            + "(GetOwnAnalyticsForOperatorHandler's own remarks) is what keeps this exemption true rather than "
+            + "merely asserted.",
 
         // ---------------------------------------------------------------------------------------
         // `4-06`. No SiteId at all, and deliberately so: the only input is the caller's own

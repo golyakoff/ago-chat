@@ -11,6 +11,7 @@ using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
+using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
@@ -66,6 +67,20 @@ public static class ConversationsEndpoints
         // convention `/search` already established; either or both absent means "let the handler
         // default the window" (`GetOperatorAnalyticsForSiteHandler`'s own remarks).
         app.MapGet("/api/v1/conversations/analytics", HandleGetAnalyticsAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-18`: an operator's own row of `/analytics` (plus `/conversion-report`'s own row for the
+        // same operator), reachable with no `site:configure` grant at all - only
+        // `"RequireOperatorIdentity"`, the same policy every route in this file already requires. This
+        // is deliberate, not an oversight: `GetOwnAnalyticsForOperatorHandler` takes no
+        // `IPermissionChecker` dependency, because a grant is a thing a tenant could withhold, and
+        // withholding it is exactly the failure `docs/design/flows.md` 2.4 exists to prevent - "a
+        // metric an operator first learns about from their manager." `from`/`to` are query parameters
+        // reaching this route, but there is no operator-id parameter anywhere on it:
+        // `GetOwnAnalyticsForOperator.RequestedBy` is read from `user.GetOperatorId()` below, the
+        // validated principal, never from the route or the query string - the same "nothing to
+        // tamper with" property that record's own remarks state.
+        app.MapGet("/api/v1/conversations/analytics/me", HandleGetOwnAnalyticsAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `18-10`: same sibling sub-resource shape as `/analytics` right above it - a second, separate
@@ -234,6 +249,27 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new GetOperatorAnalyticsForSite(user.GetOperatorId(), user.GetSiteId(), from, to),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`23-18`: same `from`/`to` query-parameter contract as `/analytics` right above - either
+    /// or both absent means "let the handler default the window"
+    /// (`GetOwnAnalyticsForOperatorHandler.DefaultWindowDays`). <see cref="GetOwnAnalyticsForOperator.RequestedBy"/>
+    /// is <c>user.GetOperatorId()</c>, exactly like every other route in this file - the only route in
+    /// this group with no accompanying permission check, because there is nothing to check: see
+    /// `GetOwnAnalyticsForOperatorHandler`'s own remarks.</summary>
+    private static async Task<IResult> HandleGetOwnAnalyticsAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        GetOwnAnalyticsForOperatorHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetOwnAnalyticsForOperator(user.GetOperatorId(), user.GetSiteId(), from, to),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
