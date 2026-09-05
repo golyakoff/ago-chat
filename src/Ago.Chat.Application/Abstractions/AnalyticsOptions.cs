@@ -38,4 +38,22 @@ public sealed class AnalyticsOptions
     public const string SectionName = "Analytics";
 
     public int MinimumSampleForRate { get; set; } = 10;
+
+    /// <summary>
+    /// `23-17`: the concurrent-load bucket boundaries `OperatorLoadReportReadStore` sorts every
+    /// assignment interval into - ascending, positive, ends open ("the highest bound plus one, and
+    /// above"). <see cref="Application.Abstractions.OperatorLoadBuckets"/> is the pure function that
+    /// turns this array into bucket indices and labels; this property only carries the configuration,
+    /// the same "buckets are configuration, not literals in SQL" requirement
+    /// (`docs/backlog/23-17-*.md`'s own Scope) <see cref="MinimumSampleForRate"/> already sets a
+    /// precedent for one field up.
+    ///
+    /// <para><b>Default is <c>[1, 3, 5, 8]</c> - four buckets ("1", "2-3", "4-5", "6-8", plus an open
+    /// "9+"), unmeasured and stated as such</b>, the identical "hardcode a sane unmeasured default"
+    /// precedent <see cref="MinimumSampleForRate"/>'s own remarks give for itself: a wrong guess here
+    /// costs a report reader a coarser or finer grouping than ideal, never a wrong number and never a
+    /// silent one (CLAUDE.md's "measure or stay silent" governs an invented rate or duration threshold,
+    /// not a display-grouping width nobody has claimed is calibrated to anything).</para>
+    /// </summary>
+    public int[] LoadBucketUpperBounds { get; set; } = [1, 3, 5, 8];
 }

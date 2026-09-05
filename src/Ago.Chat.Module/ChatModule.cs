@@ -574,10 +574,16 @@ public sealed class ChatModule : IProductModule
         // dependency on directly (AnalyticsOptions' own remarks on why one shared options class, and why
         // a non-negative int is the whole validation this needs - unlike ModuleFlowReportOptions' own
         // ModuleKey, there is no real construction to run against it).
+        // `23-17`: LoadBucketUpperBounds validated the same way - ascending, positive, non-empty
+        // (OperatorLoadBuckets.IsValidConfiguration's own remarks) - so a malformed config value fails
+        // the pod at boot rather than corrupting every operator's load report silently.
         services
             .AddOptions<AnalyticsOptions>()
             .Bind(configuration.GetSection(AnalyticsOptions.SectionName))
             .Validate(o => o.MinimumSampleForRate >= 0, "Analytics:MinimumSampleForRate must not be negative.")
+            .Validate(
+                o => OperatorLoadBuckets.IsValidConfiguration(o.LoadBucketUpperBounds),
+                "Analytics:LoadBucketUpperBounds must be non-empty, positive and strictly ascending.")
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AnalyticsOptions>>().Value);
 
