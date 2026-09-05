@@ -13,10 +13,27 @@ public sealed record RoleSeed(Guid Id, string Name, IReadOnlyList<string> Permis
 
 /// <summary>The whole bootstrap package `RegisterSiteHandler` builds and
 /// <see cref="ISiteRegistrationRepository.TryRegisterAsync"/> persists as one transaction: `Site` +
-/// both fixed roles + `Operator` + both `operator_roles` rows. See `RegisterSiteHandler`'s own remarks
-/// for why this is one wider transaction than `data-model.md`'s usual "one aggregate per
-/// transaction".</summary>
-public sealed record SiteRegistration(Site Site, Operator Operator, RoleSeed OperatorRole, RoleSeed AdminRole);
+/// both fixed roles + `Operator` + both `operator_roles` rows, plus (`24-03`) zero or more
+/// <see cref="AcceptanceRecord"/> rows. See `RegisterSiteHandler`'s own remarks for why this is one
+/// wider transaction than `data-model.md`'s usual "one aggregate per transaction".
+///
+/// <para><b>`24-03`: <paramref name="Acceptances"/> is staged into the same transaction, not written
+/// through <c>RecordAcceptanceHandler</c> afterwards.</b> `RecordAcceptanceHandler`
+/// (<c>Ago.Chat.Application.UseCases.RecordAcceptance</c>) calls its own
+/// <see cref="IAcceptanceRepository.SaveAsync"/>, which issues its own, independent
+/// <c>SaveChangesAsync</c> - calling it as a second step after <see cref="ISiteRegistrationRepository.TryRegisterAsync"/>
+/// committed would mean a crash between the two calls leaves a site with no evidence it ever showed the
+/// tenant an agreement, exactly the defect this item exists to prevent (`RegisterSiteHandler`'s own
+/// remarks on why the five-row bootstrap package is one transaction rather than five: "a partial
+/// failure here must not leave a site with no roles" - the identical reasoning applies to "must not
+/// leave a site with no evidence of accepted terms"). So `RegisterSiteHandler` builds each
+/// <see cref="AcceptanceRecord"/> directly through its own `AcceptanceRecord.ForTenant` factory (the
+/// same domain type <c>RecordAcceptanceHandler</c> uses, just not through that handler class) and
+/// hands the finished rows here, where <c>SiteRegistrationRepository.TryRegisterAsync</c> stages them
+/// onto the same <c>DbContext</c> as everything else in this record, committed by the one
+/// <c>SaveChangesAsync</c> call that follows.</para></summary>
+public sealed record SiteRegistration(
+    Site Site, Operator Operator, RoleSeed OperatorRole, RoleSeed AdminRole, IReadOnlyList<AcceptanceRecord> Acceptances);
 
 /// <summary>
 /// `10-02`: the write side of the one genuinely multi-row provisioning step in this codebase -

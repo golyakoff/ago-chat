@@ -27,9 +27,27 @@ namespace Ago.Chat.Application.UseCases.RegisterSite;
 /// an `Operator` row holding no permissions at all (a token that then passes
 /// `RequireOperatorIdentity` but can do nothing, a strictly worse failure mode than the request
 /// simply failing outright and the caller retrying the whole call).
+///
+/// <para><b>`24-03`: this is where a tenant is bound by what they accept - and there is no consent
+/// checkbox here.</b> AGO is the controller for its own account holders (`adr/0076`), and the lawful
+/// basis for everything this product must do to deliver the service is `152-ФЗ` art. 6 ч.1 п.5 -
+/// processing necessary to perform the contract the registering subject is about to become a party to.
+/// A tick-box asking this caller to "consent" to that processing would misrepresent what is happening
+/// (a consent that cannot be refused without losing the service is not freely given) and get the law
+/// backwards. What this handler actually does is narrower and different in kind: it records that the
+/// tenant <em>accepted the agreement</em> (`IRequiredDocumentRepository`/`AcceptanceRecord`, below), a
+/// fact about entering the contract, not a consent to a use of data. Registration has nothing on it
+/// today asking for consent to processing beyond contract necessity - `RegisterSite` carries no such
+/// field, and this item ships no control for one, per its own Scope: "if there is nothing beyond
+/// contract necessity today, say so and ship no control at all rather than an empty one." If a future
+/// item ever adds one (marketing, for instance), it must be a separate, unticked, refusable control
+/// whose refusal still lets this call succeed - never folded into the checks below, which is what
+/// registration cannot be conditioned on.</para>
 /// </summary>
 public sealed class RegisterSiteHandler(
     ISiteRegistrationRepository registrations,
+    IRequiredDocumentRepository requiredDocuments,
+    IDocumentRepository documents,
     IRateLimiter rateLimiter,
     RegisterSiteRateLimitOptions rateLimitOptions,
     IIdGenerator idGenerator,
@@ -146,6 +164,32 @@ public sealed class RegisterSiteHandler(
         var operatorRole = new RoleSeed(idGenerator.NewId(now), "Operator", OperatorRolePermissions);
         var adminRole = new RoleSeed(idGenerator.NewId(now), "Admin", AdminRolePermissions);
 
+        // `24-03`: "which documents does a tenant have to accept" is data (IRequiredDocumentRepository),
+        // never a literal here - see that port's own remarks for why. Resolved before any write, so a
+        // misconfigured requirement (declared but never published, see the loop below) fails this
+        // request cleanly instead of leaving a half-registered site behind.
+        var requiredKeys = await requiredDocuments.GetRequiredDocumentKeysAsync(AcceptanceSubjectKind.Tenant, cancellationToken);
+        var acceptances = new List<AcceptanceRecord>(requiredKeys.Count);
+        foreach (var documentKey in requiredKeys)
+        {
+            var current = await documents.FindCurrentAsync(documentKey, cancellationToken);
+            if (current is null)
+            {
+                // The owner declared this key required (a row exists) before publishing anything
+                // under it (`adr/0114`'s own sequencing allows exactly this ordering) - a deployment
+                // readiness gap, not this caller's mistake, and not yet a write of any kind.
+                return ConversationErrors.SiteAgreementUnavailable(documentKey);
+            }
+
+            // Built directly through AcceptanceRecord's own factory - not through
+            // RecordAcceptanceHandler - so this row can be staged into the same wide transaction as
+            // the rest of SiteRegistration; see that record's own remarks for why the two must not be
+            // two separate writes.
+            acceptances.Add(AcceptanceRecord.ForTenant(
+                new AcceptanceRecordId(idGenerator.NewId(now)), siteId, documentKey, current.Version, now,
+                command.RequestIp, command.UserAgent));
+        }
+
         // `13-07`/`adr/0068`: before this item, `false` here meant "two concurrent registrations from
         // the same identity raced past the pre-check above and collided on the old, globally-unique
         // `external_subject_id` index" - a real, reachable race, which is why the pre-check existed
@@ -162,7 +206,7 @@ public sealed class RegisterSiteHandler(
         // collides" is an assumption worth not silently relying on in the one handler that would
         // otherwise insert five rows on top of a violated unique index.
         var registered = await registrations.TryRegisterAsync(
-            new SiteRegistration(site, operatorEntity, operatorRole, adminRole), cancellationToken);
+            new SiteRegistration(site, operatorEntity, operatorRole, adminRole, acceptances), cancellationToken);
         if (!registered)
         {
             return ConversationErrors.SiteAlreadyRegistered();

@@ -75,6 +75,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<ChannelDelivery> ChannelDeliveries => Set<ChannelDelivery>();
     // `23-13`: migration-scaffolding only, the same shape - ModuleRevokeOverrideEntity's own remarks.
     internal DbSet<ModuleRevokeOverrideEntity> ModuleRevokeOverrides => Set<ModuleRevokeOverrideEntity>();
+    // `24-03`: RoleRecord's own "no Domain/Application model yet" shape - IRequiredDocumentRepository
+    // is the only reader, RegisterSiteHandler the only caller of it.
+    internal DbSet<RequiredDocumentRecord> RequiredDocuments => Set<RequiredDocumentRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

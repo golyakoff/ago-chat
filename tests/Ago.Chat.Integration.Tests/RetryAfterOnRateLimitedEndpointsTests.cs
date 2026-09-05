@@ -114,6 +114,12 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         };
         var handler = new RegisterSiteHandler(
             new NeverCalledSiteRegistrationRepository(),
+            // `24-03`: a subject-bucket-denied caller returns before either of these is ever
+            // consulted (RegisterSiteHandler's own ordering: rate limits, then validation, then the
+            // required-documents lookup) - throwing proves that ordering rather than merely assuming
+            // it.
+            new NeverCalledRequiredDocumentRepository(),
+            new NeverCalledDocumentRepository(),
             new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(1199)),
             rateLimitOptions,
             new UuidV7Generator(),
@@ -382,6 +388,27 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
     {
         public Task<bool> TryRegisterAsync(SiteRegistration registration, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A rate-limited caller must never reach registration.");
+    }
+
+    private sealed class NeverCalledRequiredDocumentRepository : IRequiredDocumentRepository
+    {
+        public Task<IReadOnlyList<string>> GetRequiredDocumentKeysAsync(AcceptanceSubjectKind subjectKind, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach the required-documents lookup.");
+    }
+
+    private sealed class NeverCalledDocumentRepository : IDocumentRepository
+    {
+        public Task<Document?> GetByKeyAsync(string documentKey, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach document lookup.");
+
+        public Task SaveAsync(Document document, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach document lookup.");
+
+        public Task<PublishedDocumentVersion?> FindVersionAsync(string documentKey, string version, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach document lookup.");
+
+        public Task<PublishedDocumentVersion?> FindCurrentAsync(string documentKey, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach document lookup.");
     }
 
     private sealed class NeverCalledExportRequestRepository : IExportRequestRepository

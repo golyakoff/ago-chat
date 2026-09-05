@@ -11,19 +11,27 @@ public class RegisterSiteHandlerTests
     private const string ExternalSubjectId = "keycloak-sub-1";
     private const string RequestIp = "203.0.113.5";
 
-    private sealed record Fixture(RegisterSiteHandler Handler, FakeSiteRegistrationRepository Registrations);
+    private sealed record Fixture(
+        RegisterSiteHandler Handler,
+        FakeSiteRegistrationRepository Registrations,
+        FakeRequiredDocumentRepository RequiredDocuments,
+        FakeDocumentRepository Documents);
 
     private static Fixture CreateFixture(IRateLimiter? rateLimiter = null)
     {
         var registrations = new FakeSiteRegistrationRepository();
+        var requiredDocuments = new FakeRequiredDocumentRepository();
+        var documents = new FakeDocumentRepository();
         var handler = new RegisterSiteHandler(
             registrations,
+            requiredDocuments,
+            documents,
             rateLimiter ?? new FakeRateLimiter(),
             new RegisterSiteRateLimitOptions(),
             new FakeIdGenerator(),
             new FakeClock(Now));
 
-        return new Fixture(handler, registrations);
+        return new Fixture(handler, registrations, requiredDocuments, documents);
     }
 
     private static Ago.Chat.Application.UseCases.RegisterSite.RegisterSite ValidCommand() =>
@@ -167,6 +175,87 @@ public class RegisterSiteHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Site.InvalidOrigin", result.Error!.Value.Code);
+        Assert.Empty(fixture.Registrations.Registered);
+    }
+
+    /// <summary>
+    /// `24-03`'s own "if there is nothing beyond contract necessity today, say so and ship no control
+    /// at all" carried through to the terms-acceptance mechanism itself: with
+    /// <see cref="FakeRequiredDocumentRepository"/> seeded with nothing (its default state, matching
+    /// the real `required_documents` table today), registration must behave exactly as it did before
+    /// this item - zero acceptance records, nothing else about the created package changed.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenNoDocumentIsRequiredForTenants_RegistersWithNoAcceptanceRecords()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Single(fixture.Registrations.Registered);
+        Assert.Empty(fixture.Registrations.Registered[0].Acceptances);
+    }
+
+    /// <summary>
+    /// `24-03`'s own Done-when #1: "Registration records an acceptance of the agreement, with its
+    /// version." <see cref="FakeRequiredDocumentRepository.Require"/> is this item's own new
+    /// production seam (<c>IRequiredDocumentRepository</c>) - a document required for
+    /// <see cref="AcceptanceSubjectKind.Tenant"/> that has a currently published version must produce
+    /// exactly one <see cref="AcceptanceRecord"/>, naming the real published version, staged in the
+    /// *same* <see cref="SiteRegistration"/> package as the site itself (never a second, independent
+    /// write - <c>SiteRegistration</c>'s own remarks on why).
+    ///
+    /// <para><b>Fails before this item's production change</b>: with `RegisterSiteHandler` reverted to
+    /// its pre-`24-03` constructor (no `IRequiredDocumentRepository`/`IDocumentRepository` dependency,
+    /// no acceptance-building loop), this test does not compile at all - the fixture's own
+    /// `RequiredDocuments`/`Documents` fakes and `Acceptances` property have nothing to attach to. With
+    /// the loop temporarily deleted but the constructor kept (the narrower regression this test
+    /// actually guards day to day), <c>Registered[0].Acceptances</c> comes back empty and this
+    /// assertion fails.</para>
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenATenantDocumentIsRequiredAndPublished_RecordsOneAcceptance_NamingTheCurrentVersion()
+    {
+        var fixture = CreateFixture();
+        fixture.RequiredDocuments.Require(AcceptanceSubjectKind.Tenant, "tenant-terms");
+        var document = Document.Create(new DocumentId(Guid.NewGuid()), "tenant-terms");
+        document.Publish(new PublishedDocumentVersionId(Guid.NewGuid()), "Tenant Terms", "DRAFT v1 - awaiting legal review.", Now);
+        await fixture.Documents.SaveAsync(document, CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(
+            ValidCommand() with { UserAgent = "TestBrowser/1.0" }, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var registration = Assert.Single(fixture.Registrations.Registered);
+        var acceptance = Assert.Single(registration.Acceptances);
+        Assert.Equal(AcceptanceSubjectKind.Tenant, acceptance.SubjectKind);
+        Assert.Equal(result.Value.SiteId, acceptance.SubjectId);
+        Assert.Equal("tenant-terms", acceptance.DocumentKey);
+        Assert.Equal("v1", acceptance.DocumentVersion);
+        Assert.Equal(RequestIp, acceptance.ClientIp);
+        Assert.Equal("TestBrowser/1.0", acceptance.UserAgent);
+    }
+
+    /// <summary>
+    /// `24-03`: the owner declared "tenant-terms" required before publishing anything under it -
+    /// `adr/0114`'s own sequencing allows exactly this ordering, and it must not silently register a
+    /// tenant with no evidence of an agreement the platform itself says is required. Registration fails
+    /// cleanly, before any write - <see cref="FakeSiteRegistrationRepository.Registered"/> stays empty,
+    /// proving <c>TryRegisterAsync</c> was never reached.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenARequiredTenantDocumentHasNoPublishedVersion_ReturnsAgreementUnavailable_WithoutRegistering()
+    {
+        var fixture = CreateFixture();
+        fixture.RequiredDocuments.Require(AcceptanceSubjectKind.Tenant, "tenant-terms");
+        // Deliberately no call to fixture.Documents.SaveAsync - the key is required but nothing was
+        // ever published under it.
+
+        var result = await fixture.Handler.HandleAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Site.AgreementUnavailable", result.Error!.Value.Code);
         Assert.Empty(fixture.Registrations.Registered);
     }
 }
