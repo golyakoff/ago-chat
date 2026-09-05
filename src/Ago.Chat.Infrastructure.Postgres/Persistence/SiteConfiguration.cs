@@ -60,6 +60,22 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasDatabaseName("ix_sites_erasure_pending")
             .HasFilter("erasure_requested_at is not null");
 
+        // `24-13`: two more shadow properties alongside ErasureRequestedAt, written by the identical
+        // call (IErasureRequestRepository.RequestSiteErasureAsync) and read only by SiteErasureJob -
+        // never through Site's own load-mutate-SaveChangesAsync path, for the identical reason. Both
+        // are nullable: a pre-existing row erased before this item shipped would have neither, and
+        // that is a fact about history, not a defect this migration needs to backfill.
+        // ErasureRequestedBy is the requesting operator - it moves into erasure_records' own
+        // requested_by column once ErasureRecordQuery completes or fails the record; nothing on Site
+        // itself ever reads it back.
+        builder.Property<Guid?>("ErasureRequestedBy").HasColumnName("erasure_requested_by");
+        // ErasureRecordId is the forward pointer this row carries to its own receipt row in
+        // erasure_records - the reverse of a normal foreign key (the receipt does not point back, see
+        // ErasureRecordEntity's own remarks on why not) - so SiteErasureJob can find and update the
+        // right erasure_records row without that table ever holding a site id it did not already have
+        // a legitimate reason to hold.
+        builder.Property<Guid?>("ErasureRecordId").HasColumnName("erasure_record_id");
+
         // AllowedOrigins is a computed property (IReadOnlyList<string>) over a private List<string>
         // field - Site never exposes a settable collection, so EF is pointed at the field directly.
         builder.Property<List<string>>("_allowedOrigins").HasColumnName("allowed_origins");

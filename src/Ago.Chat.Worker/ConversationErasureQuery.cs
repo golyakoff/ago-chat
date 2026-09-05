@@ -28,8 +28,15 @@ namespace Ago.Chat.Worker;
 /// <paramref name="VisitorId"/>: the erased conversation's own visitor, which is what
 /// <see cref="DeleteContactDetailsForVisitorAsync"/> needs to reach that visitor's contact details -
 /// read here, in the same row, rather than as a second round trip, since `conversations` already carries
-/// the column.</summary>
-public sealed record PendingConversationErasure(Guid ConversationId, Guid SiteId, Guid VisitorId);
+/// the column.
+///
+/// <para>`24-13`: <paramref name="ErasureRecordId"/> - the conversation's own forward pointer to its
+/// `erasure_records` receipt, <see langword="null"/> for a conversation stamped by a whole-site erasure
+/// rather than a standalone request (<see cref="Ago.Chat.Infrastructure.Postgres.Persistence.ConversationConfiguration"/>'s
+/// own remarks). <see cref="ConversationErasureJob"/> passes it straight through to every
+/// <see cref="ErasureRecordQuery"/> call, all of which are no-ops when it is <see langword="null"/>.</para>
+/// </summary>
+public sealed record PendingConversationErasure(Guid ConversationId, Guid SiteId, Guid VisitorId, Guid? ErasureRecordId);
 
 public static class ConversationErasureQuery
 {
@@ -37,7 +44,7 @@ public static class ConversationErasureQuery
         NpgsqlConnection connection, int limit, CancellationToken cancellationToken)
     {
         const string sql = """
-            select id, site_id, visitor_id
+            select id, site_id, visitor_id, erasure_record_id
             from conversations
             where erasure_requested_at is not null
             order by erasure_requested_at
@@ -51,7 +58,8 @@ public static class ConversationErasureQuery
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            pending.Add(new PendingConversationErasure(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2)));
+            pending.Add(new PendingConversationErasure(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.IsDBNull(3) ? null : reader.GetGuid(3)));
         }
 
         return pending;

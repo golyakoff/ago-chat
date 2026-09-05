@@ -22,19 +22,41 @@ namespace Ago.Chat.Application.Abstractions;
 /// <para>Idempotent by design: a second call after the flag is already set is a no-op that preserves
 /// the original request time, never an error and never a reset of the clock erasure's own completeness
 /// story (the 30-day backup window, `15-02`/`adr/0050`) is measured from.</para>
+///
+/// <para><b>`24-13`: also mints the erasure's own receipt, atomically with the flag.</b> Both methods
+/// grew an <paramref name="requestedBy"><c>OperatorId requestedBy</c></paramref> and a caller-minted
+/// <c>Guid erasureRecordId</c> - the same "handler generates the id, repository just persists it"
+/// shape <c>RequestSiteExportHandler</c>/<c>IExportRequestRepository.CreateAsync</c> already use for
+/// <c>export_requests</c>. Unlike that pair, this is not a new port: the receipt row
+/// (<c>erasure_records</c>) is created by the same statement that sets the flag, not by a second call
+/// through a second interface - <c>ErasureRequestRepository</c>'s own remarks explain why one
+/// statement rather than two round trips matters here specifically (idempotency has to cover both
+/// writes together, or a crash between them could stamp a flag with no receipt behind it). The receipt
+/// row is created **only** on the call that actually sets the flag for the first time; a repeat call
+/// for an already-flagged site/conversation is the existing idempotent no-op and mints nothing new -
+/// <c>erasure_records</c> gets exactly one row per erasure request, ever, matching the "must not grow
+/// a row per attempt" idempotency the background job's own completion/failure updates depend on
+/// (<c>ErasureRecordQuery</c>'s own remarks).</para>
 /// </summary>
 public interface IErasureRequestRepository
 {
     /// <summary>
-    /// Sets <c>sites.erasure_requested_at</c> if it is not already set. Returns <see langword="false"/>
-    /// if no site with this id exists - the caller's <c>Site.NotFound</c> case - and
-    /// <see langword="true"/> otherwise, whether this call was the one that set the flag or it was
-    /// already set by an earlier request.
+    /// Sets <c>sites.erasure_requested_at</c>/<c>erasure_requested_by</c>/<c>erasure_record_id</c> if
+    /// not already set, and - only on that first-set call - inserts the matching
+    /// <c>erasure_records</c> row (<c>Pending</c>, scope <see cref="ErasureScope.Site"/>) under
+    /// <paramref name="erasureRecordId"/>. Returns <see langword="false"/> if no site with this id
+    /// exists - the caller's <c>Site.NotFound</c> case - and <see langword="true"/> otherwise, whether
+    /// this call was the one that set the flag or it was already set by an earlier request.
     /// </summary>
-    Task<bool> RequestSiteErasureAsync(SiteId siteId, DateTimeOffset requestedAt, CancellationToken cancellationToken);
+    Task<bool> RequestSiteErasureAsync(
+        SiteId siteId, OperatorId requestedBy, Guid erasureRecordId, DateTimeOffset requestedAt,
+        CancellationToken cancellationToken);
 
     /// <summary>
-    /// Sets <c>conversations.erasure_requested_at</c> if it is not already set, scoped to
+    /// Sets <c>conversations.erasure_requested_at</c>/<c>erasure_requested_by</c>/
+    /// <c>erasure_record_id</c> if not already set, and - only on that first-set call - inserts the
+    /// matching <c>erasure_records</c> row (<c>Pending</c>, scope
+    /// <see cref="ErasureScope.Conversation"/>) under <paramref name="erasureRecordId"/>. Scoped to
     /// <paramref name="siteId"/> as well as <paramref name="conversationId"/> - the same
     /// per-conversation site check <see cref="Ago.Chat.Application.UseCases.CloseConversation.CloseConversationHandler"/>'s route wiring gets for free
     /// from <c>user.GetSiteId()</c>, made explicit here so a conversation that exists but belongs to a
@@ -43,5 +65,6 @@ public interface IErasureRequestRepository
     /// the caller reports both as <c>Conversation.NotFound</c>.
     /// </summary>
     Task<bool> RequestConversationErasureAsync(
-        ConversationId conversationId, SiteId siteId, DateTimeOffset requestedAt, CancellationToken cancellationToken);
+        ConversationId conversationId, SiteId siteId, OperatorId requestedBy, Guid erasureRecordId,
+        DateTimeOffset requestedAt, CancellationToken cancellationToken);
 }

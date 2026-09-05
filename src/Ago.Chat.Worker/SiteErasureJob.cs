@@ -66,18 +66,18 @@ public sealed class SiteErasureJob(
     {
         var startedAt = clock.UtcNow;
 
-        IReadOnlyList<Guid> pending;
+        IReadOnlyList<PendingSiteErasure> pending;
         await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
             pending = await SiteErasureQuery.ListPendingAsync(connection, options.Value.BatchSize, cancellationToken);
         }
 
         var erased = 0;
-        foreach (var siteId in pending)
+        foreach (var candidate in pending)
         {
             try
             {
-                if (await ProcessSiteAsync(siteId, cancellationToken))
+                if (await ProcessSiteAsync(candidate.SiteId, candidate.ErasureRecordId, cancellationToken))
                 {
                     erased++;
                 }
@@ -85,7 +85,8 @@ public sealed class SiteErasureJob(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogError(
-                    ex, "Failed to process site {SiteId} for erasure; it stays flagged for the next cycle.", siteId);
+                    ex, "Failed to process site {SiteId} for erasure; it stays flagged for the next cycle.",
+                    candidate.SiteId);
             }
         }
 
@@ -131,81 +132,112 @@ public sealed class SiteErasureJob(
     /// than the one this item exists to close.</para>
     /// </summary>
     /// <returns><see langword="true"/> if the site was fully erased this call.</returns>
-    internal async Task<bool> ProcessSiteAsync(Guid siteId, CancellationToken cancellationToken)
+    /// <remarks>
+    /// `24-13`: <paramref name="erasureRecordId"/> is this site's own pointer to its `erasure_records`
+    /// receipt, threaded through to every <see cref="ErasureRecordQuery"/> call below (all no-ops when
+    /// it is <see langword="null"/>, though in practice it never is for a site - see
+    /// <see cref="PendingSiteErasure"/>'s own remarks). The whole method is now wrapped in one
+    /// try/catch, the same shape <see cref="ConversationErasureJob.EraseConversationAsync"/>'s own
+    /// remarks explain: a throw anywhere in here marks the receipt <c>Failed</c> before rethrowing, so
+    /// <see cref="SweepAsync"/>'s own catch still logs and retries next cycle exactly as before.
+    /// </remarks>
+    internal async Task<bool> ProcessSiteAsync(Guid siteId, Guid? erasureRecordId, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-
-        await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
+        try
         {
-            await SiteErasureQuery.StampConversationsAsync(connection, siteId, now, cancellationToken);
-
-            if (await SiteErasureQuery.HasAnyConversationAsync(connection, siteId, cancellationToken))
+            await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
             {
-                // Not an error and not a stall: ConversationErasureJob's own independent ticks are
-                // draining these in bounded batches. Nothing more for this tick to do for this site.
-                return false;
-            }
-        }
+                var newlyStamped = await SiteErasureQuery.StampConversationsAsync(connection, siteId, now, cancellationToken);
+                await ErasureRecordQuery.AddConversationsMarkedAsync(connection, erasureRecordId, newlyStamped, cancellationToken);
 
-        // `24-09`: read every archive object this site has *before* the site row goes - message_archives
-        // cascades with sites (MessageArchiveEntityConfiguration's own remarks), so the object keys are
-        // unreachable the instant DeleteSiteAsync below commits. Every conversation this site had is
-        // already drained by this point (the HasAnyConversationAsync gate above), so each of these
-        // objects has already been stripped of message content by ConversationErasureJob's own
-        // ConversationArchiveEraser step - what is deleted here is an empty shell, not personal data.
-        var archiveRecords = await archives.ListForSiteAsync(new SiteId(siteId), cancellationToken);
-        foreach (var archiveRecord in archiveRecords)
-        {
-            try
+                if (await SiteErasureQuery.HasAnyConversationAsync(connection, siteId, cancellationToken))
+                {
+                    // Not an error and not a stall: ConversationErasureJob's own independent ticks are
+                    // draining these in bounded batches. Nothing more for this tick to do for this site.
+                    return false;
+                }
+            }
+
+            // `24-09`: read every archive object this site has *before* the site row goes - message_archives
+            // cascades with sites (MessageArchiveEntityConfiguration's own remarks), so the object keys are
+            // unreachable the instant DeleteSiteAsync below commits. Every conversation this site had is
+            // already drained by this point (the HasAnyConversationAsync gate above), so each of these
+            // objects has already been stripped of message content by ConversationErasureJob's own
+            // ConversationArchiveEraser step - what is deleted here is an empty shell, not personal data.
+            var archiveRecords = await archives.ListForSiteAsync(new SiteId(siteId), cancellationToken);
+            var archiveObjectsDeleted = 0;
+            foreach (var archiveRecord in archiveRecords)
             {
-                await fileStorage.DeleteAsync(new ObjectKey(archiveRecord.ObjectKey), cancellationToken);
+                try
+                {
+                    await fileStorage.DeleteAsync(new ObjectKey(archiveRecord.ObjectKey), cancellationToken);
+                    archiveObjectsDeleted++;
+                }
+                catch (FileStorageUnavailableException ex)
+                {
+                    // Tolerated, not swallowed silently: by construction this object no longer holds any
+                    // conversation's content (every one of the site's conversations already went through
+                    // ConversationArchiveEraser), so the residual is an orphaned empty shell, the same
+                    // "storage hiccup must not abandon the whole erasure" tolerance
+                    // ConversationErasureJob's own attachment-object delete already applies. Not counted
+                    // as deleted either - the same "the receipt must not claim bytes are gone that are
+                    // not" reasoning ConversationErasureJob's own remarks give.
+                    logger.LogWarning(
+                        ex, "Could not delete archive object {ObjectKey} for site {SiteId} being erased; it may now be an orphan.",
+                        archiveRecord.ObjectKey, siteId);
+                }
             }
-            catch (FileStorageUnavailableException ex)
+
+            string? publicKey;
+            IReadOnlyList<string> subjectIds;
+            await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
             {
-                // Tolerated, not swallowed silently: by construction this object no longer holds any
-                // conversation's content (every one of the site's conversations already went through
-                // ConversationArchiveEraser), so the residual is an orphaned empty shell, the same
-                // "storage hiccup must not abandon the whole erasure" tolerance
-                // ConversationErasureJob's own attachment-object delete already applies.
-                logger.LogWarning(
-                    ex, "Could not delete archive object {ObjectKey} for site {SiteId} being erased; it may now be an orphan.",
-                    archiveRecord.ObjectKey, siteId);
+                // Read before the delete: `14-04`'s own two-key shape (ForPublicKey for the widget
+                // handshake path, ForSiteId for anything holding a JWT's site_id claim) needs the public
+                // key to build the first one, and it cannot be reconstructed once the row naming it is
+                // gone. Unlike the MinIO object-store ordering elsewhere in this item, reading it ahead of
+                // the delete carries no orphan risk - a cache key lookup is never the thing that makes
+                // bytes unreachable.
+                publicKey = await SiteErasureQuery.GetPublicKeyAsync(connection, siteId, cancellationToken);
+                subjectIds = await SiteErasureQuery.ListOperatorSubjectIdsAsync(connection, siteId, cancellationToken);
+                // `24-13`: the receipt, before the row - identities below are collected already
+                // (subjectIds) but not yet deleted, and this job's own remarks already accept that a
+                // failure deleting them cannot be retried once the site row is gone (nothing left for
+                // ListPendingAsync to reclaim). The count recorded here is therefore the count about to
+                // be attempted, the same optimism this method's own closing log line already carried
+                // before this item existed.
+                await ErasureRecordQuery.CompleteSiteErasureAsync(
+                    connection, erasureRecordId, archiveObjectsDeleted, subjectIds.Count, now, cancellationToken);
+                await SiteErasureQuery.DeleteSiteAsync(connection, siteId, cancellationToken);
             }
-        }
 
-        string? publicKey;
-        IReadOnlyList<string> subjectIds;
-        await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
+            // Both keys, invalidated only after the delete commits - so a request racing this invalidation
+            // finds nothing in the database to repopulate the cache with, rather than a window in which
+            // eviction and a stale reload could interleave.
+            if (publicKey is not null)
+            {
+                await cacheInvalidation.PublishAsync(SiteCacheKeys.ForPublicKey(publicKey), idGenerator.NewId(now), cancellationToken);
+            }
+
+            await cacheInvalidation.PublishAsync(SiteCacheKeys.ForSiteId(new SiteId(siteId)), idGenerator.NewId(now), cancellationToken);
+
+            foreach (var subjectId in subjectIds)
+            {
+                await identities.DeleteAsync(subjectId, cancellationToken);
+            }
+
+            logger.LogInformation(
+                "Site {SiteId} erased: the site subtree and {IdentityCount} identity-provider user(s).",
+                siteId, subjectIds.Count);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Read before the delete: `14-04`'s own two-key shape (ForPublicKey for the widget
-            // handshake path, ForSiteId for anything holding a JWT's site_id claim) needs the public
-            // key to build the first one, and it cannot be reconstructed once the row naming it is
-            // gone. Unlike the MinIO object-store ordering elsewhere in this item, reading it ahead of
-            // the delete carries no orphan risk - a cache key lookup is never the thing that makes
-            // bytes unreachable.
-            publicKey = await SiteErasureQuery.GetPublicKeyAsync(connection, siteId, cancellationToken);
-            subjectIds = await SiteErasureQuery.ListOperatorSubjectIdsAsync(connection, siteId, cancellationToken);
-            await SiteErasureQuery.DeleteSiteAsync(connection, siteId, cancellationToken);
+            await using var failureConnection = await dataSource.OpenConnectionAsync(cancellationToken);
+            await ErasureRecordQuery.FailSiteErasureAsync(
+                failureConnection, erasureRecordId, ex.GetType().Name, clock.UtcNow, cancellationToken);
+            throw;
         }
-
-        // Both keys, invalidated only after the delete commits - so a request racing this invalidation
-        // finds nothing in the database to repopulate the cache with, rather than a window in which
-        // eviction and a stale reload could interleave.
-        if (publicKey is not null)
-        {
-            await cacheInvalidation.PublishAsync(SiteCacheKeys.ForPublicKey(publicKey), idGenerator.NewId(now), cancellationToken);
-        }
-
-        await cacheInvalidation.PublishAsync(SiteCacheKeys.ForSiteId(new SiteId(siteId)), idGenerator.NewId(now), cancellationToken);
-
-        foreach (var subjectId in subjectIds)
-        {
-            await identities.DeleteAsync(subjectId, cancellationToken);
-        }
-
-        logger.LogInformation(
-            "Site {SiteId} erased: the site subtree and {IdentityCount} identity-provider user(s).",
-            siteId, subjectIds.Count);
-        return true;
     }
 }

@@ -127,6 +127,15 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
             .HasDatabaseName("ix_conversations_erasure_pending")
             .HasFilter("erasure_requested_at is not null");
 
+        // `24-13`: ErasureRequestedBy/ErasureRecordId, the same pair SiteConfiguration's own remarks
+        // explain in full. Both stay null for a conversation stamped by SiteErasureJob's own
+        // StampConversationsAsync (a whole-site erasure sweeping this conversation up, rather than a
+        // standalone request naming it) - that conversation's own erasure is proof of the *site's*
+        // erasure, not a separate receipt of its own (ConversationErasureJob's own remarks on why it
+        // skips every erasure_records write when ErasureRecordId is null).
+        builder.Property<Guid?>("ErasureRequestedBy").HasColumnName("erasure_requested_by");
+        builder.Property<Guid?>("ErasureRecordId").HasColumnName("erasure_record_id");
+
         // `18-07`: EF's own convention had already created an unnamed single-column index on
         // VisitorId here (for the HasOne&lt;Visitor&gt; foreign key below) - not a real gap, just
         // never spelled out in this file the way every other index on this table is, so a

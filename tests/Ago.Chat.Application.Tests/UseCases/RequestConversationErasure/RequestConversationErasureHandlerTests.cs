@@ -28,7 +28,7 @@ public class RequestConversationErasureHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ConversationErase);
         }
 
-        var handler = new RequestConversationErasureHandler(erasures, permissions, new FakeClock(Now));
+        var handler = new RequestConversationErasureHandler(erasures, permissions, new FakeIdGenerator(), new FakeClock(Now));
         return new Fixture(handler, erasures);
     }
 
@@ -43,6 +43,21 @@ public class RequestConversationErasureHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(Now, fixture.Erasures.ConversationErasureRequestedAt[ConversationId]);
+    }
+
+    // `24-13`: the receipt this erasure will be provable by - minted the same call that sets the
+    // flag, never a second one (IErasureRequestRepository's own remarks on why one statement).
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_MintsAnErasureReceiptForTheRequestingOperator()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.RequestConversationErasure.RequestConversationErasure(ConversationId, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.Equal(OperatorId, fixture.Erasures.ConversationErasureRequestedBy[ConversationId]);
+        Assert.NotEqual(Guid.Empty, fixture.Erasures.ConversationErasureRecordIds[ConversationId]);
     }
 
     [Fact]
@@ -82,7 +97,7 @@ public class RequestConversationErasureHandlerTests
         erasures.SeedConversation(ConversationId, OtherSiteId);
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationErase);
-        var handler = new RequestConversationErasureHandler(erasures, permissions, new FakeClock(Now));
+        var handler = new RequestConversationErasureHandler(erasures, permissions, new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RequestConversationErasure.RequestConversationErasure(ConversationId, OperatorId, SiteId),

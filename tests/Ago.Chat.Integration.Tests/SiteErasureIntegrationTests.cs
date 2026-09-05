@@ -88,7 +88,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         await using (var permissionDb = fixture.CreateDbContext())
         {
             var requestHandler = new RequestSiteErasureHandler(
-                erasureRequests, new PermissionChecker(permissionDb), clock);
+                erasureRequests, new PermissionChecker(permissionDb), new UuidV7Generator(), clock);
             var requested = await requestHandler.HandleAsync(
                 new RequestSiteErasure(siteId, adminOperatorId), CancellationToken.None);
             Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
@@ -214,7 +214,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         await using (var permissionDb = fixture.CreateDbContext())
         {
             var requestHandler = new RequestSiteErasureHandler(
-                erasureRequests, new PermissionChecker(permissionDb), clock);
+                erasureRequests, new PermissionChecker(permissionDb), new UuidV7Generator(), clock);
             var requested = await requestHandler.HandleAsync(
                 new RequestSiteErasure(siteId, adminOperatorId), CancellationToken.None);
             Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);

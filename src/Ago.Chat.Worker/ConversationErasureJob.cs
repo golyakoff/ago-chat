@@ -86,7 +86,8 @@ public sealed class ConversationErasureJob(
             try
             {
                 if (await EraseConversationAsync(
-                    candidate.ConversationId, candidate.SiteId, candidate.VisitorId, cancellationToken))
+                    candidate.ConversationId, candidate.SiteId, candidate.VisitorId, candidate.ErasureRecordId,
+                    cancellationToken))
                 {
                     erased++;
                 }
@@ -155,72 +156,117 @@ public sealed class ConversationErasureJob(
     /// <returns><see langword="true"/> if this conversation was fully erased (its row is gone);
     /// <see langword="false"/> if it was only partially drained this call and remains flagged for the
     /// next cycle.</returns>
+    /// <remarks>
+    /// `24-13`: <paramref name="erasureRecordId"/> is this conversation's own pointer to its
+    /// `erasure_records` receipt (<see langword="null"/> for one swept up by a whole-site erasure -
+    /// <see cref="Ago.Chat.Infrastructure.Postgres.Persistence.ConversationConfiguration"/>'s own
+    /// remarks), threaded through to every <see cref="ErasureRecordQuery"/> call below, every one of
+    /// which is a no-op when it is <see langword="null"/>. The whole method body is now wrapped in a
+    /// single try/catch: a throw partway through - most plausibly <see cref="archiveEraser"/>'s own
+    /// step, which this job's class-level remarks say is deliberately allowed to throw rather than
+    /// being tolerated - marks the receipt <c>Failed</c> with however many messages this cycle itself
+    /// deleted before rethrowing, so <see cref="SweepAsync"/>'s own catch still logs and retries next
+    /// cycle exactly as before. Failure is captured here, not in <see cref="SweepAsync"/>'s own catch,
+    /// because only this method still has the per-cycle message count in scope.
+    /// </remarks>
     internal async Task<bool> EraseConversationAsync(
-        Guid conversationId, Guid siteId, Guid visitorId, CancellationToken cancellationToken)
+        Guid conversationId, Guid siteId, Guid visitorId, Guid? erasureRecordId, CancellationToken cancellationToken)
     {
-        await using (var readConnection = await dataSource.OpenConnectionAsync(cancellationToken))
+        var messagesDeletedThisCycle = 0;
+        try
         {
-            var objectKeys = await ConversationErasureQuery.ListAttachmentObjectKeysAsync(
-                readConnection, conversationId, cancellationToken);
-            foreach (var key in objectKeys)
+            var objectsDeletedThisCycle = 0;
+            await using (var readConnection = await dataSource.OpenConnectionAsync(cancellationToken))
             {
-                try
+                var objectKeys = await ConversationErasureQuery.ListAttachmentObjectKeysAsync(
+                    readConnection, conversationId, cancellationToken);
+                foreach (var key in objectKeys)
                 {
-                    // Idempotent on the storage side (5-02's own "S3 DELETE is idempotent") - a
-                    // retried erasure of a conversation whose objects are already gone is a no-op.
-                    await fileStorage.DeleteAsync(new ObjectKey(key), cancellationToken);
-                }
-                catch (FileStorageUnavailableException ex)
-                {
-                    // The same tolerance AttachmentOrphanSweepJob already applies: a storage hiccup
-                    // must not abandon the whole conversation's erasure, and the residual is an
-                    // orphaned object rather than a stuck flag nothing ever retries. Logged, not
-                    // swallowed - a leak nobody can see is how a gap like this stays unnoticed.
-                    logger.LogWarning(
-                        ex,
-                        "Could not delete storage object {ObjectKey} for conversation {ConversationId} being erased; it may now be an orphan.",
-                        key, conversationId);
+                    try
+                    {
+                        // Idempotent on the storage side (5-02's own "S3 DELETE is idempotent") - a
+                        // retried erasure of a conversation whose objects are already gone is a no-op.
+                        await fileStorage.DeleteAsync(new ObjectKey(key), cancellationToken);
+                        objectsDeletedThisCycle++;
+                    }
+                    catch (FileStorageUnavailableException ex)
+                    {
+                        // The same tolerance AttachmentOrphanSweepJob already applies: a storage hiccup
+                        // must not abandon the whole conversation's erasure, and the residual is an
+                        // orphaned object rather than a stuck flag nothing ever retries. Logged, not
+                        // swallowed - a leak nobody can see is how a gap like this stays unnoticed. Not
+                        // counted as deleted either - the receipt must not claim bytes are gone that
+                        // are not.
+                        logger.LogWarning(
+                            ex,
+                            "Could not delete storage object {ObjectKey} for conversation {ConversationId} being erased; it may now be an orphan.",
+                            key, conversationId);
+                    }
                 }
             }
-        }
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
-        for (var batch = 0; batch < options.Value.MaxMessageBatchesPerConversation; batch++)
-        {
-            var removed = await ConversationErasureQuery.DeleteMessageBatchAsync(
-                connection, conversationId, siteId, options.Value.MessageBatchSize, cancellationToken);
-
-            if (removed < options.Value.MessageBatchSize)
+            for (var batch = 0; batch < options.Value.MaxMessageBatchesPerConversation; batch++)
             {
-                // Fewer than requested means this was the last batch - every message is gone, so the
-                // rest of this conversation's teardown can proceed in the same call.
-                await ConversationErasureQuery.DeleteAttachmentsAsync(connection, conversationId, cancellationToken);
-                // `18-04`: notes and tag associations - both personal data about this conversation
-                // (ConversationNote's own remarks), removed the same way attachments are, before the
-                // conversation row itself. Tag *definitions* are never touched here - see
-                // ConversationErasureQuery.DeleteTagsForConversationAsync's own remarks.
-                await ConversationErasureQuery.DeleteNotesForConversationAsync(connection, conversationId, cancellationToken);
-                await ConversationErasureQuery.DeleteTagsForConversationAsync(connection, conversationId, cancellationToken);
-                // `23-08`: the visitor's own contact details - see this method's own remarks above and
-                // DeleteContactDetailsForVisitorAsync's for why this is keyed to the visitor rather than
-                // this conversation.
-                await ConversationErasureQuery.DeleteContactDetailsForVisitorAsync(connection, visitorId, cancellationToken);
-                // `24-09`: strip this conversation's own rows out of every archive object the site has
-                // that might still hold them - see this method's own remarks for why this must run
-                // before the conversation row goes, not after.
-                await archiveEraser.EraseAsync(new SiteId(siteId), conversationId, cancellationToken);
-                await ConversationErasureQuery.DeleteConversationAsync(connection, conversationId, cancellationToken);
-                return true;
-            }
-        }
+                var removed = await ConversationErasureQuery.DeleteMessageBatchAsync(
+                    connection, conversationId, siteId, options.Value.MessageBatchSize, cancellationToken);
+                messagesDeletedThisCycle += removed;
 
-        // MaxMessageBatchesPerConversation exhausted without draining - an exceptionally large
-        // conversation. Leave everything else untouched; the next cycle's claim re-finds this
-        // conversation (erasure_requested_at is still set) and continues.
-        logger.LogInformation(
-            "Conversation {ConversationId} was not fully drained within {MaxBatches} message batch(es) this cycle; it stays flagged and will continue next cycle.",
-            conversationId, options.Value.MaxMessageBatchesPerConversation);
-        return false;
+                if (removed < options.Value.MessageBatchSize)
+                {
+                    // Fewer than requested means this was the last batch - every message is gone, so the
+                    // rest of this conversation's teardown can proceed in the same call.
+                    var attachmentsDeleted = await ConversationErasureQuery.DeleteAttachmentsAsync(
+                        connection, conversationId, cancellationToken);
+                    // `18-04`: notes and tag associations - both personal data about this conversation
+                    // (ConversationNote's own remarks), removed the same way attachments are, before the
+                    // conversation row itself. Tag *definitions* are never touched here - see
+                    // ConversationErasureQuery.DeleteTagsForConversationAsync's own remarks.
+                    var notesDeleted = await ConversationErasureQuery.DeleteNotesForConversationAsync(
+                        connection, conversationId, cancellationToken);
+                    var tagsDeleted = await ConversationErasureQuery.DeleteTagsForConversationAsync(
+                        connection, conversationId, cancellationToken);
+                    // `23-08`: the visitor's own contact details - see this method's own remarks above and
+                    // DeleteContactDetailsForVisitorAsync's for why this is keyed to the visitor rather than
+                    // this conversation.
+                    var contactDetailsDeleted = await ConversationErasureQuery.DeleteContactDetailsForVisitorAsync(
+                        connection, visitorId, cancellationToken);
+                    // `24-09`: strip this conversation's own rows out of every archive object the site has
+                    // that might still hold them - see this method's own remarks for why this must run
+                    // before the conversation row goes, not after.
+                    await archiveEraser.EraseAsync(new SiteId(siteId), conversationId, cancellationToken);
+                    // `24-13`: the receipt, before the row - see this method's own remarks and
+                    // ErasureRecordQuery.CompleteConversationErasureAsync's own for why the ordering
+                    // matters (the record must still be reachable by id when this write happens).
+                    await ErasureRecordQuery.CompleteConversationErasureAsync(
+                        connection, erasureRecordId, messagesDeletedThisCycle, attachmentsDeleted,
+                        objectsDeletedThisCycle, notesDeleted, tagsDeleted, contactDetailsDeleted, clock.UtcNow,
+                        cancellationToken);
+                    await ConversationErasureQuery.DeleteConversationAsync(connection, conversationId, cancellationToken);
+                    return true;
+                }
+            }
+
+            // MaxMessageBatchesPerConversation exhausted without draining - an exceptionally large
+            // conversation. Leave everything else untouched; the next cycle's claim re-finds this
+            // conversation (erasure_requested_at is still set) and continues. `24-13`: this cycle's own
+            // share of messages is not lost - it is added to the receipt's running total now, rather
+            // than only being knowable once a later cycle finally finishes and can report it.
+            await ErasureRecordQuery.AddMessagesDeletedAsync(
+                connection, erasureRecordId, messagesDeletedThisCycle, cancellationToken);
+            logger.LogInformation(
+                "Conversation {ConversationId} was not fully drained within {MaxBatches} message batch(es) this cycle; it stays flagged and will continue next cycle.",
+                conversationId, options.Value.MaxMessageBatchesPerConversation);
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await using var failureConnection = await dataSource.OpenConnectionAsync(cancellationToken);
+            await ErasureRecordQuery.FailConversationErasureAsync(
+                failureConnection, erasureRecordId, messagesDeletedThisCycle, ex.GetType().Name, clock.UtcNow,
+                cancellationToken);
+            throw;
+        }
     }
 }

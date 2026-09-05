@@ -63,7 +63,7 @@ public sealed class AcceptanceRecordErasureGuardTests(PostgresFixture fixture)
             fixture.DataSource, new FakeFileStorage(), archiveEraser, new SystemClock(),
             Options.Create(erasureOptions), NullLogger<ConversationErasureJob>.Instance);
 
-        var erased = await job.EraseConversationAsync(conversationId.Value, siteId.Value, visitorId.Value, CancellationToken.None);
+        var erased = await job.EraseConversationAsync(conversationId.Value, siteId.Value, visitorId.Value, null, CancellationToken.None);
         Assert.True(erased);
 
         await using var verify = fixture.CreateDbContext();
