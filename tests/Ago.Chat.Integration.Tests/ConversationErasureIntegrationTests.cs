@@ -127,6 +127,50 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
     }
 
     /// <summary>
+    /// `23-09`'s own Done-when: "erasing the conversation removes it (`23-08`'s path, asserted again
+    /// from this source)." `ConversationErasureQuery.DeleteContactDetailsForVisitorAsync` deletes by
+    /// `visitor_id` alone (see that method's own remarks) - it never filters on `source`, so this test
+    /// exists to prove that in practice rather than by reading the `WHERE` clause: a visitor with one
+    /// operator-recorded detail and one visitor-supplied detail loses both on erasure, in the same
+    /// sweep, with no code path that reaches one and not the other.
+    /// </summary>
+    [Fact]
+    public async Task ErasingOneConversation_RemovesAVisitorSourcedContactDetail_ExactlyLikeAnOperatorSourcedOne()
+    {
+        var clock = new SettableClock(Now);
+
+        var siteId = await SeedSiteAsync("erasure-site-visitor-sourced");
+        var (adminOperatorId, _) = await SeedOperatorAsync(siteId);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+
+        await SeedContactDetailAsync(visitorId, adminOperatorId, "+7 000 000-00-03");
+        await SeedContactDetailFromVisitorAsync(visitorId, "+7 000 000-00-04");
+        Assert.Equal(2, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @id", visitorId.Value));
+        Assert.Equal(
+            1,
+            await CountAsync(
+                "select count(*) from visitor_contact_details where visitor_id = @id and source = 'Visitor'", visitorId.Value));
+
+        var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
+        await using (var permissionDb = fixture.CreateDbContext())
+        {
+            var requestHandler = new RequestConversationErasureHandler(
+                erasureRequests, new PermissionChecker(permissionDb), new UuidV7Generator(), clock);
+            var requested = await requestHandler.HandleAsync(
+                new RequestConversationErasure(conversationId, adminOperatorId, siteId), CancellationToken.None);
+            Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
+        }
+
+        var conversationJob = CreateConversationJob(clock);
+        for (var i = 0; i < 3; i++)
+        {
+            await conversationJob.SweepAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(0, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @id", visitorId.Value));
+    }
+
+    /// <summary>
     /// `24-09`'s own Done-when: "an erasure that runs after a conversation's messages were archived
     /// leaves no copy of them in the archive." Two conversations on one site, each with one message
     /// dated far enough in the past to be past `13-06`'s own retention horizon, archived for real by a
@@ -371,6 +415,16 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         var detail = VisitorContactDetail.Record(
             new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Phone, value,
             recordedByOperatorId, Now);
+        await using var db = fixture.CreateDbContext();
+        await new VisitorContactDetailRepository(db).SaveAsync(detail, CancellationToken.None);
+    }
+
+    /// <summary>`23-09`: the visitor's own control, exercised through the real repository the same
+    /// way <see cref="SeedContactDetailAsync"/> exercises the operator path above.</summary>
+    private async Task SeedContactDetailFromVisitorAsync(VisitorId visitorId, string value)
+    {
+        var detail = VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Phone, value, Now);
         await using var db = fixture.CreateDbContext();
         await new VisitorContactDetailRepository(db).SaveAsync(detail, CancellationToken.None);
     }

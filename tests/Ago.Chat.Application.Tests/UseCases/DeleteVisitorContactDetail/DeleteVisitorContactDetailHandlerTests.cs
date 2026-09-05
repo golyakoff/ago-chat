@@ -54,6 +54,32 @@ public class DeleteVisitorContactDetailHandlerTests
         Assert.Empty(fixture.ContactDetails.All);
     }
 
+    /// <summary>`23-09`: deletion is not gated by `Source` at all - an operator holding
+    /// `conversation:send` can remove a visitor-supplied row exactly the way they remove their own,
+    /// the same "no second, differently-shaped path" this item's Scope names for the erasure job.</summary>
+    [Fact]
+    public async Task HandleAsync_TheDetailWasSubmittedByTheVisitor_StillDeletesIt()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(conversation);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationSend);
+        var contactDetails = new FakeVisitorContactDetailRepository();
+        var detail = VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Phone, "+1 555 0177", Now);
+        await contactDetails.SaveAsync(detail, CancellationToken.None);
+        var handler = new DeleteVisitorContactDetailHandler(conversations, contactDetails, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.DeleteVisitorContactDetail.DeleteVisitorContactDetail(
+                OperatorId, SiteId, conversation.Id, detail.Id),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(contactDetails.All);
+    }
+
     [Fact]
     public async Task HandleAsync_OperatorWithoutPermission_ReturnsForbidden_AndKeepsTheDetail()
     {

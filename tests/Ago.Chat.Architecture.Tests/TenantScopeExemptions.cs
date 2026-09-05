@@ -54,6 +54,11 @@ internal static class TenantScopeExemptions
             + "token - the identical shape CreateAttachmentHandler's own entry above uses. No operator-initiated "
             + "twin exists for this item (InitiatePhoneVerificationHandler's own remarks on why), so there is "
             + "nothing else on this entry point to gate.",
+        ["Ago.Chat.Application.UseCases.RecordVisitorContactDetail.RecordVisitorContactDetailHandler.HandleAsVisitorAsync"] =
+            "`23-09`. Visitor path. Gated by conversation.VisitorId == command.RequestedBy, from the signed visitor "
+            + "token - the identical shape CreateAttachmentHandler's own entry above uses. The operator-initiated "
+            + "twin (HandleAsOperatorAsync) is not exempted here at all - it takes a SiteId and is gated through "
+            + "IPermissionChecker the ordinary way, so TenantScopeTests checks it rather than reading an excuse.",
         ["Ago.Chat.Application.UseCases.SendMessage.SendVisitorMessageHandler.HandleAsync"] =
             "Visitor path. Conversation.AddVisitorMessage rejects an author who is not this conversation's visitor; "
             + "this handler's own pre-checks are rate limiting and body shape, not authorization.",
