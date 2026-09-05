@@ -15,6 +15,8 @@ using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.AddConversationNote;
+using Ago.Chat.Application.UseCases.RecordAcceptance;
+using Ago.Chat.Application.UseCases.GetAcceptancesForSubject;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.CreateTag;
 using Ago.Chat.Application.UseCases.DeleteTag;
@@ -942,6 +944,12 @@ public sealed class ChatModule : IProductModule
         // per-conversation tag picker.
         services.AddScoped<AddConversationNoteHandler>();
         services.AddScoped<GetConversationNotesHandler>();
+        // `24-01`: the acceptance record's own two handlers - no host in this item maps a route to
+        // either yet (Scope: showing anything to anybody is `24-03`/`24-04`/`24-05`'s job), registered
+        // here anyway so any of those items, and this item's own Application-level tests, can resolve
+        // them the same way every other handler on this page is resolved.
+        services.AddScoped<RecordAcceptanceHandler>();
+        services.AddScoped<GetAcceptancesForSubjectHandler>();
         services.AddScoped<CreateTagHandler>();
         services.AddScoped<RenameTagHandler>();
         services.AddScoped<DeleteTagHandler>();

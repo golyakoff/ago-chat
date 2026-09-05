@@ -27,6 +27,9 @@ internal static class IdConverters
     public static readonly ValueConverter<BillingSubscriptionId, Guid> BillingSubscription = new(id => id.Value, value => new BillingSubscriptionId(value));
     public static readonly ValueConverter<BillingWebhookEventId, Guid> BillingWebhookEvent = new(id => id.Value, value => new BillingWebhookEventId(value));
     public static readonly ValueConverter<ConversationNoteId, Guid> ConversationNote = new(id => id.Value, value => new ConversationNoteId(value));
+
+    // `24-01`
+    public static readonly ValueConverter<AcceptanceRecordId, Guid> AcceptanceRecord = new(id => id.Value, value => new AcceptanceRecordId(value));
     // `23-03`
     public static readonly ValueConverter<ConversationAssignmentId, Guid> ConversationAssignment = new(
         id => id.Value, value => new ConversationAssignmentId(value));
