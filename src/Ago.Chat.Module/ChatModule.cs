@@ -105,6 +105,8 @@ using Ago.Chat.Application.UseCases.SetPreferredChannelIdentity;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.TransferConversation;
+using Ago.Chat.Application.UseCases.GetAssignmentPenalty;
+using Ago.Chat.Application.UseCases.UpdateAssignmentPenalty;
 using Ago.Chat.Application.UseCases.UnlinkChannelIdentity;
 using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
@@ -940,6 +942,12 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetOfflineAutoReplyHandler>();
         services.AddScoped<UpdateOfflineAutoReplyHandler>();
         services.AddScoped<SendOfflineAutoReplyHandler>();
+
+        // `23-05`: the console's read/write pair for `sites.assignment_penalty_seconds` - same
+        // registration shape as the pair just above, and the same reason (only `Ago.Chat.Api` maps
+        // HTTP endpoints for them today, but every host registers the pair).
+        services.AddScoped<GetAssignmentPenaltyHandler>();
+        services.AddScoped<UpdateAssignmentPenaltyHandler>();
 
         // `18-03`: the canned-response read/write pair backing `Ago.Chat.Api`'s own settings endpoints
         // and the console composer's picker - same `site:configure` gate, same "registered for every

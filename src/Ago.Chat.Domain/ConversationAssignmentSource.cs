@@ -50,4 +50,20 @@ public enum ConversationAssignmentSource
     /// this type's own remarks applies to this member exactly as it does to the other three.</para>
     /// </summary>
     Taken,
+
+    /// <summary>
+    /// `23-05`: the assignment engine gave this conversation to an operator with **no** room left -
+    /// nobody took it within the site's own `assignment_penalty_seconds` window, and `decisions.md`
+    /// §2 is explicit about the trade this member records: "a waiting customer is worse than uneven
+    /// load." Written by the same two claimers as <see cref="Assigned"/> (`SkipLockedAssignmentClaimer`,
+    /// `RedisLockAssignmentClaimer`), through `23-04`'s compare-free `IOperatorCapacity.ClaimAsync`
+    /// rather than <see cref="Assigned"/>'s own `TryClaimAsync` - the capacity predicate is dropped for
+    /// this pass entirely, so there is no compare left for `TryClaimAsync` to make.
+    ///
+    /// <para>Never printed as "forced" - `decisions.md` §2's naming amendment named this exact path as
+    /// the one that would have carried that label: a reader sees only a <b>standard</b> conversation or
+    /// an <b>additional</b> one, computed from interval overlap against `operators.capacity`, never
+    /// this enum member spelled out on a screen.</para>
+    /// </summary>
+    Additional,
 }

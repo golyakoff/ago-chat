@@ -148,6 +148,13 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property(s => s.Tier).HasColumnName("tier").IsRequired().HasDefaultValue("free");
         builder.Property(s => s.SeatLimit).HasColumnName("seat_limit").HasDefaultValue(2);
 
+        // `23-05`: same "ordinary mapped property, private setter, no backing field" shape as
+        // Tier/SeatLimit just above - AssignmentPenaltySeconds's own remarks explain why there is
+        // nothing for a Property<T>("_field") indirection to buy here. Database default matches the
+        // property initialiser, so every row written before this migration reads back `120` with no
+        // backfill (Stage23AddSiteAssignmentPenalty).
+        builder.Property(s => s.AssignmentPenaltySeconds).HasColumnName("assignment_penalty_seconds").HasDefaultValue(120);
+
         // `23-06`: four shadow properties, the identical shape `ErasureRequestedAt` already
         // establishes just above for the identical reason - each has exactly one legitimate writer
         // (`ISiteInstallationSignalRepository`, via raw Npgsql conditional `UPDATE`s) and is read only

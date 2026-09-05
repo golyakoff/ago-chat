@@ -18,12 +18,13 @@ internal sealed class ConversationAssignmentIntervalConfiguration : IEntityTypeC
         // Taken's own first real writer (AssignConversationHandler) landed without this constraint
         // widened alongside it in the same wave (reported rather than worked around, adr/0105's own
         // Alternatives considered), so this statement and Taken's first writer were, for one wave,
-        // genuinely out of step - fixed here, in the next available migration slot. A fourth
-        // (Additional, 23-05) is still not added in advance - see ConversationAssignmentSource's own
-        // remarks.
+        // genuinely out of step - fixed here, in the next available migration slot. `23-05`: widened
+        // again to four - Additional's own first real writers (SkipLockedAssignmentClaimer's and
+        // RedisLockAssignmentClaimer's second pass) land in the same wave as this statement, unlike
+        // Taken's own history above.
         builder.ToTable("conversation_assignments", t =>
         {
-            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken')");
+            t.HasCheckConstraint("ck_conversation_assignments_source", "source IN ('Assigned', 'Transferred', 'Taken', 'Additional')");
         });
         builder.HasKey(a => a.Id);
         builder.Property(a => a.Id).HasColumnName("id").HasConversion(IdConverters.ConversationAssignment).ValueGeneratedNever();

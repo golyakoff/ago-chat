@@ -32,6 +32,16 @@ namespace Ago.Chat.Worker;
 /// tries the *next* candidate operator immediately, in the same attempt - lock contention is a
 /// different, cheaper-to-retry situation than losing the capacity race itself (which still waits
 /// for the next tick, same as mechanism A).
+///
+/// <para>`23-05`: a second pass, tried only when the first finds no candidate at all, or every
+/// candidate it tried lost its lock or its capacity race - <see cref="TryAssignPastPenaltyAsync"/>,
+/// the identical `Status == Online` filter <see cref="GetCandidateOperatorsAsync"/> already uses with
+/// the capacity predicate dropped, claimed through `23-04`'s compare-free `IOperatorCapacity.ClaimAsync`.
+/// No Redis lock for this pass - unlike <see cref="TryAssignAsync"/>'s own compare-and-set claim,
+/// `ClaimAsync` cannot lose a race against another replica claiming the *same operator*, so there is
+/// nothing for a lock to protect there; the conversation's own `xmin` check (the real correctness
+/// guard this whole mechanism relies on, per this type's own remarks above) still protects against
+/// two replicas assigning the *same conversation* twice.</para>
 /// </summary>
 public sealed class RedisLockAssignmentClaimer(
     RedisDistributedLock redisLock, NpgsqlDataSource dataSource, IClock clock, IIdGenerator idGenerator) : IAssignmentClaimer
@@ -56,6 +66,7 @@ public sealed class RedisLockAssignmentClaimer(
                 candidates = await GetCandidateOperatorsAsync(readDb, siteId, cancellationToken);
             }
 
+            var assigned = false;
             foreach (var operatorId in candidates)
             {
                 await using var lockHandle = await redisLock.TryAcquireAsync(
@@ -67,9 +78,23 @@ public sealed class RedisLockAssignmentClaimer(
 
                 if (await TryAssignAsync(conversationId, operatorId, cancellationToken))
                 {
-                    assignedCount++;
+                    assigned = true;
                     break;
                 }
+            }
+
+            if (assigned)
+            {
+                assignedCount++;
+                continue;
+            }
+
+            // `23-05`: nobody had room right now (or every attempt lost its own race) - assign anyway
+            // once this conversation has waited past the site's own penalty. decisions.md §2: "a
+            // waiting customer is worse than uneven load."
+            if (await TryAssignPastPenaltyAsync(siteId, conversationId, cancellationToken))
+            {
+                assignedCount++;
             }
         }
 
@@ -134,6 +159,78 @@ public sealed class RedisLockAssignmentClaimer(
         return true;
     }
 
+    /// <summary>
+    /// `23-05`: the second pass - its own transaction, matching <see cref="TryAssignAsync"/>'s own
+    /// shape, so it is what actually decides "is this conversation old enough" and "who gets it" both
+    /// inside one atomic unit. Reloads the conversation (not the earlier plain read's own copy) for
+    /// the identical reason <see cref="TryAssignAsync"/> does: a different replica's own attempt may
+    /// have already taken or closed it since the outer loop's read, and `conversation.CreatedAt` never
+    /// changes, so reloading it here costs nothing extra to also get a state check that does matter.
+    /// </summary>
+    private async Task<bool> TryAssignPastPenaltyAsync(SiteId siteId, ConversationId conversationId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var dbOptions = new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(connection).Options;
+        await using var db = new AgoChatDbContext(dbOptions);
+        await db.Database.UseTransactionAsync(transaction, cancellationToken);
+
+        var conversations = new ConversationRepository(db);
+        var conversation = await conversations.GetByIdAsync(conversationId, cancellationToken);
+        if (conversation is null || conversation.State != ConversationState.Waiting)
+        {
+            // Already taken (or closed) by a different attempt since the outer loop's own read.
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        var now = clock.UtcNow;
+        // `CLAUDE.md` rule 8: read fresh, inside this same transaction, never from the site-settings
+        // cache - see SiteAssignmentPenaltyQuery's own remarks.
+        var penaltySeconds = await SiteAssignmentPenaltyQuery.GetSecondsAsync(db, siteId, cancellationToken);
+        if (now - conversation.CreatedAt < TimeSpan.FromSeconds(penaltySeconds))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false; // not old enough yet - stays Waiting, retried next tick
+        }
+
+        var candidateOperatorId = await FindLeastActiveOnlineOperatorAsync(db, siteId, cancellationToken);
+        if (candidateOperatorId is not { } operatorId)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false; // nobody Online at all - 14-04's territory, not this rule's
+        }
+
+        var capacity = new OperatorCapacityStore(db);
+        // Compare-free: the whole point of this pass is that capacity cannot refuse it.
+        await capacity.ClaimAsync(operatorId, cancellationToken);
+
+        try
+        {
+            // `6-09`: holdsCapacityClaim: true - same reasoning as TryAssignAsync's own call.
+            conversation.AssignTo(operatorId, now, holdsCapacityClaim: true);
+
+            await ConversationAssignmentIntervalSql.InsertOpenAsync(
+                db, idGenerator, siteId, conversationId, operatorId, ConversationAssignmentSource.Additional,
+                now, cancellationToken);
+
+            var domainEvent = conversation.DomainEvents.OfType<ConversationAssigned>().Last();
+            var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+            outbox.Enqueue(ConversationAssignedToOperatorMapper.ToEnvelope(domainEvent, siteId, conversation.VisitorId, idGenerator));
+            conversation.ClearDomainEvents();
+            await conversations.SaveAsync(conversation, cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // xmin caught a genuine double-claim attempt - rolls back the capacity claim too.
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     private static async Task<List<ConversationId>> GetWaitingConversationIdsAsync(
         AgoChatDbContext db, SiteId siteId, int batchSize, CancellationToken cancellationToken) =>
         await db.Conversations.AsNoTracking()
@@ -151,4 +248,17 @@ public sealed class RedisLockAssignmentClaimer(
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => o.Id)
             .ToListAsync(cancellationToken);
+
+    /// <summary>`23-05`: <see cref="GetCandidateOperatorsAsync"/> with the capacity predicate
+    /// dropped - the identical `Status == Online` filter, deliberately not re-derived, so an `Away`
+    /// (or `Offline`) operator is excluded from this pass for exactly the same reason it is excluded
+    /// from the first: there is one `Online` filter in this file, not two that could drift apart.
+    /// </summary>
+    private static async Task<OperatorId?> FindLeastActiveOnlineOperatorAsync(
+        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
+        await db.Operators.AsNoTracking()
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online)
+            .OrderBy(o => EF.Property<int>(o, "active_chats"))
+            .Select(o => (OperatorId?)o.Id)
+            .FirstOrDefaultAsync(cancellationToken);
 }

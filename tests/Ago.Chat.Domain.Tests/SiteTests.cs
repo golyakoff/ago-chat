@@ -370,4 +370,65 @@ public class SiteTests
 
         Assert.Empty(site.DomainEvents);
     }
+
+    // `23-05`: the regression this item's own Done-when implies - every existing tenant, one that has
+    // never called UpdateAssignmentPenalty, must read back exactly 120 (two minutes), the same value
+    // the database column defaults to, so no row written before this column existed silently behaves
+    // differently from one written after.
+    [Fact]
+    public void Constructor_WhenValid_DefaultsAssignmentPenaltyToTwoMinutes()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Equal(120, site.AssignmentPenaltySeconds);
+    }
+
+    [Fact]
+    public void UpdateAssignmentPenalty_WhenCalled_SetsTheValue()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        site.UpdateAssignmentPenalty(60, DateTimeOffset.UtcNow);
+
+        Assert.Equal(60, site.AssignmentPenaltySeconds);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void UpdateAssignmentPenalty_WhenNotPositive_Throws(int seconds)
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => site.UpdateAssignmentPenalty(seconds, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void UpdateAssignmentPenalty_WhenCalled_RaisesDomainEventExactlyOnce()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateAssignmentPenalty(300, now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteAssignmentPenaltyUpdated>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Equal("shop_7f3a", raised.PublicKey);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void UpdateAssignmentPenalty_WhenCalledTwice_RaisesTwoDomainEventsUntilCleared()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateAssignmentPenalty(300, now);
+        site.ClearDomainEvents();
+        site.UpdateAssignmentPenalty(180, now);
+
+        Assert.Single(site.DomainEvents);
+    }
 }
