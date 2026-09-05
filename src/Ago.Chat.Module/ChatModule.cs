@@ -45,6 +45,7 @@ using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
+using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
@@ -784,6 +785,8 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<TransferConversationHandler>();
         // `4-06`: OperatorHub's own connect/disconnect wiring - see the handler's own remarks.
         services.AddScoped<SetOperatorPresenceHandler>();
+        // `23-20`: the read half - see the handler's own remarks.
+        services.AddScoped<GetOperatorPresenceHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();

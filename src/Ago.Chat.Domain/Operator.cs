@@ -117,11 +117,38 @@ public sealed class Operator
     {
     }
 
-    /// <summary>The realtime connection registry has a live SignalR connection for this operator -
-    /// called from `OperatorHub.OnConnectedAsync`. Idempotent: a second connection (another tab)
-    /// arriving while already <see cref="OperatorStatus.Online"/> is a harmless no-op, not an error -
-    /// nothing here counts connections, only whether at least one exists.</summary>
+    /// <summary>The operator explicitly wants to be <see cref="OperatorStatus.Online"/> right now,
+    /// regardless of what they were doing before - the "I'm back" action
+    /// (`OperatorHub.SetAwayAsync(false)`, `23-20`), and also the pre-`23-20` connect path's own
+    /// meaning for an operator who was never away. Unconditional on purpose: this is the one caller
+    /// allowed to overwrite a deliberate <see cref="OperatorStatus.Away"/>, because it is the operator
+    /// saying so, not a side effect of a connection existing - see <see cref="NoteConnected"/> for the
+    /// passive counterpart that must not. Idempotent: calling this while already
+    /// <see cref="OperatorStatus.Online"/> is a harmless no-op, not an error.</summary>
     public void GoOnline() => Status = OperatorStatus.Online;
+
+    /// <summary>`23-20`: the passive counterpart of <see cref="GoOnline"/> - called by
+    /// `OperatorHub.OnConnectedAsync` on every connection (a first connect and every reconnect alike)
+    /// instead of calling <see cref="GoOnline"/> directly, which is what that call site did before this
+    /// item and is exactly the defect it names: an operator who deliberately went
+    /// <see cref="OperatorStatus.Away"/> and then had their connection blip - an ordinary SignalR
+    /// automatic reconnect is indistinguishable, at this hub, from any other disconnect-then-reconnect
+    /// - would be silently carried back to <see cref="OperatorStatus.Online"/> by the mere fact of
+    /// reconnecting, with no act of theirs behind it. A reconnect has no way to know whether the
+    /// operator meant to step away five minutes ago, so it must not use the caller that means "this
+    /// operator, specifically, wants to be online now" - only <see cref="GoOnline"/> (via
+    /// `SetAwayAsync(false)`) carries that meaning once this method takes the connect path over. A
+    /// genuinely <see cref="OperatorStatus.Offline"/> operator (nothing has ever told this aggregate
+    /// otherwise) is still moved to <see cref="OperatorStatus.Online"/> here - the entire behaviour this
+    /// call site had before this item, preserved for every operator who never went away - and an
+    /// already-<see cref="OperatorStatus.Online"/> operator is left alone, same as before.</summary>
+    public void NoteConnected()
+    {
+        if (Status == OperatorStatus.Offline)
+        {
+            Status = OperatorStatus.Online;
+        }
+    }
 
     /// <summary>The realtime connection registry has zero live connections for this operator - called
     /// from `OperatorHub.OnDisconnectedAsync`, only when <c>HubConnectionRegistration.OnDisconnectedAsync</c>
@@ -130,8 +157,39 @@ public sealed class Operator
     /// a brief network blip, a different and costlier decision than this one. Excluding a
     /// momentarily-disconnected operator from new assignments for the few hundred milliseconds a
     /// reconnect actually takes has no comparable cost, and leaving them assignable while genuinely
-    /// gone would route a new visitor to a connection that cannot receive it.</summary>
-    public void GoOffline() => Status = OperatorStatus.Offline;
+    /// gone would route a new visitor to a connection that cannot receive it.
+    ///
+    /// <para>`23-20`: leaves a deliberate <see cref="OperatorStatus.Away"/> alone rather than
+    /// overwriting it with <see cref="OperatorStatus.Offline"/>. Both states are already excluded from
+    /// assignment identically - the engine's own filter is `Status == Online`, not "not Offline" - so
+    /// this changes nothing about who is assignable. What it protects is the *next* reconnect: without
+    /// this guard, an away operator's last connection dropping would erase the fact they went away, and
+    /// <see cref="NoteConnected"/> would then find <see cref="OperatorStatus.Offline"/> on the
+    /// reconnect and carry them back to <see cref="OperatorStatus.Online"/> - the identical defect this
+    /// item exists to close, just reached through the disconnect path instead of the connect one. The
+    /// item's own rule - a deliberate Away "is cleared only by the operator" - means only by the
+    /// operator, not by any connection lifecycle event in either direction.</para></summary>
+    public void GoOffline()
+    {
+        if (Status != OperatorStatus.Away)
+        {
+            Status = OperatorStatus.Offline;
+        }
+    }
+
+    /// <summary>`23-20`: a deliberate act distinct from <see cref="GoOffline"/> - the operator is still
+    /// connected and still holds every conversation currently `Assigned` to them (this item's own
+    /// Scope: "going away is not going offline and is not a release" - `OperatorConversationReleaser`
+    /// and `23-03`'s assignment intervals are untouched by this method and by this item). They are
+    /// simply not the person expected to answer a *new* one. The assignment engine's own
+    /// `Status == Online` filter (`SkipLockedAssignmentClaimer`/`RedisLockAssignmentClaimer`) and
+    /// `OperatorRepository.AnyOnlineForSiteAsync` already treat anything other than `Online` as "not
+    /// online" - so nothing downstream needs to learn a new state to stop routing to an away operator or
+    /// to stop counting them as coverage for `14-04`'s offline auto-reply; this method only has to make
+    /// the state reachable. Reversed only by <see cref="GoOnline"/>, called explicitly by the operator -
+    /// never automatically, see <see cref="NoteConnected"/> and <see cref="GoOffline"/>'s own remarks
+    /// for why a mere connect or disconnect must not do this instead.</summary>
+    public void GoAway() => Status = OperatorStatus.Away;
 
     /// <summary>`13-03`: a site's `Permission.SiteManageOperators` holder assigns or releases this
     /// operator's own seat. No guard against toggling a removed operator back on - <see cref="Remove"/>

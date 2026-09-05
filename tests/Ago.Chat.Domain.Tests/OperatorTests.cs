@@ -68,6 +68,86 @@ public class OperatorTests
         Assert.Equal(OperatorStatus.Offline, op.Status);
     }
 
+    // `23-20`: the item's whole subtlety, at the smallest level it can be proven at - see
+    // Operator.GoOffline's own remarks for why this guard exists at all.
+    [Fact]
+    public void GoOffline_WhenAway_StaysAway()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Away, capacity: 5);
+
+        op.GoOffline();
+
+        Assert.Equal(OperatorStatus.Away, op.Status);
+    }
+
+    [Fact]
+    public void GoAway_WhenOnline_BecomesAway()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5);
+
+        op.GoAway();
+
+        Assert.Equal(OperatorStatus.Away, op.Status);
+    }
+
+    // `23-20`: GoOnline is the only caller allowed to overwrite Away - "coming back is GoOnline",
+    // the item's own scope.
+    [Fact]
+    public void GoOnline_WhenAway_BecomesOnline()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Away, capacity: 5);
+
+        op.GoOnline();
+
+        Assert.Equal(OperatorStatus.Online, op.Status);
+    }
+
+    [Fact]
+    public void NoteConnected_WhenOffline_BecomesOnline()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
+
+        op.NoteConnected();
+
+        Assert.Equal(OperatorStatus.Online, op.Status);
+    }
+
+    [Fact]
+    public void NoteConnected_WhenAlreadyOnline_IsANoOp()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5);
+
+        op.NoteConnected();
+
+        Assert.Equal(OperatorStatus.Online, op.Status);
+    }
+
+    // `23-20`: the defect this item exists to close, proven directly on the aggregate - a mere
+    // connection existing must never carry the authority to cancel a deliberate Away.
+    [Fact]
+    public void NoteConnected_WhenAway_StaysAway()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Away, capacity: 5);
+
+        op.NoteConnected();
+
+        Assert.Equal(OperatorStatus.Away, op.Status);
+    }
+
+    // `23-20`: the same defect, at the size it is actually reachable at - a disconnect followed by a
+    // reconnect, exactly what an ordinary SignalR automatic-reconnect blip looks like at this hub.
+    [Fact]
+    public void GoOffline_ThenNoteConnected_WhenAway_StaysAwayThroughout()
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Away, capacity: 5);
+
+        op.GoOffline();
+        Assert.Equal(OperatorStatus.Away, op.Status);
+
+        op.NoteConnected();
+        Assert.Equal(OperatorStatus.Away, op.Status);
+    }
+
     // `13-03`: every operator created today is created within `13-01`'s own seat-limit check and
     // therefore already fits - HoldsSeat defaults true, RemovedAt defaults null.
     [Fact]

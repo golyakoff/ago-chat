@@ -230,6 +230,17 @@ internal static class TenantScopeExemptions
         ["Ago.Chat.Application.UseCases.SetOperatorPresence.SetOperatorPresenceHandler.GoOfflineAsync"] =
             "The mirror image of GoOnlineAsync right above - same reasoning, called from "
             + "OperatorHub.OnDisconnectedAsync only when this was the operator's last live connection.",
+        ["Ago.Chat.Application.UseCases.SetOperatorPresence.SetOperatorPresenceHandler.NoteConnectedAsync"] =
+            "`23-20`. Same reasoning as GoOnlineAsync above, and the same call site (OperatorHub.OnConnectedAsync) "
+            + "- this replaced GoOnlineAsync there so a mere reconnect could stop carrying the authority to cancel "
+            + "a deliberate Away (Operator.NoteConnected's own remarks).",
+        ["Ago.Chat.Application.UseCases.SetOperatorPresence.SetOperatorPresenceHandler.GoAwayAsync"] =
+            "`23-20`. Same reasoning as GoOnlineAsync/GoOfflineAsync above, called from "
+            + "OperatorHub.SetAwayAsync(true) - the console's own deliberate \"I'm stepping away\" action.",
+        ["Ago.Chat.Application.UseCases.GetOperatorPresence.GetOperatorPresenceHandler.HandleAsync"] =
+            "`23-20`. The read half of the three entries right above - same reasoning: OperatorId is the caller's "
+            + "own identity from the connection's JWT (OperatorHub.GetMyPresenceAsync), not a resource the caller "
+            + "names, so there is no \"whose presence\" question a site check could answer.",
 
         // ---------------------------------------------------------------------------------------
         // `13-02`. Inbound, HTTP-triggered (not broker-consumed) - the third-party mirror of the

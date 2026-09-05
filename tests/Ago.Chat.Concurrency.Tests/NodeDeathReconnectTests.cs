@@ -8,6 +8,7 @@ using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
+using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -158,6 +159,7 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var registration = new HubConnectionRegistration(registry, tracker, node);
         var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
         var operatorPresence = new SetOperatorPresenceHandler(new OperatorRepository(db));
+        var getOperatorPresence = new GetOperatorPresenceHandler(new OperatorRepository(db));
         // `5-18`: the operator hub validates the *console's* origin, not the tenant's widget origins.
         // FakeHubCallerContext carries no HttpContext, so no Origin header is present and the check
         // short-circuits to allowed - exactly as it does for the dev harness and any non-browser client.
@@ -166,7 +168,7 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
 
         return new OperatorHub(
             assignConversation, sendMessage, getHistory, getVisitorHistory, getVisitorPresence, registration, consoleOrigin,
-            presencePublisher, operatorPresence, new DrainState())
+            presencePublisher, operatorPresence, getOperatorPresence, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),

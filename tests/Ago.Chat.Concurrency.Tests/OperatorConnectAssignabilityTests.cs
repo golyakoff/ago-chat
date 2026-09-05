@@ -5,6 +5,7 @@ using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
@@ -166,6 +167,105 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         Assert.Equal(OperatorStatus.Offline, finalStatus);
     }
 
+    /// <summary>
+    /// `23-20`: the item's own named defect, reproduced end to end against the real hub and real
+    /// Postgres exactly the way `AnOperatorBornOffline_BecomesAssignable_OnConnect_AndUnassignable_OnLastDisconnect`
+    /// above proves the pre-existing connect/disconnect wiring. Before this item, `OperatorHub.OnConnectedAsync`
+    /// called `Operator.GoOnline` unconditionally, so this exact sequence - go away, then an ordinary
+    /// connection blip (last connection drops, then a fresh one connects, indistinguishable server-side
+    /// from any other reconnect) - silently carried the operator back to `Online` with no act of theirs
+    /// behind it. The fix is two separate guards (`Operator.GoOffline` now leaves `Away` alone;
+    /// `OperatorHub.OnConnectedAsync` now calls the new `Operator.NoteConnected`, which only ever raises
+    /// `Offline` to `Online`), and this test is what proves the *pair* of them survives the sequence a
+    /// live reconnect actually produces - either guard alone is insufficient, see each method's own
+    /// remarks for why.
+    /// </summary>
+    [Fact]
+    public async Task AnAwayOperator_SurvivesDisconnectAndReconnect_StaysAway()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            await db.SaveChangesAsync();
+        }
+
+        var claimer = new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+        var registry = new RedisConnectionRegistry(
+            fixture.RedisMultiplexer, Options.Create(new ConnectionRegistryOptions()), NullLogger<RedisConnectionRegistry>.Instance);
+
+        // --- Connects, exactly as the console does on session start. ---
+        var tracker = new LocalConnectionTracker();
+        var operatorHub = CreateOperatorHub(siteId, operatorId, "operator-conn-1", registry, tracker, new NodeId($"node-{Guid.NewGuid():N}"));
+        await operatorHub.OnConnectedAsync();
+
+        // --- Deliberately goes away - the console's own SetAwayAsync(true), the control this item adds. ---
+        await operatorHub.SetAwayAsync(true);
+
+        await using (var afterAway = fixture.CreateDbContext())
+        {
+            var status = await afterAway.Operators.AsNoTracking()
+                .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Away, status);
+        }
+
+        // Already unassignable while away, same as while genuinely offline - the backlog item's own
+        // "the assignment engine stops selecting them" done-when.
+        var claimedWhileAway = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+        Assert.Equal(0, claimedWhileAway);
+
+        // --- The connection blips: the last connection drops, then a fresh one connects. Server-side
+        // this is indistinguishable from any other disconnect-then-reconnect at this hub. ---
+        await operatorHub.OnDisconnectedAsync(exception: null);
+
+        await using (var afterDisconnect = fixture.CreateDbContext())
+        {
+            var status = await afterDisconnect.Operators.AsNoTracking()
+                .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Away, status);
+        }
+
+        var reconnectedTracker = new LocalConnectionTracker();
+        var reconnectedHub = CreateOperatorHub(
+            siteId, operatorId, "operator-conn-2", registry, reconnectedTracker, new NodeId($"node-{Guid.NewGuid():N}"));
+        await reconnectedHub.OnConnectedAsync();
+
+        // --- The assertion this item names specifically: a hub reconnect does not silently return an
+        // away operator to Online. ---
+        await using (var afterReconnect = fixture.CreateDbContext())
+        {
+            var status = await afterReconnect.Operators.AsNoTracking()
+                .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Away, status);
+        }
+
+        // Still unassignable after the reconnect, for the identical reason.
+        var claimedAfterReconnect = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+        Assert.Equal(0, claimedAfterReconnect);
+
+        // The console's own GetMyPresenceAsync would render this correctly too - not just the DB row.
+        Assert.True(await reconnectedHub.GetMyPresenceAsync());
+
+        // --- Only the operator's own explicit "I'm back" clears it - SetAwayAsync(false), which reuses
+        // GoOnline (the item's own "coming back is GoOnline"). ---
+        await reconnectedHub.SetAwayAsync(false);
+
+        await using var afterComeback = fixture.CreateDbContext();
+        var finalStatus = await afterComeback.Operators.AsNoTracking()
+            .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+        Assert.Equal(OperatorStatus.Online, finalStatus);
+
+        var claimedAfterComeback = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+        Assert.Equal(1, claimedAfterComeback);
+    }
+
     private OperatorHub CreateOperatorHub(
         SiteId siteId, OperatorId operatorId, string connectionId, IConnectionRegistry registry, LocalConnectionTracker tracker, NodeId node)
     {
@@ -184,12 +284,13 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         var registration = new HubConnectionRegistration(registry, tracker, node);
         var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
         var operatorPresence = new SetOperatorPresenceHandler(new OperatorRepository(db));
+        var getOperatorPresence = new GetOperatorPresenceHandler(new OperatorRepository(db));
         var consoleOrigin = new ConsoleOriginValidator(
             new ConsoleOriginOptions { AllowedOrigins = ["https://console.test"] });
 
         return new OperatorHub(
             assignConversation, sendMessage, getHistory, getVisitorHistory, getVisitorPresence, registration, consoleOrigin,
-            presencePublisher, operatorPresence, new DrainState())
+            presencePublisher, operatorPresence, getOperatorPresence, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),

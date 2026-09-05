@@ -46,4 +46,28 @@ public sealed class SetOperatorPresenceHandler(IOperatorRepository operators)
         operatorEntity.GoOffline();
         await operators.SaveAsync(operatorEntity, cancellationToken);
     }
+
+    /// <summary>`23-20`: `OperatorHub.OnConnectedAsync`'s own caller, in place of <see cref="GoOnlineAsync"/> -
+    /// see <see cref="Domain.Operator.NoteConnected"/>'s own remarks for why a passive connect must not
+    /// carry the authority to cancel a deliberate <see cref="Domain.OperatorStatus.Away"/>.</summary>
+    public async Task NoteConnectedAsync(NoteConnected command, CancellationToken cancellationToken)
+    {
+        var operatorEntity = await operators.GetByIdAsync(command.OperatorId, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Operator {command.OperatorId.Value} not found while recording a live connection.");
+
+        operatorEntity.NoteConnected();
+        await operators.SaveAsync(operatorEntity, cancellationToken);
+    }
+
+    /// <summary>`23-20`: the console's own "I'm stepping away" action, behind `OperatorHub.SetAwayAsync(true)`.</summary>
+    public async Task GoAwayAsync(GoAway command, CancellationToken cancellationToken)
+    {
+        var operatorEntity = await operators.GetByIdAsync(command.OperatorId, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Operator {command.OperatorId.Value} not found while recording they are stepping away.");
+
+        operatorEntity.GoAway();
+        await operators.SaveAsync(operatorEntity, cancellationToken);
+    }
 }
