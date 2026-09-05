@@ -63,5 +63,11 @@ internal static class HubContractManifest
             + "returning-visitor-history panel's own \"open one\", not a caller of GetHistoryAsync "
             + "above: the authorization rule genuinely differs (assigned to *a* live conversation with "
             + "this visitor, not to the specific historical one being read)."),
+        new("OperatorHub.SetAwayAsync", 1,
+            "ago-console OperatorConnection.setAway (`23-20`) - the workspace's own away control."),
+        new("OperatorHub.GetMyPresenceAsync", 0,
+            "ago-console OperatorConnection.getMyPresence (`23-20`), called once whenever the "
+            + "connection reports \"connected\" - a first connect and every reconnect alike - so the "
+            + "away control never renders a stale toggle after either."),
     ];
 }

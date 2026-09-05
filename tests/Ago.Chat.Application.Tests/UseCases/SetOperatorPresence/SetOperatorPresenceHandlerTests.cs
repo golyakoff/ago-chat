@@ -43,4 +43,64 @@ public class SetOperatorPresenceHandlerTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => handler.GoOnlineAsync(new GoOnline(OperatorId), CancellationToken.None));
     }
+
+    // `23-20`
+    [Fact]
+    public async Task GoAwayAsync_FlipsAnOnlineOperatorToAway()
+    {
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5));
+        var handler = new SetOperatorPresenceHandler(operators);
+
+        await handler.GoAwayAsync(new GoAway(OperatorId), CancellationToken.None);
+
+        var stored = await operators.GetByIdAsync(OperatorId, CancellationToken.None);
+        Assert.Equal(OperatorStatus.Away, stored!.Status);
+    }
+
+    [Fact]
+    public async Task GoAwayAsync_WhenTheOperatorRowDoesNotExist_Throws()
+    {
+        var handler = new SetOperatorPresenceHandler(new FakeOperatorRepository());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => handler.GoAwayAsync(new GoAway(OperatorId), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task NoteConnectedAsync_WhenOffline_BecomesOnline()
+    {
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Offline, capacity: 5));
+        var handler = new SetOperatorPresenceHandler(operators);
+
+        await handler.NoteConnectedAsync(new NoteConnected(OperatorId), CancellationToken.None);
+
+        var stored = await operators.GetByIdAsync(OperatorId, CancellationToken.None);
+        Assert.Equal(OperatorStatus.Online, stored!.Status);
+    }
+
+    // `23-20`: the defect this item exists to close, at the handler level - OperatorHub.OnConnectedAsync
+    // now calls NoteConnectedAsync instead of GoOnlineAsync specifically so this stays true.
+    [Fact]
+    public async Task NoteConnectedAsync_WhenAway_StaysAway()
+    {
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Away, capacity: 5));
+        var handler = new SetOperatorPresenceHandler(operators);
+
+        await handler.NoteConnectedAsync(new NoteConnected(OperatorId), CancellationToken.None);
+
+        var stored = await operators.GetByIdAsync(OperatorId, CancellationToken.None);
+        Assert.Equal(OperatorStatus.Away, stored!.Status);
+    }
+
+    [Fact]
+    public async Task NoteConnectedAsync_WhenTheOperatorRowDoesNotExist_Throws()
+    {
+        var handler = new SetOperatorPresenceHandler(new FakeOperatorRepository());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => handler.NoteConnectedAsync(new NoteConnected(OperatorId), CancellationToken.None));
+    }
 }

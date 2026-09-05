@@ -6,6 +6,7 @@ using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
+using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -38,6 +39,7 @@ public sealed class OperatorHub(
     ConsoleOriginValidator consoleOrigin,
     OperatorPresencePublisher presencePublisher,
     SetOperatorPresenceHandler operatorPresence,
+    GetOperatorPresenceHandler getOperatorPresence,
     DrainState drainState) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
@@ -71,12 +73,17 @@ public sealed class OperatorHub(
         await connectionRegistration.OnConnectedAsync(new ConnectionId(Context.ConnectionId), principal, Context.ConnectionAborted);
 
         // `4-06`: every connection, not only the first for this operator (contrast
-        // OnDisconnectedAsync's lastConnectionGone guard below) - Operator.GoOnline is idempotent, and
-        // a second tab connecting while already Online must never accidentally look like a fresh
-        // connect that needs special handling. Deliberately not awaited-and-checked against a prior
-        // Offline read: unlike the disconnect grace period (4-04), there is no cost to this racing
-        // harmlessly against a concurrent OnDisconnectedAsync from another dropping connection.
-        await operatorPresence.GoOnlineAsync(new GoOnline(operatorId), Context.ConnectionAborted);
+        // OnDisconnectedAsync's lastConnectionGone guard below) - Operator.NoteConnected is idempotent
+        // for the states that matter here, and a second tab connecting while already Online must never
+        // accidentally look like a fresh connect that needs special handling. Deliberately not
+        // awaited-and-checked against a prior Offline read: unlike the disconnect grace period (4-04),
+        // there is no cost to this racing harmlessly against a concurrent OnDisconnectedAsync from
+        // another dropping connection.
+        //
+        // `23-20`: NoteConnected, not GoOnline - a mere connection existing must never carry the
+        // authority to cancel a deliberate Away. See Operator.NoteConnected's own remarks; this is the
+        // whole subtlety that item names.
+        await operatorPresence.NoteConnectedAsync(new NoteConnected(operatorId), Context.ConnectionAborted);
 
         await base.OnConnectedAsync();
     }
@@ -295,6 +302,49 @@ public sealed class OperatorHub(
         }
 
         return presence.Value;
+    }
+
+    /// <summary>
+    /// `23-20`: the console's own control, distinct from `GetVisitorPresenceAsync`/`ConnectionStateBadge`
+    /// above - this is the operator's *own* deliberate presence, not a visitor's or the connection's.
+    /// No `OperatorId` parameter, the same shape as `SetOperatorPresenceHandler`'s own commands: the
+    /// caller's identity comes from the JWT this connection already authenticated with, so there is no
+    /// "whose presence" question and therefore no way for one operator to name another's - satisfying
+    /// this item's own done-when ("an operator cannot set another operator's presence") without a
+    /// permission check to write, because there is no resource here for a permission to guard.
+    ///
+    /// <paramref name="away"/> <see langword="true"/> calls <see cref="GoAway"/>
+    /// (`Operator.GoAway`); <see langword="false"/> calls the existing <see cref="GoOnline"/> (`Operator.GoOnline`)
+    /// - the item's own "coming back is GoOnline", reached through a hub method it did not have a
+    /// caller for before this item, rather than a new domain transition.
+    /// </summary>
+    public async Task SetAwayAsync(bool away)
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        if (away)
+        {
+            await operatorPresence.GoAwayAsync(new GoAway(operatorId), Context.ConnectionAborted);
+        }
+        else
+        {
+            await operatorPresence.GoOnlineAsync(new GoOnline(operatorId), Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// `23-20`: a snapshot, not a subscription - the identical shape and reasoning as
+    /// `GetVisitorPresenceAsync` above, for the console's own toggle instead of a visitor's. Called
+    /// once whenever the connection reports "connected" (`ago-console`'s `OperatorConnectionProvider`),
+    /// including after a reconnect, which is exactly when a locally-remembered toggle state would
+    /// otherwise silently disagree with what this item makes the server-side truth.
+    /// </summary>
+    public async Task<bool> GetMyPresenceAsync()
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        var status = await getOperatorPresence.HandleAsync(
+            new GetOperatorPresence(operatorId), Context.ConnectionAborted);
+
+        return status == OperatorStatus.Away;
     }
 
     // `14-06`: the mapping moved to Ago.Chat.Application.Mapping.MessageDtoMapper - it existed
