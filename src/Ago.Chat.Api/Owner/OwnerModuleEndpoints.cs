@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Api.Http;
+﻿using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
@@ -27,6 +29,12 @@ namespace Ago.Chat.Api.Owner;
 /// <para><b>Generic across every module, not calendar-specific</b> - the identical
 /// <c>ModuleKeyLiteralRule</c> discipline <see cref="Modules.ModuleEndpoints"/>'s own remarks describe:
 /// the module key is a request body field here too, never a literal this file names.</para>
+///
+/// <para><b>`23-13`: revoke is no longer unconditional.</b> A tenant's own self-service purchase
+/// (<see cref="Domain.EnabledModule.GrantedByOwner"/> <see langword="false"/>) refuses this route's
+/// `DELETE` unless the request states <c>Force</c> and a <c>Reason</c> - <see cref="RevokeModuleAsOwnerRequest"/>'s
+/// and <see cref="RevokeModuleForSiteAsOwnerHandler"/>'s own remarks for the full asymmetry. An owner
+/// revoking their own grant is unchanged.</para>
 /// </summary>
 public static class OwnerModuleEndpoints
 {
@@ -82,8 +90,25 @@ public static class OwnerModuleEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        // `23-13`: the caller's identity now has to reach the handler - recorded on the override row
+        // when one is written (RevokeModuleForSiteAsOwnerHandler's own remarks), never authorising;
+        // RequirePlatformOwner on this route already decided that. Read directly off the validated
+        // token's `sub`, the identical claim OwnerAccessRecorder reads a few lines below for the
+        // unrelated access-record write - read again here, not threaded through, because this read
+        // gates the call itself: a missing claim here means nothing was even attempted, which is a
+        // different fact from "nothing was recorded".
+        var revokedBy = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        if (string.IsNullOrEmpty(revokedBy))
+        {
+            // Same reasoning as MeEndpoints/SitesEndpoints: RequirePlatformOwner already required a
+            // valid token, so a missing `sub` means Keycloak itself is misconfigured, not a caller error.
+            return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "Token carries no subject claim.");
+        }
+
         var result = await handler.HandleAsync(
-            new RevokeModuleForSiteAsOwner(new SiteId(siteId), moduleKey, request.ProvisioningSecret), cancellationToken);
+            new RevokeModuleForSiteAsOwner(
+                new SiteId(siteId), moduleKey, request.ProvisioningSecret, revokedBy, request.Force, request.Reason),
+            cancellationToken);
 
         if (result.IsFailure)
         {
@@ -137,5 +162,24 @@ public static class OwnerModuleEndpoints
     public sealed record GrantModuleResponse(
         string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, DateTimeOffset? ExpiresAt);
 
-    public sealed record RevokeModuleAsOwnerRequest(string ProvisioningSecret);
+    /// <summary>
+    /// `23-13`: <see cref="Force"/> and <see cref="Reason"/> carry the asymmetry `flows.md` 5.3 names -
+    /// see <see cref="RevokeModuleForSiteAsOwner"/>'s own remarks for why these are plain optional
+    /// members rather than the <see langword="required"/>-nullable trick <see cref="ExpiresAt"/> above
+    /// uses: omitting <see cref="Force"/> unambiguously means "not forcing", which needs no ceremony,
+    /// unlike omitting an expiry.
+    /// </summary>
+    /// <param name="ProvisioningSecret">`22-11`: proves this call may act on the module deployment's
+    /// own behalf, unchanged from before this item.</param>
+    /// <param name="Force">Revoking a grant the platform owner made needs nothing more than this
+    /// defaulting to <see langword="false"/>. Revoking a tenant's own self-service purchase
+    /// (<see cref="Domain.EnabledModule.GrantedByOwner"/> <see langword="false"/>) is refused unless
+    /// this is <see langword="true"/> and <see cref="Reason"/> is a real justification -
+    /// <see cref="RevokeModuleForSiteAsOwnerHandler"/>'s own remarks for exactly where and why.</param>
+    /// <param name="Reason">Required whenever <see cref="Force"/> is set, checked in the handler before
+    /// anything else it does - never optional-with-a-default (`23-13`'s own brief: "a blank reason is
+    /// the same failure as a defaulted expiry"). Free text, recorded verbatim in
+    /// <see cref="Application.Abstractions.IModuleRevokeOverrideRepository"/>'s own row when the
+    /// override is actually exercised.</param>
+    public sealed record RevokeModuleAsOwnerRequest(string ProvisioningSecret, bool Force = false, string? Reason = null);
 }

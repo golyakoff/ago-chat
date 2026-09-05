@@ -486,6 +486,29 @@ public static class ConversationErrors
     public static Error ModuleGrantExpiryInvalid(string reason) =>
         new("Module.GrantExpiryInvalid", reason);
 
+    /// <summary>`23-13`: <see cref="RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler"/>'s
+    /// own asymmetric guard - the row being revoked is a tenant's own self-service purchase
+    /// (<see cref="Domain.EnabledModule.GrantedByOwner"/> <see langword="false"/>), and the request did
+    /// not set <c>Force</c>. `409`, not `403`: the caller already passed <c>RequirePlatformOwner</c> -
+    /// nothing about who they are is in question, only whether they meant this specific act, the same
+    /// "a real conflict with existing state, resolved by an explicit second statement of intent" shape
+    /// <see cref="ChannelAlreadyConnected"/> already uses. The message names what the row is and what
+    /// the caller must do next, never merely the rule's name (`23-13`'s own brief: "a refusal a person
+    /// can act on").</summary>
+    public static Error ModuleRevokePurchaseRequiresForce(string reason) =>
+        new("Module.RevokePurchaseRequiresForce", reason);
+
+    /// <summary>`23-13`: the request set <c>Force</c> but carried no non-blank reason, or one longer
+    /// than <see cref="RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler.MaxReasonLength"/> -
+    /// checked first, before this handler touches the module or the row it is revoking (that handler's
+    /// own remarks explain why the check does not wait to learn whether forcing was actually
+    /// necessary). The same "decide, don't default" rule <see cref="ModuleGrantExpiryInvalid"/> already
+    /// enforces for a grant's own expiry, applied to a revoke's own justification: a blank reason behind
+    /// a set flag is exactly the "defaulted rather than stated" failure this item's own brief names.
+    /// </summary>
+    public static Error ModuleRevokeReasonRequired(string reason) =>
+        new("Module.RevokeReasonRequired", reason);
+
     // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of

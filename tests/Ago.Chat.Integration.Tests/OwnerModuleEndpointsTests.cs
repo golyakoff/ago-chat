@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Ago.Chat.Api.Auth;
@@ -166,6 +167,155 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         Assert.DoesNotContain(afterRevoke.Modules, m => m.ModuleKey == moduleKey);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // `23-13`: revoking a tenant's own self-service purchase now needs force and a reason - the
+    // asymmetry `flows.md` 5.3 names, proven end to end over the real HTTP pipeline and a real
+    // Postgres row, not only at the Application level.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The item's own headline Done-when: a tenant's own purchase, revoked through the
+    /// owner's route with no force, is refused - and the tenant still has the module.</summary>
+    [Fact]
+    public async Task OwnerToken_RevokesASelfServicePurchase_WithNoForce_IsRefused_AndTheTenantKeepsIt()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
+
+        var purchase = await operatorClient.PutAsJsonAsync(
+            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
+                moduleKey, [$"/{moduleKey}"], "https://faq.example.com",
+                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
+        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+
+        var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
+        {
+            Content = JsonContent.Create(
+                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest("a-provisioning-secret-of-sixteen-plus-chars")),
+        });
+        Assert.Equal(HttpStatusCode.Conflict, revokeResponse.StatusCode);
+
+        var modules = await GetModulesAsync(operatorClient);
+        Assert.Contains(modules.Modules, m => m.ModuleKey == moduleKey);
+    }
+
+    /// <summary>The other half: force and a real reason succeed, the module is really gone, and the
+    /// override is recorded with the real platform-owner subject off the real token - not a stand-in
+    /// (the identical proof <c>OwnerSitesEndpointTests.OwnerToken_GetsTheCrossTenantList_AndLeavesAnAccessRecord_NamingTheRealOwnerSubject</c>
+    /// already gives for its own sibling record).</summary>
+    [Fact]
+    public async Task OwnerToken_RevokesASelfServicePurchase_WithForceAndAReason_Succeeds_AndRecordsTheOverride()
+    {
+        var moduleKey = UniqueModuleKey();
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        var ownerSubject = new JwtSecurityTokenHandler().ReadJwtToken(token).Subject;
+
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, token);
+        var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
+
+        var purchase = await operatorClient.PutAsJsonAsync(
+            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
+                moduleKey, [$"/{moduleKey}"], "https://faq.example.com",
+                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
+        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+
+        const string reason = "Tenant reported to law enforcement for illegal sales through this module.";
+        var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
+        {
+            Content = JsonContent.Create(
+                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest(
+                    "a-provisioning-secret-of-sixteen-plus-chars", Force: true, Reason: reason)),
+        });
+        Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
+
+        var modules = await GetModulesAsync(operatorClient);
+        Assert.DoesNotContain(modules.Modules, m => m.ModuleKey == moduleKey);
+
+        // Trying it, over the real repository against the real row - not asserted from the response
+        // alone.
+        var overrides = await new ModuleRevokeOverrideRepository(fixture.DataSource)
+            .ListForSiteAsync(fixture.SeededSiteId, CancellationToken.None);
+        var recorded = Assert.Single(overrides, o => o.ModuleKey == moduleKey);
+        Assert.Equal(ownerSubject, recorded.RevokedBy);
+        Assert.Equal(reason, recorded.Reason);
+    }
+
+    /// <summary>The flag with no reason is refused before anything about the module is touched - the
+    /// purchase survives.</summary>
+    [Fact]
+    public async Task OwnerToken_ForcesARevoke_WithNoReason_IsRefused_AndGrantsNoOverride()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
+
+        var purchase = await operatorClient.PutAsJsonAsync(
+            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
+                moduleKey, [$"/{moduleKey}"], "https://faq.example.com",
+                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
+        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+
+        var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
+        {
+            Content = JsonContent.Create(
+                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest(
+                    "a-provisioning-secret-of-sixteen-plus-chars", Force: true, Reason: null)),
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, revokeResponse.StatusCode);
+
+        var modules = await GetModulesAsync(operatorClient);
+        Assert.Contains(modules.Modules, m => m.ModuleKey == moduleKey);
+
+        var overrides = await new ModuleRevokeOverrideRepository(fixture.DataSource)
+            .ListForSiteAsync(fixture.SeededSiteId, CancellationToken.None);
+        Assert.DoesNotContain(overrides, o => o.ModuleKey == moduleKey);
+    }
+
+    /// <summary>An owner revoking their own grant with force set and a reason still succeeds - no new
+    /// ceremony forced onto that path - but writes no override row, the real-Postgres proof of
+    /// <c>RevokeModuleForSiteAsOwnerHandlerTests.HandleAsync_WithForceAndAReason_ForAnOwnerGrant_Succeeds_ButWritesNoOverrideRecord</c>.</summary>
+    [Fact]
+    public async Task OwnerToken_ForcesARevoke_OfItsOwnGrant_Succeeds_ButRecordsNoOverride()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
+
+        await ownerClient.PutAsJsonAsync(
+            OwnerRoute, new OwnerModuleEndpoints.GrantModuleRequest
+            {
+                ModuleKey = moduleKey,
+                TriggerWords = ["/owner-granted-forced"],
+                EntryPoint = "https://calendar.example.com",
+                Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
+                ExpiresAt = null,
+            });
+
+        var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
+        {
+            Content = JsonContent.Create(
+                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest(
+                    "a-provisioning-secret-of-sixteen-plus-chars", Force: true, Reason: "not actually needed")),
+        });
+        Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
+
+        var modules = await GetModulesAsync(operatorClient);
+        Assert.DoesNotContain(modules.Modules, m => m.ModuleKey == moduleKey);
+
+        var overrides = await new ModuleRevokeOverrideRepository(fixture.DataSource)
+            .ListForSiteAsync(fixture.SeededSiteId, CancellationToken.None);
+        Assert.DoesNotContain(overrides, o => o.ModuleKey == moduleKey);
+    }
+
     /// <summary>An `ExpiresAt` in the past is refused before anything is granted - the same
     /// "decide, don't default" guard `EnableModuleForSiteAsOwnerHandler` enforces, reached this time
     /// through the real HTTP body.</summary>
@@ -322,6 +472,9 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        // `23-13`: a real repository, not a fake - this suite already runs against a real Postgres
+        // (fixture.DataSource), and the whole point of the new tests below is proving a real row lands.
+        builder.Services.AddScoped<IModuleRevokeOverrideRepository, ModuleRevokeOverrideRepository>();
         // A fake, not a real HTTP call - this suite is about the wire from operator/owner to
         // handler, not about whether a module deployment answers (the identical judgement
         // ModuleEndpointsTests's own remarks make for its sibling).

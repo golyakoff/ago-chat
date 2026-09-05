@@ -353,7 +353,10 @@ internal static class TenantScopeExemptions
             + "modules.GetAsync(siteId, moduleKey) - so a caller cannot revoke a different site's registration by "
             + "naming its module key against the wrong SiteId; the (site, module) pair is the row's own key, the "
             + "same structural protection RevokeModuleForSiteHandler's own operator-gated sibling gets from its "
-            + "additional IPermissionChecker call.",
+            + "additional IPermissionChecker call. `23-13` added a force flag and a recorded reason for revoking a "
+            + "tenant's own self-service purchase, but neither is a second permission check - RequirePlatformOwner "
+            + "on the route remains the entire access-control story unchanged; force/reason gate a business "
+            + "decision (was this override meant), not who may call the route at all.",
 
         // ---------------------------------------------------------------------------------------
         // `24-01`: the acceptance record's own two handlers. Neither carries a SiteId at all - not

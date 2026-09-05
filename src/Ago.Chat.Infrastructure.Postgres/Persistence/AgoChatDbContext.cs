@@ -73,6 +73,8 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // address-versus-reference decision and why this one, unlike AcceptanceRecord/ErasureRecord/
     // AccessRecord above, does carry real foreign keys.
     public DbSet<ChannelDelivery> ChannelDeliveries => Set<ChannelDelivery>();
+    // `23-13`: migration-scaffolding only, the same shape - ModuleRevokeOverrideEntity's own remarks.
+    internal DbSet<ModuleRevokeOverrideEntity> ModuleRevokeOverrides => Set<ModuleRevokeOverrideEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

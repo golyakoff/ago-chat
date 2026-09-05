@@ -138,6 +138,9 @@ public static class ServiceCollectionExtensions
         // remarks for why this single port serves both GetVisitorHistoryHandler (Ago.Chat.Application)
         // and the platform-owner endpoints (Ago.Chat.Api) directly.
         services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();
+        // `23-13`: the exercised-override write/read - see IModuleRevokeOverrideRepository's own
+        // remarks for why this is its own table rather than a column on enabled_modules.
+        services.AddScoped<IModuleRevokeOverrideRepository, ModuleRevokeOverrideRepository>();
         // `24-11`: the subject-scoped export archive builder - see IPersonExportArchiveWriter's own
         // remarks on why this is a second, smaller writer rather than SiteExportArchiveWriter widened.
         services.AddScoped<IPersonExportArchiveWriter, PersonExportArchiveWriter>();
