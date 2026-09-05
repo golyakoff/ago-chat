@@ -132,8 +132,24 @@ public static class SitesEndpoints
         var name = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Name);
         var email = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Email);
 
+        // `24-03`: the request's own `User-Agent` header, becoming AcceptanceRecord's own request
+        // context field if this registration ends up recording one - `null` rather than an empty
+        // string when the header is absent, the same "do not invent a value" reasoning `requestIp`'s
+        // own fallback above stops short of (that one still buckets an unknown IP together for rate
+        // limiting; there is no equivalent reason to invent a user agent for evidence). Truncated to
+        // AcceptanceRecord.MaxUserAgentLength here, at the edge - a header longer than that bound is
+        // presentation noise (an unusually verbose real browser string, or a crafted one), not a fact
+        // worth failing a registration over; AcceptanceRecord.Accept would otherwise throw for a value
+        // this endpoint controls, not the caller's own business input.
+        var rawUserAgent = httpContext.Request.Headers.UserAgent.ToString();
+        var userAgent = rawUserAgent.Length == 0
+            ? null
+            : rawUserAgent.Length > AcceptanceRecord.MaxUserAgentLength
+                ? rawUserAgent[..AcceptanceRecord.MaxUserAgentLength]
+                : rawUserAgent;
+
         var result = await handler.HandleAsync(
-            new RegisterSite(externalSubjectId, requestIp, request.SiteName, request.InitialAllowedOrigin, name, email),
+            new RegisterSite(externalSubjectId, requestIp, request.SiteName, request.InitialAllowedOrigin, name, email, userAgent),
             cancellationToken);
 
         if (result.IsFailure)

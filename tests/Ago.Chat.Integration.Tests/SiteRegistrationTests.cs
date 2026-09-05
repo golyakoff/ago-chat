@@ -187,6 +187,131 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         Assert.Equal(2, siteRows.Count);
     }
 
+    /// <summary>
+    /// `24-03`'s own "What must be demonstrated": registration records an acceptance naming a real
+    /// published version, and that recorded version resolves to readable text - against a real
+    /// Postgres and a real Keycloak-issued token, not fakes. Seeds `required_documents` and a
+    /// published `Document` directly (no admin endpoint exists yet to do it through - this item's own
+    /// port is read-only, `IRequiredDocumentRepository`'s own remarks), then proves the round trip:
+    /// the site is created, exactly one <see cref="AcceptanceRecord"/> exists for it naming the
+    /// published version, and reading that exact version back through <see cref="DocumentRepository"/>
+    /// (the same production port <c>GetDocumentVersionHandler</c> uses) returns the text that was
+    /// actually published, not merely a matching identifier.
+    /// </summary>
+    [Fact]
+    public async Task RegisterSite_WhenARequiredTenantDocumentIsPublished_RecordsAnAcceptance_ThatResolvesToTheReadableText()
+    {
+        var (token, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var documentKey = $"tenant-terms-{Guid.NewGuid():N}";
+
+        await using (var seedDb = fixture.CreateDbContext())
+        {
+            seedDb.RequiredDocuments.Add(new RequiredDocumentRecord
+            {
+                Id = Guid.NewGuid(),
+                SubjectKind = AcceptanceSubjectKind.Tenant,
+                DocumentKey = documentKey,
+            });
+            var document = Document.Create(new DocumentId(Guid.NewGuid()), documentKey);
+            document.Publish(
+                new PublishedDocumentVersionId(Guid.NewGuid()), "Tenant Terms", "DRAFT v1 - awaiting legal review.", DateTimeOffset.UtcNow);
+            seedDb.Documents.Add(document);
+            await seedDb.SaveChangesAsync();
+        }
+
+        try
+        {
+            await using var host = await BuildTestHostAsync();
+            using var client = host.GetTestClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var response = await client.PostAsJsonAsync(
+                "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("Acme Support", "https://shop.example.com"));
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<SitesEndpoints.RegisterSiteResponse>();
+            Assert.NotNull(body);
+
+            await using var db = fixture.CreateDbContext();
+            var acceptance = await db.AcceptanceRecords.SingleAsync(a =>
+                a.SubjectKind == AcceptanceSubjectKind.Tenant && a.SubjectId == body.SiteId && a.DocumentKey == documentKey);
+            Assert.Equal("v1", acceptance.DocumentVersion);
+
+            var repository = new DocumentRepository(db);
+            var readBack = await repository.FindVersionAsync(documentKey, acceptance.DocumentVersion, CancellationToken.None);
+            Assert.NotNull(readBack);
+            Assert.Equal("Tenant Terms", readBack!.Title);
+            Assert.Equal("DRAFT v1 - awaiting legal review.", readBack.Body);
+        }
+        finally
+        {
+            // `OperatorOidcFixture` is shared across every test in this collection
+            // (`ActiveSiteResolutionTests` included) - a `required_documents` row this test seeds is
+            // real, global state with no delete method on its own production port
+            // (`IRequiredDocumentRepository`'s own remarks), so this test must remove it itself or
+            // every other registration in the collection would also be asked to accept it for the
+            // rest of the run. Found live: the sibling test below left exactly this kind of row
+            // behind before this cleanup existed, and `ActiveSiteResolutionTests` started failing
+            // registration with `Site.AgreementUnavailable` instead of `Created` as a result.
+            await using var cleanup = fixture.CreateDbContext();
+            await cleanup.RequiredDocuments.Where(r => r.DocumentKey == documentKey).ExecuteDeleteAsync();
+            await cleanup.PublishedDocumentVersions.Where(v => v.DocumentKey == documentKey).ExecuteDeleteAsync();
+            await cleanup.Documents.Where(d => d.DocumentKey == documentKey).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>
+    /// `24-03`'s own registration-blocking case: the owner declared <paramref name="documentKey"/>
+    /// (a fresh, unpublished one, seeded below) required before publishing anything under it. Real
+    /// host, real database - registration must fail with `Site.AgreementUnavailable` and create
+    /// neither a `Site` nor an `Operator` row for this identity, proven by querying directly rather
+    /// than trusting the response status alone.
+    /// </summary>
+    [Fact]
+    public async Task RegisterSite_WhenARequiredTenantDocumentHasNoPublishedVersion_Returns503_AndCreatesNoSiteOrOperator()
+    {
+        var (token, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var externalSubjectId = ReadSubjectClaim(token);
+        var documentKey = $"tenant-terms-{Guid.NewGuid():N}";
+
+        await using (var seedDb = fixture.CreateDbContext())
+        {
+            seedDb.RequiredDocuments.Add(new RequiredDocumentRecord
+            {
+                Id = Guid.NewGuid(),
+                SubjectKind = AcceptanceSubjectKind.Tenant,
+                DocumentKey = documentKey,
+            });
+            // Deliberately no Document/PublishedDocumentVersion under this key.
+            await seedDb.SaveChangesAsync();
+        }
+
+        try
+        {
+            await using var host = await BuildTestHostAsync();
+            using var client = host.GetTestClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var response = await client.PostAsJsonAsync(
+                "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("Acme Support", "https://shop.example.com"));
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            var problem = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.Equal("Site.AgreementUnavailable", problem.GetProperty("type").GetString());
+
+            await using var db = fixture.CreateDbContext();
+            Assert.False(await db.Operators.AnyAsync(o => o.ExternalSubjectId == externalSubjectId));
+        }
+        finally
+        {
+            // See the sibling test above's own remarks - this row is real, global, undeleted-by-design
+            // state on a fixture shared with every other test in this collection, and this is the test
+            // whose leaked row actually broke `ActiveSiteResolutionTests` before this cleanup existed.
+            await using var cleanup = fixture.CreateDbContext();
+            await cleanup.RequiredDocuments.Where(r => r.DocumentKey == documentKey).ExecuteDeleteAsync();
+        }
+    }
+
     // `12-04` added a test here asserting this endpoint answered `403` to a platform-owner token, and
     // `12-05` removed both the refusal and the test (`adr/0063`, "Reversed in 12-05"). The identity
     // that holds both the `platform-owner` realm role and an `operators` row is not a variation on
@@ -214,6 +339,12 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
+        // `24-03`: RegisterSiteHandler's own two new dependencies - registered here even though most
+        // tests in this file leave `required_documents` empty (so they resolve to zero required keys,
+        // unchanged behaviour), the same "every handler this host maps must resolve from its own
+        // container" reasoning the export/message-archive registrations below already state.
+        builder.Services.AddScoped<IRequiredDocumentRepository, RequiredDocumentRepository>();
+        builder.Services.AddScoped<IDocumentRepository, DocumentRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         // `16-03`: SitesEndpoints now also maps the export routes - every handler for every route it

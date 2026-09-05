@@ -196,6 +196,10 @@ public static class ErrorExtensions
             // conflicted with a specific resource, send a different one".
             "ChannelCredential.NotAvailable" or "ReplyDraft.Unavailable" or "demo.capacity_reached"
                 or "demo.identity_rejected"
+                // `24-03`: the identical "a dependency of this request is missing, not anything the
+                // caller supplied being wrong" shape - a required document was declared but never
+                // published yet (ConversationErrors.SiteAgreementUnavailable's own remarks).
+                or "Site.AgreementUnavailable"
                 // `22-11`: the module deployment refused the provisioning call or could not be
                 // reached - a dependency of this request failing, not anything the caller supplied
                 // being wrong, the identical reasoning ChannelCredential.NotAvailable/ReplyDraft.Unavailable's

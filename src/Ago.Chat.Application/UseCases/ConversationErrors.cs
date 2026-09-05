@@ -121,6 +121,21 @@ public static class ConversationErrors
     public static Error SiteRegistrationRateLimited(TimeSpan retryAfter) =>
         new("Site.RateLimited", $"Too many registration attempts - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
 
+    /// <summary>`24-03`: <c>IRequiredDocumentRepository</c> named <paramref name="documentKey"/> as
+    /// required for this registration, but <c>IDocumentRepository.FindCurrentAsync</c> found no
+    /// currently published version under it - the platform owner declared a requirement before
+    /// publishing the text it points at (`adr/0114`'s own sequencing: the mechanism ships first, the
+    /// text follows once a lawyer signs off). Not the caller's mistake to fix (a `400`) and not a
+    /// conflict with anything they submitted (a `409`) - this deployment is not ready to complete this
+    /// registration yet, the identical shape <see cref="ChannelNotAvailable"/>/`ReplyDraft.Unavailable`
+    /// already use for "a dependency of this request is missing, not anything the caller supplied being
+    /// wrong" (`ErrorExtensions`'s own 503 group). <c>RegisterSiteHandler</c> returns this <b>before</b>
+    /// calling <see cref="Abstractions.ISiteRegistrationRepository.TryRegisterAsync"/> - nothing is
+    /// written, so a caller who retries once the owner has published the text succeeds cleanly, with no
+    /// partial site left behind from the earlier attempt.</summary>
+    public static Error SiteAgreementUnavailable(string documentKey) =>
+        new("Site.AgreementUnavailable", $"Registration requires accepting '{documentKey}', which has no published version yet.");
+
     // `11-01`: same shared vocabulary, same reason - GetWidgetConfigHandler/UpdateWidgetConfigHandler
     // add their own codes here rather than a separate error class, matching every use case since 4-05.
     public static Error SiteNotFound(Guid siteId) =>
