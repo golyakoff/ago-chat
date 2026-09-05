@@ -73,6 +73,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // address-versus-reference decision and why this one, unlike AcceptanceRecord/ErasureRecord/
     // AccessRecord above, does carry real foreign keys.
     public DbSet<ChannelDelivery> ChannelDeliveries => Set<ChannelDelivery>();
+    // `24-03`: RoleRecord's own "no Domain/Application model yet" shape - IRequiredDocumentRepository
+    // is the only reader, RegisterSiteHandler the only caller of it.
+    internal DbSet<RequiredDocumentRecord> RequiredDocuments => Set<RequiredDocumentRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

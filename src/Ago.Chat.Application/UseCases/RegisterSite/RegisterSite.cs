@@ -1,4 +1,6 @@
-﻿namespace Ago.Chat.Application.UseCases.RegisterSite;
+﻿using Ago.Chat.Domain;
+
+namespace Ago.Chat.Application.UseCases.RegisterSite;
 
 /// <summary>`10-02`: <see cref="ExternalSubjectId"/> comes from the caller's validated Keycloak
 /// token (`sub`, `10-01`'s `RequireKeycloakIdentity` policy), never from the request body - identity
@@ -14,8 +16,15 @@
 /// from a real human's token too, not only `13-01`'s invite redemption, so it must "pass whatever it
 /// has" the same way (`23-02`'s own backlog note). Optional, appended at the end so every existing
 /// caller keeps compiling.</summary>
+/// <summary>`24-03`: <paramref name="UserAgent"/> is the request's own `User-Agent` header, carried
+/// through for the same reason <paramref name="RequestIp"/> already is - both become
+/// <see cref="AcceptanceRecord"/>'s own <c>ClientIp</c>/<c>UserAgent</c> request-context fields when
+/// this registration records an acceptance, never resolved by the handler itself
+/// (`Application` may not reference `HttpContext`). Nullable: a caller with no header to forward (an
+/// internal call, a test) must not be forced to invent one - `AcceptanceRecord.Accept`'s own
+/// remarks already accept a null `UserAgent`.</summary>
 public sealed record RegisterSite(
     string ExternalSubjectId, string RequestIp, string SiteName, string InitialAllowedOrigin,
-    string? Name = null, string? Email = null);
+    string? Name = null, string? Email = null, string? UserAgent = null);
 
 public sealed record RegisteredSite(Guid SiteId, Guid OperatorId);

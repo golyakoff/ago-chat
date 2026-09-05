@@ -394,5 +394,11 @@ internal static class TenantScopeExemptions
             + "caller with no account (nobody has accepted anything yet) can read, `24-02`'s own Scope: \"somebody "
             + "who has not yet accepted anything has no account to read it from.\" No SiteId for the same reason as "
             + "PublishDocumentVersionHandler right above: a document is not a tenant's resource.",
+        ["Ago.Chat.Application.UseCases.GetRequiredDocumentsForSubjectKind.GetRequiredDocumentsForSubjectKindHandler.HandleAsync"] =
+            "`24-03`. Deliberately unauthenticated, the identical reasoning GetDocumentVersionHandler right above "
+            + "gives for itself: a pre-account registration screen asking \"what must I accept\" has no account to "
+            + "ask it from either. Query carries an AcceptanceSubjectKind, never a SiteId - the requirement this "
+            + "reads is a property of a subject kind (tenant/operator/visitor), not of any one tenant, the same "
+            + "reason RecordAcceptanceHandler/GetAcceptancesForSubjectHandler above carry no SiteId either.",
     };
 }

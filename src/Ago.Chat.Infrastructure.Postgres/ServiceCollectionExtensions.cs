@@ -170,6 +170,9 @@ public static class ServiceCollectionExtensions
         // why the write-side aggregate load/save pair and the public read path's direct queries share
         // one implementation.
         services.AddScoped<IDocumentRepository, DocumentRepository>();
+        // `24-03`: "which documents a subject must accept" is data - RegisterSiteHandler's own port,
+        // IRequiredDocumentRepository's own remarks on why.
+        services.AddScoped<IRequiredDocumentRepository, RequiredDocumentRepository>();
         // `20-07`: the registry's own EF write port and Dapper read store - adr/0004's split, the same
         // shape every other repository/read-store pair on this page follows.
         services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
