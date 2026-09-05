@@ -317,5 +317,8 @@ public class TransferConversationHandlerTests
 
         public Task ReleaseAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
             inner.ReleaseAsync(operatorId, cancellationToken);
+
+        public Task ClaimAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
+            inner.ClaimAsync(operatorId, cancellationToken);
     }
 }

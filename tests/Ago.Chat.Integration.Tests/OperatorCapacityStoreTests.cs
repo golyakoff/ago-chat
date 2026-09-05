@@ -273,6 +273,100 @@ public class OperatorCapacityStoreTests(PostgresFixture fixture)
         Assert.Equal(1, await ReadActiveChatsAsync(operatorId));
     }
 
+    /// <summary>
+    /// `23-04`'s own Done-when, at the store level directly rather than through
+    /// `AssignConversationHandler`: "a take when `active_chats &gt;= capacity` succeeds and
+    /// `active_chats` ends one higher" - the invariant the previous design forbade for
+    /// <see cref="OperatorCapacityStore.TryClaimAsync"/>, and the entire reason
+    /// <see cref="OperatorCapacityStore.ClaimAsync"/> exists as a second, compare-free method rather
+    /// than a parameter on the first. Deliberately does not touch `conversation_assignments` at all -
+    /// this is the one piece of `23-04`'s own new behaviour a real Postgres can still prove today,
+    /// independent of the still-open `ck_conversation_assignments_source` migration gap
+    /// `AssignConversationConcurrencyTests`/`data-model.md` document.
+    /// </summary>
+    [Fact]
+    public async Task ClaimAsync_WhenAlreadyAtCapacity_StillIncrements_PastCapacity()
+    {
+        const int capacity = 1;
+        var (siteId, operatorId) = await SeedOperatorAsync(capacity);
+        await using (var db = fixture.CreateDbContext())
+        {
+            Assert.True(await new OperatorCapacityStore(db).TryClaimAsync(operatorId, CancellationToken.None));
+        }
+
+        Assert.Equal(capacity, await ReadActiveChatsAsync(operatorId));
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new OperatorCapacityStore(db).ClaimAsync(operatorId, CancellationToken.None);
+        }
+
+        // Past capacity, deliberately - `decisions.md` §2: "a manual claim increments active_chats and
+        // does not check it."
+        Assert.Equal(capacity + 1, await ReadActiveChatsAsync(operatorId));
+    }
+
+    /// <summary>An operator nobody has claimed anything for yet - `ClaimAsync`'s own unconditional
+    /// `UPDATE` still has to be the very first increment cleanly, not only the "on top of an existing
+    /// claim" case above.</summary>
+    [Fact]
+    public async Task ClaimAsync_OnAFreshOperator_IncrementsFromZero()
+    {
+        var (_, operatorId) = await SeedOperatorAsync(capacity: 5);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await new OperatorCapacityStore(db).ClaimAsync(operatorId, CancellationToken.None);
+        }
+
+        Assert.Equal(1, await ReadActiveChatsAsync(operatorId));
+    }
+
+    /// <summary>
+    /// `23-04`: the identical arranged deadlock as
+    /// <see cref="TryClaimAsync_WhenADeadlockAbortsACallerOwnedTransaction_SurfacesTheContentionType_NeverANpgsqlError"/>
+    /// above, with <see cref="OperatorCapacityStore.ClaimAsync"/> pinned as the victim - proving the
+    /// port's translation (a real <see cref="OperatorCapacityContentionException"/>, never a raw
+    /// <c>PostgresException"</c>) applies to the compare-free write exactly as it does to
+    /// <see cref="OperatorCapacityStore.TryClaimAsync"/>, and that <c>Attempts == 1</c> here too: a
+    /// deadlock inside a caller-owned transaction (which is the only shape `AssignConversationHandler`
+    /// ever calls this through) leaves nothing on this connection to retry in place.
+    /// </summary>
+    [Fact]
+    public async Task ClaimAsync_WhenADeadlockAbortsACallerOwnedTransaction_SurfacesTheContentionType_NeverANpgsqlError()
+    {
+        var (_, first) = await SeedOperatorAsync(capacity: 5);
+        var (_, second) = await SeedOperatorAsync(capacity: 5);
+
+        await using var other = await fixture.DataSource.OpenConnectionAsync();
+        var otherTransaction = await other.BeginTransactionAsync();
+        await ExecuteAsync(other, otherTransaction, "SET LOCAL deadlock_timeout = '30s'");
+        await ExecuteAsync(other, otherTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{first.Value}'");
+
+        await using var claiming = await fixture.DataSource.OpenConnectionAsync();
+        var claimingTransaction = await claiming.BeginTransactionAsync();
+        await ExecuteAsync(claiming, claimingTransaction, "SET LOCAL deadlock_timeout = '10ms'");
+        await ExecuteAsync(claiming, claimingTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{second.Value}'");
+
+        var otherBlocks = ExecuteAsync(other, otherTransaction, $"UPDATE operators SET active_chats = active_chats WHERE id = '{second.Value}'");
+        await WaitUntilWaitingAsync(other.ProcessID);
+
+        await using var db = new AgoChatDbContext(
+            new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(claiming).Options);
+        await db.Database.UseTransactionAsync(claimingTransaction);
+
+        var exception = await Assert.ThrowsAsync<OperatorCapacityContentionException>(
+            () => new OperatorCapacityStore(db).ClaimAsync(first, CancellationToken.None));
+
+        Assert.Equal(first, exception.OperatorId);
+        Assert.Equal(1, exception.Attempts);
+        Assert.Equal(PostgresErrorCodes.DeadlockDetected, Assert.IsType<PostgresException>(exception.InnerException).SqlState);
+
+        await claimingTransaction.RollbackAsync();
+        await otherBlocks;
+        await otherTransaction.RollbackAsync();
+    }
+
     private async Task<(SiteId SiteId, OperatorId OperatorId)> SeedOperatorAsync(int capacity)
     {
         var siteId = new SiteId(Guid.NewGuid());

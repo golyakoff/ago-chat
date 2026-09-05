@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
@@ -94,6 +95,16 @@ public static class ConversationsEndpoints
         // their own conversation is a different action - ending a chat session client-side - not this
         // one; see CloseConversationHandler's own remarks).
         app.MapPost("/api/v1/conversations/{conversationId:guid}/close", HandleCloseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-04`: the same sub-resource shape as `/close` right above - a deliberate take of a
+        // `Waiting` conversation, reachable without opening a hub connection first so `/admin` and
+        // `/search` can offer it directly. Dispatches the identical AssignConversationHandler
+        // `OperatorHub.JoinConversationAsync` already calls on every join - see that handler's own
+        // remarks for why every real transition through either entry point now writes
+        // ConversationAssignmentSource.Taken and charges capacity unconditionally. Operator-only, the
+        // same "conversation:assign" gate the hub path already checks.
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/claim", HandleClaimAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `18-02`: the same sub-resource shape as `/close` right above it - a write scoped to one
@@ -272,6 +283,23 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new CloseConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+    }
+
+    /// <summary>`23-04`: no request body - a claim names only the conversation the route already
+    /// addresses and the caller the auth token already carries, the same shape `/close` right above
+    /// uses for an identical reason. `204`, not `200`: there is nothing this call computes that the
+    /// caller does not already know (unlike `/read`'s resulting count, see `HandleMarkReadAsync`'s own
+    /// remarks) - a client that wants the conversation's fresh state re-fetches it, the same way a
+    /// successful `/close` or `/transfer` already expects.</summary>
+    private static async Task<IResult> HandleClaimAsync(
+        Guid conversationId, AssignConversationHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new AssignConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();

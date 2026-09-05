@@ -78,6 +78,37 @@ public sealed class OperatorCapacityStore(AgoChatDbContext db) : IOperatorCapaci
     }
 
     /// <summary>
+    /// `23-04`: the compare-free claim - see <see cref="IOperatorCapacity.ClaimAsync"/>'s own remarks
+    /// for why this exists beside <see cref="TryClaimAsync"/> rather than a parameter on it. Same
+    /// deadlock translation as <see cref="TryClaimAsync"/>, same reasoning for no retry here: every
+    /// production caller (<c>AssignConversationHandler</c>) runs this inside its own explicit
+    /// <c>IUnitOfWork</c> transaction, which a `40P01` has already aborted in full - there is nothing
+    /// left on this connection to safely re-issue, so the retry unit is the caller's whole transaction,
+    /// not this one statement (the identical split <see cref="TryClaimAsync"/>'s own remarks describe).
+    /// Deliberately does not call <see cref="Ago.Chat.Contracts.ChatMetrics.RecordCapacityClaimAttempt"/>
+    /// - that counter's own description is specifically about a compare that can lose, and reusing it
+    /// here would misreport a call that never loses the compare (only, rarely, the statement itself) as
+    /// a claim attempt with an outcome to weigh against the ones that can actually be refused.
+    /// </summary>
+    public async Task ClaimAsync(OperatorId operatorId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                UPDATE operators
+                SET active_chats = active_chats + 1
+                WHERE id = {operatorId.Value}
+                """,
+                cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DeadlockDetected)
+        {
+            throw new OperatorCapacityContentionException(operatorId, attempts: 1, ex);
+        }
+    }
+
+    /// <summary>
     /// `6-10`: the release retries on `40P01`, the claim does not. Not an oversight - the two calls
     /// sit in different transaction shapes and only one of them *can* retry. Every
     /// <see cref="TryClaimAsync"/> in production runs inside an <see cref="IAssignmentClaimer"/>'s

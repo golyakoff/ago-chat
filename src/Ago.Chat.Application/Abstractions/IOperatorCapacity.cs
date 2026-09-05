@@ -23,6 +23,33 @@ public interface IOperatorCapacity
     /// now reserved; <c>false</c> means nothing changed.</summary>
     Task<bool> TryClaimAsync(OperatorId operatorId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// `23-04`: reserves one slot unconditionally - <c>UPDATE operators SET active_chats =
+    /// active_chats + 1 WHERE id = @id</c>, no <c>AND active_chats &lt; capacity</c> at all.
+    /// <c>decisions.md</c> §2 is explicit that capacity gates the automatic assigner only, never a
+    /// person's own deliberate choice: "a manual claim increments <c>active_chats</c> and does not
+    /// check it. The counter rises past capacity freely." <c>active_chats</c> ending above
+    /// <c>capacity</c> after this call is therefore the intended, correct outcome, not a bug for a
+    /// future reader to "fix" back into <see cref="TryClaimAsync"/>'s own shape - see
+    /// <c>AssignConversationHandler</c>'s own remarks for who is allowed to call this and why.
+    ///
+    /// <para><b>A second method, not a boolean parameter on <see cref="TryClaimAsync"/>.</b> One of the
+    /// two can fail (a normal, expected outcome every caller of it must handle) and the other cannot -
+    /// collapsing them into one method keyed by a <c>bool checkCapacity</c> would let a caller pass the
+    /// wrong flag and silently receive the wrong guarantee, exactly the ambiguity CLAUDE.md's own
+    /// backlog item text for this work called out by name. The method name carries the difference
+    /// instead: <c>Try</c>-prefixed methods in this codebase return whether they succeeded,
+    /// unprefixed ones do not because they cannot fail short of a real error.</para>
+    ///
+    /// <para><b>Still throws <see cref="OperatorCapacityContentionException"/> on a Postgres deadlock,
+    /// exactly like <see cref="TryClaimAsync"/>.</b> "Cannot fail" describes the compare, not the
+    /// statement - concurrency.md's lock-order section shows even a single-row <c>UPDATE</c> can lose a
+    /// deadlock as an innocent bystander to the assignment engine's own multi-row batches, and rule 2
+    /// forbids a raw <c>PostgresException</c> surfacing above Infrastructure regardless of which
+    /// statement produced it.</para>
+    /// </summary>
+    Task ClaimAsync(OperatorId operatorId, CancellationToken cancellationToken);
+
     /// <summary>Releases one previously-claimed slot. A no-op floor at zero - never goes negative,
     /// so a caller that races a duplicate release cannot corrupt the count.
     ///

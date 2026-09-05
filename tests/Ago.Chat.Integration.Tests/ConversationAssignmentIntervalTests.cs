@@ -46,7 +46,7 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task AssignConversationHandler_WhenClaimingAWaitingConversation_OpensAnInterval()
+    public async Task AssignConversationHandler_WhenClaimingAWaitingConversation_OpensATakenInterval_AndChargesCapacity()
     {
         var (siteId, operatorId, conversationId) = await SeedWaitingConversationAsync(Permission.ConversationAssign);
 
@@ -54,11 +54,11 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new UuidV7Generator(), new SystemClock());
+                new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
                 new AssignConversation(conversationId, operatorId, siteId), CancellationToken.None);
-            Assert.True(result.IsSuccess);
+            Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : string.Empty);
         }
 
         await using var verify = fixture.CreateDbContext();
@@ -66,8 +66,20 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
             .SingleAsync(i => i.ConversationId == conversationId);
         Assert.Equal(operatorId, interval.OperatorId);
         Assert.Equal(siteId, interval.SiteId);
-        Assert.Equal(ConversationAssignmentSource.Assigned, interval.Source);
+        // `23-04`: Taken, not Assigned - this path gained a reachable UI and its own value.
+        Assert.Equal(ConversationAssignmentSource.Taken, interval.Source);
         Assert.Null(interval.EndedAt);
+
+        // `23-04`'s own Done-when: "A take when active_chats >= capacity succeeds and active_chats
+        // ends one higher" - proven here at the ordinary, well-under-capacity case first;
+        // AssignConversationConcurrencyTests proves the over-capacity case against real contention.
+        var activeChats = await verify.Operators.AsNoTracking()
+            .Where(o => o.Id == operatorId)
+            .Select(o => EF.Property<int>(o, "active_chats"))
+            .SingleAsync();
+        Assert.Equal(1, activeChats);
+        var conversationRow = await verify.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+        Assert.True(conversationRow.HoldsCapacityClaim);
     }
 
     /// <summary>`23-03`'s own Done-when: "A hub reconnect by the same operator adds no row" - proven
@@ -83,7 +95,7 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new UuidV7Generator(), new SystemClock());
+                new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
             Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
         }
 
@@ -91,13 +103,20 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new UuidV7Generator(), new SystemClock());
+                new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
             Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
         }
 
         await using var verify = fixture.CreateDbContext();
         var count = await verify.ConversationAssignments.CountAsync(i => i.ConversationId == conversationId);
         Assert.Equal(1, count);
+
+        // `23-04`'s own Scope: "a reconnect must not increment a second time."
+        var activeChats = await verify.Operators.AsNoTracking()
+            .Where(o => o.Id == operatorId)
+            .Select(o => EF.Property<int>(o, "active_chats"))
+            .SingleAsync();
+        Assert.Equal(1, activeChats);
     }
 
     /// <summary>`23-03`'s own Done-when: "A conversation closed while held leaves no open interval" -

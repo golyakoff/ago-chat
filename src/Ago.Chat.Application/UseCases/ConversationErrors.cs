@@ -344,6 +344,15 @@ public static class ConversationErrors
     public static Error TransferContended(Guid conversationId) =>
         new("Conversation.TransferContended", $"Conversation {conversationId} could not be transferred because of write contention; retry the request.");
 
+    /// <summary>`23-04`: the identical shape as <see cref="TransferContended"/>, for a deliberate take
+    /// instead of a transfer - <see cref="Application.UseCases.AssignConversation.AssignConversationHandler.HandleAsync"/>'s
+    /// own transaction lost a Postgres deadlock against the assignment engine (or a concurrently racing
+    /// take) on every attempt the handler was willing to make. Nothing here ever committed, so there is
+    /// no leaked slot to accept, only a request to retry - `409`, the same "retry the request" shape
+    /// <see cref="ConcurrencyConflict"/>/<see cref="TransferContended"/> already use.</summary>
+    public static Error ClaimContended(Guid conversationId) =>
+        new("Conversation.ClaimContended", $"Conversation {conversationId} could not be claimed because of write contention; retry the request.");
+
     // `18-04`: same shared vocabulary, same reason - the note/tag handlers add their own codes here
     // rather than a separate error class.
     /// <summary>An empty or oversized note body - <see cref="Domain.ConversationNote.Write"/>'s own

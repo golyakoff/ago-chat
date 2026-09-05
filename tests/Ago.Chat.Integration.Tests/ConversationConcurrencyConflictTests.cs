@@ -117,7 +117,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var racingRepository = new RacingConversationRepository(
             new ConversationRepository(db), maxInjections: 1, () => SendConcurrentVisitorMessageAsync(visitorId, conversationId));
         var handler = new AssignConversationHandler(
-            racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new UuidV7Generator(), new SystemClock());
+            racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
+            new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
 
         var result = await handler.HandleAsync(new AssignConversation(conversationId, operatorId, siteId), CancellationToken.None);
 
