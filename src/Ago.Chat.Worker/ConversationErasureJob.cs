@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
@@ -18,15 +19,20 @@ namespace Ago.Chat.Worker;
 /// tick rather than killing the backstop (`concurrency.md`). One conversation's failure does not stop
 /// the others claimed in the same cycle - see <see cref="SweepAsync"/>'s own per-item try/catch.
 ///
-/// <para><b>The archive.</b> `16-02`'s brief is explicit that erasure must reach `adr/0031`'s archive
-/// once one exists. Nothing archives today - `13-06`, the real archive writer, is not built
-/// (`Ago.Chat.Worker`'s <c>IMessageArchiveGate</c> is used only by <c>MessagePartitionPruneJob</c>'s
-/// time-based whole-partition drops, a different mechanism from this row-scoped delete). This job does
-/// not reach an archive because there is nothing to reach - stated here rather than built
-/// speculatively (a fake archive-erasure port with no real implementation is exactly the premature
-/// generalisation `CLAUDE.md` warns against). When `13-06` ships a real archive, the obvious single
-/// place to add "and delete the archived copy too" is <see cref="EraseConversationAsync"/>, as a
-/// clearly-commented step between the MinIO deletes and the message-batch loop below.</para>
+/// <para><b>The archive, closed by `24-09`.</b> `16-02`'s brief was explicit that erasure must reach
+/// `adr/0031`'s archive once one existed - it did not yet when this job was written, and this
+/// paragraph used to say so ("nothing archives today"). `13-06` shipped the real archive writer since,
+/// and left the seam this job's own remarks named as the obvious next step: <see cref="EraseConversationAsync"/>
+/// now calls <see cref="ConversationArchiveEraser.EraseAsync"/> for every conversation it erases, which
+/// downloads each of the site's archived periods, drops the lines naming this conversation, and
+/// re-uploads the result - a read-modify-write, not a delete, since one archive object covers every
+/// conversation a site had in one period (`docs/adr/0108-*`, <see cref="ConversationArchiveEraser"/>'s
+/// own remarks for the full reasoning). <b>This changes this job's reliability profile</b>: erasure now
+/// depends on object storage being reachable for a read as well as a write, and can take one HTTP
+/// round trip per archived period the site has, not only per attachment. A failure in that step is
+/// allowed to throw rather than being logged and tolerated - unlike an attachment-object delete, a
+/// silently-tolerated archive failure would let this method report the conversation erased while an
+/// archived copy still stood, which is precisely the defect this item exists to close.</para>
 ///
 /// <para><b>Completeness and backups.</b> Erasure here means every row and object this process can
 /// reach. `15-02`/`adr/0050` already set backup retention to <b>30 days</b> - this item does not
@@ -37,6 +43,7 @@ namespace Ago.Chat.Worker;
 public sealed class ConversationErasureJob(
     NpgsqlDataSource dataSource,
     IFileStorage fileStorage,
+    ConversationArchiveEraser archiveEraser,
     IClock clock,
     IOptions<ConversationErasureJobOptions> options,
     ILogger<ConversationErasureJob> logger) : BackgroundService
@@ -128,6 +135,21 @@ public sealed class ConversationErasureJob(
     /// job ages out transcripts on a timer with no request behind it, and sweeping a contact away with
     /// an aged-out conversation would cost the tenant an asset every time a transcript's own window
     /// closed - the "no cascade from retention" half of the same decision.</item>
+    /// <item><b>`24-09`: the archive, last of all and still before the conversation row.</b>
+    /// <see cref="ConversationArchiveEraser"/> reads only <c>message_archives</c> and this conversation's
+    /// id - it needs nothing from <c>messages</c> that survives the batch loop above, so it could run
+    /// anywhere before the row delete. It runs here, immediately before
+    /// <see cref="ConversationErasureQuery.DeleteConversationAsync"/>, for the reason that placement is
+    /// load-bearing rather than cosmetic: <c>erasure_requested_at</c> lives on the <c>conversations</c>
+    /// row, so once that row is gone there is nothing left for <see cref="ListPendingAsync"/> to
+    /// re-claim. If archive erasure ran <i>after</i> the row delete and then failed or the process died,
+    /// the next cycle would never look at this conversation again, and an archived copy could survive
+    /// with no flag anywhere pointing at it - the exact "row deleted before its object, leaving an
+    /// orphan nobody can find" hazard <c>personal-data.md</c> already names for attachments, applied to
+    /// the archive instead. Running it here means a crash or a storage failure leaves the row (and the
+    /// flag) standing, and the next cycle's claim retries the whole conversation - messages and notes
+    /// and tags already gone are idempotent no-ops, and only the archive step (and the row delete) is
+    /// left to actually do anything.</item>
     /// </list>
     /// </summary>
     /// <returns><see langword="true"/> if this conversation was fully erased (its row is gone);
@@ -184,6 +206,10 @@ public sealed class ConversationErasureJob(
                 // DeleteContactDetailsForVisitorAsync's for why this is keyed to the visitor rather than
                 // this conversation.
                 await ConversationErasureQuery.DeleteContactDetailsForVisitorAsync(connection, visitorId, cancellationToken);
+                // `24-09`: strip this conversation's own rows out of every archive object the site has
+                // that might still hold them - see this method's own remarks for why this must run
+                // before the conversation row goes, not after.
+                await archiveEraser.EraseAsync(new SiteId(siteId), conversationId, cancellationToken);
                 await ConversationErasureQuery.DeleteConversationAsync(connection, conversationId, cancellationToken);
                 return true;
             }

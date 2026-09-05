@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Worker;
 using Ago.Platform.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -65,9 +66,13 @@ public sealed class ConversationAssignmentErasureGuardTests(PostgresFixture fixt
             await db.SaveChangesAsync();
         }
 
+        var erasureOptions = new ConversationErasureJobOptions();
+        var archiveEraser = new ConversationArchiveEraser(
+            new FakeFileStorage(), new MessageArchiveRepository(fixture.DataSource), erasureOptions,
+            NullLogger<ConversationArchiveEraser>.Instance);
         var job = new ConversationErasureJob(
-            fixture.DataSource, new FakeFileStorage(), new SystemClock(),
-            Options.Create(new ConversationErasureJobOptions()), NullLogger<ConversationErasureJob>.Instance);
+            fixture.DataSource, new FakeFileStorage(), archiveEraser, new SystemClock(),
+            Options.Create(erasureOptions), NullLogger<ConversationErasureJob>.Instance);
 
         // Called directly rather than through SweepAsync's own claim query - this test does not need
         // erasure_requested_at set, since EraseConversationAsync itself has no opinion about that flag;

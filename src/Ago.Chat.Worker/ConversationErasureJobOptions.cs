@@ -35,4 +35,16 @@ public sealed class ConversationErasureJobOptions
     /// because "how far" is exactly what is left in the table (`16-02`'s own design note on resumability).
     /// At the defaults this still drains up to 50,000 messages per conversation per cycle.</summary>
     public int MaxMessageBatchesPerConversation { get; set; } = 100;
+
+    /// <summary>`24-09`: lifetime of the presigned GET <see cref="ConversationArchiveEraser"/> uses to
+    /// read back an existing archive object before filtering it - the Worker's own internal transfer,
+    /// short-lived because it is issued and consumed in the same method call, the same "ephemeral,
+    /// immediately-consumed" reasoning <see cref="MessageArchiveJobOptions.UploadUrlLifetime"/> already
+    /// gives for the opposite direction.</summary>
+    public TimeSpan ArchiveDownloadUrlLifetime { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>`24-09`: lifetime of the presigned PUT <see cref="ConversationArchiveEraser"/> uses to
+    /// write a rewritten archive object back to the exact key it read it from - same reasoning as
+    /// <see cref="ArchiveDownloadUrlLifetime"/>, mirrored for the write side.</summary>
+    public TimeSpan ArchiveUploadUrlLifetime { get; set; } = TimeSpan.FromMinutes(10);
 }

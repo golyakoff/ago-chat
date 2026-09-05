@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.IO.Compression;
+using System.Text.Json;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -83,9 +85,7 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
             Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
         }
 
-        var conversationJob = new ConversationErasureJob(
-            fixture.DataSource, fixture.FileStorage, clock,
-            Options.Create(new ConversationErasureJobOptions()), NullLogger<ConversationErasureJob>.Instance);
+        var conversationJob = CreateConversationJob(clock);
 
         for (var i = 0; i < 3; i++)
         {
@@ -124,6 +124,174 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         // it, and a tag vocabulary entry is site-scoped, not conversation-scoped (TagConfiguration's
         // own remarks); only SiteErasureJob's whole-account cascade removes the definition row.
         Assert.Equal(1, await CountAsync("select count(*) from tags where id = @id", tagId.Value));
+    }
+
+    /// <summary>
+    /// `24-09`'s own Done-when: "an erasure that runs after a conversation's messages were archived
+    /// leaves no copy of them in the archive." Two conversations on one site, each with one message
+    /// dated far enough in the past to be past `13-06`'s own retention horizon, archived for real by a
+    /// real <see cref="MessageArchiveJob"/> cycle (one object covers both, since they share a site,
+    /// class and period, exactly `adr/0031`'s "one object per site per period" - the reason a whole-
+    /// object delete would have destroyed the *kept* conversation's transcript too, `docs/adr/0108-*`'s
+    /// own reasoning). Erasing one of the two must remove only its own lines from that shared object.
+    ///
+    /// <para>Deliberately does not also run `MessagePartitionPruneJob` to drop the live rows - this
+    /// method's own removal is independent of whether the live `messages` row still exists
+    /// (<see cref="ConversationArchiveEraser"/> reads only <c>message_archives</c> and the conversation
+    /// id), so proving it here, against a still-live row, is exactly as strong a proof as proving it
+    /// against a dropped one, for less test machinery.</para>
+    /// </summary>
+    [Fact]
+    public async Task ErasingOneConversation_RemovesItsOwnLinesFromAnArchiveItSharesWithAnotherConversation()
+    {
+        var referenceNow = new DateTimeOffset(2010, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var archivedAt = new DateTimeOffset(2010, 1, 15, 12, 0, 0, TimeSpan.Zero);
+        var retentionClass = RetentionClass.Free;
+        const int retentionHorizonMonths = 3;
+
+        var siteId = await SeedSiteAsync("archive-erasure-site");
+        var (adminOperatorId, _) = await SeedOperatorAsync(siteId);
+
+        var (toEraseConversationId, toEraseVisitorId) = await SeedConversationAsync(siteId);
+        var (toKeepConversationId, _) = await SeedConversationAsync(siteId);
+        await SeedArchivedMessageAsync(siteId, toEraseConversationId, retentionClass, archivedAt, "erase me from the archive");
+        await SeedArchivedMessageAsync(siteId, toKeepConversationId, retentionClass, archivedAt, "keep me in the archive");
+
+        // Archives for real: one object, `messages.jsonl` carrying both conversations' lines.
+        var archiveClock = new SettableClock(referenceNow);
+        var archiveJob = CreateArchiveJob(archiveClock, retentionHorizonMonths);
+        Assert.Equal(1, await archiveJob.ArchiveAsync(CancellationToken.None));
+
+        var archiveRepository = new MessageArchiveRepository(fixture.DataSource);
+        var archivedPeriod = Assert.Single(await archiveRepository.ListForSiteAsync(siteId, CancellationToken.None));
+        var beforeLines = await DownloadMessageLinesAsync(archivedPeriod.ObjectKey);
+        Assert.Equal(2, beforeLines.Count);
+
+        // Now the erasure request, and the real job that drains it - the same shape the other test in
+        // this file uses.
+        var erasureClock = new SettableClock(referenceNow);
+        var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
+        await using (var permissionDb = fixture.CreateDbContext())
+        {
+            var requestHandler = new RequestConversationErasureHandler(
+                erasureRequests, new PermissionChecker(permissionDb), erasureClock);
+            var requested = await requestHandler.HandleAsync(
+                new RequestConversationErasure(toEraseConversationId, adminOperatorId, siteId), CancellationToken.None);
+            Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
+        }
+
+        var conversationJob = CreateConversationJob(erasureClock);
+        for (var i = 0; i < 3; i++)
+        {
+            await conversationJob.SweepAsync(CancellationToken.None);
+        }
+
+        // The conversation itself is gone, the ordinary Done-when this file already proves elsewhere.
+        Assert.Equal(0, await CountAsync("select count(*) from conversations where id = @id", toEraseConversationId.Value));
+
+        // `24-09`'s own claim: the archive object - the *same* object, same key, both conversations
+        // shared - no longer carries the erased conversation's line, and still carries the other one's.
+        var afterLines = await DownloadMessageLinesAsync(archivedPeriod.ObjectKey);
+        var remaining = Assert.Single(afterLines);
+        Assert.Equal(toKeepConversationId.Value, remaining.GetProperty("conversationId").GetGuid());
+        Assert.DoesNotContain(afterLines, line => line.GetProperty("conversationId").GetGuid() == toEraseConversationId.Value);
+
+        // The manifest row itself still stands - `24-09` rewrites the object, it does not remove the
+        // manifest or the object wholesale, since the kept conversation's own line still lives there.
+        Assert.Equal(1, await CountAsync(
+            "select count(*) from message_archives where site_id = @id", siteId.Value));
+
+        // The visitor whose conversation was erased: contact-detail/erasure completeness is proven by
+        // the other test in this file; this one only needs the visitor id to exist for seeding.
+        _ = toEraseVisitorId;
+    }
+
+    private ConversationErasureJob CreateConversationJob(IClock clock)
+    {
+        var erasureOptions = new ConversationErasureJobOptions();
+        var archiveEraser = new ConversationArchiveEraser(
+            fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource), erasureOptions,
+            NullLogger<ConversationArchiveEraser>.Instance);
+        return new ConversationErasureJob(
+            fixture.DataSource, fixture.FileStorage, archiveEraser, clock,
+            Options.Create(erasureOptions), NullLogger<ConversationErasureJob>.Instance);
+    }
+
+    private MessageArchiveJob CreateArchiveJob(IClock clock, int retentionHorizonMonths)
+    {
+        var archiveOptions = new MessageArchiveJobOptions();
+        var writer = new MessageArchiveWriter(fixture.FileStorage, archiveOptions);
+        return new MessageArchiveJob(
+            fixture.DataSource, fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource), writer, clock,
+            new UuidV7Generator(),
+            Options.Create(new MessagePartitionPruneJobOptions { RetentionHorizonMonths = retentionHorizonMonths }),
+            Options.Create(archiveOptions), NullLogger<MessageArchiveJob>.Instance);
+    }
+
+    /// <summary>A conversation row with no messages of its own yet - <see cref="SeedArchivedMessageAsync"/>
+    /// inserts the message directly, the same "bypass the aggregate to control `created_at`" convention
+    /// <c>MessageRetentionArchiveEndToEndTests.SeedMessageAsync</c> already establishes.</summary>
+    private async Task<(ConversationId ConversationId, VisitorId VisitorId)> SeedConversationAsync(SiteId siteId)
+    {
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, DateTimeOffset.UtcNow);
+
+        await using var db = fixture.CreateDbContext();
+        db.Visitors.Add(new Visitor(visitorId, siteId, DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync();
+        db.Conversations.Add(conversation);
+        await db.SaveChangesAsync();
+
+        return (conversation.Id, visitorId);
+    }
+
+    private async Task SeedArchivedMessageAsync(
+        SiteId siteId, ConversationId conversationId, RetentionClass retentionClass, DateTimeOffset createdAt, string body)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await connection.ExecuteAsync(
+            """
+            insert into messages (id, conversation_id, sequence, author_kind, author_id, body, created_at, retention_class, site_id)
+            values (@id, @conversationId, 1, 'Visitor', @authorId, @body, @createdAt, @retentionClass, @siteId)
+            """,
+            new
+            {
+                id = Guid.NewGuid(),
+                conversationId = conversationId.Value,
+                authorId = Guid.NewGuid(),
+                body,
+                createdAt,
+                retentionClass = retentionClass.Value,
+                siteId = siteId.Value,
+            });
+    }
+
+    private static readonly HttpClient ArchiveHttp = new();
+
+    private async Task<IReadOnlyList<JsonElement>> DownloadMessageLinesAsync(string objectKey)
+    {
+        var downloadUrl = await fixture.FileStorage.CreateDownloadUrlAsync(
+            new ObjectKey(objectKey), TimeSpan.FromMinutes(5), CancellationToken.None);
+        using var response = await ArchiveHttp.GetAsync(downloadUrl);
+        response.EnsureSuccessStatusCode();
+        using var stream = new MemoryStream(await response.Content.ReadAsByteArrayAsync());
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+
+        var entry = archive.GetEntry("messages.jsonl") ?? throw new InvalidOperationException("Archive has no messages.jsonl entry.");
+        await using var entryStream = entry.Open();
+        using var reader = new StreamReader(entryStream);
+
+        var lines = new List<JsonElement>();
+        string? line;
+        while ((line = await reader.ReadLineAsync()) is not null)
+        {
+            if (line.Length > 0)
+            {
+                lines.Add(JsonDocument.Parse(line).RootElement.Clone());
+            }
+        }
+
+        return lines;
     }
 
     private async Task<SiteId> SeedSiteAsync(string name)
