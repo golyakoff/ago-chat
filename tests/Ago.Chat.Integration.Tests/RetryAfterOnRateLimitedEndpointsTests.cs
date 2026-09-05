@@ -358,6 +358,10 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
 
         public Task<IReadOnlyList<string>> GetPermissionsAsync(OperatorId operatorId, SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        // `23-26`: same "a visitor path must never reach this" contract as HasPermissionAsync above.
+        public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
     }
 
     private sealed class AllowAllPermissionChecker : IPermissionChecker
@@ -366,6 +370,11 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             Task.FromResult(true);
 
         public Task<IReadOnlyList<string>> GetPermissionsAsync(OperatorId operatorId, SiteId siteId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        // `23-26`: not part of the rate-limited path under test either - RemoveOperator is not one of
+        // the endpoints this suite exercises.
+        public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
     }
 

@@ -53,8 +53,9 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
             {
                 var operators = new OperatorRepository(db);
                 var permissions = new PermissionChecker(db);
+                var unitOfWork = new EfUnitOfWork(db);
                 var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
-                var handler = new RemoveOperatorHandler(operators, permissions, outbox, new UuidV7Generator(), new SystemClock());
+                var handler = new RemoveOperatorHandler(operators, permissions, unitOfWork, outbox, new UuidV7Generator(), new SystemClock());
 
                 var adminOperatorId = await SeedAdminAsync(db, siteId);
                 var result = await handler.HandleAsync(new RemoveOperator(adminOperatorId, siteId, operatorId), CancellationToken.None);

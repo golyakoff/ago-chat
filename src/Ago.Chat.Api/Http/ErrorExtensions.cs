@@ -122,7 +122,12 @@ public static class ErrorExtensions
                 // `14-15`/`adr/0079` decision 3: the identical "refused, not merged" conflict for a
                 // phone number already verified under a different visitor - ConversationErrors.
                 // PhoneVerificationAlreadyLinkedToAnotherVisitor's own remarks.
-                or "PhoneVerification.AlreadyLinkedToAnotherVisitor" => StatusCodes.Status409Conflict,
+                or "PhoneVerification.AlreadyLinkedToAnotherVisitor"
+                // `23-26`: a real conflict with the site's own current state (removing this operator
+                // would leave nobody who can manage operators), not a malformed request - the same
+                // "retry makes no sense, the remedy is a different action first" shape every other code
+                // in this group already gives for its own conflict.
+                or "Operator.IsLastManager" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.

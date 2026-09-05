@@ -246,5 +246,10 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
 
         public Task<IReadOnlyList<string>> GetPermissionsAsync(OperatorId operatorId, SiteId siteId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<string>>([]);
+
+        // `23-26`: this suite's own subject is the installation signal, not RemoveOperator's guard -
+        // never called here.
+        public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the installation-signal path under test.");
     }
 }

@@ -307,8 +307,8 @@ public sealed class RoleAssignmentProjectionBackfillTests(RoleAssignmentProjecti
         await using (var removeDb = fixture.CreateDbContext())
         {
             var handler = new RemoveOperatorHandler(
-                new OperatorRepository(removeDb), new PermissionChecker(removeDb), new EfOutboxWriter<AgoChatDbContext>(removeDb),
-                new UuidV7Generator(), new FixedClock(RunStartedAt));
+                new OperatorRepository(removeDb), new PermissionChecker(removeDb), new EfUnitOfWork(removeDb),
+                new EfOutboxWriter<AgoChatDbContext>(removeDb), new UuidV7Generator(), new FixedClock(RunStartedAt));
             var result = await handler.HandleAsync(new RemoveOperator(requestedById, siteId, operatorId), CancellationToken.None);
             Assert.True(result.IsSuccess);
         }

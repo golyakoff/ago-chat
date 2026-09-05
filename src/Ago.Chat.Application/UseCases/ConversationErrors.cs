@@ -314,6 +314,20 @@ public static class ConversationErrors
     public static Error OperatorAlreadyRemoved(Guid operatorId) =>
         new("Operator.AlreadyRemoved", $"Operator {operatorId} has already been removed.");
 
+    /// <summary>`23-26`: refused because removing this operator would leave the site with nobody who
+    /// holds `site:manage_operators` - the invariant is about the *site*, never about who is asking
+    /// (self-removal is refused on exactly the same terms as anyone else removing this same last
+    /// holder, and permitted the moment somebody else already holds the permission too). The message
+    /// names both the constraint and the remedy, per `flows.md`'s own rule that error wording is read
+    /// by a shop owner, not an engineer - there is no console screen for this refusal
+    /// (this item's own Out of scope), so this message is the entire explanation a caller ever
+    /// sees.</summary>
+    public static Error OperatorIsLastManager() =>
+        new(
+            "Operator.IsLastManager",
+            "This site must always have at least one operator who can manage operators. Grant that " +
+            "permission to another operator before removing this one.");
+
     // `18-02`: same shared vocabulary, same reason - TransferConversationHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>
