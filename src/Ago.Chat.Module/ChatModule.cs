@@ -126,6 +126,7 @@ using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
+using Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.GetConsentRequirement;
 using Ago.Chat.Application.UseCases.RecordVisitorConsent;
@@ -906,6 +907,9 @@ public sealed class ChatModule : IProductModule
         // `23-14`: the per-tenant companion to the read above - same host, same policy, same
         // registration shape.
         services.AddScoped<GetSiteForOwnerHandler>();
+        // `23-48`: the platform owner's own write for a tenant's allowed origins - same host, same
+        // policy, same registration shape as the two reads just above.
+        services.AddScoped<UpdateSiteAllowedOriginsAsOwnerHandler>();
 
         // `6-03`: the registration and delivery-history backend for a future self-service console
         // screen - see each handler's own remarks. Registered for every host (the same shape as

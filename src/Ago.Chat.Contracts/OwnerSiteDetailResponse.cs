@@ -16,6 +16,11 @@
 /// agent repairing a tenant (`flows.md` 5.3) needs to see a lapsed trial, not just its absence; the
 /// tenant's own `/settings` screen has no such need and keeps calling the filtered read
 /// unchanged.</param>
+/// <param name="AllowedOrigins">`23-48`: the tenant's own current <c>Site.AllowedOrigins</c>, added so
+/// the owner's detail screen - the only place any of it may now be edited - has something to show and
+/// edit without a second round trip. Every entry is already in normalized form
+/// (<c>Ago.Chat.Application.UseCases.RegisterSite.OriginValidator</c> refuses anything else at write
+/// time), so this list needs no further formatting to be shown back verbatim.</param>
 public sealed record OwnerSiteDetailResponse(
     Guid SiteId,
     string Name,
@@ -27,7 +32,8 @@ public sealed record OwnerSiteDetailResponse(
     DateTimeOffset? LastMessageAt,
     long AttachmentBytes,
     int RecentWindowDays,
-    IReadOnlyList<OwnerSiteModuleDto> Modules);
+    IReadOnlyList<OwnerSiteModuleDto> Modules,
+    IReadOnlyList<string> AllowedOrigins);
 
 /// <summary>
 /// `23-14`: one row of <see cref="OwnerSiteDetailResponse.Modules"/> - a module this site has (or had)

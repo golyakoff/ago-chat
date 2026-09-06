@@ -362,6 +362,18 @@ internal static class TenantScopeExemptions
             + "tenant's own self-service purchase, but neither is a second permission check - RequirePlatformOwner "
             + "on the route remains the entire access-control story unchanged; force/reason gate a business "
             + "decision (was this override meant), not who may call the route at all.",
+        ["Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner.UpdateSiteAllowedOriginsAsOwnerHandler.HandleAsync"] =
+            "`23-48`, the platform owner's own write for a tenant's allowed origins - the author's own decision "
+            + "('the answer', docs/backlog/23-48-*.md) is that only the platform owner may ever call this, not the "
+            + "tenant whose site it is. The identical category as EnableModuleForSiteAsOwnerHandler/"
+            + "RevokeModuleForSiteAsOwnerHandler above: SiteId names the tenant being acted on, chosen by the owner, "
+            + "not a resource the caller already owns, and RequirePlatformOwner on "
+            + "OwnerSiteAllowedOriginsEndpoints is the entire access-control story - Ago.Chat.Application still has "
+            + "no port that can see a Keycloak realm-role claim, so a permission check here would be a second, "
+            + "weaker copy of a rule the policy already decided. Unlike either of those two, this field has never "
+            + "had a self-service writer at all (23-46's own finding: 'there is no editor for a chat tenant's "
+            + "allowed origin anywhere in this console') - there is no nullable-OperatorId branch this could have "
+            + "been instead, because there is no sibling handler to branch off of.",
 
         // ---------------------------------------------------------------------------------------
         // `24-01`: the acceptance record's own two handlers. Neither carries a SiteId at all - not

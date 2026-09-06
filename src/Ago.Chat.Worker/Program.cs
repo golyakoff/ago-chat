@@ -204,6 +204,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<SiteCacheInvalidationConsumer>();
 
+// `23-48`: the CORS-layer sibling registered right beside it - its own hosted service, its own
+// options section, the same "one consumer, one event type" shape as the one just above.
+builder.Services
+    .AddOptions<SiteAllowedOriginsCacheInvalidationConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(SiteAllowedOriginsCacheInvalidationConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<SiteAllowedOriginsCacheInvalidationConsumer>();
+
 // `5-04`: AttachmentOptions itself is already bound by ChatModule (every host); this is just the
 // thumbnail job's own dimensions/quality and the consumer's retry shape.
 builder.Services

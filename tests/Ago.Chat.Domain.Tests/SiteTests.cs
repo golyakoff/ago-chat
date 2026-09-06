@@ -512,4 +512,63 @@ public class SiteTests
 
         Assert.Single(site.DomainEvents);
     }
+
+    // `23-48`: Site's own seventh update path - the first to ever change AllowedOrigins after
+    // construction. These are the domain-level fails-before: before UpdateAllowedOrigins existed,
+    // nothing on this aggregate could change the value at all, so every one of these would have had
+    // no method to call.
+
+    [Fact]
+    public void UpdateAllowedOrigins_WhenCalled_ReplacesTheList()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", ["https://old.example"]);
+
+        site.UpdateAllowedOrigins(["https://new.example", "https://second.example"], DateTimeOffset.UtcNow);
+
+        Assert.Equal(["https://new.example", "https://second.example"], site.AllowedOrigins);
+    }
+
+    [Fact]
+    public void UpdateAllowedOrigins_WhenCalled_RaisesDomainEventExactlyOnce_CarryingBothThePreviousAndNewLists()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", ["https://old.example"]);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateAllowedOrigins(["https://new.example"], now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteAllowedOriginsUpdated>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Equal("shop_7f3a", raised.PublicKey);
+        Assert.Equal(["https://old.example"], raised.PreviousOrigins);
+        Assert.Equal(["https://new.example"], raised.AllowedOrigins);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void UpdateAllowedOrigins_WhenCalledTwice_RaisesTwoDomainEventsUntilCleared()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", ["https://old.example"]);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateAllowedOrigins(["https://new.example"], now);
+        site.ClearDomainEvents();
+        site.UpdateAllowedOrigins(["https://old.example"], now);
+
+        Assert.Single(site.DomainEvents);
+    }
+
+    [Fact]
+    public void UpdateAllowedOrigins_WhenTheSameListIsSetAgain_StillRaisesAnEvent()
+    {
+        // No "no-op if unchanged" short-circuit - the same "the write always happens, the cache is
+        // always re-invalidated" shape every other Site update path uses (re-broadcasting an
+        // invalidation for an unchanged key is free, SiteCacheInvalidationConsumer's own remarks).
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", ["https://old.example"]);
+
+        site.UpdateAllowedOrigins(["https://old.example"], DateTimeOffset.UtcNow);
+
+        Assert.Single(site.DomainEvents);
+    }
 }

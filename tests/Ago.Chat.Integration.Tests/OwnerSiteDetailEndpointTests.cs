@@ -48,7 +48,7 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
     {
         var siteId = new SiteId(Guid.NewGuid());
         var createdAt = DateTimeOffset.UtcNow.AddDays(-7);
-        await SeedBareTenantAsync(siteId, "Detail Read Tenant", createdAt);
+        await SeedBareTenantAsync(siteId, "Detail Read Tenant", createdAt, ["https://shop.example"]);
 
         var token = await fixture.GetPlatformOwnerAccessTokenAsync();
         await using var host = await BuildTestHostAsync();
@@ -66,6 +66,9 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         Assert.True((body.CreatedAt.Value - createdAt).Duration() < TimeSpan.FromMilliseconds(1));
         Assert.Equal(ListSitesForOwnerHandler.RecentWindowDays, body.RecentWindowDays);
         Assert.Empty(body.Modules);
+        // `23-48`: the detail read's own new field - loaded off the write-side aggregate, not the
+        // read-model row (GetSiteForOwnerHandler's own remarks).
+        Assert.Equal(["https://shop.example"], body.AllowedOrigins);
     }
 
     /// <summary>The detail read's own reason to exist beyond the list: a module the platform owner
@@ -195,10 +198,11 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         return body;
     }
 
-    private async Task SeedBareTenantAsync(SiteId siteId, string name, DateTimeOffset createdAt)
+    private async Task SeedBareTenantAsync(
+        SiteId siteId, string name, DateTimeOffset createdAt, IReadOnlyList<string>? allowedOrigins = null)
     {
         await using var db = fixture.CreateDbContext();
-        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], name, createdAt));
+        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", allowedOrigins ?? [], name, createdAt));
         await db.SaveChangesAsync();
     }
 
@@ -245,6 +249,10 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         // make them, the same shape OwnerSitesEndpointTests' own host-builder uses.
         builder.Services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `23-48`: GetSiteForOwnerHandler's own second dependency, added alongside the read stores
+        // above - it loads the write-side aggregate directly for AllowedOrigins, the one field
+        // IPlatformOverviewReadStore does not carry (that handler's own remarks).
+        builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
         builder.Services.AddScoped<GetSiteForOwnerHandler>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();

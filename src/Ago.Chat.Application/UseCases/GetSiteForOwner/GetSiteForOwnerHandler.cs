@@ -38,7 +38,8 @@ namespace Ago.Chat.Application.UseCases.GetSiteForOwner;
 /// `Site.NotFound` is the honest answer to "this id does not exist", not a leak.</para>
 /// </summary>
 public sealed class GetSiteForOwnerHandler(
-    IPlatformOverviewReadStore siteReadStore, IEnabledModuleReadStore moduleReadStore, IClock clock)
+    IPlatformOverviewReadStore siteReadStore, IEnabledModuleReadStore moduleReadStore, ISiteRepository siteRepository,
+    IClock clock)
 {
     public async Task<Result<OwnerSiteDetailResponse>> HandleAsync(
         GetSiteForOwner query, CancellationToken cancellationToken)
@@ -57,6 +58,15 @@ public sealed class GetSiteForOwnerHandler(
 
         var modules = await moduleReadStore.GetAllForSiteAsync(query.SiteId, now, cancellationToken);
 
+        // `23-48`: AllowedOrigins is not one of IPlatformOverviewReadStore's own read-model columns
+        // (that port answers usage-signal questions, not "what is this site's own configuration") -
+        // loaded straight off the write-side aggregate instead, the same single-row ISiteRepository
+        // fetch EnableModuleForSiteAsOwnerHandler already makes for this site's display name. A low-
+        // frequency, human-triggered admin read: no caching concern (`caching.md`'s own reasoning for
+        // this whole port applies equally to one more field on it).
+        var aggregate = await siteRepository.GetByIdAsync(query.SiteId, cancellationToken);
+        var allowedOrigins = aggregate?.AllowedOrigins ?? [];
+
         return new OwnerSiteDetailResponse(
             site.Id.Value,
             site.Name,
@@ -68,7 +78,8 @@ public sealed class GetSiteForOwnerHandler(
             site.LastMessageAt,
             site.AttachmentBytes,
             ListSitesForOwnerHandler.RecentWindowDays,
-            modules.Select(ToModuleDto).ToList());
+            modules.Select(ToModuleDto).ToList(),
+            allowedOrigins);
     }
 
     private static OwnerSiteModuleDto ToModuleDto(EnabledModuleDetailSummary module) => new(
