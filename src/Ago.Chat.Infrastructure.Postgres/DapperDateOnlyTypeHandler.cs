@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using Dapper;
 
 namespace Ago.Chat.Infrastructure.Postgres;
