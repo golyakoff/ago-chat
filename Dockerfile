@@ -39,6 +39,30 @@ RUN apt-get update \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# `22-24`/`adr/0137`: the second root this trust store needs to carry, and a different origin from
+# the one above on purpose. The Russian CA is fetched at build time because Gosuslugi actually
+# publishes it at a stable URL; this one has no such publisher - it is this deployment's own private
+# root for in-cluster TLS (chat's calls to `ago-calendar-api`'s module endpoints, ago-deploy's
+# `k8s/overlays/demo/internal-tls.yaml`), so the committed file below is the only copy that can exist
+# before a cluster does. A certificate is not a secret (`ago-root docs/architecture/secrets.md`'s own
+# reasoning for a site's public key applies here too) - only the private key that signed it is kept
+# out of every repository, generated offline and supplied to cert-manager directly
+# (ago-deploy's own `internal-ca.key.example` has the bootstrap sequence).
+#
+# **This file and ago-deploy's `k8s/overlays/demo/internal-ca.crt` must be the identical bytes.**
+# They are two copies of one public certificate for two different reasons to need it (this image's
+# outbound trust; cert-manager's signing authority), not two independent values - a mismatch here
+# means this image trusts a root that never signs anything real, which fails closed (every module
+# call throws `ModuleUnreachableException`) rather than silently, but still needs both changed
+# together. Demonstrated offline before this line was written: an image built from this exact
+# `update-ca-certificates` step, presented with a leaf certificate this same CA signed, completed
+# default `SslStream`/`HttpClient` validation (no custom callback, no environment variable) with no
+# other change to this Dockerfile or to any C# source in this repository - see this task's own
+# report for the reproduction and its negative control (the identical leaf, against an image built
+# without this step, rejected with `PartialChain`).
+COPY internal-ca.crt /usr/local/share/ca-certificates/ago-internal-ca.crt
+RUN update-ca-certificates
+
 COPY Directory.Build.props Directory.Packages.props nuget.docker.config ./
 COPY src/Ago.Chat.Api/Ago.Chat.Api.csproj src/Ago.Chat.Api/
 COPY src/Ago.Chat.Worker/Ago.Chat.Worker.csproj src/Ago.Chat.Worker/
