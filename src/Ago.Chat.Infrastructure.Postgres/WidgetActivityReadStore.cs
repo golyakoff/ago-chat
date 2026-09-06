@@ -11,6 +11,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// </summary>
 public sealed class WidgetActivityReadStore(Npgsql.NpgsqlDataSource dataSource) : IWidgetActivityReadStore
 {
+    static WidgetActivityReadStore()
+    {
+        // `23-07`: Dapper 2.1.79 cannot bind a DateOnly parameter at all - see
+        // DapperDateOnlyTypeHandler's own remarks, including the two places this registration does
+        // *not* belong and what refused each of them. Here it runs before this store's first query,
+        // in a host and in a bare integration test alike.
+        SqlMapper.AddTypeHandler(DapperDateOnlyTypeHandler.Instance);
+    }
+
     public async Task<WidgetActivityTotals> GetTotalsAsync(SiteId siteId, DateOnly since, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
