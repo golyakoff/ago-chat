@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 
 namespace Ago.Chat.Integration.Tests;
@@ -92,6 +93,27 @@ public class ModuleFlowReadStoreTests(PostgresFixture fixture)
 
         Assert.Equal(3, result.FlowsStarted);
         Assert.Equal(2, result.FlowsClosed);
+    }
+
+    /// <summary>`24-10`: a blocked conversation's own started/closed module task contributes nothing to
+    /// this report, the same Done-when every other analytics/reporting read in this codebase now
+    /// honours.</summary>
+    [Fact]
+    public async Task GetSiteModuleFlowReportAsync_ExcludesABlockedConversation()
+    {
+        var siteId = await SeedSiteAsync();
+        var conversationId = await SeedConversationAsync(
+            siteId, Now.AddDays(-5), (BookingModuleKey, Now.AddDays(-5), Now.AddDays(-4)));
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            conversationId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var result = await Store.GetSiteModuleFlowReportAsync(siteId, BookingModuleKey, From, To, CancellationToken.None);
+
+        Assert.Equal(0, result.FlowsStarted);
+        Assert.Equal(0, result.FlowsClosed);
     }
 
     /// <summary>The item's own explicitly named edge case: a conversation with no module task at all

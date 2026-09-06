@@ -24,10 +24,15 @@ public static class WaitingConversationClaimQuery
     public static async Task<IReadOnlyList<ConversationId>> ClaimBatchAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, SiteId siteId, int batchSize, CancellationToken cancellationToken)
     {
+        // `24-10`: `blocked_at IS NULL` - a blocked conversation must not be routed to an operator by
+        // the automatic assignment engine (this item's own decided reading of its open question: "an
+        // inbound message from a blocked visitor is... not routed"). A `Waiting` conversation can be
+        // blocked the same as any other - nothing about this item restricts blocking to an already-
+        // assigned or closed conversation.
         const string sql = """
             SELECT id
             FROM conversations
-            WHERE site_id = @siteId AND state = 'Waiting'
+            WHERE site_id = @siteId AND state = 'Waiting' AND blocked_at IS NULL
             ORDER BY created_at
             LIMIT @batchSize
             FOR UPDATE SKIP LOCKED

@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 namespace Ago.Chat.Integration.Tests;
@@ -109,6 +110,37 @@ public class OperatorAnalyticsReadStoreTests(PostgresFixture fixture)
         Assert.Equal(0, result.Overall.ConversationCount);
         Assert.Null(result.Overall.AverageFirstResponseSeconds);
         Assert.Equal(0, result.Overall.MissedCount);
+        Assert.Empty(result.ByChannel);
+    }
+
+    /// <summary>`24-10`: a blocked conversation contributes nothing to this report at all - Done-when's
+    /// "excluded from... any analytics or reporting read" - proven against a real Postgres row, not by
+    /// the `blocked_at is null` predicate looking right in the SQL text.</summary>
+    [Fact]
+    public async Task GetSiteAnalyticsAsync_ExcludesABlockedConversation()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        await SeedSingleAnsweredConversationAsync(siteId, ChannelKind.Sms, offsetDays: -1, responseSeconds: 10);
+        ConversationId conversationId;
+        await using (var db = fixture.CreateDbContext())
+        {
+            conversationId = await db.Conversations.Where(c => c.SiteId == siteId).Select(c => c.Id).SingleAsync();
+        }
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            conversationId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var result = await Store.GetSiteAnalyticsAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(0, result.Overall.ConversationCount);
         Assert.Empty(result.ByChannel);
     }
 

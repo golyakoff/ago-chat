@@ -89,6 +89,10 @@ public sealed class RegisterSiteHandler(
             Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value,
             Permission.SiteErase.Value, Permission.ConversationErase.Value, Permission.SiteExport.Value,
             Permission.ConversationExport.Value,
+            // `24-10`: ConversationBlock joins the Admin set - the same granular, compliance-shaped
+            // placement ConversationErase/ConversationExport already have (Permission.ConversationBlock's
+            // own remarks on why it is its own permission rather than a reuse).
+            Permission.ConversationBlock.Value,
             // `22-05`/`adr/0093`: calendar:configure joins the Admin set - the configuration-shaped
             // action, the same category SiteConfigure already occupies here.
             Permission.CalendarConfigure.Value,

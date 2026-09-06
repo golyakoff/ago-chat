@@ -57,6 +57,62 @@ public sealed class Conversation
     /// </summary>
     public ConversationOutcome Outcome { get; private set; }
 
+    /// <summary>
+    /// `24-10`: when a controller (the tenant, acting through an operator holding
+    /// <see cref="Permission.ConversationBlock"/>) suspended processing of this conversation's data -
+    /// <see langword="null"/> for every conversation that has never been blocked, or that was blocked
+    /// and has since been unblocked (see <see cref="IsBlocked"/>'s own remarks on why this is one flag,
+    /// not a history). One state, not two - `24-10`'s own reading of its item's open question: a
+    /// second "hidden but still processed" rung was considered and rejected for having no named need
+    /// behind it (see this item's commit-prep notes), so <see cref="IsBlocked"/> is the only distinction
+    /// any caller in this codebase ever needs to make.
+    ///
+    /// <para><b>No business method mutates this pair, unlike every other state above.</b> The identical
+    /// reasoning <c>ConversationConfiguration</c>'s own remarks give for <c>ErasureRequestedAt</c>
+    /// applies again here, restated for a second flag on the same aggregate: this repository's
+    /// <c>GetByIdAsync</c> loads the whole aggregate, messages included, so routing a block/unblock
+    /// through it would both load a conversation's full message history just to flip two columns and
+    /// race this row's `xmin` against every ordinary message send. <see cref="IConversationBlockRepository"/>
+    /// (`Ago.Chat.Application.Abstractions`) writes these two columns with raw SQL instead, atomically
+    /// alongside its own audit-trail row - the same one-statement shape
+    /// <see cref="IErasureRequestRepository"/> already established. These two properties exist on this
+    /// aggregate purely so every handler that already loads it for an unrelated reason (an operator's
+    /// own per-conversation authorization check, `GetConversationHistoryHandler`'s own remarks) gets
+    /// <see cref="IsBlocked"/> for free, from the same row, rather than a second query it would be easy
+    /// to forget to add.</para>
+    /// </summary>
+    public DateTimeOffset? BlockedAt { get; private set; }
+
+    /// <summary>The operator who invoked the block currently in effect - <see langword="null"/>
+    /// whenever <see cref="BlockedAt"/> is, and for the identical reason. Not who *unblocked* it: that
+    /// is a separate act with its own actor, recorded in <see cref="IConversationBlockRepository"/>'s
+    /// own audit trail rather than overwriting this column, since a reader asking "who is responsible
+    /// for this conversation currently being frozen" needs the answer to survive exactly as long as the
+    /// freeze itself does.</summary>
+    public OperatorId? BlockedBy { get; private set; }
+
+    /// <summary>
+    /// Whether this conversation is currently frozen against processing and hidden from every ordinary
+    /// operator-facing read (`24-10`'s Done-when: "unreachable from every operator-facing read path").
+    /// Computed from <see cref="BlockedAt"/> rather than its own backing field, the same
+    /// "null means absent, not a separate boolean to keep in sync" shape <see cref="Source"/> already
+    /// uses on this aggregate for a different pair of nullable columns.
+    /// </summary>
+    public bool IsBlocked => BlockedAt is not null;
+
+    /// <summary>Test-only. Production never calls this - <see cref="IConversationBlockRepository"/>
+    /// writes these two columns with raw SQL and this aggregate is reloaded fresh by EF afterward, the
+    /// identical reasoning <see cref="BlockedAt"/>'s own remarks give for why no domain method exists
+    /// for ordinary callers. Exposed via <c>InternalsVisibleTo("Ago.Chat.Application.Tests")</c>
+    /// (`Ago.Chat.Domain`'s own <c>AssemblyInfo.cs</c>) so a fake <c>IConversationRepository</c> can
+    /// seed a blocked conversation for a handler test without a real, change-tracked EF context to load
+    /// one through.</summary>
+    internal void MarkBlockedForTesting(OperatorId blockedBy, DateTimeOffset now)
+    {
+        BlockedAt = now;
+        BlockedBy = blockedBy;
+    }
+
     /// <summary>`18-12`: the four backing fields <see cref="Source"/> is computed from - the same
     /// "private fields, computed public property, EF mapped to the fields by name" shape
     /// <c>Message._contentKind</c>/<c>_payload</c>/<c>_actions</c> already establish for a nullable

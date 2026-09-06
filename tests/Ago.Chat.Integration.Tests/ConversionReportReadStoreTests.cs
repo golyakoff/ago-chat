@@ -90,6 +90,41 @@ public class ConversionReportReadStoreTests(PostgresFixture fixture)
         Assert.Empty(result.ByOperator);
     }
 
+    /// <summary>`24-10`: a blocked conversation contributes nothing to this report - the same
+    /// Done-when this codebase's other analytics/reporting reads now all honour.</summary>
+    [Fact]
+    public async Task GetConversionReportAsync_ExcludesABlockedConversation()
+    {
+        var siteId = await CreateSiteAsync();
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var createdAt = Now.AddDays(-1);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+        conversation.SetOutcome(ConversationOutcome.Converted);
+        await using (var writeDb = fixture.CreateDbContext())
+        {
+            writeDb.Conversations.Add(conversation);
+            await writeDb.SaveChangesAsync();
+        }
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            conversationId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var result = await Store.GetConversionReportAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(0, result.Overall.RecordedCount);
+        Assert.Equal(0, result.Overall.ConvertedCount);
+    }
+
     [Fact]
     public async Task GetConversionReportAsync_ExcludesConversationsCreatedBeforeTheWindow()
     {

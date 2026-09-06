@@ -198,11 +198,15 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     private static async Task WriteConversationsAsync(
         ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
     {
+        // `24-10`: `blocked_at is null` - a tenant export must not hand back a conversation a
+        // controller separately froze from processing (this item's own Done-when: "excluded from a
+        // tenant export").
         const string sql = """
             select id, visitor_id, operator_id, state, created_at, last_sequence,
                    operator_unread_count, visitor_unread_count
             from conversations
             where site_id = @siteId
+              and blocked_at is null
             order by id
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -241,11 +245,18 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
         // each conversation's own messages in the order they were sent, the natural reading order for a
         // transcript - the same leading index columns `ConversationErasureQuery.DeleteMessageBatchAsync`'s
         // own remarks describe.
+        // `24-10`: excludes a blocked conversation's own messages via `NOT EXISTS`, not a join to
+        // `conversations` - a join would give the planner a reason to abandon the `m.site_id = @siteId`
+        // partition-pruning predicate this method's own remarks just explained is load-bearing (`15-09`/
+        // `adr/0087`); `NOT EXISTS` against the primary-keyed `conversations` row costs one index lookup
+        // per matched message and touches the query plan's join order not at all.
         const string sql = """
             select m.id, m.conversation_id, m.sequence, m.author_id, m.author_kind, m.created_at,
                    m.body, m.content_kind, m.content, m.actions, m.attachment_id
             from messages m
             where m.site_id = @siteId
+              and not exists (
+                  select 1 from conversations bc where bc.id = m.conversation_id and bc.blocked_at is not null)
             order by m.conversation_id, m.sequence
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -281,10 +292,14 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     private async Task WriteAttachmentsAsync(
         ZipArchive archive, NpgsqlConnection connection, Guid siteId, DateTimeOffset exportedAt, CancellationToken cancellationToken)
     {
+        // `24-10`: the identical `NOT EXISTS` exclusion `WriteMessagesAsync` uses right above, for the
+        // same reason - an attachment on a blocked conversation is that same conversation's own data.
         const string sql = """
             select id, conversation_id, message_id, object_key, thumbnail_key, content_type, size_bytes, state, created_at
             from attachments
             where site_id = @siteId
+              and not exists (
+                  select 1 from conversations bc where bc.id = attachments.conversation_id and bc.blocked_at is not null)
             order by id
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -335,11 +350,14 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     private static async Task WriteNotesAsync(
         ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
     {
+        // `24-10`: `c.blocked_at is null` - already joined here, unlike WriteMessagesAsync/
+        // WriteAttachmentsAsync above, so this is a plain predicate rather than a NOT EXISTS.
         const string sql = """
             select n.id, n.conversation_id, n.author_id, n.body, n.created_at
             from conversation_notes n
             join conversations c on c.id = n.conversation_id
             where c.site_id = @siteId
+              and c.blocked_at is null
             order by n.conversation_id, n.created_at
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -389,11 +407,13 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     private static async Task WriteConversationTagsAsync(
         ZipArchive archive, NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
     {
+        // `24-10`: `c.blocked_at is null` - the identical exclusion WriteNotesAsync applies right above.
         const string sql = """
             select ct.conversation_id, ct.tag_id
             from conversation_tags ct
             join conversations c on c.id = ct.conversation_id
             where c.site_id = @siteId
+              and c.blocked_at is null
             order by ct.conversation_id, ct.tag_id
             """;
         await using var command = new NpgsqlCommand(sql, connection);

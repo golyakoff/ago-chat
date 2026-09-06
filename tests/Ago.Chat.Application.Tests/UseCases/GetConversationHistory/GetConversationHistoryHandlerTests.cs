@@ -167,4 +167,51 @@ public class GetConversationHistoryHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
     }
+
+    // `24-10`: a blocked conversation's own message history is unreachable to its assigned operator -
+    // one of the operator-facing read paths this item's own Done-when names explicitly.
+    [Fact]
+    public async Task HandleAsOperatorAsync_WhenTheConversationIsBlocked_ReturnsNotFound()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+        conversation.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+
+        var result = await handler.HandleAsOperatorAsync(
+            new GetConversationHistoryAsOperator(conversation.Id, OperatorId, SiteId, BeforeSequence: null, PageSize: 10),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleDeltaAsOperatorAsync_WhenTheConversationIsBlocked_ReturnsNotFound()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+        conversation.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+
+        var result = await handler.HandleDeltaAsOperatorAsync(
+            new GetConversationDeltaAsOperator(conversation.Id, OperatorId, SiteId, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+    }
+
+    // `24-10`'s own decided reading of its open question: a blocked visitor's own inbound message is
+    // "accepted and stored", and this codebase never told the visitor they are blocked - so the
+    // visitor's own read of their own history must keep working exactly as before. Only the
+    // *operator*-facing paths become unreachable.
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenTheConversationIsBlocked_StillReturnsTheHistory()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+        conversation.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+
+        var result = await handler.HandleAsVisitorAsync(
+            new GetConversationHistoryAsVisitor(conversation.Id, VisitorId, BeforeSequence: null, PageSize: 10),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Messages.Count);
+    }
 }

@@ -108,6 +108,13 @@ public sealed class SendOfflineAutoReplyHandler(
             return OfflineAutoReplyOutcome.ConversationNotWaiting;
         }
 
+        // `24-10`: checked before the online-operator read, matching this method's own existing order
+        // of cheapest/most-decisive checks first - this item's own decided reading of its open question.
+        if (conversation.IsBlocked)
+        {
+            return OfflineAutoReplyOutcome.ConversationBlocked;
+        }
+
         if (await operators.AnyOnlineForSiteAsync(command.SiteId, cancellationToken))
         {
             return OfflineAutoReplyOutcome.OperatorOnline;

@@ -89,6 +89,45 @@ public class TagBreakdownReadStoreTests(PostgresFixture fixture)
         Assert.NotEqual(result.TaggedConversationCount, sumOfPerTagCounts); // 3 tagged conversations, not 4
     }
 
+    /// <summary>`24-10`: a blocked conversation - tagged or not - contributes nothing to this report,
+    /// the same Done-when every other analytics/reporting read in this codebase now honours.</summary>
+    [Fact]
+    public async Task GetTagBreakdownAsync_ExcludesABlockedConversation()
+    {
+        var siteId = await CreateSiteAsync();
+        var tagId = await SeedTagAsync(siteId, "Billing");
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var createdAt = Now.AddDays(-1);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            await db.SaveChangesAsync();
+        }
+
+        var conversation = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+        await using (var writeDb = fixture.CreateDbContext())
+        {
+            writeDb.Conversations.Add(conversation);
+            await writeDb.SaveChangesAsync();
+        }
+
+        var tagRepository = new TagRepository(fixture.CreateDbContext());
+        await tagRepository.AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            conversationId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var result = await Store.GetTagBreakdownAsync(siteId, From, To, CancellationToken.None);
+
+        Assert.Equal(0, result.TotalConversationCount);
+        Assert.Equal(0, result.TaggedConversationCount);
+        Assert.Empty(result.ByTag);
+    }
+
     [Fact]
     public async Task GetTagBreakdownAsync_ForASiteWithNoConversationsInTheWindow_ReturnsZerosAndANullPercentage()
     {

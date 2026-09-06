@@ -44,6 +44,7 @@ public class SendOfflineAutoReplyHandlerTests
         bool onlineOperator = false,
         bool offlineOperator = false,
         bool assigned = false,
+        bool blocked = false,
         string visitorText = "hello, anybody there?")
     {
         var site = new Site(SiteId, PublicKey, []);
@@ -68,6 +69,11 @@ public class SendOfflineAutoReplyHandlerTests
         if (assigned)
         {
             conversation.AssignTo(new OperatorId(Guid.NewGuid()), Now);
+        }
+
+        if (blocked)
+        {
+            conversation.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
         }
 
         conversation.ClearDomainEvents();
@@ -117,6 +123,25 @@ public class SendOfflineAutoReplyHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(OfflineAutoReplyOutcome.Disabled, result.Value);
+        Assert.Equal(messagesBefore, fixture.Conversation.Messages.Count);
+        Assert.Empty(fixture.Outbox.Enqueued);
+    }
+
+    // `24-10`: this item's own decided reading of its open question - "an inbound message from a
+    // blocked visitor... is not auto-replied." A blocked conversation can still be Waiting (blocking
+    // does not change ConversationState), so this must be checked separately from
+    // WithTheFlagDisabled_TheSameMessageProducesNoReply above - a test asserting one must not be
+    // satisfied by the other having fired instead.
+    [Fact]
+    public async Task WhenTheConversationIsBlocked_NoReplyIsSent()
+    {
+        var fixture = CreateFixture(blocked: true);
+        var messagesBefore = fixture.Conversation.Messages.Count;
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(OfflineAutoReplyOutcome.ConversationBlocked, result.Value);
         Assert.Equal(messagesBefore, fixture.Conversation.Messages.Count);
         Assert.Empty(fixture.Outbox.Enqueued);
     }

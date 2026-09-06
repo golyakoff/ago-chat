@@ -40,4 +40,12 @@ public enum OfflineAutoReplyOutcome
     /// ledger rejected the second attempt and nothing, including the reply that had been staged, was
     /// persisted (`adr/0017`).</summary>
     AlreadyReplied,
+
+    /// <summary>`24-10`: the conversation is currently blocked - this item's own decided reading of its
+    /// open question, "an inbound message from a blocked visitor... is not auto-replied". Checked
+    /// alongside <see cref="ConversationNotWaiting"/> rather than folded into it: a blocked conversation
+    /// may well still be <c>Waiting</c> (blocking does not change <see cref="Domain.ConversationState"/>),
+    /// so this is a genuinely separate reason to decline, and a test asserting one must not be satisfied
+    /// by the other having fired instead.</summary>
+    ConversationBlocked,
 }

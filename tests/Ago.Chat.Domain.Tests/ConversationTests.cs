@@ -27,6 +27,23 @@ public class ConversationTests
         Assert.Equal(VisitorId, started.VisitorId);
     }
 
+    /// <summary>`24-10`: a freshly started conversation has never been blocked - the same "null means
+    /// absent" default every other nullable column on this aggregate starts at (ClosedAt, Source). The
+    /// actual block/unblock transition has no domain-level unit test of its own because it has no
+    /// domain method to call - IConversationBlockRepository writes it with raw SQL, never through this
+    /// aggregate (Conversation.BlockedAt's own remarks) - so the write is proven in
+    /// ConversationBlockRepositoryTests (Ago.Chat.Integration.Tests) against a real Postgres row
+    /// instead.</summary>
+    [Fact]
+    public void Start_CreatesAConversation_WithNoBlockState()
+    {
+        var conversation = StartConversation();
+
+        Assert.False(conversation.IsBlocked);
+        Assert.Null(conversation.BlockedAt);
+        Assert.Null(conversation.BlockedBy);
+    }
+
     [Fact]
     public void AssignTo_WhenWaiting_TransitionsToAssigned_AndRaisesConversationAssigned()
     {

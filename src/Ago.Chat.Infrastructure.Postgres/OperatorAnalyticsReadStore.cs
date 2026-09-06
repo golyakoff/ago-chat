@@ -154,6 +154,8 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
     /// </summary>
     private const string DirectReferrerLabel = "Direct";
 
+    // `24-10`: `c.blocked_at is null` - a blocked conversation must not contribute a single row to any
+    // aggregate this report computes (Done-when: "excluded from... any analytics or reporting read").
     private const string SiteAnalyticsSql = """
         with in_window as (
             select c.id, c.site_id, c.visitor_id, c.state, c.operator_id as assigned_operator_id,
@@ -162,6 +164,7 @@ public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IO
             where c.site_id = @SiteId
               and c.created_at >= @From
               and c.created_at < @To
+              and c.blocked_at is null
         ),
         detail as (
             select

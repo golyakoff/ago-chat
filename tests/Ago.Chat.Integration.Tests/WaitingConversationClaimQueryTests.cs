@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Worker;
 
 namespace Ago.Chat.Integration.Tests;
@@ -94,6 +96,33 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
 
         await transactionB.CommitAsync();
         await transactionA.CommitAsync();
+    }
+
+    /// <summary>`24-10`'s own decided reading of its open question: "an inbound message from a blocked
+    /// visitor... is not routed" - a blocked conversation must never be claimed by the automatic
+    /// assignment engine, even though blocking never touches its own `state` column (a blocked
+    /// conversation can perfectly well still be `Waiting`).</summary>
+    [Fact]
+    public async Task ClaimBatchAsync_IgnoresABlockedWaitingConversation()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var ids = await SeedWaitingConversationsAsync(siteId, count: 2);
+        var blockedId = ids[0];
+        var stillClaimableId = ids[1];
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            blockedId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        var claimed = await WaitingConversationClaimQuery.ClaimBatchAsync(
+            connection, transaction, siteId, batchSize: 10, CancellationToken.None);
+
+        Assert.Equal([stillClaimableId], claimed);
+        await transaction.CommitAsync();
     }
 
     private async Task<List<ConversationId>> SeedWaitingConversationsAsync(SiteId siteId, int count)

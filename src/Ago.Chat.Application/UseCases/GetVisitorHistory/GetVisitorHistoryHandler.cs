@@ -89,6 +89,14 @@ public sealed class GetVisitorHistoryHandler(
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
         }
 
+        // `24-10`: a blocked conversation's own visitor-history panel is unreachable too - the panel is
+        // anchored on this conversation, and every read anchored on a blocked one now reads as if the
+        // conversation does not exist (GetConversationHistoryHandler's own identical check).
+        if (conversation.IsBlocked)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
+        }
+
         // `14-01`'s structural gate: a widget visitor has no ChannelIdentity row, ever (see this
         // type's own remarks) - short-circuit before the paginated read runs at all, so a widget
         // visitor's conversation never even queries for history it structurally cannot have.
@@ -128,6 +136,16 @@ public sealed class GetVisitorHistoryHandler(
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
         }
 
+        // `24-10`: the same defense-in-depth check `HandleAsOperatorAsync` above applies to its own
+        // anchor conversation - in practice this operator's own console would already have had that
+        // conversation's ordinary history read 404 (GetConversationHistoryHandler's own identical
+        // check), so this rarely fires, but the rule is "every read anchored on a blocked conversation
+        // refuses", not "every read that happens to notice one already refused elsewhere".
+        if (conversation.IsBlocked)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
+        }
+
         var historical = await conversations.GetByIdAsync(query.HistoricalConversationId, cancellationToken);
         if (historical is null)
         {
@@ -142,6 +160,17 @@ public sealed class GetVisitorHistoryHandler(
         if (historical.VisitorId != conversation.VisitorId)
         {
             return ConversationErrors.Forbidden("This conversation does not belong to the same visitor.");
+        }
+
+        // `24-10`: `historical` itself must not be reachable if it is blocked - the same "unreachable,
+        // not merely hidden" rule this codebase now gives every operator-facing read of a blocked
+        // conversation. Checked after the visitor-match authorization above, matching
+        // GetConversationHistoryHandler's own ordering (authorize first, then apply the block-shaped
+        // hiding), never before it - there is no information a blocked row's existence would leak here
+        // that the ordinary NotFound/Forbidden checks above do not already withhold identically.
+        if (historical.IsBlocked)
+        {
+            return ConversationErrors.NotFound(query.HistoricalConversationId.Value);
         }
 
         var page = await readStore.GetHistoryAsync(

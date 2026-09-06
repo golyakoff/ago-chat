@@ -38,6 +38,8 @@ public sealed class ModuleFlowReadStore(NpgsqlDataSource dataSource) : IModuleFl
 {
     private static readonly string ClosedState = nameof(ModuleTaskState.Closed);
 
+    // `24-10`: `c.blocked_at is null` - the identical exclusion every other analytics/reporting read in
+    // this codebase now applies.
     private const string SiteModuleFlowReportSql = """
         select
             count(*) as "FlowsStarted",
@@ -48,6 +50,7 @@ public sealed class ModuleFlowReadStore(NpgsqlDataSource dataSource) : IModuleFl
           and mt.module_key = @ModuleKey
           and mt.opened_at >= @From
           and mt.opened_at < @To
+          and c.blocked_at is null
         """;
 
     public async Task<ModuleFlowReportResult> GetSiteModuleFlowReportAsync(

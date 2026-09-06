@@ -129,6 +129,9 @@ public static class ServiceCollectionExtensions
         // `16-02`: the erase-request write - see IErasureRequestRepository's own remarks on why it is
         // its own port rather than a method on ISiteRepository/IConversationRepository.
         services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `24-10`: the block/unblock write - see IConversationBlockRepository's own remarks for why it
+        // is raw SQL like the port right above rather than a method on IConversationRepository.
+        services.AddScoped<IConversationBlockRepository, ConversationBlockRepository>();
         // `23-06`: the install screen's own two facts - see ISiteInstallationSignalRepository's own
         // remarks for why this is a third port taking the identical shape as the one directly above.
         services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();

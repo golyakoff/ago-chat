@@ -5,6 +5,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
+using Ago.Chat.Application.UseCases.BlockConversation;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.CategorizeConversation;
@@ -114,6 +115,7 @@ using Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Application.UseCases.GetAssignmentPenalty;
 using Ago.Chat.Application.UseCases.UpdateAssignmentPenalty;
+using Ago.Chat.Application.UseCases.UnblockConversation;
 using Ago.Chat.Application.UseCases.UnlinkChannelIdentity;
 using Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner;
 using Ago.Chat.Application.UseCases.UpdateCannedResponses;
@@ -927,6 +929,10 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RequestSiteErasureHandler>();
         services.AddScoped<RequestConversationErasureHandler>();
         services.AddScoped<GetConversationByIdHandler>();
+        // `24-10`: the block/unblock writes - same registration shape as the erase-request pair right
+        // above, for the identical reason (BlockConversationHandler's own remarks).
+        services.AddScoped<BlockConversationHandler>();
+        services.AddScoped<UnblockConversationHandler>();
         // `18-10`: found missing here the same way `GetConversionReportForSiteHandler` was - these two
         // outcome handlers (SetConversationOutcomeEndpoints' own actual read/write actions, not the
         // site-wide report) were never registered either, so `/outcome` (GET and POST) both crash-
