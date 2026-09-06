@@ -47,7 +47,8 @@ public sealed class GetMyPermissionsHandler(
     GetSiteConfigByIdHandler siteConfig,
     IEnabledModuleReadStore moduleReadStore,
     IClock clock,
-    IOperatorRepository operators)
+    IOperatorRepository operators,
+    Ago.Chat.Application.UseCases.MintDemoTenant.DemoTenantOptions demoOptions)
 {
     public async Task<Result<OperatorPermissionsResponse>> HandleAsync(
         GetMyPermissions query, CancellationToken cancellationToken)
@@ -61,7 +62,15 @@ public sealed class GetMyPermissionsHandler(
 
         await operators.RefreshIdentityAsync(query.OperatorId, query.Name, query.Email, cancellationToken);
 
+        // `23-45`: `config` is already loaded above for the locale and it carries the public key, so
+        // this costs no extra query and no new port. Ordinal comparison, never the current culture's -
+        // a public key is an opaque identifier, and a culture-sensitive match on one is the kind of
+        // thing that works everywhere except the machine whose locale differs.
+        var credentialsArePublished = config is not null
+            && demoOptions.PublishedCredentialSitePublicKeys.Contains(config.PublicKey, StringComparer.Ordinal);
+
         return new OperatorPermissionsResponse(
-            query.OperatorId.Value, query.SiteId.Value, granted, locale.ToString(), enabledModules, query.Name);
+            query.OperatorId.Value, query.SiteId.Value, granted, locale.ToString(), enabledModules, query.Name,
+            credentialsArePublished);
     }
 }

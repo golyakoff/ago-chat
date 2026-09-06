@@ -50,6 +50,33 @@ public sealed class DemoTenantOptions
     /// </summary>
     [Required]
     public string VisitorOrigin { get; set; } = "http://localhost:3000";
+
+    /// <summary>
+    /// `23-45`: the public keys of the sites whose <b>console credentials are printed on a public
+    /// page</b>. Empty everywhere but the demo deployment.
+    ///
+    /// <para>This is the one fact `8-06`'s standing console band actually depends on, and until this
+    /// item nothing carried it - so the band was shown to everybody who was not the platform owner,
+    /// including a real tenant, to whom "its login is published on the demo pages, so anyone can sign
+    /// in here" is simply false. The author found it by signing in with their own account.</para>
+    ///
+    /// <para><b>It cannot be derived, which is why it is configuration.</b> A minted demo tenant is
+    /// identifiable (<c>demo_expires_at</c> is non-null) but its credentials are shown once and
+    /// published nowhere. The seeded shared demo shops have no expiry at all, so in the database they
+    /// are indistinguishable from a real tenant - checked against the live deployment, where
+    /// <c>demo_site</c> and a real tenant's row differ in nothing this question could read. And it is
+    /// not a property of the tenant in the first place: the same row in another deployment would have
+    /// no password on any web page. It is a property of <i>this deployment's</i> demo setup, which is
+    /// where it now lives.</para>
+    ///
+    /// <para><b>An empty list here must be loud, not quiet.</b> The band now appears only when this
+    /// names the caller's site, which inverts the direction `12-04` was careful about: forgetting used
+    /// to show the stricter text, and now it shows nothing at all - to the one account whose password
+    /// anybody can read off a web page. <c>Ago.Chat.Api</c>'s <c>DemoTenantOptionsValidator</c> refuses
+    /// to start when <see cref="Enabled"/> is on and this is empty, so that mistake is a crash at boot
+    /// rather than a missing sentence nobody notices.</para>
+    /// </summary>
+    public IList<string> PublishedCredentialSitePublicKeys { get; set; } = [];
 }
 
 /// <summary>
