@@ -145,14 +145,14 @@ public static class ErrorExtensions
                 // `24-10`: a real conflict with the conversation's own current block state, not a
                 // malformed request - the same "the remedy is a different action first" shape
                 // Tag.AlreadyExists/ChannelCredential.AlreadyConnected already give their own conflicts.
-                or "Conversation.AlreadyBlocked" or "Conversation.NotBlocked" => StatusCodes.Status409Conflict,
-            // `24-05`: a real conflict with this specific request's own preconditions (this site
-            // requires a recorded consent, and this visitor has none yet), resolved by an explicit
-            // second act - recording the consent - rather than by fixing the request body, the
-            // identical shape ChannelCredential.AlreadyConnected/Module.RevokePurchaseRequiresForce
-            // already give their own conflicts (ConversationErrors.VisitorContactDetailConsentRequired's
-            // own remarks).
-            or "VisitorContactDetail.ConsentRequired" => StatusCodes.Status409Conflict,
+                or "Conversation.AlreadyBlocked" or "Conversation.NotBlocked"
+                // `24-05`: a real conflict with this specific request's own preconditions (this site
+                // requires a recorded consent, and this visitor has none yet), resolved by an explicit
+                // second act - recording the consent - rather than by fixing the request body, the
+                // identical shape ChannelCredential.AlreadyConnected/Module.RevokePurchaseRequiresForce
+                // already give their own conflicts (ConversationErrors.VisitorContactDetailConsentRequired's
+                // own remarks).
+                or "VisitorContactDetail.ConsentRequired" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
