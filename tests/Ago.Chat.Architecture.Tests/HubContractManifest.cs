@@ -80,5 +80,8 @@ internal static class HubContractManifest
         new("OperatorHub.GetTeamDeltaAsync", 1,
             "ago-console OperatorConnection.getTeamDelta (`23-32`) - the reconnect catch-up TeamChatPage "
             + "asks for once per genuine reconnect."),
+        new("OperatorHub.RemoveTeamMessageAsync", 1,
+            "ago-console OperatorConnection.removeTeamMessage (`23-33`), called from "
+            + "RemoveTeamMessageButton.onRemove on TeamChatPage."),
     ];
 }

@@ -11,4 +11,9 @@ public static class TeamChatErrors
     public static Error InvalidBody(string reason) => new("TeamChat.InvalidBody", reason);
 
     public static Error NotFound(string reason) => new("TeamChat.NotFound", reason);
+
+    /// <summary>`23-33`: <c>RemoveTeamMessageHandler</c>'s own gate - the same
+    /// <c>ConversationErrors.Forbidden</c> shape, kept in this vocabulary rather than borrowed from
+    /// that one for the identical reason every error here has its own code.</summary>
+    public static Error Forbidden(string reason) => new("TeamChat.Forbidden", reason);
 }

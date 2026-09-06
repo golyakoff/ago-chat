@@ -9,4 +9,4 @@
 /// <see cref="DateTime"/> never leaves Infrastructure (date-and-time.md).</summary>
 internal sealed record TeamMessageRow(
     Guid Id, int Sequence, Guid AuthorOperatorId, string? AuthorDisplayName, string? AuthorEmail,
-    bool AuthorIsAdmin, string Body, DateTime CreatedAt, Guid? ClientMessageId);
+    bool AuthorIsAdmin, string Body, DateTime CreatedAt, Guid? ClientMessageId, DateTime? RemovedAt);

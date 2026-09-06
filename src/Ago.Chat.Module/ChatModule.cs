@@ -91,6 +91,7 @@ using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.RemoveOperator;
+using Ago.Chat.Application.UseCases.RemoveTeamMessage;
 using Ago.Chat.Application.UseCases.RequestChannelLinkFromConsole;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
@@ -98,6 +99,7 @@ using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveTeamMessageDelivery;
+using Ago.Chat.Application.UseCases.ResolveTeamMessageRemovalDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeModuleForSite;
@@ -808,6 +810,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<SendTeamMessageHandler>();
         services.AddScoped<GetTeamMessageHistoryHandler>();
         services.AddScoped<ResolveTeamMessageDeliveryTargetsHandler>();
+        // `23-33`: the tenant's own removal - see each handler's own remarks.
+        services.AddScoped<RemoveTeamMessageHandler>();
+        services.AddScoped<ResolveTeamMessageRemovalDeliveryTargetsHandler>();
         services.AddScoped<GetSiteConfigByPublicKeyHandler>();
         services.AddScoped<GetSiteConfigByIdHandler>();
         services.AddScoped<CheckCorsOriginHandler>();

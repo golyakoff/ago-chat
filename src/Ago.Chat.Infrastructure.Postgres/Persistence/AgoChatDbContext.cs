@@ -70,6 +70,11 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // own encapsulated navigation (Ago.Chat.Domain.TeamMessage's own remarks on why it has no parent
     // aggregate to be reached through in the first place).
     public DbSet<TeamMessage> TeamMessages => Set<TeamMessage>();
+    // `23-33`: migration-scaffolding plus TeamChatRepository.RemoveAsync's own one write - the same
+    // shape ModuleRevokeOverrides below takes, except this one is written through EF rather than raw
+    // Npgsql (TeamMessageRemovalEntity's own remarks explain why: it must commit atomically with the
+    // tombstoned TeamMessage row and the outbox row above it, CLAUDE.md rule 4).
+    internal DbSet<TeamMessageRemovalEntity> TeamMessageRemovals => Set<TeamMessageRemovalEntity>();
     // `24-01`: AcceptanceRecord's own table - see AcceptanceRecordConfiguration's own remarks for why
     // it carries no foreign key to any subject's own table.
     public DbSet<AcceptanceRecord> AcceptanceRecords => Set<AcceptanceRecord>();

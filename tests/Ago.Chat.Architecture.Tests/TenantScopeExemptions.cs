@@ -457,5 +457,20 @@ internal static class TenantScopeExemptions
             + "this system itself published\" category ResolveMessageDeliveryTargetsHandler's own precedent "
             + "establishes for the identical shape on the conversation side. SiteId comes off that event, never "
             + "a caller.",
+
+        // `23-33`: the removal fan-out resolver - the identical shape and identical reasoning as
+        // ResolveTeamMessageDeliveryTargetsHandler right above, restated for a different event.
+        // RemoveTeamMessageHandler.HandleAsync (the actual capability this item adds) is deliberately
+        // not listed here - it does call permissions.HasPermissionAsync(...,
+        // Permission.SiteManageOperators, ...), which is a real authorization outcome this time (the
+        // backlog item's own "removal is the first thing in this room that is genuinely a capability"),
+        // and satisfies this file's own scan on its own merits.
+        ["Ago.Chat.Application.UseCases.ResolveTeamMessageRemovalDelivery.ResolveTeamMessageRemovalDeliveryTargetsHandler.HandleAsync"] =
+            "`23-33`. Not a caller-facing entry point at all - driven by "
+            + "Ago.Chat.Worker.TeamMessageRemovedFanoutConsumer reacting to this system's own already-committed "
+            + "TeamMessageRemoved event (adr/0005: the event is only published after the removal's own "
+            + "transaction committed), the same \"an integration event this system itself published\" category "
+            + "ResolveTeamMessageDeliveryTargetsHandler's own precedent establishes right above. SiteId comes off "
+            + "that event, never a caller.",
     };
 }

@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.RemoveTeamMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.SendTeamMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -45,6 +46,8 @@ public sealed class OperatorHub(
     // `23-32`: the team chat's own two handlers - see each hub method below.
     SendTeamMessageHandler sendTeamMessage,
     GetTeamMessageHistoryHandler getTeamHistory,
+    // `23-33`: the tenant's own removal - see RemoveTeamMessageAsync below.
+    RemoveTeamMessageHandler removeTeamMessage,
     DrainState drainState) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
@@ -415,6 +418,39 @@ public sealed class OperatorHub(
             new GetTeamMessageDelta(siteId, afterSequence), Context.ConnectionAborted);
 
         return new TeamHistoryPage(TeamMessageDtoMapper.ToDtos(messages), NextBeforeSequence: null);
+    }
+
+    /// <summary>
+    /// `23-33`: the tenant's own removal - <see cref="RemoveTeamMessageHandler"/>'s own remarks state
+    /// exactly which permission gates this and why. Local echo mirrors <see cref="SendTeamMessageAsync"/>'s
+    /// own shape: re-read the just-tombstoned row (<paramref name="teamMessageId"/>'s own sequence,
+    /// via <see cref="GetTeamHistoryAsync"/>'s underlying query, <c>beforeSequence: sequence + 1,
+    /// pageSize: 1</c>) rather than building a DTO from what this handler already has in memory, so
+    /// the caller's own tab and the fan-out copy every other operator receives
+    /// (<c>TeamMessageRemovedFanoutConsumer</c> -> <c>ResolveTeamMessageRemovalDeliveryTargetsHandler</c>)
+    /// are byte-identical - `5-11`'s own failure mode, guarded against here the same way
+    /// <see cref="SendTeamMessageAsync"/> already guards against it.
+    ///
+    /// <para>Pushed under <c>TeamMessageRemoved</c>, never <c>TeamMessageReceived</c> - see
+    /// <c>Ago.Chat.Contracts.TeamMessageRemoved</c>'s own remarks for why reusing the post event's own
+    /// push method would silently vanish behind the console's transport-level dedup.</para>
+    /// </summary>
+    public async Task RemoveTeamMessageAsync(Guid teamMessageId)
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        var siteId = Context.User!.GetSiteId();
+
+        var removed = await removeTeamMessage.HandleAsync(
+            new RemoveTeamMessage(siteId, operatorId, new TeamMessageId(teamMessageId)), Context.ConnectionAborted);
+        if (removed.IsFailure)
+        {
+            throw new HubException(removed.Error!.Value.Message);
+        }
+
+        var page = await getTeamHistory.HandleAsync(
+            new GetTeamMessageHistory(siteId, removed.Value.Sequence + 1, PageSize: 1), Context.ConnectionAborted);
+        var dto = TeamMessageDtoMapper.ToDto(page.Messages.Single());
+        await Clients.Caller.SendAsync("TeamMessageRemoved", dto, Context.ConnectionAborted);
     }
 
     // `14-06`: the mapping moved to Ago.Chat.Application.Mapping.MessageDtoMapper - it existed

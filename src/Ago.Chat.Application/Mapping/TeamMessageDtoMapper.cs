@@ -22,7 +22,8 @@ public static class TeamMessageDtoMapper
             item.AuthorIsAdmin,
             item.Body,
             item.CreatedAt,
-            item.ClientMessageId);
+            item.ClientMessageId,
+            item.RemovedAt);
     }
 
     public static IReadOnlyList<TeamMessageDto> ToDtos(IReadOnlyList<TeamMessageHistoryItem> items)

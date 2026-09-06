@@ -91,6 +91,62 @@ public class TeamChatCrossTenantTests(PostgresFixture fixture)
         Assert.Empty(delta);
     }
 
+    /// <summary>
+    /// `23-33`: unlike <see cref="SendTeamMessage"/>/<see cref="GetTeamMessageHistory"/> above,
+    /// <see cref="Application.UseCases.RemoveTeamMessage.RemoveTeamMessage"/> *does* take a target an
+    /// attacker could name - <see cref="TeamMessageId"/> is not derived from the caller's own site
+    /// claim, it is a value the console hands the hub, so this is exactly the
+    /// <c>CrossTenantConversationAccessTests</c>-shaped hole to close: an operator of site B, who
+    /// genuinely holds <see cref="Permission.SiteManageOperators"/> for their own site, must still be
+    /// refused when the message id they name belongs to site A - the real
+    /// <see cref="PermissionChecker"/>, not <c>FakePermissionChecker</c>, is what proves the site
+    /// comparison and not merely the permission grant is what gates this.
+    /// </summary>
+    [Fact]
+    public async Task AnOperatorOfOneSite_CannotRemoveAnotherSitesTeamMessage_EvenWhileHoldingSiteManageOperatorsOnTheirOwnSite()
+    {
+        var siteA = await SeedTenantAsync();
+        var siteB = await SeedTenantWithSiteManageOperatorsAsync();
+
+        await using var db = fixture.CreateDbContext();
+        var teamChat = new TeamChatRepository(db, fixture.DataSource, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+        var sendHandler = new SendTeamMessageHandler(teamChat, new PermissionChecker(db), new SystemClock(), new UuidV7Generator());
+
+        var sent = await sendHandler.HandleAsync(
+            new Application.UseCases.SendTeamMessage.SendTeamMessage(siteA.SiteId, siteA.OperatorId, "site A's own message"),
+            CancellationToken.None);
+        Assert.True(sent.IsSuccess);
+
+        var removeHandler = new Application.UseCases.RemoveTeamMessage.RemoveTeamMessageHandler(
+            teamChat, new PermissionChecker(db), new SystemClock(), new UuidV7Generator());
+
+        // The attack this test exists to catch: site B's own operator, holding the real permission
+        // this handler checks, names site A's own message id directly.
+        var attack = await removeHandler.HandleAsync(
+            new Application.UseCases.RemoveTeamMessage.RemoveTeamMessage(siteB.SiteId, siteB.OperatorId, sent.Value.Id),
+            CancellationToken.None);
+
+        Assert.True(attack.IsFailure);
+        Assert.Equal("TeamChat.NotFound", attack.Error!.Value.Code);
+
+        // The refusal above is about isolation, not about the permission grant being fake - site A's
+        // own operator, who holds no permission at all here, is refused for a different reason
+        // (Forbidden) when the same site tries the same id.
+        var noPermission = await removeHandler.HandleAsync(
+            new Application.UseCases.RemoveTeamMessage.RemoveTeamMessage(siteA.SiteId, siteA.OperatorId, sent.Value.Id),
+            CancellationToken.None);
+        Assert.True(noPermission.IsFailure);
+        Assert.Equal("TeamChat.Forbidden", noPermission.Error!.Value.Code);
+
+        // The message survived both attempts, untouched.
+        var historyHandler = new GetTeamMessageHistoryHandler(new TeamMessageReadStore(fixture.DataSource));
+        var ownerView = await historyHandler.HandleAsync(
+            new Application.UseCases.GetTeamMessageHistory.GetTeamMessageHistory(siteA.SiteId, null, 50), CancellationToken.None);
+        var item = Assert.Single(ownerView.Messages);
+        Assert.Equal("site A's own message", item.Body);
+        Assert.Null(item.RemovedAt);
+    }
+
     /// <summary>One tenant, one operator holding every permission there is on its own site - enough to
     /// prove both the ordinary-operator and the admin-labelled send path in isolation from any other
     /// tenant's data.</summary>
@@ -102,6 +158,33 @@ public class TeamChatCrossTenantTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
         db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+        await db.SaveChangesAsync();
+
+        return new Tenant(siteId, operatorId);
+    }
+
+    /// <summary>`23-33`: a tenant whose operator genuinely holds <see cref="Permission.SiteManageOperators"/>
+    /// for their own site - a real `roles`/`operator_roles` grant, the same shape
+    /// `NodeDeathReconnectTests`' own seeding already establishes, not `FakePermissionChecker.Grant`
+    /// (this file's whole point is proving the real <see cref="PermissionChecker"/>'s own site
+    /// comparison, not a fake's).</summary>
+    private async Task<Tenant> SeedTenantWithSiteManageOperatorsAsync()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        await using var db = fixture.CreateDbContext();
+        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+        db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+        db.Roles.Add(new RoleRecord
+        {
+            Id = roleId,
+            SiteId = siteId,
+            Name = "Admin",
+            Permissions = [Permission.SiteManageOperators.Value],
+        });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
         await db.SaveChangesAsync();
 
         return new Tenant(siteId, operatorId);

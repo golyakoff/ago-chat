@@ -128,6 +128,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<TeamChatFanoutConsumer>();
 
+// `23-33`: the team chat's own removal fan-out consumer - a distinct BackgroundService, not a second
+// branch inside TeamChatFanoutConsumer above (that class's own remarks explain why).
+builder.Services
+    .AddOptions<TeamMessageRemovedFanoutConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(TeamMessageRemovedFanoutConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<TeamMessageRemovedFanoutConsumer>();
+
 builder.Services
     .AddOptions<ConversationAssignmentFanoutConsumerOptions>()
     .Bind(builder.Configuration.GetSection(ConversationAssignmentFanoutConsumerOptions.SectionName))

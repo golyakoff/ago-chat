@@ -55,9 +55,25 @@ public sealed class TeamMessage
 
     public DateTimeOffset CreatedAt { get; }
 
+    /// <summary>
+    /// `23-33`: the tenant's own moderation - <see langword="null"/> for a message nobody has
+    /// removed, the moment it was removed otherwise. A tombstone, deliberately not a physical
+    /// <c>DELETE</c>: this type's own remarks above already explain why <see cref="Sequence"/> is the
+    /// room's real ordering key rather than an incidental detail - a hole punched in it by deleting a
+    /// row would misdirect <c>Ago.Chat.Application.Abstractions.ITeamMessageReadStore.GetDeltaAsync</c>'s
+    /// own reconnect catch-up (a client resuming after a gap counts on every sequence in between
+    /// having existed, not on the survivors alone). The room's own read side
+    /// (<c>TeamMessageReadStore</c>) is what actually hides a removed message's <see cref="Body"/>
+    /// from every future read - this property only decides whether it does, never touching the
+    /// column that holds the original text: `personal-data.md`'s own team-chat row already retains it
+    /// forever with no per-tier tiering machinery to safely strip it with, and this item's own concern
+    /// is accountability ("who removed what, when"), not scrubbing content nothing asked to scrub.
+    /// </summary>
+    public DateTimeOffset? RemovedAt { get; private set; }
+
     public TeamMessage(
         TeamMessageId id, SiteId siteId, OperatorId authorOperatorId, bool authorIsAdmin, MessageBody body,
-        int sequence, Guid? clientMessageId, DateTimeOffset createdAt)
+        int sequence, Guid? clientMessageId, DateTimeOffset createdAt, DateTimeOffset? removedAt = null)
     {
         if (sequence <= 0)
         {
@@ -72,5 +88,25 @@ public sealed class TeamMessage
         Sequence = sequence;
         ClientMessageId = clientMessageId;
         CreatedAt = createdAt;
+        RemovedAt = removedAt;
+    }
+
+    /// <summary>
+    /// `23-33`: the account owner's own removal (<c>RemoveTeamMessageHandler</c> - see its own
+    /// remarks for exactly who may call this and why). Idempotency is the caller's job, the same
+    /// split <see cref="Attachment.MarkDeleted"/>'s own callers already draw
+    /// (<c>DeleteAttachmentHandler</c> checks <c>State == Deleted</c> *before* calling it and returns
+    /// success without calling this method again) - this method itself still throws on a second call
+    /// rather than silently overwriting <see cref="RemovedAt"/>, so a caller that skips its own check
+    /// gets a loud bug instead of a quietly wrong timestamp.
+    /// </summary>
+    public void Remove(DateTimeOffset removedAt)
+    {
+        if (RemovedAt is not null)
+        {
+            throw new InvalidOperationException($"TeamMessage {Id.Value} is already removed.");
+        }
+
+        RemovedAt = removedAt;
     }
 }

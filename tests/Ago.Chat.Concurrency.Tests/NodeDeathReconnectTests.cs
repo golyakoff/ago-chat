@@ -13,6 +13,7 @@ using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.RemoveTeamMessage;
 using Ago.Chat.Application.UseCases.SendTeamMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -195,10 +196,15 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
             new TeamChatRepository(db, fixture.DataSource, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
             new PermissionChecker(db), new SystemClock(), new UuidV7Generator());
         var getTeamHistory = new GetTeamMessageHistoryHandler(new TeamMessageReadStore(fixture.DataSource));
+        // `23-33`: same "real infra" call as sendTeamMessage right above.
+        var removeTeamMessage = new RemoveTeamMessageHandler(
+            new TeamChatRepository(db, fixture.DataSource, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
+            new PermissionChecker(db), new SystemClock(), new UuidV7Generator());
 
         return new OperatorHub(
             assignConversation, sendMessage, getHistory, getVisitorHistory, getVisitorPresence, registration, consoleOrigin,
-            presencePublisher, operatorPresence, getOperatorPresence, sendTeamMessage, getTeamHistory, new DrainState())
+            presencePublisher, operatorPresence, getOperatorPresence, sendTeamMessage, getTeamHistory, removeTeamMessage,
+            new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),

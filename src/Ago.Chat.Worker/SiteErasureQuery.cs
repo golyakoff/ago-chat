@@ -124,9 +124,12 @@ public static class SiteErasureQuery
     /// `operator_roles` through it), `roles` (and `operator_roles` through it too), `visitors`,
     /// `channel_identities`, `webhook_endpoints` (and `webhook_deliveries` through it), `message_archives`
     /// (`24-09`, `MessageArchiveEntityConfiguration`'s own required FK), `18-04`'s `tags`
-    /// (`TagConfiguration`'s own required FK, `ON DELETE CASCADE`) and - `23-32` - `team_messages`
-    /// (`TeamMessageConfiguration`'s own required FK, the same shape `tags` already takes) - every one a
-    /// required foreign key to `sites`. By the time this runs, `conversations`/`messages`/`attachments` are already empty for
+    /// (`TagConfiguration`'s own required FK, `ON DELETE CASCADE`), `23-32`'s `team_messages`
+    /// (`TeamMessageConfiguration`'s own required FK, the same shape `tags` already takes) and -
+    /// `23-33` - `team_message_removals` (`TeamMessageRemovalEntityConfiguration`'s own required FK,
+    /// deliberately diverging from `module_revoke_overrides`' no-FK choice - that configuration's own
+    /// remarks explain why a removal record is meant to go with the room it describes, not outlive it)
+    /// - every one a required foreign key to `sites`. By the time this runs, `conversations`/`messages`/`attachments` are already empty for
     /// this site (<see cref="HasAnyConversationAsync"/> gates it), and so are
     /// `conversation_notes`/`conversation_tags` (drained per-conversation by
     /// <see cref="ConversationErasureQuery.DeleteNotesForConversationAsync"/>/

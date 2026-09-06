@@ -20,7 +20,7 @@ public sealed class TeamMessageReadStore(NpgsqlDataSource dataSource) : ITeamMes
         select tm.id as "Id", tm.sequence as "Sequence", tm.author_operator_id as "AuthorOperatorId",
                o.display_name as "AuthorDisplayName", o.email as "AuthorEmail",
                tm.author_is_admin as "AuthorIsAdmin", tm.body as "Body", tm.created_at as "CreatedAt",
-               tm.client_message_id as "ClientMessageId"
+               tm.client_message_id as "ClientMessageId", tm.removed_at as "RemovedAt"
         from team_messages tm
         left join operators o on o.id = tm.author_operator_id
         where tm.site_id = @SiteId
@@ -35,7 +35,7 @@ public sealed class TeamMessageReadStore(NpgsqlDataSource dataSource) : ITeamMes
         select tm.id as "Id", tm.sequence as "Sequence", tm.author_operator_id as "AuthorOperatorId",
                o.display_name as "AuthorDisplayName", o.email as "AuthorEmail",
                tm.author_is_admin as "AuthorIsAdmin", tm.body as "Body", tm.created_at as "CreatedAt",
-               tm.client_message_id as "ClientMessageId"
+               tm.client_message_id as "ClientMessageId", tm.removed_at as "RemovedAt"
         from team_messages tm
         left join operators o on o.id = tm.author_operator_id
         where tm.site_id = @SiteId and tm.sequence > @AfterSequence
@@ -46,7 +46,7 @@ public sealed class TeamMessageReadStore(NpgsqlDataSource dataSource) : ITeamMes
         select tm.id as "Id", tm.sequence as "Sequence", tm.author_operator_id as "AuthorOperatorId",
                o.display_name as "AuthorDisplayName", o.email as "AuthorEmail",
                tm.author_is_admin as "AuthorIsAdmin", tm.body as "Body", tm.created_at as "CreatedAt",
-               tm.client_message_id as "ClientMessageId"
+               tm.client_message_id as "ClientMessageId", tm.removed_at as "RemovedAt"
         from team_messages tm
         left join operators o on o.id = tm.author_operator_id
         where tm.site_id = @SiteId and tm.sequence = @Sequence
@@ -84,8 +84,20 @@ public sealed class TeamMessageReadStore(NpgsqlDataSource dataSource) : ITeamMes
         return row is null ? null : ToItem(row);
     }
 
-    private static TeamMessageHistoryItem ToItem(TeamMessageRow row) => new(
-        new TeamMessageId(row.Id), row.Sequence, new OperatorId(row.AuthorOperatorId), row.AuthorDisplayName,
-        row.AuthorEmail, row.AuthorIsAdmin, row.Body,
-        new DateTimeOffset(DateTime.SpecifyKind(row.CreatedAt, DateTimeKind.Utc)), row.ClientMessageId);
+    // `23-33`: the read side's own redaction - a removed message's Body never crosses out of this
+    // class, not even as far as TeamMessageHistoryItem (that record's own remarks state why this is
+    // where it happens rather than at rest). RemovedAt itself is converted the same DateTime->
+    // DateTimeOffset way CreatedAt is, for the identical Npgsql-timestamptz reason TeamMessageRow's
+    // own doc comment gives.
+    private static TeamMessageHistoryItem ToItem(TeamMessageRow row)
+    {
+        var removedAt = row.RemovedAt is { } removed
+            ? new DateTimeOffset(DateTime.SpecifyKind(removed, DateTimeKind.Utc))
+            : (DateTimeOffset?)null;
+
+        return new TeamMessageHistoryItem(
+            new TeamMessageId(row.Id), row.Sequence, new OperatorId(row.AuthorOperatorId), row.AuthorDisplayName,
+            row.AuthorEmail, row.AuthorIsAdmin, removedAt is null ? row.Body : null,
+            new DateTimeOffset(DateTime.SpecifyKind(row.CreatedAt, DateTimeKind.Utc)), row.ClientMessageId, removedAt);
+    }
 }

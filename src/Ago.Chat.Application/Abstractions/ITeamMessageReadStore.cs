@@ -36,7 +36,14 @@ public interface ITeamMessageReadStore
 
 /// <summary>One row of a team chat read, joined against the author's current <c>operators</c> row for
 /// its display name/email - see <c>Ago.Chat.Contracts.TeamMessageDto</c>'s own remarks on why that
-/// join happens at read time rather than the name being stamped onto the message.</summary>
+/// join happens at read time rather than the name being stamped onto the message.
+///
+/// <para>`23-33`: <see cref="Body"/> is <see langword="null"/> exactly when <see cref="RemovedAt"/> is
+/// not - the read store itself nulls it out (never the write side - <c>Ago.Chat.Domain.TeamMessage</c>'s
+/// own remarks on why the original text stays at rest, unscrubbed), so a removed message's content
+/// never crosses out of <c>Ago.Chat.Infrastructure.Postgres</c> at all, not even as far as this
+/// record.</para>
+/// </summary>
 public sealed record TeamMessageHistoryItem(
     TeamMessageId Id,
     int Sequence,
@@ -44,8 +51,9 @@ public sealed record TeamMessageHistoryItem(
     string? AuthorDisplayName,
     string? AuthorEmail,
     bool AuthorIsAdmin,
-    string Body,
+    string? Body,
     DateTimeOffset CreatedAt,
-    Guid? ClientMessageId);
+    Guid? ClientMessageId,
+    DateTimeOffset? RemovedAt = null);
 
 public sealed record TeamMessageHistoryPage(IReadOnlyList<TeamMessageHistoryItem> Messages, int? NextBeforeSequence);
