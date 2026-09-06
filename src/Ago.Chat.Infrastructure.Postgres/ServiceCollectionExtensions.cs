@@ -183,6 +183,10 @@ public static class ServiceCollectionExtensions
         // shape every other repository/read-store pair on this page follows.
         services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
         services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `22-07`/`adr/0093`: "site X's module K has quantity Q" - the calendar add-on's own granted
+        // masters count. One implicit-transaction port, not a repository + a separate outbox call -
+        // see IModuleQuantityGrantStore's own remarks.
+        services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
         // `14-14`: unverified contact details - reachable from exactly three handlers, the same
         // narrow-by-design shape INoteRepository's own remarks describe for itself.
         services.AddScoped<IVisitorContactDetailRepository, VisitorContactDetailRepository>();

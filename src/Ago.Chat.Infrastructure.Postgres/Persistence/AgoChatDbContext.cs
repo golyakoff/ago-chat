@@ -48,6 +48,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // and ExportRequests above use, for the identical reason - nothing ever queries this DbSet on its
     // own, only EF's own migration tooling needs it registered to generate the table.
     public DbSet<EnabledModule> EnabledModules => Set<EnabledModule>();
+    // `22-07`/`adr/0093`: "site X's module K has quantity Q" - the calendar add-on's own granted
+    // masters count is the first real instance.
+    public DbSet<ModuleQuantityGrant> ModuleQuantityGrants => Set<ModuleQuantityGrant>();
     internal DbSet<ModuleTask> ModuleTasks => Set<ModuleTask>();
     // `14-14`: VisitorContactDetail's own table - see its own remarks for why it is not folded into
     // ChannelIdentities.
