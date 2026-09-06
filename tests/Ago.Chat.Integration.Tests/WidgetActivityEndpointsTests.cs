@@ -125,6 +125,40 @@ public sealed class WidgetActivityEndpointsTests(SiteCachingFixture fixture)
         Assert.Empty(accumulator.DrainSnapshot());
     }
 
+    /// <summary>
+    /// `23-07`'s own Done-when: "the beacon is ... rate-limited per IP with a `429` and a
+    /// `Retry-After`". The endpoint shipped with that limiter wired and every test above passing a
+    /// limiter that always allows, so the refusing branch was the one line of this endpoint nothing
+    /// executed - found while landing the item rather than while writing it.
+    ///
+    /// <para>Two things are asserted together on purpose. A `429` without `Retry-After` is worse than
+    /// no limit at all here: the widget's backoff reads that header, and `5-20`'s jittered retry
+    /// falls back to hammering without it.</para>
+    ///
+    /// <para>It also asserts <b>nothing was counted and nothing was looked up</b>. The refusal is
+    /// checked before the site lookup deliberately (an unknown public key still costs the caller a
+    /// token), and the null <c>getSite</c>/<c>signalRepository</c> below are what prove that ordering:
+    /// if the handler ever reached either, this test fails with a null-reference rather than quietly
+    /// passing on a weaker arrangement.</para>
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenRateLimited_Answers429WithRetryAfterAndCountsNothing()
+    {
+        var accumulator = new WidgetActivityAccumulator();
+        var httpContext = BuildHttpContext(origin: "https://tenant.example");
+
+        var result = await WidgetActivityEndpoints.HandleAsync(
+            new WidgetActivityEndpoints.WidgetActivityBeaconRequest("site_whatever", "load"),
+            getSite: null!, installationSignals: null!, activity: accumulator,
+            rateLimiter: new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(4)),
+            Options.Create(new WidgetActivityBeaconRateLimitOptions()), new FixedClock(Now), httpContext, CancellationToken.None);
+        await result.ExecuteAsync(httpContext);
+
+        Assert.Equal(StatusCodes.Status429TooManyRequests, httpContext.Response.StatusCode);
+        Assert.Equal("4", httpContext.Response.Headers.RetryAfter);
+        Assert.Empty(accumulator.DrainSnapshot());
+    }
+
     [Fact]
     public async Task HandleAsync_WithAnUnknownKind_IsRefused()
     {
