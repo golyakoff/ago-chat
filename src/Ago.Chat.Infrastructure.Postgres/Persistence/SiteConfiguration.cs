@@ -21,6 +21,12 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         {
             t.HasCheckConstraint("ck_sites_widget_position", "widget_position IN ('bottom-right', 'bottom-left')");
             t.HasCheckConstraint("ck_sites_widget_locale", "widget_locale IN ('en', 'ru')");
+            // `23-11`: a third check constraint on this table, the same "HasCheckConstraint can be
+            // called any number of times against the same t" shape `11-10` already used to add its
+            // own second one. Deliberately only two legal values - `ContactVisibility`'s own remarks
+            // on why rung three ("Never") does not exist anywhere in the C# type, so there is nothing
+            // a third value here could ever enforce.
+            t.HasCheckConstraint("ck_sites_contact_visibility", "contact_visibility IN ('Visible', 'MaskedWithReveal')");
         });
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id).HasColumnName("id").HasConversion(IdConverters.Site).ValueGeneratedNever();
@@ -154,6 +160,22 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // property initialiser, so every row written before this migration reads back `120` with no
         // backfill (Stage23AddSiteAssignmentPenalty).
         builder.Property(s => s.AssignmentPenaltySeconds).HasColumnName("assignment_penalty_seconds").HasDefaultValue(120);
+
+        // `23-11`: same "ordinary mapped property, private setter, no backing field" shape once more -
+        // ContactVisibility's own remarks explain why there is nothing for a Property<T>("_field")
+        // indirection to buy here, and why the CHECK constraint above enumerates only two values.
+        // EF's own built-in string converter (AcceptanceRecordEntityConfiguration's own precedent for
+        // an enum column, `HasConversion<string>()`), not a dedicated PositionConverter-style type -
+        // this codebase reaches for a dedicated converter only when the enum's own wire spelling
+        // differs from its C# member name (Position's "bottom-right" against BottomRight); here they
+        // are identical, so the built-in converter is the smaller, equally correct choice. Database
+        // default matches the property initialiser, so every row written before this migration reads
+        // back `Visible` with no backfill - the identical "additive column, database default, no data
+        // migration" shape `Tier`'s own remarks describe for itself.
+        builder.Property(s => s.ContactVisibility)
+            .HasColumnName("contact_visibility")
+            .HasConversion<string>()
+            .HasDefaultValue(ContactVisibility.Visible);
 
         // `23-06`: four shadow properties, the identical shape `ErasureRequestedAt` already
         // establishes just above for the identical reason - each has exactly one legitimate writer

@@ -3,6 +3,7 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
+using Ago.Chat.Application.UseCases.RevealVisitorContactDetail;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.ContactDetails;
@@ -33,6 +34,18 @@ public static class ContactDetailEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapDelete("/api/v1/conversations/{conversationId:guid}/contact-details/{contactDetailId:guid}", HandleDeleteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-11`: same route family, own Map call on the same group's own file - not a separate
+        // "own Map call" the way `SitesEndpoints.MapAccessRecordsEndpoint` needs (this codebase's own
+        // trap, `24-12`'s own remarks: several stripped-down test hosts call `MapSitesEndpoints`
+        // without registering that route's own handler). No stripped-down test host in this codebase
+        // calls `MapContactDetailEndpoints` at all - it is reachable only through the real `Program`,
+        // where every handler on this page is already registered - so this route can join the same
+        // group with no such risk.
+        app.MapPost(
+                "/api/v1/conversations/{conversationId:guid}/contact-details/{contactDetailId:guid}/reveal",
+                HandleRevealAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -86,9 +99,12 @@ public static class ContactDetailEndpoints
             return error.ToProblem(httpContext, retryAfter);
         }
 
+        // `23-11`: Masked is always false here - a caller who just submitted this value already knows
+        // it, the identical "this is not a list read" reasoning that keeps a reveal's own response
+        // unmasked (RevealVisitorContactDetailHandler's own remarks).
         return Results.Ok(new ContactDetailDto(
             result.Value.Id, result.Value.Kind, result.Value.Value, result.Value.RecordedByOperatorId,
-            result.Value.Source, result.Value.Verified, result.Value.RecordedAt));
+            result.Value.Source, result.Value.Verified, result.Value.RecordedAt, Masked: false));
     }
 
     private static async Task<IResult> HandleDeleteAsync(
@@ -108,8 +124,30 @@ public static class ContactDetailEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 
+    /// <summary>`23-11`: `POST .../contact-details/{contactDetailId}/reveal` - one contact detail,
+    /// one reveal, one record (`RevealVisitorContactDetailHandler`'s own remarks). Reuses the list's
+    /// own <see cref="ContactDetailDto"/> shape rather than a parallel type - a reveal's response is
+    /// the identical row the list already renders, with <c>Masked</c> now <see langword="false"/> and
+    /// <c>Value</c> now the real one.</summary>
+    private static async Task<IResult> HandleRevealAsync(
+        Guid conversationId,
+        Guid contactDetailId,
+        RevealVisitorContactDetailHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RevealVisitorContactDetail(
+                new ConversationId(conversationId), new VisitorContactDetailId(contactDetailId),
+                user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToDto(result.Value));
+    }
+
     private static ContactDetailDto ToDto(VisitorContactDetailDto d) =>
-        new(d.Id, d.Kind, d.Value, d.RecordedByOperatorId, d.Source, d.Verified, d.RecordedAt);
+        new(d.Id, d.Kind, d.Value, d.RecordedByOperatorId, d.Source, d.Verified, d.RecordedAt, d.Masked);
 
     /// <summary>Nullable only because a client can omit either field - the handler decides an empty
     /// value or an unrecognised kind is an error, the same "validate downstream, translate the throw"
@@ -118,10 +156,15 @@ public static class ContactDetailEndpoints
 
     /// <summary>`23-09`: <paramref name="RecordedByOperatorId"/> is nullable, and <paramref name="Source"/>/
     /// <paramref name="Verified"/> are new wire fields - see <c>VisitorContactDetailDto</c>'s own
-    /// remarks for why a null operator id is never rendered as an empty cell or a fabricated name.</summary>
+    /// remarks for why a null operator id is never rendered as an empty cell or a fabricated name.
+    ///
+    /// <para>`23-11`: <paramref name="Masked"/> - see <c>VisitorContactDetailDto</c>'s own remarks.
+    /// On the list read, <see langword="true"/> means <paramref name="Value"/> is a masked string and
+    /// the console should offer a reveal action; on the record/reveal responses it is always
+    /// <see langword="false"/>, since a caller of either already has the real value in hand.</para></summary>
     public sealed record ContactDetailDto(
         Guid Id, string Kind, string Value, Guid? RecordedByOperatorId, string Source, bool Verified,
-        DateTimeOffset RecordedAt);
+        DateTimeOffset RecordedAt, bool Masked);
 
     public sealed record ContactDetailsResponse(IReadOnlyList<ContactDetailDto> ContactDetails);
 }

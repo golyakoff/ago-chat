@@ -184,6 +184,15 @@ public static class ConversationErrors
     public static Error AssignmentPenaltyInvalid(string reason) =>
         new("AssignmentPenalty.Invalid", reason);
 
+    /// <summary>`23-11`: the wire value did not parse to a real, defined
+    /// <see cref="Domain.ContactVisibility"/> member - in particular, this is the error a request
+    /// naming rung three ("Never") gets, since that member does not exist to parse to
+    /// (<see cref="Domain.ContactVisibility"/>'s own remarks). Same "validate at the Application
+    /// boundary, translate the throw" split every enum-backed setting on this codebase already
+    /// uses.</summary>
+    public static Error ContactVisibilityInvalidRung(string reason) =>
+        new("ContactVisibility.InvalidRung", reason);
+
     /// <summary>`18-03`: a canned response `CannedResponse` refused - an empty or oversized title or
     /// body, or too many in the list. Same "one code, the message carries the detail" reasoning
     /// `OfflineAutoReplyInvalid` states for itself.</summary>

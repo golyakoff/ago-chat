@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906020519_Stage23AddContactVisibilityRung")]
+    partial class Stage23AddContactVisibilityRung
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1904,33 +1907,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasIndex("RoleId");
 
                     b.ToTable("operator_roles", (string)null);
-                });
-
-            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.RequiredDocumentRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("DocumentKey")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("document_key");
-
-                    b.Property<string>("SubjectKind")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasColumnName("subject_kind");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SubjectKind", "DocumentKey")
-                        .IsUnique()
-                        .HasDatabaseName("ix_required_documents_subject_kind_document_key");
-
-                    b.ToTable("required_documents", (string)null);
                 });
 
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.RoleRecord", b =>

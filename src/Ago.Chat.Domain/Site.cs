@@ -192,6 +192,16 @@ public sealed class Site
     // not jsonb, for the identical reason).
     private List<CannedResponse>? _cannedResponses;
 
+    /// <summary>`23-11`/`decisions.md` §5: the account-wide rung this site's contact surfaces obey -
+    /// <see cref="ContactVisibility.Visible"/> for every row that predates this column, so an existing
+    /// tenant keeps exactly the behaviour it has today (this item's own Done-when: "asserted, because
+    /// this must not change the micro case"). An ordinary mapped scalar with a private setter, the
+    /// same "no wrapping value object" shape <see cref="Tier"/>/<see cref="SeatLimit"/>/
+    /// <see cref="AssignmentPenaltySeconds"/> already establish for themselves - there is no
+    /// cross-field invariant here either, only a closed two-member enum a `CHECK` constraint can
+    /// enforce directly (<c>SiteConfiguration</c>'s own remarks).</summary>
+    public ContactVisibility ContactVisibility { get; private set; } = ContactVisibility.Visible;
+
     /// <summary>`18-03`: this site's prepared-answer library. Empty for every row that predates the
     /// feature - the same "list defaults to nothing rather than throwing" shape
     /// <see cref="OfflineAutoReply"/> already established for its own rules.</summary>
@@ -377,6 +387,21 @@ public sealed class Site
     /// <see cref="Ago.Platform.Kernel"/>-wide "validate once, at the boundary that owns the whole value"
     /// discipline without inventing a type nothing else needs.</para>
     /// </summary>
+    /// <summary>
+    /// `23-11`: `Site`'s sixth update path, and the second to raise one domain event mapped to *two*
+    /// integration events - see <see cref="SiteContactVisibilityUpdated"/>'s own remarks for why one
+    /// write needs both a chat-internal cache-invalidation fact and a cross-boundary one.
+    /// <paramref name="rung"/> arrives already validated (a real, defined <see cref="ContactVisibility"/>
+    /// member - `Enum.IsDefined` is the handler's own guard, the same "validate at the Application
+    /// boundary, this method just applies it" split every other `Site` write path already draws), so
+    /// this method's only job is applying it and recording that it happened.
+    /// </summary>
+    public void UpdateContactVisibility(ContactVisibility rung, DateTimeOffset now)
+    {
+        ContactVisibility = rung;
+        _domainEvents.Add(new SiteContactVisibilityUpdated(Id, PublicKey, rung, now));
+    }
+
     public void UpdateCannedResponses(IReadOnlyList<CannedResponse> responses)
     {
         ArgumentNullException.ThrowIfNull(responses);

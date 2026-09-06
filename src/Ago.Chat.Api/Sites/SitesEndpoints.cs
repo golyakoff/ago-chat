@@ -4,6 +4,7 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
+using Ago.Chat.Application.UseCases.GetContactRevealsForSite;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
@@ -92,6 +93,20 @@ public static class SitesEndpoints
     public static void MapAccessRecordsEndpoint(this WebApplication app)
     {
         app.MapGet("/api/v1/sites/{siteId:guid}/access-records", HandleGetAccessRecordsAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+    }
+
+    /// <summary>
+    /// `23-11`: `GET /api/v1/sites/{siteId}/contact-reveals` - the tenant's own read of the reveal
+    /// audit trail, its own <c>Map</c> call for the identical reason <see cref="MapAccessRecordsEndpoint"/>
+    /// is its own (this class's own remarks on that method: several stripped-down integration test
+    /// hosts call <see cref="MapSitesEndpoints"/> without registering every route's own handler in
+    /// their DI container, and Minimal API cannot build any endpoint's metadata once one endpoint's
+    /// service parameter cannot be resolved).
+    /// </summary>
+    public static void MapContactRevealsEndpoint(this WebApplication app)
+    {
+        app.MapGet("/api/v1/sites/{siteId:guid}/contact-reveals", HandleGetContactRevealsAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -278,6 +293,31 @@ public static class SitesEndpoints
     private static AccessRecordDto ToDto(AccessRecordItem item) => new(
         item.Id, item.OccurredAt, item.AccessKind.ToString(), item.ActorKind.ToString(), item.ActorId,
         item.ResourceKind?.ToString(), item.ResourceId);
+
+    /// <summary>
+    /// `23-11`'s own Done-when: "the tenant can read the reveal record, and the screen says what it
+    /// is for and what it is not." `?before=&limit=` matches the identical pagination convention
+    /// <see cref="HandleGetAccessRecordsAsync"/> already uses.
+    /// </summary>
+    private static async Task<IResult> HandleGetContactRevealsAsync(
+        Guid siteId, Guid? before, int? limit, GetContactRevealsForSiteHandler handler, HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetContactRevealsForSite(new SiteId(siteId), user.GetOperatorId(), before, limit), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var page = result.Value;
+        return Results.Ok(new ContactRevealsResponse([.. page.Items.Select(ToDto)], page.NextBeforeId));
+    }
+
+    private static ContactRevealDto ToDto(ContactRevealItem item) => new(
+        item.Id, item.OccurredAt, item.ConversationId, item.ContactDetailId, item.OperatorId, item.Surface);
 
     /// <summary>`13-06`: `GET /api/v1/sites/{siteId}/message-archives` - every retention period this
     /// site currently has an archive object for, newest first.</summary>
