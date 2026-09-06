@@ -19,5 +19,9 @@ namespace Ago.Chat.Application.UseCases.GetWidgetConfig;
 /// off `Ago.Chat.Domain.WidgetConfig` (unlike <see cref="Locale"/>, they need no second domain method to
 /// read from - `WidgetConfig`'s own remarks explain why they stay part of that type).
 /// </summary>
+/// `24-05`: <see cref="RequireContactConsent"/> joins as one more additive field, straight off
+/// `Ago.Chat.Domain.WidgetConfig` - the same "no second domain method to read from" shape
+/// <see cref="NoticeText"/>/<see cref="NoticeUrl"/> already established for themselves.
 public sealed record WidgetConfigDto(
-    string? PrimaryColorHex, Position Position, Locale Locale, string? NoticeText, string? NoticeUrl);
+    string? PrimaryColorHex, Position Position, Locale Locale, string? NoticeText, string? NoticeUrl,
+    bool RequireContactConsent);

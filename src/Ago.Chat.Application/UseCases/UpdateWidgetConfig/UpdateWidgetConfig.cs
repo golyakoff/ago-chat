@@ -18,6 +18,10 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// (`WidgetConfig`'s own remarks explain why), so they ride through the same
 /// `new WidgetConfig(...)`/`Site.UpdateWidgetConfig` call color and position already use, with no third
 /// `Site` method needed.
+///
+/// `24-05`: <see cref="RequireContactConsent"/> joins on the identical terms - already a plain
+/// <see langword="bool"/> with nothing to validate, so it needs no parse step the way
+/// <see cref="Position"/>/<see cref="Locale"/> do, and rides the same `new WidgetConfig(...)` call.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -26,4 +30,5 @@ public sealed record UpdateWidgetConfig(
     string Position,
     string Locale,
     string? NoticeText,
-    string? NoticeUrl);
+    string? NoticeUrl,
+    bool RequireContactConsent = false);

@@ -65,7 +65,24 @@ public readonly partial record struct WidgetConfig
     /// for a risk that was never present.</summary>
     public string? NoticeUrl { get; }
 
-    public WidgetConfig(string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null)
+    /// <summary>`24-05`: a per-site opt-in, off by default - the crux of that item's own Goal. When
+    /// <see langword="true"/>, a recorded acceptance (`24-01`) of this site's own visitor-consent
+    /// document (<see cref="SiteConsentDocumentKey"/>, published through the tenant's own entry point,
+    /// never AGO's) is required before <c>RecordVisitorContactDetailHandler</c> accepts a phone or
+    /// email onto a conversation - the gate attaches to <b>handing over contact details</b>, never to
+    /// the conversation itself, which stays reachable regardless of this flag
+    /// (`RecordVisitorContactDetailHandler`'s own remarks state the gate; nothing here blocks a
+    /// message send). Deliberately joins <see cref="NoticeText"/>/<see cref="NoticeUrl"/> on the same
+    /// terms - one more fixed, named, validated field on this type, not a new configuration mechanism -
+    /// and deliberately defaults to <see langword="false"/> for every existing row
+    /// (`Stage24AddSiteRequireContactConsent`'s own column default): `24-05`'s own Scope is explicit
+    /// that turning this on for every tenant silently would be worse than leaving it off, so a tenant
+    /// who wants it must ask for it.</summary>
+    public bool RequireContactConsent { get; }
+
+    public WidgetConfig(
+        string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null,
+        bool requireContactConsent = false)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -99,6 +116,7 @@ public readonly partial record struct WidgetConfig
         Position = position;
         NoticeText = noticeText;
         NoticeUrl = noticeUrl;
+        RequireContactConsent = requireContactConsent;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls

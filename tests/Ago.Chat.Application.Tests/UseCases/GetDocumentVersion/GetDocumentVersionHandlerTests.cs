@@ -14,7 +14,8 @@ public class GetDocumentVersionHandlerTests
     {
         var documents = new FakeDocumentRepository();
         var cache = new FakeCache();
-        var publisher = new PublishDocumentVersionHandler(documents, new FakeIdGenerator(), new FakeClock(Now), cache);
+        var publisher = new PublishDocumentVersionHandler(
+            documents, new FakePermissionChecker(), new FakeIdGenerator(), new FakeClock(Now), cache);
         var reader = new GetDocumentVersionHandler(documents, cache);
         return new Fixture(reader, publisher, cache);
     }

@@ -37,10 +37,26 @@ namespace Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 /// removed - the backlog item's own "a visitor-authenticated write path is not an operator one" is
 /// the reason <see cref="RecordVisitorContactDetailAsVisitor"/> is its own command type rather than a
 /// reused one with a nullable <see cref="OperatorId"/>.</para>
+///
+/// <para><b>`24-05`: both entry points now check <see cref="ConsentSatisfiedAsync"/> right before
+/// building the row, never before.</b> The gate attaches to <em>this write</em> - handing over a
+/// contact detail - never to the conversation itself: nothing above either method's own existing
+/// checks changes, a visitor who has not consented can still open the panel, read the auto-reply, and
+/// keep talking; only this one write is refused, with a `409` a caller resolves by recording the
+/// consent (`RecordVisitorConsentHandler`) and retrying the identical request. Checked on <b>both</b>
+/// paths deliberately, not only the visitor's own form (`23-09`): the backlog item's own "Depends on"
+/// names `23-09` and `23-10` together as "the acts this consent actually attaches to," and `23-10`'s
+/// operator-promoted row is still a contact detail newly made findable and actionable, the same
+/// personal-data-shape argument `23-09`'s own backlog item already made for why a visitor-typed number
+/// is not exempt just because it also sits in the transcript. This is a real, judgment-call reading of
+/// an item that did not spell out which path(s) it meant - stated here rather than silently
+/// assumed.</para>
 /// </summary>
 public sealed class RecordVisitorContactDetailHandler(
     IConversationRepository conversations,
     IVisitorContactDetailRepository contactDetails,
+    ISiteRepository sites,
+    IAcceptanceRepository acceptances,
     IPermissionChecker permissions,
     IRateLimiter rateLimiter,
     ContactDetailRateLimitOptions rateLimitOptions,
@@ -68,6 +84,11 @@ public sealed class RecordVisitorContactDetailHandler(
             // Wrong-tenant reads like no row - the same info-hiding shape every cross-tenant guard in
             // this codebase already uses (ConversationErrors.NotFound's own callers).
             return ConversationErrors.NotFound(command.ConversationId.Value);
+        }
+
+        if (!await ConsentSatisfiedAsync(conversation.SiteId, conversation.VisitorId, cancellationToken))
+        {
+            return ConversationErrors.VisitorContactDetailConsentRequired();
         }
 
         var now = clock.UtcNow;
@@ -130,6 +151,11 @@ public sealed class RecordVisitorContactDetailHandler(
             return ConversationErrors.RateLimited(siteLimit.RetryAfter);
         }
 
+        if (!await ConsentSatisfiedAsync(conversation.SiteId, conversation.VisitorId, cancellationToken))
+        {
+            return ConversationErrors.VisitorContactDetailConsentRequired();
+        }
+
         var now = clock.UtcNow;
         VisitorContactDetail detail;
         try
@@ -145,6 +171,29 @@ public sealed class RecordVisitorContactDetailHandler(
         await contactDetails.SaveAsync(detail, cancellationToken);
 
         return ToResult(detail);
+    }
+
+    /// <summary>`24-05`'s own gate: <see langword="true"/> when the site does not require contact
+    /// consent at all (every site before this item, and every site since that has not opted in - the
+    /// unchanged-default requirement), or when this visitor already holds a recorded acceptance of
+    /// this site's own contact-consent document, any version - <see cref="SiteConsentDocumentKey.For"/>
+    /// derives the same key <c>RecordVisitorConsentHandler</c> writes against, so the two can never
+    /// drift apart on how the key is spelled. A site that requires consent but has not published its
+    /// own document yet reads as "not satisfied" here too - the honest answer, since nothing this
+    /// visitor could do would ever produce a matching acceptance for a key nothing was ever published
+    /// under (`GetConsentRequirementHandler`'s own read surfaces that gap to the widget as "required,
+    /// not yet available" rather than this handler guessing at a friendlier failure).</summary>
+    private async Task<bool> ConsentSatisfiedAsync(SiteId siteId, VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var site = await sites.GetByIdAsync(siteId, cancellationToken);
+        if (site is null || !site.WidgetConfig.RequireContactConsent)
+        {
+            return true;
+        }
+
+        var contactKey = SiteConsentDocumentKey.For(siteId, VisitorConsentPurpose.Contact);
+        var accepted = await acceptances.GetForSubjectAsync(AcceptanceSubjectKind.Visitor, visitorId.Value, cancellationToken);
+        return accepted.Any(a => a.DocumentKey == contactKey);
     }
 
     private static bool TryParseKind(string raw, out VisitorContactDetailKind kind) =>

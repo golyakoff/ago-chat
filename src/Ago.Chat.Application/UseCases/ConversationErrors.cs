@@ -600,6 +600,29 @@ public static class ConversationErrors
     public static Error ContactDetailInvalidKind(string reason) =>
         new("VisitorContactDetail.InvalidKind", $"'{reason}' is not a valid contact detail kind.");
 
+    /// <summary>`24-05`: this site has <see cref="Domain.WidgetConfig.RequireContactConsent"/> turned
+    /// on, and this visitor has no recorded acceptance of the contact-consent document yet -
+    /// <c>RecordVisitorContactDetailHandler</c>'s own gate, checked in both
+    /// <c>HandleAsOperatorAsync</c>/<c>HandleAsVisitorAsync</c> right before the row would be saved,
+    /// never before. `409`, not `403`: this is not a permission the caller lacks, it is a precondition
+    /// this specific request has not yet satisfied, resolved by recording the consent first
+    /// (<c>RecordVisitorConsentHandler</c>) and retrying the identical request - the same "a real
+    /// conflict with the row's own current state, resolved by an explicit second act rather than by
+    /// fixing the request body" shape <see cref="ChannelAlreadyConnected"/>/<see cref="ModuleRevokePurchaseRequiresForce"/>
+    /// already give their own conflicts.</summary>
+    public static Error VisitorContactDetailConsentRequired() =>
+        new(
+            "VisitorContactDetail.ConsentRequired",
+            "This site requires a recorded visitor consent before accepting a contact detail.");
+
+    /// <summary>`24-05`: the identical two-bucket rate limiter shape <see cref="RateLimited"/> already
+    /// gives <c>RecordVisitorContactDetailHandler</c>'s own visitor path, for
+    /// <c>RecordVisitorConsentHandler</c>'s bucket instead - its own code, not a reuse, the same
+    /// "a client branching on <c>type</c> should tell these apart" reasoning <see cref="SiteRegistrationRateLimited"/>
+    /// already states for itself.</summary>
+    public static Error ConsentRateLimited(TimeSpan retryAfter) =>
+        new("Consent.RateLimited", $"Too many consent requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
     // `14-13`/`adr/0079` decision 5: same shared vocabulary, same reason - SetPreferredChannelIdentityHandler
     // adds its own code here rather than a separate error class.
     /// <summary>The named id does not resolve to one of *this visitor's own*, currently

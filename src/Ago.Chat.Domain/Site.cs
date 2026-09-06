@@ -95,7 +95,13 @@ public sealed class Site
     private string? _widgetNoticeText;
     private string? _widgetNoticeUrl;
 
-    public WidgetConfig WidgetConfig => new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl);
+    // `24-05`: one more flat backing field, the same shape as the pair above - its own column
+    // (Stage24AddSiteRequireContactConsent), a plain `bool` (no owned-type machinery) for the same
+    // "one more caller of an already-established shape" reason `16-04`'s own comment gives for its two.
+    private bool _requireContactConsent;
+
+    public WidgetConfig WidgetConfig =>
+        new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl, _requireContactConsent);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -241,6 +247,7 @@ public sealed class Site
         _widgetPosition = WidgetConfig.Default.Position;
         _widgetNoticeText = WidgetConfig.Default.NoticeText;
         _widgetNoticeUrl = WidgetConfig.Default.NoticeUrl;
+        _requireContactConsent = WidgetConfig.Default.RequireContactConsent;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -265,6 +272,7 @@ public sealed class Site
         _widgetPosition = config.Position;
         _widgetNoticeText = config.NoticeText;
         _widgetNoticeUrl = config.NoticeUrl;
+        _requireContactConsent = config.RequireContactConsent;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

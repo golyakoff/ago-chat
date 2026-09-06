@@ -122,6 +122,8 @@ using Ago.Chat.Application.UseCases.UpdateCannedResponses;
 using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
+using Ago.Chat.Application.UseCases.GetConsentRequirement;
+using Ago.Chat.Application.UseCases.RecordVisitorConsent;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
 using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
 using Ago.Chat.Application.UseCases.InitiatePhoneVerification;
@@ -1031,6 +1033,19 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(ContactDetailRateLimitOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ContactDetailRateLimitOptions>>().Value);
+
+        // `24-05`: the visitor's own consent - required only where a site opts in
+        // (Site.WidgetConfig.RequireContactConsent), gating RecordVisitorContactDetailHandler's own
+        // write rather than the conversation itself. The same registration shape
+        // ContactDetailRateLimitOptions uses just above, its own options type - see
+        // ConsentRateLimitOptions's own remarks for why it is not a reuse of that one.
+        services.AddScoped<GetConsentRequirementHandler>();
+        services.AddScoped<RecordVisitorConsentHandler>();
+        services
+            .AddOptions<ConsentRateLimitOptions>()
+            .Bind(configuration.GetSection(ConsentRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ConsentRateLimitOptions>>().Value);
 
         // `14-15`/`adr/0079`: phone verification via a proactive SMS/voice code - see this item's own
         // backlog file, "Why this cannot reuse 14-12's mechanism". Both handlers share one options

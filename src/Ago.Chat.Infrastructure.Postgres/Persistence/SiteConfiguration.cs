@@ -100,6 +100,12 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // WidgetConfig's own constructor is this value's only validation, same as CannedResponse's.
         builder.Property<string?>("_widgetNoticeText").HasColumnName("widget_notice_text");
         builder.Property<string?>("_widgetNoticeUrl").HasColumnName("widget_notice_url");
+        // `24-05`: a third backing field on the same terms - a plain bool column, database default
+        // `false` so every row written before this migration reads back "not required", the identical
+        // "additive column, database default, no data migration" shape `Tier`'s own remarks describe.
+        builder.Property<bool>("_requireContactConsent")
+            .HasColumnName("widget_require_contact_consent")
+            .HasDefaultValue(false);
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed
