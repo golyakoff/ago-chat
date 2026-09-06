@@ -15,6 +15,8 @@ internal static class IdConverters
     public static readonly ValueConverter<OperatorId, Guid> Operator = new(id => id.Value, value => new OperatorId(value));
     public static readonly ValueConverter<ConversationId, Guid> Conversation = new(id => id.Value, value => new ConversationId(value));
     public static readonly ValueConverter<MessageId, Guid> Message = new(id => id.Value, value => new MessageId(value));
+    // `23-32`
+    public static readonly ValueConverter<TeamMessageId, Guid> TeamMessage = new(id => id.Value, value => new TeamMessageId(value));
     public static readonly ValueConverter<AttachmentId, Guid> Attachment = new(id => id.Value, value => new AttachmentId(value));
     public static readonly ValueConverter<WebhookEndpointId, Guid> WebhookEndpoint = new(id => id.Value, value => new WebhookEndpointId(value));
     public static readonly ValueConverter<WebhookDeliveryId, Guid> WebhookDelivery = new(id => id.Value, value => new WebhookDeliveryId(value));

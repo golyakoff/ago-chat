@@ -204,6 +204,12 @@ public static class ServiceCollectionExtensions
         // EmailWebhookEndpoints (Ago.Chat.Api) both resolve it through this port, neither one referencing
         // this project directly (IEmailThreadStore's own remarks on why).
         services.AddScoped<IEmailThreadStore, EmailThreadStore>();
+        // `23-32`: the team chat's own write/read pair - see ITeamChatRepository's own remarks for
+        // why the write is a single implicit-transaction port rather than a repository plus a
+        // separate outbox call, and ITeamMessageReadStore's own remarks for the read/write split.
+        services.AddScoped<ITeamChatRepository, TeamChatRepository>();
+        services.AddScoped<ITeamMessageReadStore, TeamMessageReadStore>();
+
         // adr/0017: the one place a concrete DbContext type meets the generic platform writer.
         services.AddOutboxInbox<AgoChatDbContext>();
 

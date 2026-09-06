@@ -47,6 +47,7 @@ using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.SetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
@@ -96,6 +97,7 @@ using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
+using Ago.Chat.Application.UseCases.ResolveTeamMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeModuleForSite;
@@ -106,6 +108,7 @@ using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.SendTeamMessage;
 using Ago.Chat.Application.UseCases.SendOfflineAutoReply;
 using Ago.Chat.Application.UseCases.SetModuleTaskChannelPriorityList;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
@@ -799,6 +802,12 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<SendVisitorMessageHandler>();
         services.AddScoped<SendOperatorMessageHandler>();
         services.AddScoped<GetConversationHistoryHandler>();
+        // `23-32`: the team chat's own three handlers - see each one's own remarks. Registered here,
+        // next to SendOperatorMessageHandler/GetConversationHistoryHandler/ResolveMessageDeliveryTargetsHandler
+        // below, the same shape every other use case on this page follows.
+        services.AddScoped<SendTeamMessageHandler>();
+        services.AddScoped<GetTeamMessageHistoryHandler>();
+        services.AddScoped<ResolveTeamMessageDeliveryTargetsHandler>();
         services.AddScoped<GetSiteConfigByPublicKeyHandler>();
         services.AddScoped<GetSiteConfigByIdHandler>();
         services.AddScoped<CheckCorsOriginHandler>();

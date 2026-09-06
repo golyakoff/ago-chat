@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Caching;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
+using Ago.Chat.Application.UseCases.SendTeamMessage;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.Postgres;
@@ -9,6 +10,7 @@ using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -73,6 +75,20 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
                 CancellationToken.None);
         }
 
+        // `23-32`: the team chat's own room - "erasing the site erases the room" (that item's own
+        // Done-when), a plain FK cascade like `tags`/`operators` rather than anything
+        // `ConversationErasureJob` needs to know about (`TeamMessageConfiguration`'s own remarks).
+        await using (var db = fixture.CreateDbContext())
+        {
+            var sendTeamMessage = new SendTeamMessageHandler(
+                new TeamChatRepository(db, fixture.DataSource, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
+                new PermissionChecker(db), clock, new UuidV7Generator());
+            var sent = await sendTeamMessage.HandleAsync(
+                new Application.UseCases.SendTeamMessage.SendTeamMessage(siteId, adminOperatorId, "erasure test team message"),
+                CancellationToken.None);
+            Assert.True(sent.IsSuccess);
+        }
+
         Assert.True(await fixture.UserExistsAsync(subjectId));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(thumbnailKey), CancellationToken.None));
@@ -82,6 +98,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(1, await CountAsync("select count(*) from conversation_tags where conversation_id = @conversationId", conversationId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from tags where id = @siteId", tagId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @siteId", visitorId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from team_messages where site_id = @siteId", siteId.Value));
 
         // The real HTTP-facing write: permission-checked, one flag set, no deletion here.
         var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
@@ -137,6 +154,9 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(0, await CountAsync("select count(*) from conversation_notes where conversation_id = @conversationId", conversationId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from conversation_tags where conversation_id = @conversationId", conversationId.Value));
         Assert.Equal(0, await CountAsync("select count(*) from tags where site_id = @siteId", siteId.Value));
+        // `23-32`: the room itself - a plain FK cascade from `sites`, proven the same way every other
+        // cascaded table on this page is.
+        Assert.Equal(0, await CountAsync("select count(*) from team_messages where site_id = @siteId", siteId.Value));
 
         // MinIO: both the object and 5-04's thumbnail beside it.
         Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));

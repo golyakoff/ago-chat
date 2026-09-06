@@ -7,16 +7,20 @@ using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
+using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.SendTeamMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Module;
 using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
@@ -288,10 +292,16 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         var getOperatorPresence = new GetOperatorPresenceHandler(new OperatorRepository(db));
         var consoleOrigin = new ConsoleOriginValidator(
             new ConsoleOriginOptions { AllowedOrigins = ["https://console.test"] });
+        // `23-32`: real infra, the same "no fake stands in for Postgres here" call every other port
+        // on this hub already makes in this file.
+        var sendTeamMessage = new SendTeamMessageHandler(
+            new TeamChatRepository(db, fixture.DataSource, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
+            new PermissionChecker(db), new SystemClock(), new UuidV7Generator());
+        var getTeamHistory = new GetTeamMessageHistoryHandler(new TeamMessageReadStore(fixture.DataSource));
 
         return new OperatorHub(
             assignConversation, sendMessage, getHistory, getVisitorHistory, getVisitorPresence, registration, consoleOrigin,
-            presencePublisher, operatorPresence, getOperatorPresence, new DrainState())
+            presencePublisher, operatorPresence, getOperatorPresence, sendTeamMessage, getTeamHistory, new DrainState())
         {
             Context = new FakeHubCallerContext(connectionId, OperatorPrincipal(siteId, operatorId)),
             Clients = new FakeHubCallerClients(),
