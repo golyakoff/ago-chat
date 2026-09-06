@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
@@ -134,11 +135,31 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         // cache is fine, never exercised (same reasoning as ReconnectResumeTests' own CreateHub).
         var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
 
-        return new VisitorHub(startConversation, null!, getHistory, registration, originValidator, new DrainState())
+        return new VisitorHub(
+            startConversation, null!, getHistory, registration, originValidator, new DrainState(),
+            new NoOpWidgetActivityRecorder(), new SystemClock())
         {
             Context = new FakeHubCallerContext(connectionId, VisitorPrincipal(siteId, visitorId)),
             Clients = new FakeHubCallerClients(),
         };
+    }
+
+    /// <summary>`23-07`: `JoinAsync` now calls `IWidgetActivityRecorder.RecordConversation` on a new
+    /// conversation - this file exercises node-death reconnect, not the funnel, so a no-op stands in
+    /// the same way <see cref="NoOpEventPublisher"/> does for presence below.</summary>
+    private sealed class NoOpWidgetActivityRecorder : IWidgetActivityRecorder
+    {
+        public void RecordLoad(SiteId siteId, DateTimeOffset now)
+        {
+        }
+
+        public void RecordOpen(SiteId siteId, DateTimeOffset now)
+        {
+        }
+
+        public void RecordConversation(SiteId siteId, DateTimeOffset now)
+        {
+        }
     }
 
     private OperatorHub CreateOperatorHub(

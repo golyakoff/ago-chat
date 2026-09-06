@@ -342,6 +342,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         // `23-06`: GetSiteInstallationHandler's own two new reads.
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IConversationReadStore, ConversationReadStore>();
+        // `23-07`: the funnel's own read - the third dependency GetSiteInstallationHandler now needs.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IWidgetActivityReadStore, WidgetActivityReadStore>();
         builder.Services.AddSingleton(new Ago.Chat.Application.UseCases.GetSiteInstallation.SiteInstallationOptions());
         builder.Services.AddSingleton<Ago.Chat.Application.Abstractions.IWebhookSecretGenerator, WebhookSecretGenerator>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IWebhookSecretCipher, WebhookSecretCipher>();

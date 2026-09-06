@@ -6,10 +6,12 @@ using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
+using Ago.Platform.Kernel;
 using Ago.Platform.Realtime;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -28,7 +30,9 @@ public sealed class VisitorHub(
     GetConversationHistoryHandler getHistory,
     HubConnectionRegistration connectionRegistration,
     HubOriginValidator originValidator,
-    DrainState drainState) : Hub
+    DrainState drainState,
+    IWidgetActivityRecorder widgetActivity,
+    IClock clock) : Hub
 {
     private const int DefaultPageSize = 50;
 
@@ -115,6 +119,17 @@ public sealed class VisitorHub(
         var started = await startConversation.HandleAsync(
             new StartConversation(siteId, visitorId, source), Context.ConnectionAborted);
         var conversationId = started.Value.ConversationId;
+
+        // `23-07`: the funnel's third count, from the existing write path above - never a second
+        // beacon (the item's own Scope). Widget-scoped deliberately: this is the one place a
+        // conversation is known to have started *through the widget* (as opposed to
+        // `ReceiveChannelMessageHandler`'s own channel-originated conversations, which have no widget
+        // load or open beside them in this same window - `IWidgetActivityRecorder.RecordConversation`'s
+        // own remarks).
+        if (started.Value.IsNew)
+        {
+            widgetActivity.RecordConversation(siteId, clock.UtcNow);
+        }
 
         if (lastKnownSequence is { } afterSequence && !started.Value.IsNew)
         {

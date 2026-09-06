@@ -20,4 +20,15 @@ public sealed class SiteInstallationOptions
     /// concluding "the product was used" - `docs/backlog/23-06-*.md`'s own Scope: "any conversation
     /// created for this site in the window."</summary>
     public int RecentlyThresholdDays { get; set; } = 7;
+
+    /// <summary>`23-07`: how many days back <c>GetSiteInstallationHandler</c> sums
+    /// `site_widget_activity` for the funnel's three counts - a separate window from
+    /// <see cref="RecentlyThresholdDays"/> above, deliberately: that one answers "is this recent
+    /// enough to still call it quiet rather than long-dead", a judgement call about staleness: this
+    /// one answers "how much traffic should the funnel show", a judgement call about how many data
+    /// points make three counts worth looking at at all. Reusing one number would make a future
+    /// change to either meaning silently move the other. 30 days is a starting point, not measured -
+    /// the same caveat <see cref="RecentlyThresholdDays"/>'s own sibling options elsewhere in this
+    /// codebase always carry for an unmeasured default.</summary>
+    public int FunnelWindowDays { get; set; } = 30;
 }

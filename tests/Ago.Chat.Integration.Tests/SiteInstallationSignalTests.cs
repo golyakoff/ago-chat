@@ -144,9 +144,10 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
         var signalRepository = new SiteInstallationSignalRepository(fixture.DataSource);
         var conversationReadStore = new ConversationReadStore(fixture.DataSource);
         var now = new DateTimeOffset(2026, 9, 5, 12, 0, 0, TimeSpan.Zero);
+        var widgetActivity = new WidgetActivityReadStore(fixture.DataSource);
         var handler = new GetSiteInstallationHandler(
             new SiteRepository(fixture.CreateDbContext()), permissions, signalRepository, conversationReadStore,
-            new FixedClock(now), new SiteInstallationOptions());
+            widgetActivity, new FixedClock(now), new SiteInstallationOptions());
 
         var before = await handler.HandleAsync(new GetSiteInstallation(siteId, operatorId), CancellationToken.None);
         Assert.True(before.IsSuccess);

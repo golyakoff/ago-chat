@@ -33,14 +33,17 @@ public class GetSiteInstallationHandlerTests
         FakePermissionChecker permissions,
         FakeSiteInstallationSignalRepository? signals = null,
         FakeConversationReadStore? conversations = null,
-        int recentlyThresholdDays = 7) =>
+        FakeWidgetActivityReadStore? widgetActivity = null,
+        int recentlyThresholdDays = 7,
+        int funnelWindowDays = 30) =>
         new(
             sites,
             permissions,
             signals ?? new FakeSiteInstallationSignalRepository(),
             conversations ?? new FakeConversationReadStore(),
+            widgetActivity ?? new FakeWidgetActivityReadStore(),
             new FakeClock(Now),
-            new SiteInstallationOptions { RecentlyThresholdDays = recentlyThresholdDays });
+            new SiteInstallationOptions { RecentlyThresholdDays = recentlyThresholdDays, FunnelWindowDays = funnelWindowDays });
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_ReturnsTheSitesPublicKeyAndAllowedOrigins()
@@ -226,5 +229,104 @@ public class GetSiteInstallationHandlerTests
 
         Assert.Equal(SiteInstallationState.NotSeenYet, result.Value.State);
         Assert.False(result.Value.UsedRecently);
+    }
+
+    /// <summary>`23-07`'s own Done-when: "Three counts appear for a site that has had traffic, and
+    /// 0 / 0 / 0 for a brand-new one" - the traffic half. The site has also been seen, so
+    /// <see cref="WidgetFunnelAdviceResolver.Resolve"/> does not short-circuit on
+    /// <see cref="SiteInstallationState.NeverSeenButInUse"/>.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteHasTraffic_ReturnsTheThreeCounts()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", ["https://tenant.example"]));
+        var signals = new FakeSiteInstallationSignalRepository();
+        signals.Seed(SiteId, new SiteInstallationSignals(Now.AddDays(-10), Now, null, null));
+        var widgetActivity = new FakeWidgetActivityReadStore();
+        widgetActivity.Seed(SiteId, new WidgetActivityTotals(40, 12, 3));
+        var handler = CreateHandler(sites, permissions, signals, widgetActivity: widgetActivity);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetSiteInstallation.GetSiteInstallation(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.Equal(40, result.Value.Loads);
+        Assert.Equal(12, result.Value.Opens);
+        Assert.Equal(3, result.Value.Conversations);
+        Assert.Equal(WidgetFunnelAdvice.None, result.Value.Advice);
+    }
+
+    /// <summary>The brand-new half of the same Done-when: nothing has ever been flushed for this
+    /// site, so the funnel reads `0 / 0 / 0` - <see cref="FakeWidgetActivityReadStore"/>'s own
+    /// "no row" default, exercised through the handler.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteIsBrandNew_ReturnsZeroForEveryCount()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", ["https://tenant.example"]));
+        var handler = CreateHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetSiteInstallation.GetSiteInstallation(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.Equal(0, result.Value.Loads);
+        Assert.Equal(0, result.Value.Opens);
+        Assert.Equal(0, result.Value.Conversations);
+    }
+
+    /// <summary>`23-07`'s own Done-when: "Each zero state produces its own advice and none produces
+    /// another's - asserted on the resolved state, not on the rendered words." Three cases, one per
+    /// non-`None` <see cref="WidgetFunnelAdvice"/> member, plus the fourth-state guard - all five
+    /// through the handler rather than only against <see cref="WidgetFunnelAdviceResolver"/> directly,
+    /// so a future change to how the handler wires the resolver's arguments cannot silently break this
+    /// without a test noticing.</summary>
+    [Theory]
+    [InlineData(0, 0, 0, WidgetFunnelAdvice.FixInstall)]
+    [InlineData(5, 0, 0, WidgetFunnelAdvice.ImprovePlacement)]
+    [InlineData(5, 3, 0, WidgetFunnelAdvice.ConnectChannelsAndRespond)]
+    [InlineData(5, 3, 2, WidgetFunnelAdvice.None)]
+    public async Task HandleAsync_ResolvesTheAdviceMatchingWhichCountIsZero(
+        int loads, int opens, int conversations, WidgetFunnelAdvice expected)
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", ["https://tenant.example"]));
+        var signals = new FakeSiteInstallationSignalRepository();
+        signals.Seed(SiteId, new SiteInstallationSignals(Now.AddDays(-10), Now, null, null));
+        var widgetActivity = new FakeWidgetActivityReadStore();
+        widgetActivity.Seed(SiteId, new WidgetActivityTotals(loads, opens, conversations));
+        var handler = CreateHandler(sites, permissions, signals, widgetActivity: widgetActivity);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetSiteInstallation.GetSiteInstallation(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.Equal(expected, result.Value.Advice);
+    }
+
+    /// <summary>The one case the plain zero-count table above cannot express: a site with every
+    /// count at zero because the widget has never connected, but a channel-only conversation exists
+    /// within the recency window. `23-06`'s fourth state must win over
+    /// <see cref="WidgetFunnelAdvice.FixInstall"/> - the item's own words, "None of the above
+    /// applies, and the install advice must not be produced."</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNeverSeenButInUse_NeverProducesFixInstallAdvice()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", ["https://tenant.example"]));
+        var conversations = new FakeConversationReadStore();
+        conversations.Seed(Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now.AddDays(-2)));
+        var handler = CreateHandler(sites, permissions, conversations: conversations);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetSiteInstallation.GetSiteInstallation(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.Equal(SiteInstallationState.NeverSeenButInUse, result.Value.State);
+        Assert.Equal(WidgetFunnelAdvice.None, result.Value.Advice);
     }
 }

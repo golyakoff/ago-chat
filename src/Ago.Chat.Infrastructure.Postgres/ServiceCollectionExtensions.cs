@@ -135,6 +135,13 @@ public static class ServiceCollectionExtensions
         // `23-06`: the install screen's own two facts - see ISiteInstallationSignalRepository's own
         // remarks for why this is a third port taking the identical shape as the one directly above.
         services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
+        // `23-07`: the funnel's own read - see IWidgetActivityReadStore's own remarks. The write side
+        // (WidgetActivityWriter, the accumulator it drains, and the flusher's own hosted service) is
+        // registered in Ago.Chat.Api's own Program.cs instead, the identical "internal pipeline
+        // plumbing, resolved by exactly the host that runs it" shape MessageBatchWriter/BatchAccumulator
+        // already take there - this read, unlike that write, is a plain scoped Dapper read every host
+        // registering GetSiteInstallationHandler needs resolvable, the same as every port above it.
+        services.AddScoped<IWidgetActivityReadStore, WidgetActivityReadStore>();
         // `16-03`: the export-request read/write - see IExportRequestRepository's own remarks.
         services.AddScoped<IExportRequestRepository, ExportRequestRepository>();
         // `24-12`: the boundary-crossing-access write/read - see IAccessRecordRepository's own
