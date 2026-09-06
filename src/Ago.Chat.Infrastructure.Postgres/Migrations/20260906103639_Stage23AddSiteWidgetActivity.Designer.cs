@@ -13,7 +13,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    [Migration("20260906080546_Stage23AddSiteWidgetActivity")]
+    [Migration("20260906103639_Stage23AddSiteWidgetActivity")]
     partial class Stage23AddSiteWidgetActivity
     {
         /// <inheritdoc />
@@ -1341,6 +1341,12 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Property<string>("_offlineAutoReplyRules")
                         .HasColumnType("text")
                         .HasColumnName("offline_auto_reply_rules");
+
+                    b.Property<bool>("_requireContactConsent")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("widget_require_contact_consent");
 
                     b.Property<string>("_widgetNoticeText")
                         .HasColumnType("text")
