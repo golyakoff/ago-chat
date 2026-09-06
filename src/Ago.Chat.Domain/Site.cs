@@ -410,6 +410,40 @@ public sealed class Site
         _domainEvents.Add(new SiteContactVisibilityUpdated(Id, PublicKey, rung, now));
     }
 
+    /// <summary>
+    /// `23-48`: `Site`'s seventh update path, and the first to ever change <see cref="AllowedOrigins"/>
+    /// after construction - `10-02`'s registration handler is the only other writer, and it only ever
+    /// sets the list once, at creation. Called from exactly one place,
+    /// <c>UpdateSiteAllowedOriginsAsOwnerHandler</c> - the author's own decision (`23-48`'s "the
+    /// answer") is that nobody else may ever call this, not even the tenant whose site it is.
+    ///
+    /// <para><paramref name="origins"/> arrives already-validated (each entry checked by
+    /// <c>Ago.Chat.Application.UseCases.RegisterSite.OriginValidator</c>, the same validator `10-02`'s
+    /// registration handler already uses for the first origin a site is ever given - reused rather
+    /// than a second wording for the identical rule, matching this method's own split from
+    /// <see cref="UpdateWidgetConfig"/>: validate once, at the Application boundary, this method's
+    /// only job is applying it and recording that it happened.</para>
+    ///
+    /// <para>Raises <see cref="SiteAllowedOriginsUpdated"/>, carrying <b>both</b> the list this write
+    /// replaces and the list it leaves behind - see that event's own remarks for why a delta-free
+    /// "current value only" shape (every other <see cref="Site"/> event since `11-01`) is not enough
+    /// here: the CORS-layer cache this event's own consumer must also evict is keyed by origin string,
+    /// not by site, so evicting it correctly needs to know what the removed origins actually
+    /// were.</para>
+    /// </summary>
+    public void UpdateAllowedOrigins(IReadOnlyList<string> origins, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(origins);
+
+        var previous = _allowedOrigins.ToList();
+        // In-place mutation, not a reassignment - _allowedOrigins stays `readonly`, matching every
+        // other List<T>-backed field on this aggregate (AllowedOrigins' own `[.. allowedOrigins]` in
+        // the constructor is the sole exception, since a constructor may still write a readonly field).
+        _allowedOrigins.Clear();
+        _allowedOrigins.AddRange(origins);
+        _domainEvents.Add(new SiteAllowedOriginsUpdated(Id, PublicKey, previous, [.. _allowedOrigins], now));
+    }
+
     public void UpdateCannedResponses(IReadOnlyList<CannedResponse> responses)
     {
         ArgumentNullException.ThrowIfNull(responses);
