@@ -22,6 +22,14 @@
 /// the tenant") - stamped at send time, deliberately not recomputed from the author's role today; see
 /// <c>Ago.Chat.Domain.TeamMessage.AuthorIsAdmin</c>'s own remarks for why a historical message keeps
 /// the label it earned when it was sent.
+///
+/// <para>`23-33`: <see cref="Body"/> is <see langword="null"/> exactly when <see cref="RemovedAt"/>
+/// is not - the tombstone this backlog item chose over silent disappearance ("«сообщение удалено» is
+/// honest"). Nulled at the read side (<c>TeamMessageReadStore</c>), never at rest: the original text
+/// is not scrubbed from the row it came from, only kept off every wire shape a client can see from
+/// the moment of removal onward - see <c>Ago.Chat.Domain.TeamMessage.RemovedAt</c>'s own remarks for
+/// why. A client renders a fixed placeholder whenever <see cref="RemovedAt"/> is set and must never
+/// treat a <see langword="null"/> <see cref="Body"/> any other way.</para>
 /// </summary>
 public sealed record TeamMessageDto(
     Guid Id,
@@ -30,6 +38,7 @@ public sealed record TeamMessageDto(
     string? AuthorDisplayName,
     string? AuthorEmail,
     bool AuthorIsAdmin,
-    string Body,
+    string? Body,
     DateTimeOffset CreatedAt,
-    Guid? ClientMessageId = null);
+    Guid? ClientMessageId = null,
+    DateTimeOffset? RemovedAt = null);

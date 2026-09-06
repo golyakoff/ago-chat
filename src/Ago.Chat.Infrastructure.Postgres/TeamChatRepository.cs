@@ -71,6 +71,34 @@ public sealed class TeamChatRepository(
         return message;
     }
 
+    /// <summary>`23-33`: by <see cref="TeamMessageId"/> alone - <see cref="Application.UseCases.RemoveTeamMessage.RemoveTeamMessageHandler"/>
+    /// is the one caller, and it is the one place that compares <see cref="TeamMessage.SiteId"/>
+    /// against the requesting operator's own site (<see cref="ITeamChatRepository.GetByIdAsync"/>'s
+    /// own remarks on why that check does not belong here).</summary>
+    public Task<TeamMessage?> GetByIdAsync(TeamMessageId id, CancellationToken cancellationToken) =>
+        db.TeamMessages.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
+
+    public async Task RemoveAsync(
+        TeamMessage message, OperatorId removedBy, Guid removalId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        // `message` was loaded through this same `db` (GetByIdAsync above) and already carries its
+        // own RemovedAt change from RemoveTeamMessageHandler's own call to TeamMessage.Remove - EF's
+        // change tracker already knows to UPDATE it, nothing to Add() here the way PostAsync's fresh
+        // row needs.
+        db.TeamMessageRemovals.Add(new TeamMessageRemovalEntity
+        {
+            Id = removalId,
+            TeamMessageId = message.Id,
+            SiteId = message.SiteId,
+            RemovedByOperatorId = removedBy,
+            RemovedAt = now,
+        });
+
+        outbox.Enqueue(TeamMessageRemovedMapper.ToEnvelope(message.Id.Value, message.SiteId.Value, message.Sequence, now, idGenerator));
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     /// <summary>The atomic compare-and-set CLAUDE.md rule 8 asks for: assigned inside the database,
     /// never computed from a value this process already holds. See this type's own remarks for why it
     /// runs over its own connection rather than participating in <see cref="PostAsync"/>'s later

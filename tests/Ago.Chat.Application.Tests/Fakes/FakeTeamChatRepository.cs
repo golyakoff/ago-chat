@@ -14,6 +14,11 @@ public sealed class FakeTeamChatRepository : ITeamChatRepository
 
     public List<TeamMessage> Posted { get; } = [];
 
+    /// <summary>`23-33`: every <see cref="RemoveAsync"/> call this fake has seen - the same
+    /// assert-what-the-handler-decided role <see cref="Posted"/> plays for <c>PostAsync</c>, for
+    /// <c>RemoveTeamMessageHandlerTests</c>.</summary>
+    public List<(TeamMessageId TeamMessageId, OperatorId RemovedBy, Guid RemovalId, DateTimeOffset Now)> Removed { get; } = [];
+
     public Task<TeamMessage> PostAsync(
         SiteId siteId,
         OperatorId authorId,
@@ -37,5 +42,15 @@ public sealed class FakeTeamChatRepository : ITeamChatRepository
         var message = new TeamMessage(id, siteId, authorId, authorIsAdmin, body, _sequence, clientMessageId, now);
         Posted.Add(message);
         return Task.FromResult(message);
+    }
+
+    public Task<TeamMessage?> GetByIdAsync(TeamMessageId id, CancellationToken cancellationToken) =>
+        Task.FromResult(Posted.FirstOrDefault(m => m.Id == id));
+
+    public Task RemoveAsync(
+        TeamMessage message, OperatorId removedBy, Guid removalId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Removed.Add((message.Id, removedBy, removalId, now));
+        return Task.CompletedTask;
     }
 }

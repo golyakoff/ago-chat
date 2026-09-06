@@ -41,4 +41,31 @@ public interface ITeamChatRepository
         TeamMessageId id,
         DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `23-33`: by <see cref="TeamMessageId"/> alone, not scoped to a <see cref="SiteId"/> - the same
+    /// info-hiding split <c>IAttachmentRepository.GetByIdAsync</c> already draws: the tenant-isolation
+    /// comparison happens once, in <c>RemoveTeamMessageHandler</c>, so a message belonging to another
+    /// site reads identically to one that does not exist at all, rather than this port silently
+    /// folding "wrong site" and "no such row" into the same <see langword="null"/> two different ways
+    /// in two different places.
+    /// </summary>
+    Task<TeamMessage?> GetByIdAsync(TeamMessageId id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Persists a <paramref name="message"/> already moved into its removed state
+    /// (<see cref="TeamMessage.Remove"/> - Application decides the domain transition, this port only
+    /// persists it, the same split <see cref="PostAsync"/>'s own remarks state for
+    /// <paramref name="authorIsAdmin"/>), writes the removal's own small accountability record - own
+    /// table, no aggregate, the backlog item's own words - and stages the
+    /// <c>Ago.Chat.Contracts.TeamMessageRemoved</c> outbox row that drives the realtime tombstone
+    /// push, all inside the one <c>SaveChangesAsync</c> this call makes (CLAUDE.md rule 4, the
+    /// identical atomicity <see cref="PostAsync"/> already gives the send path).
+    /// </summary>
+    Task RemoveAsync(
+        TeamMessage message,
+        OperatorId removedBy,
+        Guid removalId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
 }

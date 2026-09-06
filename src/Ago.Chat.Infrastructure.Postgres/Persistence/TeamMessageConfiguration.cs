@@ -28,6 +28,11 @@ internal sealed class TeamMessageConfiguration : IEntityTypeConfiguration<TeamMe
         // never sends one must not be rejected outright, only skip dedup.
         builder.Property(m => m.ClientMessageId).HasColumnName("client_message_id");
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
+        // `23-33`: null for a message nobody has removed - Ago.Chat.Domain.TeamMessage.RemovedAt's
+        // own remarks explain why this stays a tombstone flag on the existing row rather than a
+        // physical DELETE, and why it carries no removed-by column of its own (that accountability
+        // record lives in team_message_removals, its own small table, not denormalized here).
+        builder.Property(m => m.RemovedAt).HasColumnName("removed_at");
 
         // The room's own ordering key - a unique index, not only the database sequence's own
         // uniqueness, as defense in depth against a bug in the atomic UPDATE ever producing a
