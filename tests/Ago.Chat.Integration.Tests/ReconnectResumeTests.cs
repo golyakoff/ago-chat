@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.SendMessage;
@@ -112,7 +113,9 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         // sendMessage is never used - only JoinAsync is exercised in this file, and messages are
         // seeded directly through SendVisitorMessageHandler in the test body instead of through
         // the hub's SendMessageAsync (which also echoes to Clients.Caller, irrelevant here).
-        var hub = new VisitorHub(startConversation, null!, getHistory, registration, originValidator, new DrainState())
+        var hub = new VisitorHub(
+            startConversation, null!, getHistory, registration, originValidator, new DrainState(),
+            new NoOpWidgetActivityRecorder(), new SystemClock())
         {
             Context = new FakeHubCallerContext(connectionId, ClaimsPrincipalFor(siteId, visitorId)),
         };
@@ -142,6 +145,24 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
             Task.FromResult<IReadOnlyCollection<RegisteredConnection>>([]);
 
         public Task RemoveNodeAsync(NodeId nodeId, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>`23-07`: `JoinAsync` now calls `IWidgetActivityRecorder.RecordConversation` on a new
+    /// conversation - this file exercises resume/no-resume behaviour, not the funnel, so a no-op
+    /// stands in the same way <see cref="NoOpConnectionRegistry"/> does above.</summary>
+    private sealed class NoOpWidgetActivityRecorder : IWidgetActivityRecorder
+    {
+        public void RecordLoad(SiteId siteId, DateTimeOffset now)
+        {
+        }
+
+        public void RecordOpen(SiteId siteId, DateTimeOffset now)
+        {
+        }
+
+        public void RecordConversation(SiteId siteId, DateTimeOffset now)
+        {
+        }
     }
 
     /// <summary>Always misses - `caching.md`'s own documented Redis-failure behaviour, reused here

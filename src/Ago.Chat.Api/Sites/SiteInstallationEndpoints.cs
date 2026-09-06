@@ -42,7 +42,8 @@ public static class SiteInstallationEndpoints
     private static SiteInstallationResponse ToResponse(SiteInstallationDto dto) =>
         new(
             dto.PublicKey, dto.AllowedOrigins, dto.FirstSeenAt, dto.LastSeenAt, dto.LastRefusedOrigin,
-            dto.LastRefusedOriginAt, dto.UsedRecently, dto.State.ToString());
+            dto.LastRefusedOriginAt, dto.UsedRecently, dto.State.ToString(),
+            dto.Loads, dto.Opens, dto.Conversations, dto.Advice.ToString());
 
     /// <summary>
     /// `23-06`: six more fields alongside `10-06`'s original two - the four raw facts, the second fact
@@ -52,6 +53,11 @@ public static class SiteInstallationEndpoints
     /// convention <see cref="SitesEndpoints.SiteExportStatusResponse"/> already established for
     /// `Domain.ExportStatus` - a client reads a name, not an ordinal it would have to keep in sync with
     /// this enum's own declaration order.
+    ///
+    /// <para>`23-07`: four more fields join on the same terms - the funnel (<see cref="Loads"/>/
+    /// <see cref="Opens"/>/<see cref="Conversations"/>) and <see cref="Advice"/>, crossing the wire as
+    /// its own enum member name (`"None"`, `"FixInstall"`, `"ImprovePlacement"`,
+    /// `"ConnectChannelsAndRespond"`) for the identical reason <see cref="State"/> already does.</para>
     /// </summary>
     public sealed record SiteInstallationResponse(
         string PublicKey,
@@ -61,5 +67,9 @@ public static class SiteInstallationEndpoints
         string? LastRefusedOrigin,
         DateTimeOffset? LastRefusedOriginAt,
         bool UsedRecently,
-        string State);
+        string State,
+        int Loads,
+        int Opens,
+        int Conversations,
+        string Advice);
 }

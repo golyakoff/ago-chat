@@ -87,6 +87,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `24-10`: migration-scaffolding only, the same shape - ConversationBlockRecordEntity's own remarks.
     internal DbSet<ConversationBlockRecordEntity> ConversationBlockRecords => Set<ConversationBlockRecordEntity>();
 
+    // `23-07`: migration-scaffolding only, the same shape - SiteWidgetActivityEntity's own remarks.
+    internal DbSet<SiteWidgetActivityEntity> SiteWidgetActivity => Set<SiteWidgetActivityEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AgoChatDbContext).Assembly);

@@ -22,6 +22,15 @@ namespace Ago.Chat.Application.UseCases.GetSiteInstallation;
 /// <see cref="LastRefusedOrigin"/> to name the actual origin being refused, neither of which the
 /// enum alone carries.</para>
 /// </summary>
+/// <summary>
+/// `23-07`: three more fields join the six above - the funnel itself (<see cref="Loads"/>/
+/// <see cref="Opens"/>/<see cref="Conversations"/>, summed over <see
+/// cref="SiteInstallationOptions.FunnelWindowDays"/>) and <see cref="Advice"/>, the one resolved
+/// recommendation (<see cref="WidgetFunnelAdviceResolver.Resolve"/>) computed here so the console
+/// never re-derives the zero-state rule itself - the identical reason <see cref="State"/> is computed
+/// here rather than left to the console, restated for the item this DTO's own remarks above did not
+/// yet cover.
+/// </summary>
 public sealed record SiteInstallationDto(
     string PublicKey,
     IReadOnlyList<string> AllowedOrigins,
@@ -30,4 +39,8 @@ public sealed record SiteInstallationDto(
     string? LastRefusedOrigin,
     DateTimeOffset? LastRefusedOriginAt,
     bool UsedRecently,
-    SiteInstallationState State);
+    SiteInstallationState State,
+    int Loads,
+    int Opens,
+    int Conversations,
+    WidgetFunnelAdvice Advice);

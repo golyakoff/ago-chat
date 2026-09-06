@@ -27,6 +27,7 @@ public sealed class GetSiteInstallationHandler(
     IPermissionChecker permissions,
     ISiteInstallationSignalRepository signals,
     IConversationReadStore conversations,
+    IWidgetActivityReadStore widgetActivity,
     IClock clock,
     SiteInstallationOptions options)
 {
@@ -55,9 +56,21 @@ public sealed class GetSiteInstallationHandler(
         var state = SiteInstallationStateResolver.Resolve(
             signal.LastSeenAt, signal.LastRefusedOrigin, signal.LastRefusedOriginAt, usedRecently);
 
+        // `23-07`: the funnel's own window, separate from `threshold` above - see
+        // SiteInstallationOptions.FunnelWindowDays' own remarks for why the two numbers must not
+        // collapse into one.
+        var since = DateOnly.FromDateTime(now.UtcDateTime).AddDays(-options.FunnelWindowDays);
+        var totals = await widgetActivity.GetTotalsAsync(query.SiteId, since, cancellationToken);
+
+        var advice = WidgetFunnelAdviceResolver.Resolve(state, totals.Loads, totals.Opens, totals.Conversations);
+        if (!WidgetFunnelAdviceResolver.IsReachableForTier(advice, site.Tier))
+        {
+            advice = WidgetFunnelAdvice.None;
+        }
+
         return new SiteInstallationDto(
             site.PublicKey, site.AllowedOrigins,
             signal.FirstSeenAt, signal.LastSeenAt, signal.LastRefusedOrigin, signal.LastRefusedOriginAt,
-            usedRecently, state);
+            usedRecently, state, totals.Loads, totals.Opens, totals.Conversations, advice);
     }
 }

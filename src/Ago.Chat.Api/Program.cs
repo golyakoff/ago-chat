@@ -31,6 +31,8 @@ using Ago.Chat.Api.AssignmentPenalty;
 using Ago.Chat.Api.ContactVisibility;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
+using Ago.Chat.Api.WidgetActivity;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Schema;
@@ -153,6 +155,19 @@ builder.Services.AddSingleton<MessageBatchWriter>();
 builder.Services.AddHostedService<MessagePipelineWorkerHost>();
 builder.Services.AddHostedService<BatchFlusherService>();
 
+// `23-07`: the funnel's own accumulate-and-flush pair, registered here rather than in ChatModule for
+// the identical "internal pipeline plumbing, resolved by exactly the host that runs it" reason as
+// ConversationSequencer/BatchAccumulator/MessageBatchWriter directly above - only Ago.Chat.Api's
+// AuthEndpoints/WidgetActivityEndpoints/VisitorHub ever call IWidgetActivityRecorder at all.
+builder.Services
+    .AddOptions<WidgetActivityOptions>()
+    .Bind(builder.Configuration.GetSection(WidgetActivityOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<WidgetActivityAccumulator>();
+builder.Services.AddSingleton<IWidgetActivityRecorder>(sp => sp.GetRequiredService<WidgetActivityAccumulator>());
+builder.Services.AddSingleton<WidgetActivityWriter>();
+builder.Services.AddHostedService<WidgetActivityFlusherService>();
+
 // 3-05: bound here, not ChatModule - AuthEndpoints is the only consumer, and it lives in Ago.Chat.Api
 // itself (unlike MessageSendRateLimitOptions, which sits beside SendVisitorMessageHandler in
 // Application because that handler is registered for every host).
@@ -166,6 +181,13 @@ builder.Services
 builder.Services
     .AddOptions<VisitorSessionRenewalRateLimitOptions>()
     .Bind(builder.Configuration.GetSection(VisitorSessionRenewalRateLimitOptions.SectionName))
+    .ValidateOnStart();
+
+// `23-07`: the beacon's own bucket, per IP rather than per site or per visitor - see
+// WidgetActivityBeaconRateLimitOptions' own remarks for why.
+builder.Services
+    .AddOptions<WidgetActivityBeaconRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(WidgetActivityBeaconRateLimitOptions.SectionName))
     .ValidateOnStart();
 
 // `24-02`: the published surface's own per-IP bucket - bound here, not ChatModule, the same
@@ -377,6 +399,7 @@ app.MapGet("/healthz/version", () => BuildInfoResponse.For(typeof(Program).Assem
 app.MapPrometheusScrapingEndpoint();
 
 app.MapAuthEndpoints();
+app.MapWidgetActivityEndpoints();
 app.MapAttachmentEndpoints();
 app.MapConversationsEndpoints();
 app.MapOperatorsEndpoints();
