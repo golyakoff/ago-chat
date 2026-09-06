@@ -431,4 +431,55 @@ public class SiteTests
 
         Assert.Single(site.DomainEvents);
     }
+
+    // `23-11`'s own Done-when: "a tenant on Visible sees today's behaviour, byte for byte" - the
+    // regression this default protects, the identical shape `Constructor_WhenValid_DefaultsAssignmentPenaltyToTwoMinutes`
+    // above already establishes for its own column.
+    [Fact]
+    public void Constructor_WhenValid_DefaultsContactVisibilityToVisible()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Equal(ContactVisibility.Visible, site.ContactVisibility);
+    }
+
+    [Fact]
+    public void UpdateContactVisibility_WhenCalled_SetsTheValue()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        site.UpdateContactVisibility(ContactVisibility.MaskedWithReveal, DateTimeOffset.UtcNow);
+
+        Assert.Equal(ContactVisibility.MaskedWithReveal, site.ContactVisibility);
+    }
+
+    [Fact]
+    public void UpdateContactVisibility_WhenCalled_RaisesDomainEventExactlyOnce_CarryingTheCompleteCurrentRung()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateContactVisibility(ContactVisibility.MaskedWithReveal, now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteContactVisibilityUpdated>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Equal("shop_7f3a", raised.PublicKey);
+        Assert.Equal(ContactVisibility.MaskedWithReveal, raised.Rung);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void UpdateContactVisibility_WhenCalledTwice_RaisesTwoDomainEventsUntilCleared()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateContactVisibility(ContactVisibility.MaskedWithReveal, now);
+        site.ClearDomainEvents();
+        site.UpdateContactVisibility(ContactVisibility.Visible, now);
+
+        Assert.Single(site.DomainEvents);
+    }
 }

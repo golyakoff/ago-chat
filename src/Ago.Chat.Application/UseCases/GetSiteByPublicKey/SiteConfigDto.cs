@@ -43,8 +43,17 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// both loaders, and <b>put on the wire</b> by the handshake: this is the visitor-facing point of the
 /// whole item (a visitor must see the notice before typing anything), the opposite of
 /// <see cref="OfflineAutoReply"/>/<see cref="Tier"/>'s "never expose to the public key" reasoning.
+/// `23-11`: <see cref="ContactVisibility"/> joins on the identical terms <see cref="Tier"/> already
+/// established - an additive field on the existing cached DTO, populated identically by both loaders,
+/// and (like <see cref="Tier"/>) <b>never put on the wire by the widget handshake</b>: an anonymous
+/// visitor holding the public key has no legitimate reason to learn whether this tenant masks its own
+/// contact list. <c>ListVisitorContactDetailsHandler</c> is this field's one real reader - composing
+/// through <c>GetSiteConfigByIdHandler</c> the same way `SendOfflineAutoReplyHandler`'s own remarks
+/// describe ("composes rather than duplicates") - so the same event that evicts every other cached
+/// setting (<c>SiteSettingsChanged</c>, via <c>SiteContactVisibilityUpdatedMapper</c>) keeps this field
+/// fresh too, with no new cache-invalidation code.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
     OfflineAutoReplySettings OfflineAutoReply, string Tier,
-    string? WidgetNoticeText, string? WidgetNoticeUrl);
+    string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility);

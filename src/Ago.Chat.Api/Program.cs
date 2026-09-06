@@ -27,6 +27,7 @@ using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.Modules;
 using Ago.Chat.Api.AssignmentPenalty;
+using Ago.Chat.Api.ContactVisibility;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Contracts;
@@ -419,6 +420,8 @@ app.MapModuleEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();
 app.MapAssignmentPenaltyEndpoints();
+// `23-11`: the account-wide contact-visibility rung's own settings-screen read/write.
+app.MapContactVisibilityEndpoints();
 // `18-03`
 app.MapCannedResponseEndpoints();
 // `18-04`
@@ -445,6 +448,9 @@ app.MapSitesEndpoints();
 // never be made to resolve GetAccessRecordsForSiteHandler just because this route happened to share
 // its file).
 app.MapAccessRecordsEndpoint();
+// `23-11`: own Map call, the identical reason the line above is - see MapContactRevealsEndpoint's
+// own remarks.
+app.MapContactRevealsEndpoint();
 // `10-06`: own file, own Map call - see SiteInstallationEndpoints' own remarks on why it is not
 // folded into MapSitesEndpoints above.
 app.MapSiteInstallationEndpoints();

@@ -269,6 +269,13 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<AccessRecordPruneJob>();
 
+// `23-11`: the contact-reveal record's own stated retention, the identical registration shape.
+builder.Services
+    .AddOptions<ContactRevealPruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(ContactRevealPruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ContactRevealPruneJob>();
+
 builder.Services
     .AddOptions<MessagePartitionPruneJobOptions>()
     .Bind(builder.Configuration.GetSection(MessagePartitionPruneJobOptions.SectionName))
