@@ -2,6 +2,7 @@
 using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.GetMyPermissions;
@@ -15,17 +16,94 @@ public class GetMyPermissionsHandlerTests
         return new GetSiteConfigByIdHandler(sites, new FakeCache());
     }
 
+    /// <summary>`23-45`: defaults to the empty list every non-demo deployment has, so every existing
+    /// test here keeps asserting what a real installation answers. The two tests that care pass the
+    /// public keys the demo pages publish.</summary>
     private static GetMyPermissionsHandler HandlerFor(
         Site site,
         FakePermissionChecker? permissions = null,
         FakeEnabledModuleReadStore? modules = null,
-        FakeOperatorRepository? operators = null) =>
+        FakeOperatorRepository? operators = null,
+        params string[] publishedCredentialKeys) =>
         new(
             permissions ?? new FakePermissionChecker(),
             SiteConfigFor(site),
             modules ?? new FakeEnabledModuleReadStore(),
             new FakeClock(DateTimeOffset.UtcNow),
-            operators ?? new FakeOperatorRepository());
+            operators ?? new FakeOperatorRepository(),
+            new DemoTenantOptions { PublishedCredentialSitePublicKeys = publishedCredentialKeys });
+
+    /// <summary>
+    /// `23-45`: the four kinds of account that sign in to the public demo console, and the one fact
+    /// the console's standing warning actually depends on. Written together, in one place, because the
+    /// bug they close was a *class* being wrong rather than a case: the console had no way to ask this
+    /// question at all, so it told everybody who was not the platform owner that their login is
+    /// published - which is true of exactly one of them.
+    ///
+    /// <para>The platform owner is not a case here. It is not a property of a site, and the console
+    /// answers it from a different source entirely (`12-01`'s own endpoint); `23-42` covers it, on that
+    /// side.</para>
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_ForTheSharedDemoShopWhosePasswordIsPublished_SaysSo()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var handler = HandlerFor(new Site(siteId, "demo_site", []), null, null, null, "demo_site", "demo_site2");
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetMyPermissions.GetMyPermissions(operatorId, siteId), CancellationToken.None);
+
+        Assert.True(result.Value.CredentialsArePublished);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ForARealTenantOnTheSameDeployment_DoesNot()
+    {
+        // The case the author found by signing in with their own account. This site sits in the same
+        // database as the two above, on the same deployment, with the same empty `demo_expires_at` -
+        // nothing about the row distinguishes it, which is exactly why the answer is configuration.
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var handler = HandlerFor(new Site(siteId, "site_a_real_tenant", []), null, null, null, "demo_site", "demo_site2");
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetMyPermissions.GetMyPermissions(operatorId, siteId), CancellationToken.None);
+
+        Assert.False(result.Value.CredentialsArePublished);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ForAMintedDemoTenant_DoesNot_BecauseItsCredentialsAreShownOnceAndPublishedNowhere()
+    {
+        // A demo tenant *is* identifiable - `demo_expires_at` is non-null - and it would be the easy
+        // signal to reach for. It is the wrong one: its password is shown to one viewer on one screen
+        // and printed on no page, so "anyone can sign in here" is as false for them as for a real
+        // tenant. Asserted with the expiry actually set, so a later change that reaches for IsDemo
+        // reddens here rather than shipping.
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var minted = new Site(siteId, "demo_01a0755b012770eab313413be2a08c5f", [],
+            demoExpiresAt: DateTimeOffset.UtcNow.AddHours(24));
+        var handler = HandlerFor(minted, null, null, null, "demo_site", "demo_site2");
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetMyPermissions.GetMyPermissions(operatorId, siteId), CancellationToken.None);
+
+        Assert.True(minted.IsDemo);
+        Assert.False(result.Value.CredentialsArePublished);
+    }
+
+    [Fact]
+    public async Task HandleAsync_OnADeploymentThatPublishesNobodysCredentials_SaysSoForEverySite()
+    {
+        // Every real installation. The list is empty there, so no account is ever told its login is
+        // published - including one whose public key happens to read like a demo site's.
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var handler = HandlerFor(new Site(siteId, "demo_site", []));
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetMyPermissions.GetMyPermissions(operatorId, siteId), CancellationToken.None);
+
+        Assert.False(result.Value.CredentialsArePublished);
+    }
 
     [Fact]
     public async Task HandleAsync_ReturnsEveryPermissionTheOperatorsRolesGrantForThatSite()

@@ -36,6 +36,16 @@
 /// no `name` claim at all. Placed after <see cref="EnabledModules"/>, not before it - C# requires a
 /// defaulted parameter to follow every non-defaulted one, and `EnabledModules` carries no default
 /// (`23-21`'s own contract: a caller must always state what the tenant has).</param>
+/// <param name="CredentialsArePublished">`23-45`: whether this site's console credentials are printed
+/// on a public page. True for exactly one kind of account - the shared demo shop whose password the
+/// demo pages publish - and false for every real tenant, every minted demo tenant (whose credentials
+/// are shown once and published nowhere) and every non-demo deployment, where the list this reads is
+/// empty.
+///
+/// <para>It rides here for the same "no second network call" reason <see cref="Locale"/> and
+/// <see cref="EnabledModules"/> already do, and it is a separate fact from both: the console's
+/// standing public-demo warning is true of the reader only when this is true, which is what
+/// `12-04`'s two wordings were reaching for without a fact to reach with.</para></param>
 public sealed record OperatorPermissionsResponse(
     Guid OperatorId, Guid SiteId, IReadOnlyList<string> Permissions, string Locale,
-    IReadOnlyList<string> EnabledModules, string? DisplayName = null);
+    IReadOnlyList<string> EnabledModules, string? DisplayName = null, bool CredentialsArePublished = false);

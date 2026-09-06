@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
@@ -136,6 +137,10 @@ public sealed class OperatorIdentityRefreshEndpointTests(OperatorOidcFixture fix
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<GetSiteConfigByIdHandler>();
+        // `23-45`: the bound options value, the shape this repository registers options in
+        // (`Program.cs` does the same). Empty list, which is what a real installation has and what
+        // this test is about - nothing here is a demo deployment.
+        builder.Services.AddSingleton(new DemoTenantOptions());
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
         builder.Services.AddScoped<GetMyPermissionsHandler>();
         // `OperatorsEndpoints.MapOperatorsEndpoints()` maps three more routes beyond `operators/me` -

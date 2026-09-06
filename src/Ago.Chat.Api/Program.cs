@@ -90,6 +90,11 @@ builder.Services
     .Bind(builder.Configuration.GetSection(DemoTenantOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+// `23-45`: a cross-property rule that no data annotation can express - if minting is on, the shared
+// published account must be named. See DemoTenantOptionsValidator's own remarks: an empty list there
+// silently removes the console's standing warning from the one account whose password is on a public
+// page, so this refuses to start rather than serving a console that is quietly less honest.
+builder.Services.AddSingleton<IValidateOptions<DemoTenantOptions>, DemoTenantOptionsValidator>();
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<DemoTenantOptions>>().Value);
 builder.Services
     .AddOptions<DemoTenantRateLimitOptions>()
