@@ -54,6 +54,17 @@ public sealed class GetConversationHistoryHandler(
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
         }
 
+        // `24-10`: unreachable, not merely hidden - a blocked conversation's own history must read
+        // exactly like a conversation that does not exist, the same shape every other operator-facing
+        // read in this codebase now gives a blocked conversation (ConversationReadStore's own remarks).
+        // Checked after the operator's own assignment, not before: an operator who was never assigned to
+        // this conversation gets Forbidden either way, and there is no information to protect by
+        // reordering the two checks.
+        if (conversation.IsBlocked)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
+        }
+
         var page = await readStore.GetHistoryAsync(
             query.ConversationId, conversation.SiteId, query.BeforeSequence, query.PageSize, cancellationToken);
         return page;
@@ -102,6 +113,13 @@ public sealed class GetConversationHistoryHandler(
         if (conversation.OperatorId != query.RequestedBy)
         {
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
+        }
+
+        // `24-10`: the identical exclusion HandleAsOperatorAsync's own history read applies right above
+        // in this file.
+        if (conversation.IsBlocked)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
         }
 
         var delta = await readStore.GetDeltaAsync(query.ConversationId, conversation.SiteId, query.AfterSequence, cancellationToken);

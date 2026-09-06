@@ -414,6 +414,20 @@ public static class ConversationErrors
     public static Error NoteInvalid(string reason) =>
         new("ConversationNote.Invalid", reason);
 
+    // `24-10`: same shared vocabulary, same reason - BlockConversationHandler/UnblockConversationHandler
+    // add their own codes here rather than a separate error class.
+    /// <summary>The conversation named exists but is already blocked - the caller's remedy is
+    /// "unblock it first", not "retry the same request". `409`, the same "a real conflict with the
+    /// row's own current state" shape <see cref="TagAlreadyExists"/>/<see cref="ChannelAlreadyConnected"/>
+    /// already use.</summary>
+    public static Error ConversationAlreadyBlocked(Guid conversationId) =>
+        new("Conversation.AlreadyBlocked", $"Conversation {conversationId} is already blocked.");
+
+    /// <summary>The reverse of <see cref="ConversationAlreadyBlocked"/> - an unblock request against a
+    /// conversation that is not currently blocked. Same `409` group, identical reasoning.</summary>
+    public static Error ConversationNotBlocked(Guid conversationId) =>
+        new("Conversation.NotBlocked", $"Conversation {conversationId} is not currently blocked.");
+
     public static Error TagNotFound(Guid tagId) =>
         new("Tag.NotFound", $"Tag {tagId} was not found for this site.");
 

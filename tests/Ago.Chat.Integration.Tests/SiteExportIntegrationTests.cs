@@ -1,5 +1,6 @@
 ﻿using System.IO.Compression;
 using System.Text.Json;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Domain;
@@ -35,6 +36,73 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
     private sealed class SettableClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; set; } = now;
+    }
+
+    /// <summary>`24-10`'s own Done-when: "a blocked conversation is excluded from a tenant export" -
+    /// checked against the real archive's actual contents, the same bar the sibling test right below
+    /// sets, not merely that the SQL predicate looks right. Two conversations, one blocked: the blocked
+    /// one's own row, its two messages, and (implicitly) any note/tag on it must all be absent from
+    /// every file this archive writes, while the ordinary conversation's own row and messages still
+    /// come through untouched.</summary>
+    [Fact]
+    public async Task ExportingASite_ExcludesABlockedConversation_ButKeepsTheOrdinaryOne()
+    {
+        var clock = new SettableClock(Now);
+
+        var (siteId, _, _) = await SeedSiteAsync("export-site-blocked");
+        var operatorId = await SeedOperatorAsync(siteId, Permission.SiteExport);
+        var (_, keptConversationId, keptMessageIds) = await SeedConversationAsync(siteId);
+        var (_, blockedConversationId, blockedMessageIds) = await SeedConversationAsync(siteId);
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var blockOutcome = await blocks.BlockAsync(
+            blockedConversationId, siteId, operatorId, Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, blockOutcome);
+
+        var exportRequests = new ExportRequestRepository(fixture.DataSource);
+        Guid exportId;
+        await using (var permissionDb = fixture.CreateDbContext())
+        {
+            var requestHandler = new RequestSiteExportHandler(
+                exportRequests, new FakeRateLimiter(), new PermissionChecker(permissionDb),
+                new SiteExportRateLimitOptions(), new UuidV7Generator(), clock);
+            var requested = await requestHandler.HandleAsync(
+                new RequestSiteExport(siteId, operatorId), CancellationToken.None);
+            Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
+            exportId = requested.Value;
+        }
+
+        var job = CreateJob(clock);
+        Assert.Equal(1, await job.SweepAsync(CancellationToken.None));
+
+        Uri downloadUrl;
+        await using (var permissionDb = fixture.CreateDbContext())
+        {
+            var statusHandler = new GetSiteExportStatusHandler(
+                exportRequests, fixture.FileStorage, new PermissionChecker(permissionDb), new SiteExportOptions());
+            var status = await statusHandler.HandleAsync(
+                new GetSiteExportStatus(exportId, siteId, operatorId), CancellationToken.None);
+            Assert.True(status.IsSuccess, status.IsFailure ? status.Error!.Value.ToString() : null);
+            downloadUrl = status.Value.DownloadUrl!;
+        }
+
+        using var archiveResponse = await Http.GetAsync(downloadUrl);
+        archiveResponse.EnsureSuccessStatusCode();
+        using var archiveStream = new MemoryStream(await archiveResponse.Content.ReadAsByteArrayAsync());
+        using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read);
+
+        var conversationRows = await ReadJsonLinesAsync(archive, "conversations.jsonl");
+        Assert.Contains(conversationRows, r => r.GetProperty("id").GetGuid() == keptConversationId.Value);
+        Assert.DoesNotContain(conversationRows, r => r.GetProperty("id").GetGuid() == blockedConversationId.Value);
+
+        var messageRows = await ReadJsonLinesAsync(archive, "messages.jsonl");
+        var messageConversationIds = messageRows.Select(r => r.GetProperty("conversationId").GetGuid()).ToList();
+        Assert.Contains(keptConversationId.Value, messageConversationIds);
+        Assert.DoesNotContain(blockedConversationId.Value, messageConversationIds);
+        // Every message that did come through belongs to the kept conversation - not just "at least
+        // one of the blocked ones is missing", but none of them are there.
+        Assert.All(keptMessageIds, id => Assert.Contains(messageRows, r => r.GetProperty("id").GetGuid() == id));
+        Assert.All(blockedMessageIds, id => Assert.DoesNotContain(messageRows, r => r.GetProperty("id").GetGuid() == id));
     }
 
     [Fact]

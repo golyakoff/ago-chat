@@ -258,4 +258,47 @@ public class GetVisitorHistoryHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Empty(fixture.AccessRecords.Recorded);
     }
+
+    // `24-10`: the visitor-history panel is anchored on its own current conversation - if that one is
+    // blocked, the whole panel is unreachable, the same "unreachable, not merely hidden" rule this
+    // codebase now gives every operator-facing read of a blocked conversation.
+    [Fact]
+    public async Task HandleAsOperatorAsync_WhenTheCurrentConversationIsBlocked_ReturnsNotFound()
+    {
+        var fixture = CreateFixture();
+        LinkChannelIdentity(fixture.ChannelIdentities, Now);
+        fixture.CurrentConversation.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+
+        var result = await fixture.Handler.HandleAsOperatorAsync(
+            new Application.UseCases.GetVisitorHistory.GetVisitorHistory(
+                fixture.CurrentConversation.Id, AssignedOperatorId, SiteId, null, 50),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+    }
+
+    // `24-10`: opening a blocked historical conversation is unreachable too - proven separately from
+    // the panel-anchor case above, per this item's own "asserted per path" rule.
+    [Fact]
+    public async Task HandleHistoricalConversationAsOperatorAsync_WhenTheHistoricalConversationIsBlocked_ReturnsNotFound_AndRecordsNothing()
+    {
+        var fixture = CreateFixture();
+        var historical = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now.AddDays(-1));
+        historical.AssignTo(OtherOperatorId, Now.AddDays(-1));
+        historical.AddOperatorMessage(OtherOperatorId, new MessageId(Guid.NewGuid()), new MessageBody("handled by someone else"), Now.AddDays(-1));
+        historical.Close(Now.AddDays(-1).AddHours(1));
+        historical.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+        fixture.Conversations.Seed(historical);
+        fixture.ReadStore.Seed(historical);
+
+        var result = await fixture.Handler.HandleHistoricalConversationAsOperatorAsync(
+            new Application.UseCases.GetVisitorHistory.GetVisitorHistoryConversation(
+                fixture.CurrentConversation.Id, historical.Id, AssignedOperatorId, SiteId, null, 50),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+        Assert.Empty(fixture.AccessRecords.Recorded);
+    }
 }

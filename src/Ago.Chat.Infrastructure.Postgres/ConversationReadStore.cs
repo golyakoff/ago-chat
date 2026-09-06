@@ -74,6 +74,10 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // `23-02`: the one `ConversationSummaryItem` caller that renders an operator's name to a human
     // (the admin/supervisor site-wide list) - `left join`, not inner, so a conversation whose operator
     // has since been removed still lists, with a blank name rather than vanishing from the page.
+    // `24-10`: `c.blocked_at is null` on every row this file returns to an operator - see this file's
+    // own remarks on the read paths below for why. A blocked conversation is meant to be indistinguishable
+    // from one that does not exist, the same not-found-shaped hiding IErasureRequestRepository's own
+    // cross-tenant check already establishes for a different reason.
     private const string AllForSiteSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
@@ -81,6 +85,7 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         from conversations c
         left join operators op on op.id = c.operator_id
         where c.site_id = @SiteId
+          and c.blocked_at is null
           and (@BeforeId is null or c.id < @BeforeId)
           and (@TagId is null or exists(
               select 1 from conversation_tags ct where ct.conversation_id = c.id and ct.tag_id = @TagId))
@@ -124,13 +129,18 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // left to Dapper's own optional-constructor-parameter default, so `ConversationSummaryRow` never
     // depends on that behaviour going unverified for a single-row query where the join costs nothing
     // real.
+    // `24-10`: `blocked_at is null` here too - GetConversationByIdHandler's own narrow erasure-poll
+    // caller has no special standing to see a blocked conversation any more than the site-wide list
+    // does; the console's own "see that a conversation is blocked" need is answered by
+    // BlockConversationHandler/UnblockConversationHandler's own response instead (that handler's own
+    // remarks on ConversationBlockStatus).
     private const string ByIdSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
                op.display_name as "OperatorName"
         from conversations c
         left join operators op on op.id = c.operator_id
-        where c.id = @ConversationId and c.site_id = @SiteId
+        where c.id = @ConversationId and c.site_id = @SiteId and c.blocked_at is null
         """;
 
     public async Task<ConversationSummaryItem?> GetByIdAsync(
@@ -157,6 +167,11 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // for runtime partition pruning even though this whole query has no single fixed site_id to bind
     // (the same per-row correlation PlatformOverviewReadStore's own cross-tenant lateral already
     // relies on, this file's own remarks explain why).
+    // `24-10`: `c.blocked_at is null` - a blocked conversation must not surface as one of "this
+    // visitor's other conversations" any more than it surfaces on the site-wide list. Deliberately not
+    // filtered on `@ExcludeConversationId`'s own block state (that conversation is excluded from this
+    // list on identity alone, not on its block state - whether it itself is blocked is a question the
+    // caller already answered before reaching this read, GetVisitorHistoryHandler's own remarks).
     private const string VisitorHistorySql = """
         select c.id as "Id", c.state as "State", c.created_at as "StartedAt", c.closed_at as "ClosedAt",
                lm.body as "PreviewBody", lm.author_kind as "PreviewAuthorKind", lm.created_at as "PreviewCreatedAt"
@@ -171,6 +186,7 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         ) lm on true
         where c.visitor_id = @VisitorId
           and c.id <> @ExcludeConversationId
+          and c.blocked_at is null
           and (@BeforeId is null or c.id < @BeforeId)
         order by c.id desc
         limit @PageSize
@@ -201,10 +217,15 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
 
     // `24-11`: unpaginated by design - ListAllForVisitorAsync's own remarks on why a visitor-scoped
     // export needs every id in one round trip rather than a page at a time.
+    // `24-10`: `blocked_at is null` - ExportVisitorHandler's own export must not hand back a
+    // conversation this same visitor also has that a controller separately froze; the named
+    // conversation's own block state is already checked one level up (this file's own ByIdSql), so this
+    // is the other half of the same guarantee for every *other* conversation this visitor has.
     private const string AllConversationIdsForVisitorSql = """
         select id as "Id"
         from conversations
         where visitor_id = @VisitorId
+          and blocked_at is null
         order by created_at
         """;
 

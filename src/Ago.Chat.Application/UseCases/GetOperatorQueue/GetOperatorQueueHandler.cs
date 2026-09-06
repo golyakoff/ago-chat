@@ -41,6 +41,15 @@ public sealed class GetOperatorQueueHandler(
         var waiting = await conversations.GetWaitingForSiteAsync(query.SiteId, cancellationToken);
         var assigned = await conversations.GetAssignedToOperatorAsync(query.OperatorId, cancellationToken);
 
+        // `24-10`: the identical in-memory filter this handler's own tag filter right below already
+        // uses, not a change to IConversationRepository's own query - GetAssignedToOperatorAsync also
+        // backs OperatorConversationReleaser's disconnect-grace-period release (`4-04`), a write-side
+        // process this item deliberately leaves untouched (see this item's commit-prep notes: filtering
+        // a blocked conversation out of that list too would leave its capacity claim never released).
+        // This queue view is the only caller that needs a blocked conversation invisible.
+        waiting = waiting.Where(c => !c.IsBlocked).ToList();
+        assigned = assigned.Where(c => !c.IsBlocked).ToList();
+
         if (query.Tag is { } tagId)
         {
             var taggedIds = await tags.GetConversationIdsForTagAsync(tagId, query.SiteId, cancellationToken);

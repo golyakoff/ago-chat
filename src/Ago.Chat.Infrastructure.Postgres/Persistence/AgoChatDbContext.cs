@@ -84,6 +84,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // is the only reader, RegisterSiteHandler the only caller of it.
     internal DbSet<RequiredDocumentRecord> RequiredDocuments => Set<RequiredDocumentRecord>();
 
+    // `24-10`: migration-scaffolding only, the same shape - ConversationBlockRecordEntity's own remarks.
+    internal DbSet<ConversationBlockRecordEntity> ConversationBlockRecords => Set<ConversationBlockRecordEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AgoChatDbContext).Assembly);

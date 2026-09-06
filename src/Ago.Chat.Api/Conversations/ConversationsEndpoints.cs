@@ -1,6 +1,8 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.AssignConversation;
+using Ago.Chat.Application.UseCases.BlockConversation;
+using Ago.Chat.Application.UseCases.UnblockConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ExportConversation;
 using Ago.Chat.Application.UseCases.ExportVisitor;
@@ -154,6 +156,17 @@ public static class ConversationsEndpoints
         // which any operator holding `conversation:assign`'s sibling `conversation:close` may do on
         // their own assigned conversation.
         app.MapPost("/api/v1/conversations/{conversationId:guid}/erase", HandleEraseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `24-10`: the same sub-resource shape as `/erase` right above - `conversation:block`, its own
+        // permission for the identical granularity reasoning ConversationErase/SiteErase already state
+        // (Permission.ConversationBlock's own remarks). Unlike `/erase`, this pair is reversible: `200`
+        // with the resulting block status, not `202`/`204` - there is nothing asynchronous here for a
+        // console to poll (BlockConversationHandler's own remarks: the write is a single atomic
+        // statement, not a background job).
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/block", HandleBlockAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/unblock", HandleUnblockAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `24-11`: a tenant honouring one visitor's access request exports that conversation and
@@ -466,6 +479,45 @@ public static class ConversationsEndpoints
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Accepted();
+    }
+
+    /// <summary>`24-10`: the wire shape of a successful block/unblock - both endpoints below return
+    /// this, since both answer the identical question ("what is this conversation's block state now")
+    /// for opposite directions (<c>BlockConversationHandler.ConversationBlockStatus</c>'s own remarks).</summary>
+    public sealed record ConversationBlockStatusDto(Guid ConversationId, DateTimeOffset OccurredAt, Guid OperatorId);
+
+    private static async Task<IResult> HandleBlockAsync(
+        Guid conversationId, BlockConversationHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new BlockConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var status = result.Value;
+        return Results.Ok(new ConversationBlockStatusDto(status.ConversationId.Value, status.OccurredAt, status.OperatorId.Value));
+    }
+
+    private static async Task<IResult> HandleUnblockAsync(
+        Guid conversationId, UnblockConversationHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new UnblockConversation(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var status = result.Value;
+        return Results.Ok(new ConversationBlockStatusDto(status.ConversationId.Value, status.OccurredAt, status.OperatorId.Value));
     }
 
     /// <summary>`24-11`: builds and returns one conversation's export archive in the same request - no

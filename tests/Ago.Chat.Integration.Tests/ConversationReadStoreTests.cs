@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 
 namespace Ago.Chat.Integration.Tests;
@@ -101,5 +102,57 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         var delta = await store.GetDeltaAsync(conversationId, siteId, afterSequence: 3, CancellationToken.None);
 
         Assert.Empty(delta);
+    }
+
+    // `24-10`: "the conversation detail" - GetConversationByIdHandler's own single-conversation fetch
+    // reads through this exact method. A blocked conversation must read exactly like one that does not
+    // exist, the same not-found-shaped hiding every operator-facing read in this codebase now gives a
+    // blocked conversation.
+    [Fact]
+    public async Task GetByIdAsync_ExcludesABlockedConversation()
+    {
+        var (conversationId, siteId) = await SeedConversationWithMessages(1);
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            conversationId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var item = await store.GetByIdAsync(conversationId, siteId, CancellationToken.None);
+
+        Assert.Null(item);
+    }
+
+    // `24-10`: "the conversation list" - the site-wide admin/supervisor read. One site, two
+    // conversations: the blocked one must be absent and the ordinary one must still come through, not
+    // merely "the list is missing something" but specifically the right thing.
+    [Fact]
+    public async Task GetAllForSiteAsync_ExcludesABlockedConversation_ButKeepsTheOrdinaryOne()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var keptVisitorId = new VisitorId(Guid.NewGuid());
+        var blockedVisitorId = new VisitorId(Guid.NewGuid());
+        var kept = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, keptVisitorId, Now);
+        var blocked = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, blockedVisitorId, Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(keptVisitorId, siteId, Now));
+            db.Visitors.Add(new Visitor(blockedVisitorId, siteId, Now));
+            db.Conversations.Add(kept);
+            db.Conversations.Add(blocked);
+            await db.SaveChangesAsync();
+        }
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            blocked.Id, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, CancellationToken.None);
+
+        Assert.Equal([kept.Id], page.Conversations.Select(c => c.Id));
     }
 }

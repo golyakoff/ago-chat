@@ -42,6 +42,8 @@ public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource, Analytics
     private static readonly string ConvertedOutcome = nameof(ConversationOutcome.Converted);
     private static readonly string NotConvertedOutcome = nameof(ConversationOutcome.NotConverted);
 
+    // `24-10`: `c.blocked_at is null` on both queries below - the identical exclusion
+    // OperatorAnalyticsReadStore's own SQL applies, restated for this report's two table scans.
     private const string OverallSql = """
         with in_window as (
             select c.id
@@ -49,6 +51,7 @@ public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource, Analytics
             where c.site_id = @SiteId
               and c.created_at >= @From
               and c.created_at < @To
+              and c.blocked_at is null
         )
         select
             count(distinct iw.id) as "TotalConversationCount",
@@ -64,6 +67,7 @@ public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource, Analytics
             where c.site_id = @SiteId
               and c.created_at >= @From
               and c.created_at < @To
+              and c.blocked_at is null
         )
         select
             t.id as "TagId",

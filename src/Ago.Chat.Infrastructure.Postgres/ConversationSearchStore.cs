@@ -44,6 +44,10 @@ public sealed class ConversationSearchStore(NpgsqlDataSource dataSource) : IConv
     // support.
     // internal, not private: MessagePartitionPruningExplainTests (15-09/adr/0087) runs `EXPLAIN`
     // against this exact text - see ConversationReadStore.Sql's own remarks for why.
+    // `24-10`: `c.blocked_at is null` - a search that named the very phrase inside a blocked
+    // conversation's own body must not be how an operator finds it again (the operator-facing read
+    // path this codebase's own full-text search over conversations is the whole point of, and one this
+    // item's own docs-search enumeration named explicitly as a gap to look for).
     internal const string Sql = """
         select m.id as "MessageId", m.conversation_id as "ConversationId", m.sequence as "Sequence",
                m.body as "MatchedBody", m.author_kind as "AuthorKind", m.created_at as "CreatedAt",
@@ -55,6 +59,7 @@ public sealed class ConversationSearchStore(NpgsqlDataSource dataSource) : IConv
           and m.created_at < @To
           and to_tsvector('simple', m.body) @@ plainto_tsquery('simple', @Phrase)
           and (@BeforeMessageId is null or m.id < @BeforeMessageId)
+          and c.blocked_at is null
         order by m.id desc
         limit @PageSize
         """;

@@ -47,6 +47,8 @@ public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource, Analy
     private static readonly string FollowUpNeededOutcome = nameof(ConversationOutcome.FollowUpNeeded);
     private static readonly string UnsetOutcome = nameof(ConversationOutcome.Unset);
 
+    // `24-10`: `c.blocked_at is null` - the identical exclusion OperatorAnalyticsReadStore's own SQL
+    // applies, restated for this report's own table scan.
     private const string ConversionReportSql = """
         with in_window as (
             select c.operator_id, c.outcome
@@ -54,6 +56,7 @@ public sealed class ConversionReportReadStore(NpgsqlDataSource dataSource, Analy
             where c.site_id = @SiteId
               and c.created_at >= @From
               and c.created_at < @To
+              and c.blocked_at is null
         )
         select
             iw.operator_id as "OperatorId",

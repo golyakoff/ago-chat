@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Microsoft.EntityFrameworkCore;
 
@@ -60,6 +61,24 @@ public sealed class ConversationSearchStoreTests(PostgresFixture fixture)
         var hit = Assert.Single(page.Results);
         Assert.Equal(conversationId, hit.ConversationId);
         Assert.Equal("please refund my last order", hit.MatchedBody);
+    }
+
+    // `24-10`: a search that would otherwise find the phrase inside a blocked conversation's own
+    // message must not surface it - one of the operator-facing read paths this item's own docs-search
+    // enumeration named explicitly.
+    [Fact]
+    public async Task SearchAsync_ExcludesAMatchInsideABlockedConversation()
+    {
+        var (siteId, conversationId) = await SeedConversationWithMessage("please refund my last order", Now);
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            conversationId, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var store = new ConversationSearchStore(fixture.DataSource);
+        var page = await store.SearchAsync(siteId, "refund", Now.AddDays(-1), Now.AddDays(1), null, 20, CancellationToken.None);
+
+        Assert.Empty(page.Results);
     }
 
     [Fact]

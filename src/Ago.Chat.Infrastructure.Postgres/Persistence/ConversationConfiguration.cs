@@ -136,6 +136,16 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property<Guid?>("ErasureRequestedBy").HasColumnName("erasure_requested_by");
         builder.Property<Guid?>("ErasureRecordId").HasColumnName("erasure_record_id");
 
+        // `24-10`: ordinary mapped properties, unlike ErasureRequestedAt right above - not EF shadow
+        // properties, because every handler that already loads this aggregate for an unrelated
+        // per-conversation authorization check (GetConversationHistoryHandler's own remarks) needs
+        // Conversation.IsBlocked for free, from the same row, rather than a second query it would be
+        // easy to forget to add (Conversation.BlockedAt's own remarks state this in full). The *write*
+        // still bypasses this aggregate entirely - IConversationBlockRepository, raw SQL, the identical
+        // reasoning ErasureRequestedAt's own comment gives.
+        builder.Property(c => c.BlockedAt).HasColumnName("blocked_at");
+        builder.Property(c => c.BlockedBy).HasColumnName("blocked_by").HasConversion(IdConverters.NullableOperator);
+
         // `18-07`: EF's own convention had already created an unnamed single-column index on
         // VisitorId here (for the HasOne&lt;Visitor&gt; foreign key below) - not a real gap, just
         // never spelled out in this file the way every other index on this table is, so a

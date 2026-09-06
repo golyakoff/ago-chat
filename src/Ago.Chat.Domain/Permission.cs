@@ -134,6 +134,19 @@ public readonly record struct Permission(string Value)
     // complete copy leaving the system (SiteExport/ConversationExport) - not for "this data feels
     // sensitive", which is the trap this note exists to mark.
 
+    // `24-10`: dedicated, not a reuse of ConversationErase - the same granular-permission reasoning
+    // ConversationErase's own remarks already give relative to ConversationClose/SiteErase, restated
+    // for a third, materially different blast radius. Blocking is non-destructive and reversible
+    // (unlike ConversationErase), but it is still a real capability - it hides a conversation from
+    // every other operator's ordinary reads - that an operator trusted to close or even erase a
+    // conversation should not automatically also hold; a future custom role could plausibly grant "may
+    // erase on a visitor's own request" without "may freeze a conversation other operators can no
+    // longer see". One permission for both directions (block and its later reversal), unlike the
+    // request/completion split ConversationErase has no analogue for at all: freezing and unfreezing
+    // are the same capability exercised in either direction, not two different blast radii the way
+    // request-erasure and (nonexistent) un-erasure would be.
+    public static readonly Permission ConversationBlock = new("conversation:block");
+
     public static readonly Permission BookingConfirm = new("booking:confirm");
     public static readonly Permission BookingReject = new("booking:reject");
     public static readonly Permission BookingCancel = new("booking:cancel");

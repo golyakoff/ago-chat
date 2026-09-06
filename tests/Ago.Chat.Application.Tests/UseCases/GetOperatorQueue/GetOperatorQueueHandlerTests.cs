@@ -84,6 +84,41 @@ public class GetOperatorQueueHandlerTests
         Assert.Equal(taggedAssignedToMe.Id.Value, Assert.Single(result.Value.AssignedToMe).ConversationId);
     }
 
+    // `24-10`: a blocked conversation must not appear in either half of the queue - the operator-facing
+    // read this item's own Done-when names as "the conversation list" applies here too, even though
+    // this list is small/unpaginated (GetOperatorQueueHandler's own remarks on why this is filtered
+    // in-memory, the same way the tag filter above is).
+    [Fact]
+    public async Task HandleAsync_ABlockedWaitingConversation_IsExcluded()
+    {
+        var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        waiting.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+
+        var (handler, conversations) = CreateHandler();
+        conversations.Seed(waiting);
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value.Waiting);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ABlockedConversationAssignedToMe_IsExcluded()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        assignedToMe.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
+
+        var (handler, conversations) = CreateHandler();
+        conversations.Seed(assignedToMe);
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value.AssignedToMe);
+    }
+
     [Fact]
     public async Task HandleAsync_OperatorWithoutConversationReadPermission_ReturnsForbidden()
     {

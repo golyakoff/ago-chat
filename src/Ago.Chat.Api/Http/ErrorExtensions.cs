@@ -136,7 +136,11 @@ public static class ErrorExtensions
                 // self-service purchase, not a grant), resolved by an explicit second statement of
                 // intent rather than by fixing the request body - the same shape
                 // ChannelCredential.AlreadyConnected already gives its own conflict.
-                or "Module.RevokePurchaseRequiresForce" => StatusCodes.Status409Conflict,
+                or "Module.RevokePurchaseRequiresForce"
+                // `24-10`: a real conflict with the conversation's own current block state, not a
+                // malformed request - the same "the remedy is a different action first" shape
+                // Tag.AlreadyExists/ChannelCredential.AlreadyConnected already give their own conflicts.
+                or "Conversation.AlreadyBlocked" or "Conversation.NotBlocked" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.

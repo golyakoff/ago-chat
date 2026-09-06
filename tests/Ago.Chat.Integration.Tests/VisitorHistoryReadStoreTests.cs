@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Platform.Kernel;
 
@@ -73,6 +74,56 @@ public class VisitorHistoryReadStoreTests(PostgresFixture fixture)
         Assert.NotNull(newerItem.ClosedAt);
         Assert.Equal("newer: thanks, resolved", newerItem.PreviewBody);
         Assert.Equal(MessageAuthorKind.Visitor, newerItem.PreviewAuthorKind);
+    }
+
+    /// <summary>`24-10`: one of this item's own named read paths - "18-07's cross-conversation visitor
+    /// history" - excludes a blocked conversation the same way the site-wide list does. The visitor's
+    /// other, unblocked conversation still comes through.</summary>
+    [Fact]
+    public async Task GetVisitorHistoryAsync_ExcludesABlockedConversation()
+    {
+        var (siteId, visitorId) = await SeedSiteAndVisitor();
+        var kept = await SeedClosedConversation(siteId, visitorId, Now.AddDays(-2), Now.AddDays(-2).AddMinutes(10), "kept: how do I return this?");
+        var blocked = await SeedClosedConversation(siteId, visitorId, Now.AddDays(-1), Now.AddDays(-1).AddMinutes(10), "blocked: should not surface");
+        var current = Conversation.Start(new ConversationId(IdGenerator.NewId(Now)), siteId, visitorId, Now);
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Conversations.Add(current);
+            await db.SaveChangesAsync();
+        }
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            blocked.Id, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var page = await store.GetVisitorHistoryAsync(visitorId, current.Id, beforeId: null, pageSize: 10, CancellationToken.None);
+
+        Assert.Equal([kept.Id], page.Conversations.Select(c => c.Id));
+    }
+
+    /// <summary>`24-10`: `ListAllForVisitorAsync` backs `ExportVisitorHandler` (`24-11`) - a blocked
+    /// conversation must not ride along inside a visitor-scoped export of that same visitor's *other*
+    /// conversations (the named conversation's own block state is checked one level up, at
+    /// `GetByIdAsync` - `ConversationReadStoreTests.GetByIdAsync_ExcludesABlockedConversation`'s own
+    /// remarks).</summary>
+    [Fact]
+    public async Task ListAllForVisitorAsync_ExcludesABlockedConversation()
+    {
+        var (siteId, visitorId) = await SeedSiteAndVisitor();
+        var kept = await SeedClosedConversation(siteId, visitorId, Now.AddDays(-2), Now.AddDays(-2).AddMinutes(10), "kept");
+        var blocked = await SeedClosedConversation(siteId, visitorId, Now.AddDays(-1), Now.AddDays(-1).AddMinutes(10), "blocked");
+
+        var blocks = new ConversationBlockRepository(fixture.DataSource);
+        var outcome = await blocks.BlockAsync(
+            blocked.Id, siteId, new OperatorId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        Assert.Equal(ConversationBlockOutcome.Applied, outcome);
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var ids = await store.ListAllForVisitorAsync(visitorId, CancellationToken.None);
+
+        Assert.Equal([kept.Id], ids);
     }
 
     [Fact]
