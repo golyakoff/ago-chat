@@ -62,18 +62,22 @@ public static class WidgetConfigEndpoints
                 request.Position,
                 request.Locale,
                 request.NoticeText,
-                request.NoticeUrl),
+                request.NoticeUrl,
+                request.RequireContactConsent),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
     }
 
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
-        new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl);
+        new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
+            dto.RequireContactConsent);
 
     public sealed record UpdateWidgetConfigRequest(
-        string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl);
+        string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
+        bool RequireContactConsent);
 
     public sealed record WidgetConfigResponse(
-        string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl);
+        string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
+        bool RequireContactConsent);
 }

@@ -36,6 +36,36 @@ public class SiteTests
         // this item must not do (WidgetConfig's own remarks).
         Assert.Null(site.WidgetConfig.NoticeText);
         Assert.Null(site.WidgetConfig.NoticeUrl);
+        // `24-05`: every existing tenant, and every freshly created one, does not require a recorded
+        // consent before accepting a contact detail - the unchanged-default requirement the backlog
+        // item's own Scope names explicitly.
+        Assert.False(site.WidgetConfig.RequireContactConsent);
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenRequireContactConsentIsSetTrue_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, requireContactConsent: true), now);
+
+        Assert.True(site.WidgetConfig.RequireContactConsent);
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenRequireContactConsentIsOmitted_DefaultsFalse()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, requireContactConsent: true), now);
+
+        // A later call that does not mention the flag at all (the console's own launcher-only save,
+        // say) must not silently carry the old value forward by accident - WidgetConfig's constructor
+        // parameter defaults to false, so a caller must say true explicitly to keep it on.
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomLeft), now);
+
+        Assert.False(site.WidgetConfig.RequireContactConsent);
     }
 
     // `11-01`: 11-01's own Done-when - Site.UpdateWidgetConfig rejects a malformed hex color. The

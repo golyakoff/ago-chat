@@ -34,6 +34,7 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             site.WidgetConfig.Position,
             site.Locale,
             site.WidgetConfig.NoticeText,
-            site.WidgetConfig.NoticeUrl);
+            site.WidgetConfig.NoticeUrl,
+            site.WidgetConfig.RequireContactConsent);
     }
 }

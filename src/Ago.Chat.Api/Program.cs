@@ -2,6 +2,7 @@
 using Ago.Chat.Api.CannedResponses;
 using Ago.Chat.Api.ModuleTaskChannelPreferences;
 using Ago.Chat.Api.ChannelIdentities;
+using Ago.Chat.Api.Consent;
 using Ago.Chat.Api.ContactDetails;
 using Ago.Chat.Api.PhoneVerification;
 using Ago.Chat.Api.Notes;
@@ -438,6 +439,11 @@ app.MapModuleTaskChannelPreferenceEndpoints();
 // `14-14`/`adr/0079` section 6: unverified contact details - a separate, simpler surface beside
 // channel identities, never reaching IChannelIdentityRepository or DeliverChannelMessageHandler.
 app.MapContactDetailEndpoints();
+// `24-05`: the visitor's own consent read/accept pair, and the tenant's own publish route for their
+// site-scoped consent document - see each file's own remarks for why neither reaches
+// OwnerDocumentEndpoints'/DocumentEndpoints' shared RequirePlatformOwner-vs-anonymous split.
+app.MapConsentEndpoints();
+app.MapSiteConsentDocumentEndpoints();
 // `14-15`/`adr/0079`: phone verification via a proactive SMS/voice code - visitor-only (see
 // PhoneVerificationEndpoints' own remarks), the third caller of the dual-scheme EitherTokenKind policy
 // after AttachmentEndpoints.

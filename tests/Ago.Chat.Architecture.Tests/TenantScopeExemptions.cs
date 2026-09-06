@@ -408,5 +408,25 @@ internal static class TenantScopeExemptions
             + "ask it from either. Query carries an AcceptanceSubjectKind, never a SiteId - the requirement this "
             + "reads is a property of a subject kind (tenant/operator/visitor), not of any one tenant, the same "
             + "reason RecordAcceptanceHandler/GetAcceptancesForSubjectHandler above carry no SiteId either.",
+
+        // ---------------------------------------------------------------------------------------
+        // `24-05`: the visitor's own consent read/write pair. Both are conversation-scoped, visitor-only
+        // entry points - the identical shape RecordVisitorContactDetailHandler.HandleAsVisitorAsync
+        // above already carries no SiteId for. PublishDocumentVersionHandler.HandleAsSiteConsentAsync
+        // (same file as HandleAsync above) is deliberately NOT listed here: it carries a SiteId and
+        // checks IPermissionChecker against Permission.SiteConfigure, so TenantScopeTests checks it the
+        // ordinary way rather than reading an excuse.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.GetConsentRequirement.GetConsentRequirementHandler.HandleAsync"] =
+            "`24-05`. Visitor path. Gated by conversation.VisitorId == query.RequestedBy, from the signed visitor "
+            + "token - the identical shape RecordVisitorContactDetailHandler.HandleAsVisitorAsync's own entry above "
+            + "uses. No operator-initiated twin exists for this item (an operator already sees the site's own "
+            + "RequireContactConsent flag through GetWidgetConfigHandler, which is RBAC-gated the ordinary way), so "
+            + "there is nothing else on this entry point to gate.",
+        ["Ago.Chat.Application.UseCases.RecordVisitorConsent.RecordVisitorConsentHandler.HandleAsync"] =
+            "`24-05`. Visitor path, and deliberately the only path - RecordVisitorConsentHandler's own remarks "
+            + "explain why there is no operator-initiated twin: consenting on a visitor's behalf is exactly the "
+            + "self-service act this item forbids. Gated by conversation.VisitorId == command.RequestedBy, from the "
+            + "signed visitor token, the identical shape every other visitor entry point in this file already uses.",
     };
 }

@@ -27,7 +27,7 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
 
         await using (var db = fixture.CreateDbContext())
         {
-            var handler = new PublishDocumentVersionHandler(new DocumentRepository(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
+            var handler = new PublishDocumentVersionHandler(new DocumentRepository(db), new PermissionChecker(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
 
             var v1 = await handler.HandleAsync(
                 new PublishDocumentVersion(documentKey, "Privacy Policy", "DRAFT v1 text - awaiting legal review."),
@@ -66,7 +66,7 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
         var documentKey = $"operator-terms-{Guid.NewGuid():N}";
 
         await using var db = fixture.CreateDbContext();
-        var publishHandler = new PublishDocumentVersionHandler(new DocumentRepository(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
+        var publishHandler = new PublishDocumentVersionHandler(new DocumentRepository(db), new PermissionChecker(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
         await publishHandler.HandleAsync(new PublishDocumentVersion(documentKey, "Operator Terms", "DRAFT v1 text."), CancellationToken.None);
         await publishHandler.HandleAsync(new PublishDocumentVersion(documentKey, "Operator Terms", "DRAFT v2 text."), CancellationToken.None);
 
@@ -98,7 +98,7 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
         var visitorId = new VisitorId(Guid.NewGuid());
 
         await using var db = fixture.CreateDbContext();
-        var publishHandler = new PublishDocumentVersionHandler(new DocumentRepository(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
+        var publishHandler = new PublishDocumentVersionHandler(new DocumentRepository(db), new PermissionChecker(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
         var v1 = await publishHandler.HandleAsync(
             new PublishDocumentVersion(documentKey, "Processing Notice", "DRAFT: we process your messages to answer them."),
             CancellationToken.None);
@@ -132,7 +132,7 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
         // exists to exercise).
         await using (var seed = fixture.CreateDbContext())
         {
-            var seedHandler = new PublishDocumentVersionHandler(new DocumentRepository(seed), new UuidV7Generator(), new SystemClock(), new NoOpCache());
+            var seedHandler = new PublishDocumentVersionHandler(new DocumentRepository(seed), new PermissionChecker(seed), new UuidV7Generator(), new SystemClock(), new NoOpCache());
             var seeded = await seedHandler.HandleAsync(
                 new PublishDocumentVersion(documentKey, "Privacy Policy", "DRAFT: the seeded version."), CancellationToken.None);
             Assert.True(seeded.IsSuccess);
@@ -141,7 +141,7 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var racingRepository = new RacingDocumentRepository(
             new DocumentRepository(db), maxInjections: 1, () => PublishConcurrentlyAsync(documentKey));
-        var handler = new PublishDocumentVersionHandler(racingRepository, new UuidV7Generator(), new SystemClock(), new NoOpCache());
+        var handler = new PublishDocumentVersionHandler(racingRepository, new PermissionChecker(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
 
         var result = await handler.HandleAsync(
             new PublishDocumentVersion(documentKey, "Privacy Policy", "DRAFT: the version that wins the race."), CancellationToken.None);
@@ -161,7 +161,7 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
     private async Task PublishConcurrentlyAsync(string documentKey)
     {
         await using var db = fixture.CreateDbContext();
-        var handler = new PublishDocumentVersionHandler(new DocumentRepository(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
+        var handler = new PublishDocumentVersionHandler(new DocumentRepository(db), new PermissionChecker(db), new UuidV7Generator(), new SystemClock(), new NoOpCache());
         var result = await handler.HandleAsync(new PublishDocumentVersion(documentKey, "Privacy Policy", "DRAFT: the concurrent writer's version."), CancellationToken.None);
         Assert.True(result.IsSuccess);
     }

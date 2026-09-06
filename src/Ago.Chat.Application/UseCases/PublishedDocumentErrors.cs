@@ -22,4 +22,19 @@ public static class PublishedDocumentErrors
     /// remarks give for an identical shape.</summary>
     public static Error PublishConflict(string documentKey) =>
         new("Document.PublishConflict", $"Publishing under '{documentKey}' conflicted with a concurrent publish; retry.");
+
+    /// <summary>`24-05`: a purpose string that does not parse to a real
+    /// <see cref="Ago.Chat.Domain.VisitorConsentPurpose"/> member - the caller's own mistake to fix,
+    /// the same "validate the enum, translate the miss at the Application boundary" split
+    /// <see cref="ConversationErrors.WidgetConfigInvalidPosition"/> already draws for its own enum.</summary>
+    public static Error InvalidPurpose(string reason) => new("Document.InvalidPurpose", reason);
+
+    /// <summary>`24-05`: a site has <see cref="Ago.Chat.Domain.WidgetConfig.RequireContactConsent"/>
+    /// turned on, but nothing has ever been published under this purpose's own consent-document key -
+    /// the tenant enabled the flag before writing (or finished writing) their own text. Deployment/
+    /// tenant-configuration not ready, not the caller's mistake and not a conflict with anything they
+    /// sent - the identical shape <see cref="ConversationErrors.SiteAgreementUnavailable"/> already
+    /// gives for the equivalent gap on the tenant-registration path.</summary>
+    public static Error ConsentDocumentUnavailable(string documentKey) =>
+        new("Document.ConsentDocumentUnavailable", $"No published version exists yet for consent document '{documentKey}'.");
 }

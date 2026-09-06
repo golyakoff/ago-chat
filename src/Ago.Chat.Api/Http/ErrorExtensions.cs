@@ -103,7 +103,12 @@ public static class ErrorExtensions
                 // `23-13`: the caller's own mistake to fix - Force was set with no non-blank reason, or
                 // one longer than RevokeModuleForSiteAsOwnerHandler.MaxReasonLength allows. The same
                 // "decide, don't default" shape Module.GrantExpiryInvalid already gives its own guard.
-                or "Module.RevokeReasonRequired" => StatusCodes.Status400BadRequest,
+                or "Module.RevokeReasonRequired"
+                // `24-05`: the caller's own mistake to fix - a purpose string that does not parse to a
+                // real Domain.VisitorConsentPurpose member, the same "validate the enum, translate the
+                // miss" shape WidgetConfig.InvalidPosition/ChannelLinkRequest.InvalidKind already give
+                // their own enums.
+                or "Document.InvalidPurpose" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -141,6 +146,13 @@ public static class ErrorExtensions
                 // malformed request - the same "the remedy is a different action first" shape
                 // Tag.AlreadyExists/ChannelCredential.AlreadyConnected already give their own conflicts.
                 or "Conversation.AlreadyBlocked" or "Conversation.NotBlocked" => StatusCodes.Status409Conflict,
+                // `24-05`: a real conflict with this specific request's own preconditions (this site
+                // requires a recorded consent, and this visitor has none yet), resolved by an explicit
+                // second act - recording the consent - rather than by fixing the request body, the
+                // identical shape ChannelCredential.AlreadyConnected/Module.RevokePurchaseRequiresForce
+                // already give their own conflicts (ConversationErrors.VisitorContactDetailConsentRequired's
+                // own remarks).
+                or "VisitorContactDetail.ConsentRequired" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
@@ -184,8 +196,10 @@ public static class ErrorExtensions
             // lines up.
             // `24-11`: PersonExport.RateLimited joins the same group - ConversationErrors.PersonExportRateLimited's
             // own remarks on why it is a distinct code from Export.RateLimited rather than a reuse.
+            // `24-05`: Consent.RateLimited joins the same group - ConversationErrors.ConsentRateLimited's
+            // own remarks on why it is a distinct code from Message.RateLimited rather than a reuse.
             "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "PersonExport.RateLimited"
-                or "ReplyDraft.RateLimited"
+                or "ReplyDraft.RateLimited" or "Consent.RateLimited"
                 or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut" or "demo.rate_limited"
                 => StatusCodes.Status429TooManyRequests,
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
@@ -217,7 +231,12 @@ public static class ErrorExtensions
                 // reached - a dependency of this request failing, not anything the caller supplied
                 // being wrong, the identical reasoning ChannelCredential.NotAvailable/ReplyDraft.Unavailable's
                 // own comment gives for its group.
-                or "Module.RegistrationFailed" => StatusCodes.Status503ServiceUnavailable,
+                or "Module.RegistrationFailed"
+                // `24-05`: the identical "a dependency of this request is missing" shape as
+                // Site.AgreementUnavailable right above - a site turned on RequireContactConsent (or a
+                // visitor is trying to accept) before its own consent document was ever published under
+                // this purpose's key (PublishedDocumentErrors.ConsentDocumentUnavailable's own remarks).
+                or "Document.ConsentDocumentUnavailable" => StatusCodes.Status503ServiceUnavailable,
             // `ago-root#352`: demo.unavailable is deliberately left here rather than given its own status.
             // MintDemoTenantHandler returns it only after ISiteRegistrationRepository.TryRegisterAsync's
             // five-row insert hits its own unique-index violation - a race that port's own remarks call
