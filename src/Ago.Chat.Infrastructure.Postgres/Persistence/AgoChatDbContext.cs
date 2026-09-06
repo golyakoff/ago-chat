@@ -65,6 +65,11 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // ModuleTaskChannelPreferenceRepository queries it directly, keyed on ModuleTaskId by value rather than
     // reached through Conversation's own encapsulated navigation.
     public DbSet<ModuleTaskChannelPreference> ModuleTaskChannelPreferences => Set<ModuleTaskChannelPreference>();
+    // `23-32`: the team chat's own table - a real DbSet, unlike ModuleTasks above, since
+    // TeamChatRepository queries/inserts it directly rather than reaching it through an aggregate's
+    // own encapsulated navigation (Ago.Chat.Domain.TeamMessage's own remarks on why it has no parent
+    // aggregate to be reached through in the first place).
+    public DbSet<TeamMessage> TeamMessages => Set<TeamMessage>();
     // `24-01`: AcceptanceRecord's own table - see AcceptanceRecordConfiguration's own remarks for why
     // it carries no foreign key to any subject's own table.
     public DbSet<AcceptanceRecord> AcceptanceRecords => Set<AcceptanceRecord>();

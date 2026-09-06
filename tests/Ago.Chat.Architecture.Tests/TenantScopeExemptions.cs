@@ -428,5 +428,34 @@ internal static class TenantScopeExemptions
             + "explain why there is no operator-initiated twin: consenting on a visitor's behalf is exactly the "
             + "self-service act this item forbids. Gated by conversation.VisitorId == command.RequestedBy, from the "
             + "signed visitor token, the identical shape every other visitor entry point in this file already uses.",
+
+        // ---------------------------------------------------------------------------------------
+        // `23-32`: the team chat's own two reads and the fan-out resolver. All three take a SiteId
+        // straight from the operator's own token claim (never a route segment or a body value - the
+        // same "there is nothing else for a caller to name" shape GetOperatorQueueHandler's own
+        // remarks give for its SiteId, restated in SendTeamMessage's own doc comment) and none call
+        // IPermissionChecker, because the backlog item's own Scope makes that the correct answer, not
+        // an omission: "every operator of that tenant in it, no way to create a second" is
+        // unconditional membership, not a capability adr/0016's per-role permissions could
+        // meaningfully differentiate within a site the way conversation:send/conversation:assign do.
+        // SendTeamMessageHandler.HandleAsync is not listed here - it does call
+        // permissions.HasPermissionAsync(..., Permission.SiteManageOperators, ...), which satisfies
+        // this file's own scan, even though the boolean it returns decides a label (23-32's admin
+        // badge) rather than an authorization outcome.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.GetTeamMessageHistory.GetTeamMessageHistoryHandler.HandleAsync"] =
+            "`23-32`. SiteId is the caller's own operator claim, naming exactly the caller's own site's team "
+            + "room - there is no other room this query could be pointed at, and no permission distinguishes "
+            + "one operator's right to read it from another's (every operator of the site is a member, "
+            + "unconditionally).",
+        ["Ago.Chat.Application.UseCases.GetTeamMessageHistory.GetTeamMessageHistoryHandler.HandleDeltaAsync"] =
+            "`23-32`. Same reasoning as HandleAsync right above - the reconnect-catchup twin of the same read.",
+        ["Ago.Chat.Application.UseCases.ResolveTeamMessageDelivery.ResolveTeamMessageDeliveryTargetsHandler.HandleAsync"] =
+            "`23-32`. Not a caller-facing entry point at all - driven by Ago.Chat.Worker.TeamChatFanoutConsumer "
+            + "reacting to this system's own already-committed TeamMessagePosted event (adr/0005: the event is "
+            + "only published after the message's own transaction committed), the same \"an integration event "
+            + "this system itself published\" category ResolveMessageDeliveryTargetsHandler's own precedent "
+            + "establishes for the identical shape on the conversation side. SiteId comes off that event, never "
+            + "a caller.",
     };
 }

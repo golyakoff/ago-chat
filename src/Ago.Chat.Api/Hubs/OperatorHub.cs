@@ -5,10 +5,12 @@ using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.SendTeamMessage;
 using Ago.Chat.Application.UseCases.SetOperatorPresence;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Contracts;
@@ -40,6 +42,9 @@ public sealed class OperatorHub(
     OperatorPresencePublisher presencePublisher,
     SetOperatorPresenceHandler operatorPresence,
     GetOperatorPresenceHandler getOperatorPresence,
+    // `23-32`: the team chat's own two handlers - see each hub method below.
+    SendTeamMessageHandler sendTeamMessage,
+    GetTeamMessageHistoryHandler getTeamHistory,
     DrainState drainState) : Hub
 {
     /// <summary>Same wiring as VisitorHub.OnConnectedAsync - see its comment, including the `3-06`
@@ -345,6 +350,71 @@ public sealed class OperatorHub(
             new GetOperatorPresence(operatorId), Context.ConnectionAborted);
 
         return status == OperatorStatus.Away;
+    }
+
+    /// <summary>
+    /// `23-32`: unlike <see cref="SendMessageAsync"/>, there is no <c>JoinConversationAsync</c>
+    /// equivalent for the team chat - a site's operator claim already names the one room this
+    /// connection may ever read or write, so there is no id for a caller to join and nothing to
+    /// authorize beyond the connection's own JWT. <paramref name="clientMessageId"/> is `5-07`'s
+    /// retry-dedup, the same wire idiom <see cref="SendMessageAsync"/> already offers.
+    ///
+    /// <para>Returns the assigned sequence, echoed to the caller the same way
+    /// <see cref="SendMessageAsync"/> does: a re-read of the just-written row
+    /// (<see cref="GetTeamHistoryAsync"/>'s own query, <c>beforeSequence: sequence + 1, pageSize: 1</c>)
+    /// rather than building a DTO from what this handler already has in memory, so the local echo and
+    /// the fan-out copy every other operator receives (<c>TeamChatFanoutConsumer</c> ->
+    /// <c>ResolveTeamMessageDeliveryTargetsHandler</c>) are byte-identical - `5-11`'s own failure
+    /// mode, guarded against here the same way <see cref="SendAsync"/> already guards against it for
+    /// an ordinary conversation message.</para>
+    /// </summary>
+    public async Task<int> SendTeamMessageAsync(string body, Guid? clientMessageId = null)
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        var siteId = Context.User!.GetSiteId();
+
+        var sent = await sendTeamMessage.HandleAsync(
+            new SendTeamMessage(siteId, operatorId, body, clientMessageId), Context.ConnectionAborted);
+        if (sent.IsFailure)
+        {
+            throw new HubException(sent.Error!.Value.Message);
+        }
+
+        var page = await getTeamHistory.HandleAsync(
+            new GetTeamMessageHistory(siteId, sent.Value.Sequence + 1, PageSize: 1), Context.ConnectionAborted);
+        var dto = TeamMessageDtoMapper.ToDto(page.Messages.Single());
+        // `3-02`: local echo only - real delivery to every other operator of this site goes through
+        // TeamChatFanoutConsumer reacting to this message's own TeamMessagePosted, the same split
+        // SendAsync's own remarks state for an ordinary conversation message.
+        await Clients.Caller.SendAsync("TeamMessageReceived", dto, Context.ConnectionAborted);
+
+        return sent.Value.Sequence;
+    }
+
+    /// <summary>The team chat's own backward-keyset page, newest first -
+    /// <paramref name="beforeSequence"/> <see langword="null"/> means "most recent page," the initial
+    /// load; a real value means "load older," the same convention <see cref="GetHistoryAsync"/> uses
+    /// for a conversation.</summary>
+    public async Task<TeamHistoryPage> GetTeamHistoryAsync(int? beforeSequence, int pageSize)
+    {
+        var siteId = Context.User!.GetSiteId();
+        var page = await getTeamHistory.HandleAsync(
+            new GetTeamMessageHistory(siteId, beforeSequence, pageSize), Context.ConnectionAborted);
+
+        return new TeamHistoryPage(TeamMessageDtoMapper.ToDtos(page.Messages), page.NextBeforeSequence);
+    }
+
+    /// <summary>`3-03`'s reconnect delta, the team-chat sibling of <see cref="JoinConversationAsync"/>'s
+    /// own <c>lastKnownSequence</c> branch - every message strictly after
+    /// <paramref name="afterSequence"/>, oldest first, unbounded rather than paginated for the
+    /// identical reason.</summary>
+    public async Task<TeamHistoryPage> GetTeamDeltaAsync(int afterSequence)
+    {
+        var siteId = Context.User!.GetSiteId();
+        var messages = await getTeamHistory.HandleDeltaAsync(
+            new GetTeamMessageDelta(siteId, afterSequence), Context.ConnectionAborted);
+
+        return new TeamHistoryPage(TeamMessageDtoMapper.ToDtos(messages), NextBeforeSequence: null);
     }
 
     // `14-06`: the mapping moved to Ago.Chat.Application.Mapping.MessageDtoMapper - it existed

@@ -205,5 +205,17 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property<DateTimeOffset?>("LastSeenAt").HasColumnName("last_seen_at");
         builder.Property<string?>("LastRefusedOrigin").HasColumnName("last_refused_origin");
         builder.Property<DateTimeOffset?>("LastRefusedOriginAt").HasColumnName("last_refused_origin_at");
+
+        // `23-32`: a shadow property, the identical shape `ErasureRequestedAt` establishes above -
+        // one legitimate writer (`TeamChatRepository`'s own atomic `UPDATE ... RETURNING`, CLAUDE.md
+        // rule 8) and one reader (the same statement's own `RETURNING` clause; nothing else ever reads
+        // this column back), never through Site's load-mutate-SaveChangesAsync path. Not a separate
+        // "team_chat_rooms" table with its own row per site: every site already has exactly one `sites`
+        // row by the time any operator can send to it, so there is no "does the room exist yet"
+        // question a second table's own lazy-insert would need to answer - the identical "one column,
+        // no object to bundle it into yet" judgement `Tier`/`SeatLimit`'s own remarks already state for
+        // themselves. Defaults to 0 so every pre-existing row reads back "nothing sent yet," the first
+        // real message's own compare-and-set moves it to 1.
+        builder.Property<int>("TeamChatLastSequence").HasColumnName("team_chat_last_sequence").HasDefaultValue(0);
     }
 }

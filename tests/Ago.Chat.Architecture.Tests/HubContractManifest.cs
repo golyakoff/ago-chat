@@ -69,5 +69,16 @@ internal static class HubContractManifest
             "ago-console OperatorConnection.getMyPresence (`23-20`), called once whenever the "
             + "connection reports \"connected\" - a first connect and every reconnect alike - so the "
             + "away control never renders a stale toggle after either."),
+
+        // `23-32`: the team chat's own three - all new, all called from ago-console's own
+        // OperatorConnection (sendTeamMessage/getTeamHistory/getTeamDelta) the moment this item
+        // shipped, the same "add it, say who calls it" discipline this file asks for on every entry.
+        new("OperatorHub.SendTeamMessageAsync", 2,
+            "ago-console OperatorConnection.sendTeamMessage (`23-32`)."),
+        new("OperatorHub.GetTeamHistoryAsync", 2,
+            "ago-console OperatorConnection.getTeamHistory (`23-32`)."),
+        new("OperatorHub.GetTeamDeltaAsync", 1,
+            "ago-console OperatorConnection.getTeamDelta (`23-32`) - the reconnect catch-up TeamChatPage "
+            + "asks for once per genuine reconnect."),
     ];
 }

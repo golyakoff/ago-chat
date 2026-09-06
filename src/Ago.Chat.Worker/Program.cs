@@ -120,6 +120,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ConnectionFanoutConsumer>();
 
+// `23-32`: the team chat's own fan-out consumer - same registration shape as ConnectionFanoutConsumer
+// right above.
+builder.Services
+    .AddOptions<TeamChatFanoutConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(TeamChatFanoutConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<TeamChatFanoutConsumer>();
+
 builder.Services
     .AddOptions<ConversationAssignmentFanoutConsumerOptions>()
     .Bind(builder.Configuration.GetSection(ConversationAssignmentFanoutConsumerOptions.SectionName))
