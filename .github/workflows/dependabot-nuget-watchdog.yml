@@ -1,0 +1,60 @@
+# `17-14` (carried out of `17-11`, golyakoff/ago-root#396): `17-11` fixed the cause Dependabot's own
+# update-job log named - the checked-in `nuget.config` pointed at a Windows path that does not exist
+# on Dependabot's Linux runner, so the `nuget` ecosystem's update job failed with `NU1301` on every
+# run, reported success anyway, and proposed nothing. Nobody could tell it had ever run at all: the
+# `github-actions` ecosystem kept opening ordinary PRs on the same schedule and made the whole
+# mechanism look alive.
+#
+# That is the actual defect this workflow exists for. A correctly-configured `nuget` ecosystem can
+# still go silent again in the same invisible way - a renamed registry secret, a feed outage, a
+# `packageSourceMapping` typo, GitHub changing how it resolves a checked-in `NuGet.Config` combined
+# with `registries:` (dependabot-core#8721, #10859, #11914, #3724 - open issues, not yet observed
+# failing here, but not yet observed succeeding end to end either; see `nuget.config`'s own comment
+# and `ago-root#396`'s Outcome) - and the job would report success and stay quiet about it every
+# time, exactly as it did before `17-11`. This is the visible substitute for reading that log by
+# hand: it runs after Dependabot's own weekly window and fails loudly if the `nuget` ecosystem has
+# gone quiet again, the same way the required `build-test` job already fails loudly on a
+# Critical/High CVE (`ago-root` `docs/runbooks/vulnerability-response.md`). It does not diagnose
+# *why* nothing was proposed - only that something worth looking at has stopped.
+#
+# Five-week window, not one: `dependabot.yml`'s schedule is weekly, but a week with nothing to
+# bump is a normal, honest silence (`ago-platform`'s own nuget PRs do not arrive every single
+# week either). One full cycle of slack past the weekly cadence separates "quiet because there is
+# nothing to do" from "quiet because the job is broken again".
+name: Dependabot NuGet watchdog
+
+on:
+  schedule:
+    # Two hours after Dependabot's own weekly window (dependabot.yml: Monday 06:00 UTC), so a PR
+    # opened this morning is already visible before this job goes looking for it.
+    - cron: "0 8 * * 1"
+  # So this can be run on demand - right after 17-14's own fix, or after touching dependabot.yml
+  # or nuget.config again - instead of waiting for the next scheduled window.
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check-recent-nuget-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if no nuget Dependabot PR in the last 5 weeks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '35 days ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          count=$(gh pr list --repo "$REPO" \
+            --search "author:app/dependabot head:dependabot/nuget/" \
+            --state all --json createdAt \
+            --jq "[.[] | select(.createdAt >= \"$since\")] | length")
+
+          echo "nuget-ecosystem Dependabot PRs since $since: $count"
+
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No nuget-ecosystem Dependabot pull request opened in the last 5 weeks. Either the update job is failing silently again (GitHub > Insights > Dependency graph > Dependabot shows the actual job log and error, which a PR list cannot) or the dependency graph is genuinely unchanged for over a month - confirm which before assuming the configuration is still fine. See golyakoff/ago-root#579 (17-14) and ago-root docs/runbooks/vulnerability-response.md."
+            exit 1
+          fi
