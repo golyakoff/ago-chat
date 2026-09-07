@@ -6,15 +6,13 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Modules;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
-using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
-using Ago.Chat.Application.UseCases.RevokeModuleForSite;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
-using Ago.Chat.Application.UseCases.RotateModuleCredential;
-using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
+using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
+using Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
@@ -40,12 +38,19 @@ namespace Ago.Chat.Integration.Tests;
 /// tokens (<see cref="OperatorOidcFixture"/>): the platform owner can grant a module to a tenant with
 /// no payment, the grant is distinguishable from a self-service purchase wherever either is recorded,
 /// revoking it works, and neither an ordinary operator nor a site-wide admin can reach this surface.
+/// `23-83`/`adr/0151` adds the platform owner's own rotate and verify to the same claim: the two
+/// writes `22-11` never gave the owner, reachable only once the tenant's own copies stopped existing
+/// as routes.
 ///
-/// <para>Both <see cref="ModuleEndpoints.MapModuleEndpoints"/> (the tenant's own self-service route,
-/// `RequireOperatorIdentity`) and <see cref="OwnerModuleEndpoints.MapOwnerModuleEndpoints"/> (the
-/// owner's route, `RequirePlatformOwner`) are mapped on the same host in this file - deliberately,
-/// because the audit-distinction claim can only be proven by comparing what each path writes, not by
-/// reading either route's own behaviour in isolation.</para>
+/// <para>Both <see cref="ModuleEndpoints.MapModuleEndpoints"/> (the tenant's own read-only route,
+/// `RequireOperatorIdentity` - `23-83` removed its four writes) and
+/// <see cref="OwnerModuleEndpoints.MapOwnerModuleEndpoints"/> (the owner's route,
+/// `RequirePlatformOwner`) are mapped on the same host in this file - deliberately, because the
+/// audit-distinction claim can only be proven by comparing what the owner's own writes produce
+/// against what the tenant's own read shows, not by reading either route's own behaviour in
+/// isolation. What used to be a second write path to compare against
+/// (<see cref="SeedSelfServicePurchaseAsync"/>'s own remarks) is now a direct Postgres seed instead -
+/// the tenant no longer has a route that could produce one.</para>
 /// </summary>
 [Collection(OperatorOidcCollection.Name)]
 public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
@@ -101,12 +106,11 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
         var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
 
-        // The tenant buys module A themselves, through the ordinary self-service route.
-        var purchase = await operatorClient.PutAsJsonAsync(
-            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
-                purchasedKey, ["/purchased"], "https://faq.example.com",
-                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
-        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+        // The tenant bought module A themselves, at some point before `23-83` removed the self-service
+        // route that once made that possible - seeded directly, the same "a real row, not a live call"
+        // shape `ModuleEndpointsTests.DemoAdminToken_CannotListAnotherTenantsEnabledModules` uses for
+        // its own victim row (`SeedSelfServicePurchaseAsync`'s own remarks).
+        await SeedSelfServicePurchaseAsync(purchasedKey, "/purchased");
 
         // The owner grants module B, with no payment, through the owner-only route.
         var grant = await ownerClient.PutAsJsonAsync(
@@ -184,11 +188,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
         var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
 
-        var purchase = await operatorClient.PutAsJsonAsync(
-            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
-                moduleKey, [$"/{moduleKey}"], "https://faq.example.com",
-                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
-        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+        await SeedSelfServicePurchaseAsync(moduleKey, $"/{moduleKey}");
 
         var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
             HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
@@ -217,11 +217,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         var ownerClient = CreateClient(host, token);
         var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
 
-        var purchase = await operatorClient.PutAsJsonAsync(
-            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
-                moduleKey, [$"/{moduleKey}"], "https://faq.example.com",
-                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
-        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+        await SeedSelfServicePurchaseAsync(moduleKey, $"/{moduleKey}");
 
         const string reason = "Tenant reported to law enforcement for illegal sales through this module.";
         var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
@@ -255,11 +251,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
         var operatorClient = CreateClient(host, await fixture.GetDemoAdminAccessTokenAsync());
 
-        var purchase = await operatorClient.PutAsJsonAsync(
-            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
-                moduleKey, [$"/{moduleKey}"], "https://faq.example.com",
-                "a-tenant-minted-secret-of-sixteen-plus-chars", "a-provisioning-secret-of-sixteen-plus-chars"));
-        Assert.Equal(HttpStatusCode.OK, purchase.StatusCode);
+        await SeedSelfServicePurchaseAsync(moduleKey, $"/{moduleKey}");
 
         var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
             HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
@@ -552,6 +544,176 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     }
 
     // ------------------------------------------------------------------------------------------
+    // `23-83`/`adr/0151`: rotate and verify, on the platform owner's own behalf - the two writes
+    // `22-11` never gave the owner, added only once the tenant's own copies stopped existing as
+    // routes (`ModuleEndpointsTests`'s own fails-before proof that they are actually gone).
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The item's own headline claim for rotate: a module the owner granted can have its
+    /// credential rotated through the owner's own route, and the fresh value actually lands on both
+    /// sides - Chat's own row and the (fake) module's own confirmation.</summary>
+    [Fact]
+    public async Task OwnerToken_RotatesACredential_AndTheStoredCredentialChanges()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        await ownerClient.PutAsJsonAsync(
+            OwnerRoute, new OwnerModuleEndpoints.GrantModuleRequest
+            {
+                ModuleKey = moduleKey,
+                TriggerWords = ["/to-be-rotated"],
+                EntryPoint = "https://calendar.example.com",
+                Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+                ExpiresAt = null,
+            });
+
+        var response = await ownerClient.PostAsync($"{OwnerRoute}/{moduleKey}/rotate", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.RotateModuleCredentialResponse>();
+        Assert.NotNull(body);
+        Assert.False(string.IsNullOrWhiteSpace(body.NewCredential));
+        Assert.NotEqual("an-owner-minted-secret-of-sixteen-plus-chars", body.NewCredential);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        var call = Assert.Single(gateway.RotateCalls, c => c.Module.ModuleKey.Value == moduleKey);
+        Assert.Equal(ConfiguredProvisioningSecret, call.ProvisioningSecret.Value);
+        Assert.Equal(body.NewCredential, call.NewCredential.Value);
+    }
+
+    [Fact]
+    public async Task OwnerToken_RotatesAModuleThatIsNotEnabled_ReturnsNotFound()
+    {
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PostAsync($"{OwnerRoute}/{UniqueModuleKey()}/rotate", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>The identical wire-proof `OwnerToken_Grants_IgnoresAnySmuggledProvisioningSecretInTheRawBody_AndUsesTheConfiguredOne`
+    /// gives for grant, restated for rotate: this route's own request carries no
+    /// `ProvisioningSecret` field for a raw body to smuggle one into in the first place (there is no
+    /// request body type at all - <see cref="OwnerModuleEndpoints.MapOwnerModuleEndpoints"/>'s own
+    /// rotate route takes none), so the value the gateway receives can only ever be the one this host
+    /// is configured with.</summary>
+    [Fact]
+    public async Task OwnerToken_Rotates_WhenThisDeploymentHasNoProvisioningSecretConfigured_Returns503_AndCallsNoGateway()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync(configureProvisioningSecret: false);
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PostAsync($"{OwnerRoute}/{moduleKey}/rotate", content: null);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        Assert.Empty(gateway.RotateCalls);
+    }
+
+    /// <summary>The item's own headline claim for verify: the reconciliation check runs on the
+    /// owner's own behalf and reports agreement for a module both sides actually have.</summary>
+    [Fact]
+    public async Task OwnerToken_VerifiesARegistration_ReportsAgree()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        await ownerClient.PutAsJsonAsync(
+            OwnerRoute, new OwnerModuleEndpoints.GrantModuleRequest
+            {
+                ModuleKey = moduleKey,
+                TriggerWords = ["/to-be-verified"],
+                EntryPoint = "https://calendar.example.com",
+                Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+                ExpiresAt = null,
+            });
+
+        var response = await ownerClient.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/verify",
+            new OwnerModuleEndpoints.VerifyModuleRegistrationAsOwnerRequest("https://calendar.example.com"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.VerifyModuleRegistrationResponse>();
+        Assert.NotNull(body);
+        Assert.True(body.ChatHasRegistration);
+        Assert.True(body.ModuleHasRegistration);
+        Assert.True(body.Agree);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        var call = Assert.Single(gateway.GetStatusCalls, c => c.Module.ModuleKey.Value == moduleKey);
+        Assert.Equal(ConfiguredProvisioningSecret, call.ProvisioningSecret.Value);
+    }
+
+    [Fact]
+    public async Task OwnerToken_Verifies_WhenThisDeploymentHasNoProvisioningSecretConfigured_Returns503_AndCallsNoGateway()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync(configureProvisioningSecret: false);
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/verify",
+            new OwnerModuleEndpoints.VerifyModuleRegistrationAsOwnerRequest("https://calendar.example.com"));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        Assert.Empty(gateway.GetStatusCalls);
+    }
+
+    [Fact]
+    public async Task OrdinaryOperatorToken_CannotRotateACredential()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, await fixture.GetDemoOperatorAccessTokenAsync());
+
+        var response = await client.PostAsync($"{OwnerRoute}/{UniqueModuleKey()}/rotate", content: null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task NoToken_CannotRotateACredential()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token: null);
+
+        var response = await client.PostAsync($"{OwnerRoute}/{UniqueModuleKey()}/rotate", content: null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrdinaryOperatorToken_CannotVerifyARegistration()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, await fixture.GetDemoOperatorAccessTokenAsync());
+
+        var response = await client.PostAsJsonAsync(
+            $"{OwnerRoute}/{UniqueModuleKey()}/verify",
+            new OwnerModuleEndpoints.VerifyModuleRegistrationAsOwnerRequest("https://calendar.example.com"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task NoToken_CannotVerifyARegistration()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token: null);
+
+        var response = await client.PostAsJsonAsync(
+            $"{OwnerRoute}/{UniqueModuleKey()}/verify",
+            new OwnerModuleEndpoints.VerifyModuleRegistrationAsOwnerRequest("https://calendar.example.com"));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // The authorization boundary: this route is RequirePlatformOwner and nothing weaker.
     // ------------------------------------------------------------------------------------------
 
@@ -616,27 +778,14 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    /// <summary>`22-17`'s own "must not become the normal path" claim, checked mechanically: a
-    /// platform-owner token is refused on the tenant's own self-service route exactly as an ordinary
-    /// operator token is refused on the owner's route - the two surfaces do not blur into each
-    /// other.</summary>
-    [Fact]
-    public async Task OwnerToken_IsRejectedOnTheSelfServiceRoute()
-    {
-        await using var host = await BuildTestHostAsync();
-        using var client = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
-
-        var response = await client.PutAsJsonAsync(
-            SelfServiceRoute, new ModuleEndpoints.EnableModuleRequest(
-                UniqueModuleKey(), ["/x"], "https://calendar.example.com",
-                "a-perfectly-valid-shaped-secret-value-x", "a-provisioning-secret-of-sixteen-plus-chars"));
-
-        // The platform owner has no `operators` row (`adr/0032`), so `RequireOperatorIdentity` never
-        // even resolves an OperatorId claim for this token - the same 403 an unrecognised principal
-        // gets, proven here against a token that is very much recognised, just not as this kind of
-        // caller.
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-    }
+    // `22-17`'s own "must not become the normal path" claim used to be checked here mechanically: a
+    // platform-owner token, refused on the tenant's own self-service `PUT`, proved the two surfaces do
+    // not blur into each other. `23-83`/`adr/0151` removed that `PUT` outright rather than moving it
+    // behind a stronger check, so the question this test asked no longer has anywhere to be asked -
+    // there is no write route left on the tenant's own side for an owner token (or anyone else's) to
+    // reach. `ModuleEndpointsTests.NoToken_AlsoGetsNotFound_OnTheRemovedEnableRoute` is this file's
+    // own replacement proof: the removed route answers `404` for every caller, platform owner
+    // included, not merely `403` for the wrong kind of one.
 
     private async Task<ModuleEndpoints.EnabledModulesResponse> GetModulesAsync(HttpClient operatorClient)
     {
@@ -645,6 +794,26 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         var body = await response.Content.ReadFromJsonAsync<ModuleEndpoints.EnabledModulesResponse>();
         Assert.NotNull(body);
         return body;
+    }
+
+    /// <summary>
+    /// `23-83`/`adr/0151`: several tests in this file need a `GrantedByOwner: false` row to compare an
+    /// owner's own write against - "this is a tenant's own purchase, not an owner grant" is exactly
+    /// what those tests exercise. Before this item that row came from a live `PUT` on the tenant's own
+    /// self-service route; that route is gone, so the row is written directly, the identical shape
+    /// <c>ModuleEndpointsTests.DemoAdminToken_CannotListAnotherTenantsEnabledModules</c> already uses
+    /// for its own victim row. <see cref="EnabledModule"/>'s <c>grantedByOwner</c> parameter defaults
+    /// to <see langword="false"/>, so simply not passing it is what makes this a self-service-shaped
+    /// row rather than an owner-shaped one.
+    /// </summary>
+    private async Task SeedSelfServicePurchaseAsync(string moduleKey, string triggerWord)
+    {
+        await using var db = fixture.CreateDbContext();
+        db.EnabledModules.Add(new EnabledModule(
+            new EnabledModuleId(Guid.NewGuid()), fixture.SeededSiteId, new ModuleKey(moduleKey), [triggerWord],
+            new Uri("https://faq.example.com"), new ModuleCredential("a-tenant-minted-secret-of-sixteen-plus-chars"),
+            DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync();
     }
 
     /// <summary>Reads chat's own granted quantity straight off Postgres, one real
@@ -714,17 +883,24 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         });
         builder.Services.AddSingleton<IModuleProvisioningSecretProvider, ConfiguredModuleProvisioningSecretProvider>();
 
-        builder.Services.AddScoped<EnableModuleForSiteHandler>();
-        builder.Services.AddScoped<RotateModuleCredentialHandler>();
-        builder.Services.AddScoped<RevokeModuleForSiteHandler>();
+        // `23-83`/`adr/0151`: the tenant's own self-service handlers that used to be registered here
+        // (EnableModuleForSiteHandler/RotateModuleCredentialHandler/RevokeModuleForSiteHandler/
+        // VerifyModuleRegistrationHandler) are gone - `Api.Modules.ModuleEndpoints` maps only the GET
+        // route now, and that handler is the one still registered below.
         // `23-01`: MapModuleEndpoints maps the whole self-service group at once, including
         // the GET route's own handler - an unregistered handler here fails endpoint
         // construction for the group as a whole (ModuleEndpointsTests's own remarks), which
         // is exactly what this file's own fails-before run demonstrated.
         builder.Services.AddScoped<ListEnabledModulesForSiteHandler>();
-        builder.Services.AddScoped<VerifyModuleRegistrationHandler>();
         builder.Services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
+        // `23-83`/`adr/0151`: the platform owner's own rotate/verify, added once the tenant's own
+        // copies stopped existing as routes. The real generator, not a fake - it wraps
+        // RandomNumberGenerator with no external dependency, the identical reasoning
+        // `ChatModule.cs`'s own production registration already gives for using it unfaked.
+        builder.Services.AddSingleton<IModuleCredentialGenerator, ModuleCredentialGenerator>();
+        builder.Services.AddScoped<RotateModuleCredentialAsOwnerHandler>();
+        builder.Services.AddScoped<VerifyModuleRegistrationAsOwnerHandler>();
         // `23-66`: the platform owner's own quantity grant, alongside the pair above - real Postgres
         // store, real outbox writer, the same "this suite already runs against a real Postgres" posture
         // ModuleQuantityGrantedOutboxTests already established for this exact store.
@@ -791,6 +967,13 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
 
         public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> RevokeCalls { get; } = [];
 
+        // `23-83`: the owner's own rotate/verify need the identical wire-proof shape RegisterCalls/
+        // RevokeCalls already give - which secret actually reached the module-registration boundary,
+        // not merely that the call succeeded.
+        public List<(ModuleRegistrationTarget Module, ModuleCredential NewCredential, ModuleProvisioningSecret ProvisioningSecret)> RotateCalls { get; } = [];
+
+        public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> GetStatusCalls { get; } = [];
+
         public Task RegisterAsync(
             ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
             string displayName, CancellationToken cancellationToken)
@@ -801,7 +984,11 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
 
         public Task RotateAsync(
             ModuleRegistrationTarget module, ModuleCredential newCredential, ModuleProvisioningSecret provisioningSecret,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken)
+        {
+            RotateCalls.Add((module, newCredential, provisioningSecret));
+            return Task.CompletedTask;
+        }
 
         public Task RevokeAsync(
             ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
@@ -811,7 +998,10 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         }
 
         public Task<ModuleRegistrationRemoteStatus> GetStatusAsync(
-            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
-            Task.FromResult(new ModuleRegistrationRemoteStatus(Exists: true, DateTimeOffset.UtcNow, HasCredentialInGracePeriod: false));
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
+        {
+            GetStatusCalls.Add((module, provisioningSecret));
+            return Task.FromResult(new ModuleRegistrationRemoteStatus(Exists: true, DateTimeOffset.UtcNow, HasCredentialInGracePeriod: false));
+        }
     }
 }

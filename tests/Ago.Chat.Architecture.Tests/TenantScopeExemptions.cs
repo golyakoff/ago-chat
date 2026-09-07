@@ -362,6 +362,24 @@ internal static class TenantScopeExemptions
             + "tenant's own self-service purchase, but neither is a second permission check - RequirePlatformOwner "
             + "on the route remains the entire access-control story unchanged; force/reason gate a business "
             + "decision (was this override meant), not who may call the route at all.",
+        ["Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner.RotateModuleCredentialAsOwnerHandler.HandleAsync"] =
+            "`23-83`/`adr/0151`, the platform owner's own rotate - added once the tenant's own "
+            + "RotateModuleCredentialHandler stopped existing as a route. The identical category as "
+            + "EnableModuleForSiteAsOwnerHandler/RevokeModuleForSiteAsOwnerHandler above: SiteId names the "
+            + "tenant whose module is being rotated, chosen by the owner, not a resource the caller already "
+            + "owns, and RequirePlatformOwner on OwnerModuleEndpoints is the entire access-control story - "
+            + "Ago.Chat.Application still has no port that can see a Keycloak realm-role claim, so a "
+            + "permission check here would be a second, weaker copy of a rule the policy already decided. "
+            + "The SiteId is used to load the EnabledModule row being rotated - modules.GetAsync(siteId, "
+            + "moduleKey) - the same structural protection its deleted tenant-facing sibling got from its "
+            + "additional IPermissionChecker call.",
+        ["Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner.VerifyModuleRegistrationAsOwnerHandler.HandleAsync"] =
+            "`23-83`/`adr/0151`, the platform owner's own reconciliation check - added once the tenant's own "
+            + "VerifyModuleRegistrationHandler stopped existing as a route. The identical category as "
+            + "RotateModuleCredentialAsOwnerHandler right above: SiteId names the tenant whose registration "
+            + "is being checked, chosen by the owner, and RequirePlatformOwner on OwnerModuleEndpoints is the "
+            + "entire access-control story. Read-only - the SiteId is used only to load one row "
+            + "(modules.GetAsync) and to name the module deployment being asked; nothing is written.",
         ["Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwnerHandler.HandleAsync"] =
             "`23-66`, the platform owner's own write for a module's granted quantity - the identical category as "
             + "EnableModuleForSiteAsOwnerHandler/RevokeModuleForSiteAsOwnerHandler above: SiteId names the tenant "

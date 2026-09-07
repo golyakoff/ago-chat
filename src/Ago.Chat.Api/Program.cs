@@ -444,7 +444,9 @@ app.MapWidgetConfigEndpoints();
 // `24-02`: the published surface's own unauthenticated read routes - see DocumentEndpoints' own
 // remarks for why they are mapped without any RequireAuthorization policy at all.
 app.MapDocumentEndpoints();
-// `19-03`: the console-facing surface for `EnableModuleForSite`, left unbuilt by `20-07`.
+// `19-03`/`23-83`: a tenant's own read of which modules are enabled on their site. The write half
+// `19-03` built here (`ModuleEndpoints`'s own remarks) is gone - provisioning is the platform's act,
+// not a tenant's (`adr/0151`).
 app.MapModuleEndpoints();
 // `14-04`
 app.MapOfflineAutoReplyEndpoints();

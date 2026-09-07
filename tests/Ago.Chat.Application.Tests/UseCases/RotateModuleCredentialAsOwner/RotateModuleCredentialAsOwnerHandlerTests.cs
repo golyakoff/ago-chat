@@ -1,34 +1,35 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Tests.Fakes;
-using Ago.Chat.Application.UseCases.RotateModuleCredential;
+using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
 using Ago.Chat.Domain;
 
-namespace Ago.Chat.Application.Tests.UseCases.RotateModuleCredential;
+namespace Ago.Chat.Application.Tests.UseCases.RotateModuleCredentialAsOwner;
 
-/// <summary>`22-11`'s own second Done-when, at the Application level.</summary>
-public class RotateModuleCredentialHandlerTests
+/// <summary>
+/// `23-83`/`adr/0151`: the platform owner's own half of `22-11`'s "rotate without downtime" - the
+/// identical behaviour <c>RotateModuleCredentialHandlerTests</c> proved for the deleted tenant handler
+/// (module-first ordering, mint-don't-accept), minus the permission check that handler had and plus
+/// the "provisioning secret not configured" case every owner-surface handler now has to answer
+/// (`EnableModuleForSiteAsOwnerHandlerTests`' own sibling case).
+/// </summary>
+public class RotateModuleCredentialAsOwnerHandlerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
     private static readonly SiteId SiteId = new(Guid.NewGuid());
-    private static readonly OperatorId OperatorId = new(Guid.NewGuid());
     private static readonly ModuleKey Calendar = new("calendar");
     private static readonly Uri EntryPoint = new("https://calendar.example.com");
     private const string OriginalCredential = "original-secret-of-sixteen-plus-chars";
-    private const string ValidProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars";
 
     private sealed record Fixture(
-        RotateModuleCredentialHandler Handler, FakeEnabledModuleRepository Modules, FakePermissionChecker Permissions,
-        FakeModuleRegistrationGateway RegistrationGateway, EnabledModuleId ExistingId);
+        RotateModuleCredentialAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
+        FakeModuleRegistrationGateway RegistrationGateway, FakeModuleProvisioningSecretProvider ProvisioningSecrets,
+        EnabledModuleId ExistingId);
 
-    private static async Task<Fixture> CreateFixtureAsync(bool permitted = true, bool seeded = true)
+    private static async Task<Fixture> CreateFixtureAsync(bool seeded = true)
     {
         var modules = new FakeEnabledModuleRepository();
-        var permissions = new FakePermissionChecker();
         var registrationGateway = new FakeModuleRegistrationGateway();
-        if (permitted)
-        {
-            permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
-        }
+        var provisioningSecrets = new FakeModuleProvisioningSecretProvider();
 
         var existingId = new EnabledModuleId(Guid.NewGuid());
         if (seeded)
@@ -39,13 +40,16 @@ public class RotateModuleCredentialHandlerTests
         }
 
         var generator = new FixedModuleCredentialGenerator("freshly-minted-secret-of-sixteen-plus-x");
-        var handler = new RotateModuleCredentialHandler(modules, permissions, registrationGateway, generator);
-        return new Fixture(handler, modules, permissions, registrationGateway, existingId);
+        var handler = new RotateModuleCredentialAsOwnerHandler(modules, registrationGateway, generator, provisioningSecrets);
+        return new Fixture(handler, modules, registrationGateway, provisioningSecrets, existingId);
     }
 
-    private static Application.UseCases.RotateModuleCredential.RotateModuleCredential Command() =>
-        new(OperatorId, SiteId, Calendar.Value, ValidProvisioningSecret);
+    private static Application.UseCases.RotateModuleCredentialAsOwner.RotateModuleCredentialAsOwner Command() =>
+        new(SiteId, Calendar.Value);
 
+    /// <summary>The end-to-end claim this item's own report has to demonstrate: no permission checker
+    /// exists on this handler at all (constructor signature carries none), and the rotation still
+    /// lands - proving the sole gate is the route's own RequirePlatformOwner policy.</summary>
     [Fact]
     public async Task HandleAsync_ForARegisteredModule_CallsTheGateway_AndUpdatesTheStoredCredential()
     {
@@ -64,7 +68,7 @@ public class RotateModuleCredentialHandlerTests
         Assert.Equal(SiteId, call.Module.SiteId);
         Assert.Equal(EntryPoint, call.Module.EntryPoint);
         Assert.Equal(new ModuleCredential("freshly-minted-secret-of-sixteen-plus-x"), call.NewCredential);
-        Assert.Equal(new ModuleProvisioningSecret(ValidProvisioningSecret), call.ProvisioningSecret);
+        Assert.Equal(new ModuleProvisioningSecret(FakeModuleProvisioningSecretProvider.DefaultSecret), call.ProvisioningSecret);
     }
 
     /// <summary>The ordering claim this handler's own remarks make: nothing on this side changes
@@ -84,18 +88,6 @@ public class RotateModuleCredentialHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_WithoutPermission_ReturnsForbidden_AndCallsNothing()
-    {
-        var fixture = await CreateFixtureAsync(permitted: false);
-
-        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
-
-        Assert.True(result.IsFailure);
-        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
-        Assert.Empty(fixture.RegistrationGateway.RotateCalls);
-    }
-
-    [Fact]
     public async Task HandleAsync_ForAModuleNotEnabledOnThisSite_ReturnsModuleNotEnabled()
     {
         var fixture = await CreateFixtureAsync(seeded: false);
@@ -105,6 +97,23 @@ public class RotateModuleCredentialHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Module.NotEnabled", result.Error!.Value.Code);
         Assert.Empty(fixture.RegistrationGateway.RotateCalls);
+    }
+
+    /// <summary>`adr/0150`'s own deployment-state case, extended to this second owner caller: a host
+    /// with no configured secret refuses per call rather than minting anything.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNoProvisioningSecretIsConfigured_ReturnsModuleProvisioningNotConfigured()
+    {
+        var fixture = await CreateFixtureAsync();
+        fixture.ProvisioningSecrets.Secret = null;
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.ProvisioningNotConfigured", result.Error!.Value.Code);
+        Assert.Empty(fixture.RegistrationGateway.RotateCalls);
+        var stored = Assert.Single(fixture.Modules.All);
+        Assert.Equal(new ModuleCredential(OriginalCredential), stored.Credential);
     }
 
     private sealed class FixedModuleCredentialGenerator(string value) : IModuleCredentialGenerator

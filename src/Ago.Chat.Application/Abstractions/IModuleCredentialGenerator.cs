@@ -7,10 +7,11 @@
 /// "a non-empty string came back", the same gap <see cref="IIdGenerator"/>/<see cref="IClock"/> close
 /// for identity and time).
 ///
-/// <para><b>Not used by <c>EnableModuleForSiteHandler</c>.</b> That handler still accepts an
-/// operator-supplied <see cref="Domain.ModuleCredential"/>, unchanged from `22-02` - see
-/// <c>RotateModuleCredentialHandler</c>'s own remarks for why rotation mints instead and enabling does
-/// not.</para>
+/// <para><b>Not used by <c>EnableModuleForSiteAsOwnerHandler</c></b> (the only registration path left
+/// after `23-83`/`adr/0151` removed the tenant's own self-service enable). That handler still accepts
+/// a caller-supplied <see cref="Domain.ModuleCredential"/>, unchanged from `22-02` - see
+/// <c>RotateModuleCredentialAsOwnerHandler</c>'s own remarks for why rotation mints instead and
+/// enabling does not.</para>
 /// </summary>
 public interface IModuleCredentialGenerator
 {
