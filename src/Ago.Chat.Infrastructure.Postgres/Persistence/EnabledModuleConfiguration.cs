@@ -39,6 +39,10 @@ internal sealed class EnabledModuleConfiguration : IEntityTypeConfiguration<Enab
         builder.Property(m => m.GrantedByOwner).HasColumnName("granted_by_owner").HasDefaultValue(false);
         builder.Property(m => m.ExpiresAt).HasColumnName("expires_at");
 
+        // `22-30`: a revoke stamps this instead of deleting the row - see EnabledModule.RevokedAt's
+        // own remarks for why.
+        builder.Property(m => m.RevokedAt).HasColumnName("revoked_at");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(m => m.SiteId);
 
         // `20-07`'s own trigger-conflict rule (EnableModuleForSiteHandler) reads every enabled module

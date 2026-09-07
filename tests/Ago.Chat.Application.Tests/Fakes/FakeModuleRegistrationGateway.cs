@@ -14,6 +14,8 @@ public sealed class FakeModuleRegistrationGateway : IModuleRegistrationGateway
 
     public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> RevokeCalls { get; } = [];
 
+    public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> EraseTenantDataCalls { get; } = [];
+
     public bool UnreachableOnRegister { get; set; }
 
     public bool UnreachableOnRotate { get; set; }
@@ -22,7 +24,13 @@ public sealed class FakeModuleRegistrationGateway : IModuleRegistrationGateway
 
     public bool UnreachableOnGetStatus { get; set; }
 
+    public bool UnreachableOnEraseTenantData { get; set; }
+
     public ModuleRegistrationRemoteStatus StatusToReturn { get; set; } = new(Exists: true, DateTimeOffset.UtcNow, HasCredentialInGracePeriod: false);
+
+    /// <summary>`22-30`: keyed by module key, so a test with more than one module on a site can script
+    /// each one's own answer - defaults to "confirmed clean" for any module a test never scripts.</summary>
+    public Dictionary<ModuleKey, TenantDataErasureResult> EraseTenantDataResultByModule { get; } = [];
 
     public Task RegisterAsync(
         ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
@@ -71,5 +79,19 @@ public sealed class FakeModuleRegistrationGateway : IModuleRegistrationGateway
         }
 
         return Task.FromResult(StatusToReturn);
+    }
+
+    public Task<TenantDataErasureResult> EraseTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
+    {
+        EraseTenantDataCalls.Add((module, provisioningSecret));
+        if (UnreachableOnEraseTenantData)
+        {
+            throw new ModuleUnreachableException(module.ModuleKey, "fake unreachable (erase tenant data)");
+        }
+
+        return Task.FromResult(
+            EraseTenantDataResultByModule.GetValueOrDefault(
+                module.ModuleKey, new TenantDataErasureResult(TenantExisted: true, Confirmed: true)));
     }
 }

@@ -56,6 +56,30 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
         await SendAsync(HttpMethod.Delete, uri, body: null, module.ModuleKey, provisioningSecret, cancellationToken);
     }
 
+    /// <summary>`22-30`: `DELETE .../module-registrations/{tenantId}/tenant-data` - a distinct route
+    /// from <see cref="RevokeAsync"/>'s own `DELETE .../module-registrations/{tenantId}`, on purpose
+    /// (see <c>Ago.Calendar.Api.ChatModule.ModuleRegistrationEndpoints.HandleEraseAsync</c>'s own
+    /// remarks on the calendar side for why folding the two together would make one HTTP call mean two
+    /// irreversible things).</summary>
+    public async Task<TenantDataErasureResult> EraseTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
+    {
+        var uri = BuildUri(module.EntryPoint, $"api/v1/module-registrations/{module.SiteId.Value}/tenant-data");
+        var response = await SendAsync(HttpMethod.Delete, uri, body: null, module.ModuleKey, provisioningSecret, cancellationToken);
+
+        try
+        {
+            var parsed = await response.Content.ReadFromJsonAsync<TenantErasureWireResponse>(JsonOptions, cancellationToken);
+            return parsed is null
+                ? throw new ModuleUnreachableException(module.ModuleKey, "module returned an empty erasure response.")
+                : new TenantDataErasureResult(parsed.TenantExisted, parsed.Confirmed);
+        }
+        catch (JsonException ex)
+        {
+            throw new ModuleUnreachableException(module.ModuleKey, $"module returned a malformed erasure response: {ex.Message}", ex);
+        }
+    }
+
     public async Task<ModuleRegistrationRemoteStatus> GetStatusAsync(
         ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
     {
@@ -116,4 +140,11 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
     }
 
     private sealed record StatusWireResponse(bool Exists, DateTimeOffset? RegisteredAt, bool HasCredentialInGracePeriod);
+
+    /// <summary>Byte-identical property names to
+    /// <c>Ago.Calendar.Api.ChatModule.ModuleRegistrationEndpoints.TenantErasureResponse</c> under
+    /// default <see cref="JsonSerializerDefaults.Web"/> options - no shared assembly between the two
+    /// repositories (`adr/0093`), so this is duplicated on purpose, the identical shape every other
+    /// wire DTO in this class already takes.</summary>
+    private sealed record TenantErasureWireResponse(bool TenantExisted, bool Confirmed);
 }

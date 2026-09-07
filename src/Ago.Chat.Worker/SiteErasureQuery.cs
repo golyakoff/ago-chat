@@ -14,7 +14,12 @@ namespace Ago.Chat.Worker;
 /// no-op-when-null contract as <see cref="ConversationErasureQuery.PendingConversationErasure"/>'s own
 /// <c>ErasureRecordId</c>, rather than one nullable-by-necessity type and one that asserts a fact no
 /// column-level constraint actually enforces.</summary>
-public sealed record PendingSiteErasure(Guid SiteId, Guid? ErasureRecordId);
+/// <param name="RequestedAt">`22-30`: when this site's erasure was requested - the `sites` row's own
+/// `erasure_requested_at`, already guaranteed non-null by this query's own `WHERE` clause. Threaded
+/// through to <see cref="SiteErasureJob.EraseModulesAsync"/> as the clock a module-unreachability
+/// window is measured against, so that window reflects how long the whole erasure has been waiting,
+/// not merely how long this one tick has run.</param>
+public sealed record PendingSiteErasure(Guid SiteId, Guid? ErasureRecordId, DateTimeOffset RequestedAt);
 
 public static class SiteErasureQuery
 {
@@ -22,7 +27,7 @@ public static class SiteErasureQuery
         NpgsqlConnection connection, int limit, CancellationToken cancellationToken)
     {
         const string sql = """
-            select id, erasure_record_id
+            select id, erasure_record_id, erasure_requested_at
             from sites
             where erasure_requested_at is not null
             order by erasure_requested_at
@@ -36,7 +41,9 @@ public static class SiteErasureQuery
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            pending.Add(new PendingSiteErasure(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1)));
+            pending.Add(new PendingSiteErasure(
+                reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1),
+                reader.GetFieldValue<DateTimeOffset>(2)));
         }
 
         return pending;

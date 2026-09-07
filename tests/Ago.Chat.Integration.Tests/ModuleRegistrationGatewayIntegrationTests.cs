@@ -110,6 +110,72 @@ public class ModuleRegistrationGatewayIntegrationTests
             CancellationToken.None));
     }
 
+    /// <summary>`22-30`: the erase-tenant-data route, over a real HTTP round trip - the deployment-
+    /// wide provisioning secret header, a distinct path from <see cref="RevokeAsync"/>'s own route
+    /// (`ModuleRegistrationEndpoints.HandleEraseAsync`'s own remarks on the calendar side explain
+    /// why), and the module's own proof read back and translated correctly.</summary>
+    [Fact]
+    public async Task EraseTenantDataAsync_CallsTheTenantDataRoute_WithTheProvisioningSecretHeader_AndParsesTheProof()
+    {
+        await using var server = new FakeModuleRegistrationServer();
+        await server.StartAsync();
+        server.EraseTenantDataResponseJson = """{"tenantExisted":true,"confirmed":true}""";
+
+        var gateway = new HttpModuleRegistrationGateway(new HttpClient());
+        var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
+
+        var result = await gateway.EraseTenantDataAsync(target, ProvisioningSecret, CancellationToken.None);
+
+        Assert.True(result.TenantExisted);
+        Assert.True(result.Confirmed);
+        var received = Assert.Single(server.ReceivedEraseTenantDataRequests);
+        Assert.Equal(ProvisioningSecret.Value, received.ProvisioningSecretHeader);
+        Assert.Equal($"/api/v1/module-registrations/{SiteId.Value}/tenant-data", received.Path);
+    }
+
+    [Fact]
+    public async Task EraseTenantDataAsync_WhenTheModuleReportsNotConfirmed_ReturnsThatAnswer_NotAThrow()
+    {
+        await using var server = new FakeModuleRegistrationServer();
+        await server.StartAsync();
+        server.EraseTenantDataResponseJson = """{"tenantExisted":true,"confirmed":false}""";
+
+        var gateway = new HttpModuleRegistrationGateway(new HttpClient());
+        var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
+
+        var result = await gateway.EraseTenantDataAsync(target, ProvisioningSecret, CancellationToken.None);
+
+        Assert.False(result.Confirmed);
+    }
+
+    [Fact]
+    public async Task EraseTenantDataAsync_WhenTheModuleRefuses_ThrowsModuleUnreachableException()
+    {
+        await using var server = new FakeModuleRegistrationServer();
+        await server.StartAsync();
+        server.RefuseEveryCall = true;
+
+        var gateway = new HttpModuleRegistrationGateway(new HttpClient());
+        var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
+
+        await Assert.ThrowsAsync<ModuleUnreachableException>(
+            () => gateway.EraseTenantDataAsync(target, ProvisioningSecret, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task EraseTenantDataAsync_WhenTheModuleIsUnreachable_ThrowsModuleUnreachableException()
+    {
+        await using var server = new FakeModuleRegistrationServer();
+        await server.StartAsync();
+        await server.StopAsync();
+
+        var gateway = new HttpModuleRegistrationGateway(new HttpClient());
+        var target = new ModuleRegistrationTarget(Calendar, SiteId, server.BaseAddress);
+
+        await Assert.ThrowsAsync<ModuleUnreachableException>(
+            () => gateway.EraseTenantDataAsync(target, ProvisioningSecret, CancellationToken.None));
+    }
+
     [Fact]
     public async Task RegisterAsync_WhenTheModuleIsUnreachable_ThrowsModuleUnreachableException()
     {
@@ -138,11 +204,15 @@ public class ModuleRegistrationGatewayIntegrationTests
 
         public string StatusResponseJson { get; set; } = """{"exists":false,"registeredAt":null,"hasCredentialInGracePeriod":false}""";
 
+        public string EraseTenantDataResponseJson { get; set; } = """{"tenantExisted":true,"confirmed":true}""";
+
         public List<(string Path, string ProvisioningSecretHeader, string Credential, string DisplayName)> ReceivedRegisterRequests { get; } = [];
 
         public List<(string Path, string NewCredential)> ReceivedRotateRequests { get; } = [];
 
         public List<string> ReceivedRevokeRequests { get; } = [];
+
+        public List<(string Path, string ProvisioningSecretHeader)> ReceivedEraseTenantDataRequests { get; } = [];
 
         public async Task StartAsync()
         {
@@ -213,6 +283,27 @@ public class ModuleRegistrationGatewayIntegrationTests
 
                 context.Response.ContentType = "application/json";
                 await context.Response.WriteAsync(StatusResponseJson);
+            });
+
+            // `22-30`: a distinct route from the plain DELETE above - ModuleRegistrationEndpoints
+            // .HandleEraseAsync's own remarks on the calendar side explain why the two verbs are kept
+            // apart rather than folded together.
+            app.MapDelete("/api/v1/module-registrations/{siteId}/tenant-data", async context =>
+            {
+                if (RefuseEveryCall)
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return;
+                }
+
+                lock (ReceivedEraseTenantDataRequests)
+                {
+                    ReceivedEraseTenantDataRequests.Add((
+                        context.Request.Path, context.Request.Headers["X-Ago-Module-Provisioning-Secret"].ToString()));
+                }
+
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(EraseTenantDataResponseJson);
             });
 
             await app.StartAsync();

@@ -12,6 +12,7 @@ using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -283,9 +284,23 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
             Options.Create(erasureOptions), NullLogger<ConversationErasureJob>.Instance);
     }
 
+    // `22-30`: no test in this file seeds an EnabledModule row, so SiteErasureJob's own module gate
+    // always finds an empty list and returns immediately - this scope factory and the two stand-ins
+    // it resolves (NoOpModuleErasureDependencies.cs) exist only to satisfy the constructor and DI
+    // graph, and would fail loudly (NotSupportedException) if that assumption ever stopped holding.
+    private static IServiceScopeFactory CreateModuleScopeFactory(NpgsqlDataSource dataSource)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        services.AddScoped<IModuleRegistrationGateway, UncalledModuleRegistrationGateway>();
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private SiteErasureJob CreateSiteJob(IClock clock, IDemoIdentityProvisioner identities, CacheInvalidationPublisher cacheInvalidation) =>
         new(fixture.DataSource, identities, fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource),
-            cacheInvalidation, new UuidV7Generator(), clock,
+            cacheInvalidation, new UuidV7Generator(), clock, CreateModuleScopeFactory(fixture.DataSource),
+            new UnconfiguredModuleProvisioningSecretProvider(),
             Options.Create(new SiteErasureJobOptions()), NullLogger<SiteErasureJob>.Instance);
 
     /// <summary>The real adapter (`KeycloakDemoIdentityProvisioner`), not a double - `IDemoIdentityProvisioner.DeleteAsync`

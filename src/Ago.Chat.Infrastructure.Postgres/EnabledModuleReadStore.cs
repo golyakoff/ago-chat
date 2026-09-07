@@ -18,11 +18,15 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
     // the console listing) already treats "not enabled" as meaning. `@Now` is a parameter this store
     // is handed, never `now()`: this codebase compares instants sourced from `IClock`
     // (`CLAUDE.md` rule 11), not the database server's own clock - see this interface's own remarks.
+    // `22-30`: `and revoked_at is null` - the identical treatment for a revoked grant, which no
+    // longer deletes the row (EnabledModule.RevokedAt's own remarks), so this filter is what keeps
+    // this method's own external answer unchanged from before that item: a revoked module still
+    // reads as "not enabled" here, on the live routing path this comment already describes.
     private const string Sql = """
         select module_key as "ModuleKey", trigger_words as "TriggerWords", entry_point as "EntryPoint",
                credential as "Credential", granted_by_owner as "GrantedByOwner", expires_at as "ExpiresAt"
         from enabled_modules
-        where site_id = @SiteId and (expires_at is null or expires_at > @Now)
+        where site_id = @SiteId and (expires_at is null or expires_at > @Now) and revoked_at is null
         """;
 
     // `23-14`: no `expires_at` filter at all - the platform owner's detail read needs the whole
@@ -30,11 +34,14 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
     // granted" stay distinguishable (this file's own interface remarks). `is_active` is projected
     // rather than filtered on, computed by the identical comparison `Sql`'s own `WHERE` clause above
     // uses to decide inclusion - so a caller reading it is trusting the same live decision the
-    // production hot path makes, not a second one.
+    // production hot path makes, not a second one. `22-30`: no `revoked_at` filter either, for the
+    // identical reason - and the same reason `Ago.Chat.Worker.SiteErasureJob` reads through this very
+    // method to learn every module a site has ever had, revoked or lapsed included, now that neither
+    // case deletes the row.
     private const string AllSql = """
         select module_key as "ModuleKey", trigger_words as "TriggerWords", entry_point as "EntryPoint",
                granted_by_owner as "GrantedByOwner", expires_at as "ExpiresAt",
-               (expires_at is null or expires_at > @Now) as "IsActive"
+               ((expires_at is null or expires_at > @Now) and revoked_at is null) as "IsActive"
         from enabled_modules
         where site_id = @SiteId
         """;

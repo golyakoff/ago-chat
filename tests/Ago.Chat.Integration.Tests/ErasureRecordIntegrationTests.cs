@@ -11,6 +11,7 @@ using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -294,9 +295,21 @@ public class ErasureRecordIntegrationTests(ErasureFixture fixture)
             Options.Create(erasureOptions), NullLogger<ConversationErasureJob>.Instance);
     }
 
+    // `22-30`: see SiteErasureIntegrationTests.CreateModuleScopeFactory's own remarks - identical
+    // reasoning, duplicated rather than shared across two test files for a two-line helper.
+    private static IServiceScopeFactory CreateModuleScopeFactory(NpgsqlDataSource dataSource)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        services.AddScoped<IModuleRegistrationGateway, UncalledModuleRegistrationGateway>();
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
     private SiteErasureJob CreateSiteJob(IClock clock, IDemoIdentityProvisioner identities, CacheInvalidationPublisher cacheInvalidation) =>
         new(fixture.DataSource, identities, fixture.FileStorage, new MessageArchiveRepository(fixture.DataSource),
-            cacheInvalidation, new UuidV7Generator(), clock,
+            cacheInvalidation, new UuidV7Generator(), clock, CreateModuleScopeFactory(fixture.DataSource),
+            new UnconfiguredModuleProvisioningSecretProvider(),
             Options.Create(new SiteErasureJobOptions()), NullLogger<SiteErasureJob>.Instance);
 
     private KeycloakDemoIdentityProvisioner CreateProvisioner() =>

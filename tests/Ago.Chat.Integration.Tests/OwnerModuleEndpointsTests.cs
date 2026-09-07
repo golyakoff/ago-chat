@@ -1083,5 +1083,12 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             GetStatusCalls.Add((module, provisioningSecret));
             return Task.FromResult(new ModuleRegistrationRemoteStatus(Exists: true, DateTimeOffset.UtcNow, HasCredentialInGracePeriod: false));
         }
+
+        // `22-30`: this suite never exercises erasure - added only so this always-succeeds double
+        // still compiles against the interface, the identical minimal-stub treatment every other
+        // never-exercised method on this class would get if one existed before this item.
+        public Task<TenantDataErasureResult> EraseTenantDataAsync(
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantDataErasureResult(TenantExisted: true, Confirmed: true));
     }
 }
