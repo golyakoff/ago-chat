@@ -218,6 +218,68 @@ public class RecordVisitorContactDetailHandlerTests
         Assert.Empty(fixture.ContactDetails.All);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // `23-58`: the widget's own form now asks for name, phone and e-mail, all three required, from
+    // *both* of its entry points. Nothing here changes on the `ago-chat` side to make that true -
+    // `VisitorContactDetailKind.Email` already existed (`14-14`), and `ValidateAndTrim` already
+    // refuses an empty value for any kind - these tests demonstrate both rather than assert them,
+    // per the backlog item's own "a required field enforced only in the DOM is not required."
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>Done-when: "the e-mail is stored as its own kind rather than riding as `Other`."
+    /// `VisitorContactDetailKind.Email` needed no new domain work for this item - it already existed
+    /// and simply was not a field the widget offered before `23-58`.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_EmailKind_SavesAsItsOwnKind_NotOther()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new RecordVisitorContactDetailAsVisitor(fixture.ConversationId, VisitorId, "Email", "visitor@example.invalid"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = Assert.Single(fixture.ContactDetails.All);
+        Assert.Equal(VisitorContactDetailKind.Email, saved.Kind);
+        Assert.Equal("visitor@example.invalid", saved.Value);
+        Assert.Equal("Email", result.Value.Kind);
+    }
+
+    /// <summary>Done-when: "a submission missing any of the three is refused - server-side, not
+    /// only in the browser." The widget's own required-field guard sits in the DOM; this is the
+    /// server-side half for the e-mail field specifically (the phone field's own equivalent,
+    /// <see cref="HandleAsVisitorAsync_EmptyValue_ReturnsInvalid_AndSavesNothing"/>, already existed
+    /// before this item).</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_EmptyEmail_ReturnsInvalid_AndSavesNothing()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new RecordVisitorContactDetailAsVisitor(fixture.ConversationId, VisitorId, "Email", "   "),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("VisitorContactDetail.Invalid", result.Error!.Value.Code);
+        Assert.Empty(fixture.ContactDetails.All);
+    }
+
+    /// <summary>The name field's own server-side half - stored as `Other` (`ui/contactCapture.ts`'s
+    /// own remarks on why), required exactly like the other two since `23-58`.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_EmptyName_AsOtherKind_ReturnsInvalid_AndSavesNothing()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new RecordVisitorContactDetailAsVisitor(fixture.ConversationId, VisitorId, "Other", "   "),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("VisitorContactDetail.Invalid", result.Error!.Value.Code);
+        Assert.Empty(fixture.ContactDetails.All);
+    }
+
     [Fact]
     public async Task HandleAsVisitorAsync_UnrecognisedKind_ReturnsInvalidKind()
     {
