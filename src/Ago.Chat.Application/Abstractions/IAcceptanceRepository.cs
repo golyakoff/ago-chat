@@ -27,4 +27,12 @@ public interface IAcceptanceRepository
     /// read.</summary>
     Task<IReadOnlyList<AcceptanceRecord>> GetForSubjectAsync(
         AcceptanceSubjectKind subjectKind, Guid subjectId, CancellationToken cancellationToken);
+
+    /// <summary>`23-37`: every acceptance recorded against one document key, newest first - the read
+    /// a tenant's own "who accepted, and when" screen needs. Filters on <see cref="AcceptanceRecord.DocumentKey"/>
+    /// alone, never on <see cref="AcceptanceRecord.SubjectId"/> - the caller has no subject id to filter
+    /// by yet, that is the whole question being asked. Safe to scope a tenant's own read to, and only
+    /// to, their own site's documents because <see cref="SiteConsentDocumentKey.For"/> is the only way
+    /// this key is ever produced - see that type's own remarks.</summary>
+    Task<IReadOnlyList<AcceptanceRecord>> GetForDocumentKeyAsync(string documentKey, CancellationToken cancellationToken);
 }

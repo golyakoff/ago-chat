@@ -25,4 +25,11 @@ public sealed class AcceptanceRepository(AgoChatDbContext db) : IAcceptanceRepos
             .Where(a => a.SubjectKind == subjectKind && a.SubjectId == subjectId)
             .OrderBy(a => a.AcceptedAt)
             .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<AcceptanceRecord>> GetForDocumentKeyAsync(
+        string documentKey, CancellationToken cancellationToken) =>
+        await db.AcceptanceRecords
+            .Where(a => a.DocumentKey == documentKey)
+            .OrderByDescending(a => a.AcceptedAt)
+            .ToListAsync(cancellationToken);
 }
