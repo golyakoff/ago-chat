@@ -9,25 +9,28 @@ public sealed class FakeOperatorRepository : IOperatorRepository
 
     /// <summary>`13-07`: mirrors <c>OperatorRepository.GetByExternalSubjectIdAndSiteIdAsync</c>
     /// exactly - both columns, never a fallback to a different site for the same identity.
-    /// `13-03`: also mirrors the <c>HoldsSeat</c>/<c>RemovedAt</c> filter - a fake that quietly used a
-    /// different rule than the adapter would let a test pass against a condition production does not
-    /// implement.</summary>
+    /// `13-03` added the <c>HoldsSeat</c>/<c>RemovedAt</c> filter; `23-71` mirrors dropping
+    /// <c>HoldsSeat</c> again - a fake that quietly used a different rule than the adapter would let a
+    /// test pass against a condition production does not implement.</summary>
     public Task<Operator?> GetByExternalSubjectIdAndSiteIdAsync(string externalSubjectId, SiteId siteId, CancellationToken cancellationToken) =>
         Task.FromResult(_all.Find(
-            o => o.ExternalSubjectId == externalSubjectId && o.SiteId == siteId && o.HoldsSeat && o.RemovedAt is null));
+            o => o.ExternalSubjectId == externalSubjectId && o.SiteId == siteId && o.RemovedAt is null));
 
     /// <summary>`13-07`: every seeded row for this identity - before this item, tests could only ever
-    /// seed zero or one; this is what lets a test express "more than one tenancy" at all. `13-03`:
-    /// filtered the same way <see cref="GetByExternalSubjectIdAndSiteIdAsync"/> is.</summary>
+    /// seed zero or one; this is what lets a test express "more than one tenancy" at all. `23-71`:
+    /// filtered the same way <see cref="GetByExternalSubjectIdAndSiteIdAsync"/> is (no longer also on
+    /// <c>HoldsSeat</c> - see that method's own remarks).</summary>
     public Task<IReadOnlyList<Operator>> ListByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<Operator>>(
-            _all.FindAll(o => o.ExternalSubjectId == externalSubjectId && o.HoldsSeat && o.RemovedAt is null));
+            _all.FindAll(o => o.ExternalSubjectId == externalSubjectId && o.RemovedAt is null));
 
-    /// <summary>`14-04`: mirrors <c>OperatorRepository</c>'s own predicate exactly - <c>Online</c>
-    /// only, no capacity term. A fake that quietly used a different rule than the adapter would let a
-    /// test pass against a condition production does not implement.</summary>
+    /// <summary>`14-04`: mirrors <c>OperatorRepository</c>'s own predicate exactly - <c>Online</c>,
+    /// no capacity term. `23-71`: also mirrors the new <c>HoldsSeat &amp;&amp; RemovedAt == null</c>
+    /// terms - "on duty" is a routing question, not a sign-in one, so a seatless administrator who
+    /// happens to be connected must not count. A fake that quietly used a different rule than the
+    /// adapter would let a test pass against a condition production does not implement.</summary>
     public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
-        Task.FromResult(_all.Exists(o => o.SiteId == siteId && o.Status == OperatorStatus.Online));
+        Task.FromResult(_all.Exists(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt is null));
 
     /// <summary>`4-06`: mirrors <c>OperatorRepository.GetByIdAsync</c> - returns the same seeded
     /// reference, so a caller's <c>GoOnline</c>/<c>GoOffline</c> mutation is visible to every other

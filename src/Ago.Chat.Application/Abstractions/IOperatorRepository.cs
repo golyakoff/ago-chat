@@ -17,15 +17,21 @@ public interface IOperatorRepository
     /// caller must never fall back to a different tenancy on a miss (`adr/0068`'s own "never
     /// misdirect" invariant, `tenant-isolation.md`'s worst-case failure mode).
     ///
-    /// <para><b>`13-03`: only a row with <see cref="Operator.HoldsSeat"/> and no
-    /// <see cref="Operator.RemovedAt"/> is ever returned.</b> This is the mechanism behind
-    /// `Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`'s own sign-in-blocking behaviour - a
-    /// seat-less or removed operator resolves to no <see cref="Operator"/> here, which
-    /// `ResolveOperatorIdentityHandler` already turns into "no `OperatorId` claim added", the exact same
-    /// shape as no row existing at all (`decisions/0006`'s "only the owner and as many operators as are
-    /// paid for can sign in"). No new policy code needed anywhere above this query - the same "the query
-    /// itself is the source of truth" discipline `adr/0068`'s own remarks already establish for the
-    /// `RequestedSiteId` case.</para>
+    /// <para><b>`13-03`: only a row with no <see cref="Operator.RemovedAt"/> is ever returned.</b> A
+    /// removed operator resolves to no <see cref="Operator"/> here at all, unconditionally - "this
+    /// person is gone" admits no exception, not even for a former administrator
+    /// (`Operator.Remove`'s own remarks: there is no "un-remove" in this codebase).</para>
+    ///
+    /// <para><b>`23-71`: <see cref="Operator.HoldsSeat"/> is deliberately no longer filtered here.</b>
+    /// Before this item this query also required <c>HoldsSeat</c>, which was the entire mechanism
+    /// behind `Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`'s sign-in-blocking behaviour -
+    /// but it over-collapsed `decisions/0006`'s own rule ("only the owner **and** as many operators as
+    /// are paid for can sign in"): a seatless administrator was refused this row entirely and could
+    /// never sign in to administer their own account. Whether a returned, non-removed row is actually
+    /// eligible to sign in is now <see cref="UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler"/>'s
+    /// own decision (`OperatorSignInEligibility.CanSignInAsync`, composing <see cref="IPermissionChecker"/>) - this
+    /// query's job is narrower now: "does this identity have a real, non-removed row for this site",
+    /// nothing about whether it may sign in.</para>
     /// </summary>
     Task<Operator?> GetByExternalSubjectIdAndSiteIdAsync(string externalSubjectId, SiteId siteId, CancellationToken cancellationToken);
 
@@ -39,11 +45,12 @@ public interface IOperatorRepository
     /// <see cref="ResolveOperatorIdentityHandler"/> is where that distinction is made, never here;
     /// this method's only job is to return every row, honestly.
     ///
-    /// <para>`13-03`: "every row" here means every row this identity may still sign in with - the same
-    /// <see cref="Operator.HoldsSeat"/>/<see cref="Operator.RemovedAt"/> filter
-    /// <see cref="GetByExternalSubjectIdAndSiteIdAsync"/>'s own remarks describe, for the identical
-    /// reason: a tenancy this identity administers but cannot currently sign in to is not a real answer
-    /// to "which site should this token resolve to".</para>
+    /// <para>`13-03`: "every row" here means every non-removed row - the same
+    /// <see cref="Operator.RemovedAt"/> filter <see cref="GetByExternalSubjectIdAndSiteIdAsync"/>'s
+    /// own remarks describe. <b>`23-71`: no longer also filtered on <see cref="Operator.HoldsSeat"/></b> -
+    /// see that method's own remarks on why; whether a seatless row is still eligible to sign in
+    /// (administrator or not) is <see cref="ResolveOperatorIdentityHandler"/>'s own decision to make
+    /// per row, not this query's.</para>
     /// </summary>
     Task<IReadOnlyList<Operator>> ListByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken);
 

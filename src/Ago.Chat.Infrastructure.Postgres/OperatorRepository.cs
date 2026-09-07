@@ -11,29 +11,39 @@ public sealed class OperatorRepository(AgoChatDbContext db) : IOperatorRepositor
     /// (`OperatorConfiguration`) is what makes this an equality lookup on both columns, not a scan -
     /// the same index Postgres already used for the single-column lookup this replaces.
     ///
-    /// <para>`13-03`: <c>HoldsSeat &amp;&amp; RemovedAt == null</c> added - the port's own remarks on
-    /// why this is the whole sign-in-blocking mechanism.</para></summary>
+    /// <para>`13-03` added <c>HoldsSeat &amp;&amp; RemovedAt == null</c>. <b>`23-71`: <c>HoldsSeat</c>
+    /// dropped from this query</b> - only <c>RemovedAt == null</c> remains. See the port's own remarks
+    /// for why: whether a returned row may actually sign in is now
+    /// <c>ResolveOperatorIdentityHandler</c>'s own decision, composing <c>IPermissionChecker</c>, not
+    /// a filter this query bakes in.</para></summary>
     public Task<Operator?> GetByExternalSubjectIdAndSiteIdAsync(string externalSubjectId, SiteId siteId, CancellationToken cancellationToken) =>
         db.Operators.FirstOrDefaultAsync(
-            o => o.ExternalSubjectId == externalSubjectId && o.SiteId == siteId && o.HoldsSeat && o.RemovedAt == null,
+            o => o.ExternalSubjectId == externalSubjectId && o.SiteId == siteId && o.RemovedAt == null,
             cancellationToken);
 
     /// <summary>`13-07`: every row for this identity - before this item at most one could ever exist;
     /// the composite unique index (`OperatorConfiguration`) is what makes more than one possible.
-    /// `13-03`: filtered to only rows this identity may still sign in with - the port's own
-    /// remarks.</summary>
+    /// `13-03` filtered to only <c>HoldsSeat</c> rows; `23-71` drops that filter for the identical
+    /// reason <see cref="GetByExternalSubjectIdAndSiteIdAsync"/> does - the port's own remarks.</summary>
     public async Task<IReadOnlyList<Operator>> ListByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken) =>
         await db.Operators
-            .Where(o => o.ExternalSubjectId == externalSubjectId && o.HoldsSeat && o.RemovedAt == null)
+            .Where(o => o.ExternalSubjectId == externalSubjectId && o.RemovedAt == null)
             .ToListAsync(cancellationToken);
 
     /// <summary>`14-04`: <c>AsNoTracking</c> and an <c>EXISTS</c>, not a load - the caller wants a
     /// yes/no and must not accidentally be handed operator aggregates it could then mutate. No
     /// <c>active_chats</c> term, deliberately: see the port's own remarks on why this is weaker than
-    /// the assignment engine's candidate query.</summary>
+    /// the assignment engine's candidate query.
+    ///
+    /// <para>`23-71`: <c>HoldsSeat &amp;&amp; RemovedAt == null</c> added - "is anybody on duty"
+    /// answers a routing question, not a sign-in one, and a seatless administrator connecting the
+    /// console (now reachable, since this item lets them sign in at all) is not staff covering the
+    /// queue. The identical filter `Ago.Chat.Worker`'s own `SkipLockedAssignmentClaimer`/
+    /// `RedisLockAssignmentClaimer` now apply to their own candidate queries, for the same reason -
+    /// see each one's own remarks.</para></summary>
     public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
         db.Operators.AsNoTracking()
-            .AnyAsync(o => o.SiteId == siteId && o.Status == OperatorStatus.Online, cancellationToken);
+            .AnyAsync(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null, cancellationToken);
 
     /// <summary>`4-06`: tracked, deliberately - the caller loads this to mutate
     /// <see cref="Operator.Status"/> via <see cref="Operator.GoOnline"/>/<see cref="Operator.GoOffline"/>

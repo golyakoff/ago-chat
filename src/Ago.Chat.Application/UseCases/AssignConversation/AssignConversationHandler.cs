@@ -23,11 +23,23 @@ namespace Ago.Chat.Application.UseCases.AssignConversation;
 /// for the transition - see <see cref="AssignAndSaveAsync"/>'s own remarks on why that write is
 /// unconditional and why it sits inside an explicit transaction alongside the interval and the
 /// conversation's own save.</para>
+///
+/// <para><b>`23-71`: <see cref="Domain.Permission.ConversationAssign"/> alone is no longer enough.</b>
+/// `command.OperatorId` is always the caller's own claim (`ConversationsEndpoints`/`OperatorHub` both
+/// pass <c>user.GetOperatorId()</c> - this handler has no "assign to someone else" shape), so before
+/// this item a real seat was implied: only a seated operator could ever sign in and obtain that claim
+/// at all. Once an administrator can sign in with no seat (this item's own point) that implication
+/// breaks - an administrator who also happens to hold `conversation:assign` (the Operator role, held
+/// alongside Admin by every account's own registering owner, `RegisterSiteHandler`'s own remarks)
+/// could self-claim a conversation despite holding no seat, putting them in the routing pool by the
+/// back door. <see cref="Domain.Operator.HoldsSeat"/> is checked explicitly here, the same choke-point
+/// role this handler already plays for the cross-tenant guard right below it.</para>
 /// </summary>
 public sealed class AssignConversationHandler(
     IConversationRepository conversations,
     IConversationAssignmentLog assignmentLog,
     IPermissionChecker permissions,
+    IOperatorRepository operators,
     IOperatorCapacity capacity,
     IUnitOfWork unitOfWork,
     IIdGenerator idGenerator,
@@ -55,6 +67,22 @@ public sealed class AssignConversationHandler(
         if (!allowed)
         {
             return ConversationErrors.Forbidden("Operator does not have permission to claim conversations for this site.");
+        }
+
+        // `23-71`: the caller's own seat, not the conversation's - command.OperatorId is always the
+        // caller's own claim (this handler's own type-level remarks), so this is "may *I* be routed a
+        // conversation", asked once per call, the same terminal-fact-checked-before-the-loop shape the
+        // permission check right above it already uses. GetByIdAsync(OperatorId, SiteId, ...) rather
+        // than GetByIdAsync(OperatorId, ...) alone - the identical cross-tenant-misdirection guard this
+        // handler already draws below for the conversation itself, applied to the operator row too.
+        var self = await operators.GetByIdAsync(command.OperatorId, command.SiteId, cancellationToken);
+        if (self is null || !self.HoldsSeat)
+        {
+            // A missing row should be unreachable here (RequireOperatorIdentity already refused a
+            // token whose OperatorId claim resolves to nothing), but a caller genuinely holding no
+            // seat is exactly the case this item makes newly reachable - refused with the same code
+            // either way, since the caller's remedy is identical.
+            return ConversationErrors.OperatorHasNoSeat(command.OperatorId.Value);
         }
 
         for (var attempt = 1; ; attempt++)

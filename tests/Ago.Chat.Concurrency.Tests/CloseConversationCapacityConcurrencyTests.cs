@@ -443,7 +443,7 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+                new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
                 new AssignConversation(conversationId, operatorId, siteId), CancellationToken.None);

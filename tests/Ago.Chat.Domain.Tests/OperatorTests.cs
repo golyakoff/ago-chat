@@ -171,6 +171,24 @@ public class OperatorTests
         Assert.Equal(holdsSeat, op.HoldsSeat);
     }
 
+    // `23-71`: decisions/0006's own "the owner and as many operators as are paid for" - a seat is no
+    // longer the only door. Four combinations, all four asserted: the ordinary seated operator (with
+    // or without the permission - a seat alone is always enough), the seatless administrator this item
+    // exists for, and the seatless non-administrator this item must still refuse.
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, false)]
+    public void CanSignIn_IsHoldsSeatOrHoldsManageOperatorsPermission(
+        bool holdsSeat, bool holdsManageOperatorsPermission, bool expected)
+    {
+        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
+        op.ToggleSeat(holdsSeat);
+
+        Assert.Equal(expected, op.CanSignIn(holdsManageOperatorsPermission));
+    }
+
     [Fact]
     public void Remove_WhenNotAlreadyRemoved_StampsRemovedAtAndRaisesOperatorRemoved()
     {

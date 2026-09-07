@@ -20,7 +20,7 @@ public class ResolveOperatorIdentityHandlerTests
         var operatorId = new OperatorId(Guid.NewGuid());
         var repository = new FakeOperatorRepository();
         repository.Seed(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "keycloak-sub-123"));
-        var handler = new ResolveOperatorIdentityHandler(repository);
+        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("keycloak-sub-123"), CancellationToken.None);
 
@@ -32,7 +32,7 @@ public class ResolveOperatorIdentityHandlerTests
     [Fact]
     public async Task HandleAsync_WhenNoOperatorMatches_ReturnsNull()
     {
-        var handler = new ResolveOperatorIdentityHandler(new FakeOperatorRepository());
+        var handler = new ResolveOperatorIdentityHandler(new FakeOperatorRepository(), new FakePermissionChecker());
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("unknown-sub"), CancellationToken.None);
 
@@ -54,7 +54,7 @@ public class ResolveOperatorIdentityHandlerTests
         var operatorB = new OperatorId(Guid.NewGuid());
         repository.Seed(new Operator(operatorA, siteA, OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub"));
         repository.Seed(new Operator(operatorB, siteB, OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub"));
-        var handler = new ResolveOperatorIdentityHandler(repository);
+        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("multi-sub", siteB), CancellationToken.None);
 
@@ -78,7 +78,7 @@ public class ResolveOperatorIdentityHandlerTests
         var siteNotAdministered = new SiteId(Guid.NewGuid());
         repository.Seed(new Operator(
             new OperatorId(Guid.NewGuid()), siteA, OperatorStatus.Online, capacity: 5, externalSubjectId: "single-tenant-sub"));
-        var handler = new ResolveOperatorIdentityHandler(repository);
+        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
 
         var result = await handler.HandleAsync(
             new ResolveOperatorIdentityQuery("single-tenant-sub", siteNotAdministered), CancellationToken.None);
@@ -98,7 +98,7 @@ public class ResolveOperatorIdentityHandlerTests
         var siteId = new SiteId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
         repository.Seed(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "single-tenant-sub-2"));
-        var handler = new ResolveOperatorIdentityHandler(repository);
+        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("single-tenant-sub-2"), CancellationToken.None);
 
@@ -123,9 +123,61 @@ public class ResolveOperatorIdentityHandlerTests
             new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub-2"));
         repository.Seed(new Operator(
             new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub-2"));
-        var handler = new ResolveOperatorIdentityHandler(repository);
+        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("multi-sub-2"), CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// `23-71`: the fix's own central case - `decisions/0006`'s "the owner and as many operators as
+    /// are paid for can sign in", restored. An operator row with `HoldsSeat: false` used to resolve to
+    /// no claim at all, unconditionally; it now still resolves when the row holds this site's own
+    /// `site:manage_operators` permission, proven against both resolution paths this handler has
+    /// (`RequestedSiteId` present and absent) so neither is left conflating "holds a seat" with "may
+    /// administer this account".
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheOperatorHoldsNoSeatButManagesOperators_StillResolves()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var repository = new FakeOperatorRepository();
+        var admin = new Operator(
+            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "seatless-admin", holdsSeat: false);
+        repository.Seed(admin);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(operatorId, siteId, Permission.SiteManageOperators);
+        var handler = new ResolveOperatorIdentityHandler(repository, permissions);
+
+        var withRequestedSite = await handler.HandleAsync(
+            new ResolveOperatorIdentityQuery("seatless-admin", siteId), CancellationToken.None);
+        var withoutRequestedSite = await handler.HandleAsync(
+            new ResolveOperatorIdentityQuery("seatless-admin"), CancellationToken.None);
+
+        Assert.NotNull(withRequestedSite);
+        Assert.Equal(operatorId, withRequestedSite.OperatorId);
+        Assert.NotNull(withoutRequestedSite);
+        Assert.Equal(operatorId, withoutRequestedSite.OperatorId);
+    }
+
+    /// <summary>
+    /// The complementary case - an ordinary operator (no `site:manage_operators` grant) whose seat was
+    /// released stays refused, exactly as `13-03` shipped it. `23-71` widens who may sign in without a
+    /// seat; it does not remove the seat requirement for anyone who is not an administrator.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheOperatorHoldsNoSeatAndDoesNotManageOperators_ReturnsNull()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var repository = new FakeOperatorRepository();
+        repository.Seed(new Operator(
+            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "seatless-ordinary", holdsSeat: false));
+        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+
+        var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("seatless-ordinary", siteId), CancellationToken.None);
 
         Assert.Null(result);
     }

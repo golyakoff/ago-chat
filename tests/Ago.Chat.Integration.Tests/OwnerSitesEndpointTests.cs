@@ -397,6 +397,9 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - see
+        // OfflineAutoReplyDeliveryEndToEndTests' own remarks on this same addition.
+        builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         // The production registrations for this route, exactly as ChatModule/AddPostgresPersistence
         // make them.

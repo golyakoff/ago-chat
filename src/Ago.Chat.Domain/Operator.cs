@@ -197,6 +197,34 @@ public sealed class Operator
     /// operator to toggle its seat has already made a mistake this aggregate cannot see.</summary>
     public void ToggleSeat(bool holdsSeat) => HoldsSeat = holdsSeat;
 
+    /// <summary>
+    /// `23-71`: `decisions/0006`'s "only the owner and as many operators as are paid for can sign in"
+    /// restored to what it actually said - the owner is *additional to* the paid seats, not one of
+    /// them. `13-03` collapsed that: a seat became the *only* door, so an administrator holding no seat
+    /// (the common case for a shop owner who delegates every chat and answers none) could not sign in
+    /// at all. This is the one-line invariant both callers that decide sign-in eligibility
+    /// (<c>ResolveOperatorIdentityHandler</c>, <c>ListMyTenanciesHandler</c>) now share, so the rule
+    /// lives once, here, rather than as two separately maintained `HoldsSeat || ...` expressions that
+    /// could drift apart.
+    ///
+    /// <para><paramref name="holdsManageOperatorsPermission"/> is supplied by the caller, never
+    /// resolved here: <see cref="Permission"/>/role resolution is <c>IPermissionChecker</c>'s own
+    /// infrastructure-backed port (`adr/0016`), and Domain must not depend on it (`clean-architecture.md`'s
+    /// dependency rule - the alternative, giving <see cref="Operator"/> a reference to a permission
+    /// checker so it could resolve this itself, would make the aggregate untestable without a database
+    /// and would put an infrastructure concern inside the one layer that must never see it). This method
+    /// is deliberately just the boolean rule; the lookup that produces its input is the caller's own
+    /// job.</para>
+    ///
+    /// <para><b>Never widens routing.</b> This answers "may sign in", nothing else - the assignment
+    /// engine and every other routing/on-duty query (`SkipLockedAssignmentClaimer`,
+    /// `RedisLockAssignmentClaimer`, `IOperatorRepository.AnyOnlineForSiteAsync`,
+    /// `AssignConversationHandler`'s own self-claim guard) still gate on <see cref="HoldsSeat"/> alone -
+    /// "may administer this account" and "may be routed a conversation" are two different questions
+    /// from this item onward, and this method only ever answers the first.</para>
+    /// </summary>
+    public bool CanSignIn(bool holdsManageOperatorsPermission) => HoldsSeat || holdsManageOperatorsPermission;
+
     /// <summary>`13-03`: "this person is gone" - a site's `Permission.SiteManageOperators` holder's own
     /// call. Raises <see cref="OperatorRemoved"/> so `Ago.Chat.Worker` can release this operator's
     /// `Assigned` conversations back to `Waiting` (<c>OperatorConversationReleaser</c>'s own existing

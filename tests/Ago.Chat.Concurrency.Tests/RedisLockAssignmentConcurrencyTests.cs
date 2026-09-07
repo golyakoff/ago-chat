@@ -114,4 +114,50 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
 
         Assert.DoesNotContain(intervals, i => stillWaiting.Select(c => c.Id).Contains(i.ConversationId));
     }
+
+    /// <summary>
+    /// `23-71`: mechanism B's own twin of `OperatorConnectAssignabilityTests.AnOnlineOperatorWithNoSeat_IsNeverAssignedAConversation` -
+    /// fault injection against real Postgres and real Redis, not a read of
+    /// <c>GetCandidateOperatorsAsync</c>'s own `Where` clause. A real seatless-but-`Online` operator
+    /// (the shape a seatless administrator's own console connection can now produce) sits alongside a
+    /// genuinely seated one; only the seated one may ever receive the conversation.
+    /// </summary>
+    [Fact]
+    public async Task AnOnlineOperatorWithNoSeat_IsNeverAssignedAConversation_EvenAlongsideAnEligibleOne()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var seatedOperatorId = new OperatorId(Guid.NewGuid());
+        var seatlessOperatorId = new OperatorId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(seatedOperatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // HoldsSeat: false, Online, real capacity room - exactly what a seatless administrator's
+            // own console connection can now produce (Operator.NoteConnected asks nothing about the
+            // seat). Least-loaded-first ordering would otherwise make this the *preferred* candidate,
+            // since it starts with the same zero active_chats as the seated one - proving this isn't
+            // merely tie-broken away by chance.
+            db.Operators.Add(new Operator(seatlessOperatorId, siteId, OperatorStatus.Online, capacity: 5, holdsSeat: false));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            await db.SaveChangesAsync();
+        }
+
+        var redisLock = new RedisDistributedLock(
+            fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(),
+            NullLogger<RedisDistributedLock>.Instance);
+        var claimer = new RedisLockAssignmentClaimer(redisLock, fixture.DataSource, new SystemClock(), new UuidV7Generator());
+
+        var claimed = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+
+        Assert.Equal(1, claimed);
+
+        await using var verify = fixture.CreateDbContext();
+        var conversation = await verify.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Assigned, conversation.State);
+        Assert.Equal(seatedOperatorId, conversation.OperatorId);
+    }
 }

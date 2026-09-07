@@ -271,13 +271,58 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         Assert.Equal(1, claimedAfterComeback);
     }
 
+    /// <summary>
+    /// `23-71`: fault injection, not a read of the query - a real, seated-by-nothing-but-`Status`
+    /// operator row (`HoldsSeat: false`, `Status: Online`, real capacity room) planted directly against
+    /// real Postgres, the exact state this item makes newly reachable now that a seatless
+    /// administrator can sign in and connect the console at all (`OperatorHub.OnConnectedAsync` calls
+    /// `Operator.NoteConnected`, which flips `Offline` to `Online` unconditionally on the state, never
+    /// asking about the seat). Before this item's fix to <c>SkipLockedAssignmentClaimer</c>'s own
+    /// candidate queries, this operator would have been indistinguishable from any other `Online`
+    /// candidate and would have won the real waiting conversation seeded below - this test proves it
+    /// no longer can, against the real claimer, not by reading <c>FindCandidateOperatorAsync</c>'s own
+    /// `Where` clause and trusting it.
+    /// </summary>
+    [Fact]
+    public async Task AnOnlineOperatorWithNoSeat_IsNeverAssignedAConversation()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            // Online with real capacity room, but HoldsSeat: false - the seatless-administrator shape
+            // this item's own routing guarantee exists for, planted directly rather than reached
+            // through a hub connect (which today never sets HoldsSeat either way - this proves the
+            // claimer's own query is the actual backstop, not the connect path's behaviour).
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, holdsSeat: false));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            await db.SaveChangesAsync();
+        }
+
+        var claimer = new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+
+        var claimed = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+
+        Assert.Equal(0, claimed);
+
+        await using var afterAttempt = fixture.CreateDbContext();
+        var conversation = await afterAttempt.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Null(conversation.OperatorId);
+    }
+
     private OperatorHub CreateOperatorHub(
         SiteId siteId, OperatorId operatorId, string connectionId, IConnectionRegistry registry, LocalConnectionTracker tracker, NodeId node)
     {
         var db = fixture.CreateDbContext();
         var assignConversation = new AssignConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-            new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+            new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
             new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
         var getHistory = new GetConversationHistoryHandler(
