@@ -20,6 +20,25 @@ namespace Ago.Chat.Application.UseCases.ToggleOperatorSeat;
 /// is capacity-checked - the same `402 Payment Required` vocabulary
 /// (<see cref="ConversationErrors.OperatorSeatLimitReached"/>), because "upgrade" is the real remedy,
 /// not "retry".</para>
+///
+/// <para><b>`23-67`: toggling a seat off deliberately carries no last-manager-style guard, and this is
+/// the one place in this file that is a finding rather than an implementer's-call.</b> `23-67`'s own
+/// incident was exactly this action - the account's sole operator released their own seat and could not
+/// sign back in - and its rule is "no action may leave a tenant with nobody able to sign in and manage
+/// operators." Checked against what this handler can actually do to that invariant, rather than assumed:
+/// <see cref="Operator.CanSignIn"/> (`23-71`) is <c>HoldsSeat || holdsManageOperatorsPermission</c>, and
+/// <see cref="Permission.SiteManageOperators"/> is resolved by <c>PermissionChecker.HasPermissionAsync</c>
+/// from a role assignment that this method never touches - <see cref="Operator.ToggleSeat"/> writes
+/// <see cref="Operator.HoldsSeat"/> alone. So for the one operator this invariant is about - a
+/// non-removed holder of <see cref="Permission.SiteManageOperators"/> - <see cref="Operator.CanSignIn"/>
+/// is <see langword="true"/> before this method runs and stays <see langword="true"/> after it, for
+/// every input this method accepts, because the permission half of that `||` is untouched either way.
+/// A count-based guard copied from <c>RemoveOperatorHandler</c>'s own `23-26` last-manager check would
+/// therefore read the same site invariant this handler cannot move and could never refuse - the
+/// literal opposite of that guard's own reason to exist. What actually closed `23-67`'s incident is
+/// `23-71` itself, landed first and cited by this item's own dependency line for exactly that reason;
+/// this paragraph and <c>OperatorSignInEligibilityTests.CanSignInAsync_TheSoleManager_SurvivesReleasingTheirOwnLastSeat</c>
+/// are `23-67`'s proof that the fix reaches this call site, not new protection.</para>
 /// </summary>
 public sealed class ToggleOperatorSeatHandler(
     IOperatorRepository operators, ISiteRepository sites, IPermissionChecker permissions)
