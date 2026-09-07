@@ -485,6 +485,11 @@ app.MapAccessRecordsEndpoint();
 // `23-11`: own Map call, the identical reason the line above is - see MapContactRevealsEndpoint's
 // own remarks.
 app.MapContactRevealsEndpoint();
+// `23-52`: own Map call, the identical reason the two lines above are - see
+// MapTenantAgreementsEndpoint's own remarks (a test host that maps only MapSitesEndpoints must never
+// be made to resolve GetTenantAgreementsForSiteHandler just because this route happened to share its
+// file).
+app.MapTenantAgreementsEndpoint();
 // `10-06`: own file, own Map call - see SiteInstallationEndpoints' own remarks on why it is not
 // folded into MapSitesEndpoints above.
 app.MapSiteInstallationEndpoints();
