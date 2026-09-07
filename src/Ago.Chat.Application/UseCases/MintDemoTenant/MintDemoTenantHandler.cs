@@ -90,6 +90,11 @@ public sealed class MintDemoTenantHandler(
             Permission.CalendarConfigure.Value,
             // `24-12`: the tenant's own read of who accessed their data - the same Admin-only,
             // compliance-shaped placement SiteErase/SiteExport already have.
+            // `23-36`: same restatement, same reasoning - `RegisterSiteHandler.AdminRolePermissions`'
+            // own remarks explain why `channel:manage` was missing from both arrays. A demo tenant
+            // that cannot demonstrate connecting a channel is exactly the "half a console is a worse
+            // demonstration than none" case this class's own remarks already state above.
+            Permission.ChannelManage.Value,
         ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(

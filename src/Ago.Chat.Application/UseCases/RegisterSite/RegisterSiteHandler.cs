@@ -98,6 +98,16 @@ public sealed class RegisterSiteHandler(
             Permission.CalendarConfigure.Value,
             // `24-12`: the tenant's own read of who accessed their data - the same Admin-only,
             // compliance-shaped placement SiteErase/SiteExport already have.
+            // `23-36`: found while wiring the console's Telegram connect screen to a real tenant -
+            // `channel:manage` has gated `RegisterChannelCredentialHandler`/`RevokeChannelCredentialHandler`
+            // since `14-02`, and no seeded role has ever actually held it. The exact `18-04` shape this
+            // class's own remarks already name above (a permission exists, a handler already checks it,
+            // but nothing wires a real site's role up to hold it) - here for six channels' worth of
+            // connect/disconnect endpoints instead of one note/tag action, and unnoticed for longer
+            // because nothing had a console screen to exercise the gap until now. Admin-only: connecting
+            // a channel is a site-configuration action, the same category SiteConfigure/CalendarConfigure
+            // already occupy here, not day-to-day operator work.
+            Permission.ChannelManage.Value,
         ];
 
     public async Task<Result<RegisteredSite>> HandleAsync(RegisterSite command, CancellationToken cancellationToken)

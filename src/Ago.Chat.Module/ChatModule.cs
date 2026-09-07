@@ -34,6 +34,7 @@ using Ago.Chat.Application.UseCases.UntagConversation;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
+using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.ExportConversation;
@@ -384,6 +385,9 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ChannelCredentialCipherOptions>>().Value);
         services.AddScoped<RegisterChannelCredentialHandler>();
         services.AddScoped<RevokeChannelCredentialHandler>();
+        // `23-36`: the read-side sibling, registered here next to the two writes it shares a repository
+        // and a permission with.
+        services.AddScoped<GetChannelCredentialStatusHandler>();
 
         // `14-02`: MAX's own outbound client and adapter - registered here, for every host, the same
         // "registered everywhere, resolved where it matters" shape as everything else on this page.
