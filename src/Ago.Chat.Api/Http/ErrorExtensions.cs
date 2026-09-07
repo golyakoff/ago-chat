@@ -251,6 +251,12 @@ public static class ErrorExtensions
                 // the identical "a dependency of this request is missing, not anything the caller
                 // supplied being wrong" shape, not a caller error.
                 or "Module.ProvisioningNotConfigured"
+                // `23-92`/`adr/0154`: the identical shape, for the module's own entry point - a
+                // deployment that has declared no `ModuleEntryPoints:<key>` value for the module the
+                // platform owner named is a dependency of this request missing, not anything the caller
+                // supplied being wrong (there is no longer an `EntryPoint` field the caller could get
+                // wrong at all).
+                or "Module.EntryPointNotConfigured"
                 // `24-05`: the identical "a dependency of this request is missing" shape as
                 // Site.AgreementUnavailable right above - a site turned on RequireContactConsent (or a
                 // visitor is trying to accept) before its own consent document was ever published under

@@ -79,7 +79,7 @@ public static class OwnerModuleEndpoints
     {
         var result = await handler.HandleAsync(
             new EnableModuleForSiteAsOwner(
-                new SiteId(siteId), request.ModuleKey, request.TriggerWords, request.EntryPoint, request.Credential,
+                new SiteId(siteId), request.ModuleKey, request.TriggerWords, request.Credential,
                 request.ExpiresAt),
             cancellationToken);
 
@@ -94,7 +94,7 @@ public static class OwnerModuleEndpoints
             httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerModuleGrant,
             new SiteId(siteId), AccessRecordResourceKind.EnabledModule, result.Value.Value, cancellationToken);
 
-        return Results.Ok(new GrantModuleResponse(request.ModuleKey, request.TriggerWords, request.EntryPoint, request.ExpiresAt));
+        return Results.Ok(new GrantModuleResponse(request.ModuleKey, request.TriggerWords, request.ExpiresAt));
     }
 
     private static async Task<IResult> HandleRevokeAsync(
@@ -254,22 +254,29 @@ public static class OwnerModuleEndpoints
     /// <remarks>`23-65`/`adr/0150`: carries no <c>ProvisioningSecret</c> - the console never holds
     /// `adr/0095`'s deployment-wide secret. <c>Ago.Chat.Api</c> supplies it from its own configuration
     /// (<see cref="Application.Abstractions.IModuleProvisioningSecretProvider"/>); the caller is
-    /// authorised by <c>RequirePlatformOwner</c> on this route, unchanged.</remarks>
+    /// authorised by <c>RequirePlatformOwner</c> on this route, unchanged.
+    ///
+    /// <para><b>`23-92`/`adr/0154` removes <c>EntryPoint</c> from this shape entirely</b> - not merely
+    /// unset. The wire contract itself no longer has a field to carry one, the identical "nothing left
+    /// for a caller to hold or send" shape `adr/0150` already gave <c>ProvisioningSecret</c>:
+    /// <c>EnableModuleForSiteAsOwnerHandler</c> resolves the module's address from
+    /// <see cref="Application.Abstractions.IModuleEntryPointProvider"/> instead, keyed by
+    /// <see cref="ModuleKey"/>.</para></remarks>
     public sealed class GrantModuleRequest
     {
         public required string ModuleKey { get; init; }
 
         public required IReadOnlyList<string> TriggerWords { get; init; }
 
-        public required string EntryPoint { get; init; }
-
         public required string Credential { get; init; }
 
         public required DateTimeOffset? ExpiresAt { get; init; }
     }
 
-    public sealed record GrantModuleResponse(
-        string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, DateTimeOffset? ExpiresAt);
+    /// <summary>`23-92`: no longer echoes <c>EntryPoint</c> - the request carries none to echo, and the
+    /// resolved value is exactly what <c>ModuleEntryPoints:&lt;key&gt;</c> already declares, nothing a
+    /// response needs to confirm back to a caller who never supplied it.</summary>
+    public sealed record GrantModuleResponse(string ModuleKey, IReadOnlyList<string> TriggerWords, DateTimeOffset? ExpiresAt);
 
     /// <summary>
     /// `23-13`: <see cref="Force"/> and <see cref="Reason"/> carry the asymmetry `flows.md` 5.3 names -

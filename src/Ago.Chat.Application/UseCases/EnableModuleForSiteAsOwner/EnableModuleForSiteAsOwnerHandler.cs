@@ -50,7 +50,7 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 public sealed class EnableModuleForSiteAsOwnerHandler(
     IEnabledModuleRepository modules, IEnabledModuleReadStore moduleReadStore,
     IModuleRegistrationGateway registrationGateway, IModuleProvisioningSecretProvider provisioningSecrets,
-    ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
+    IModuleEntryPointProvider entryPoints, ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
 {
     /// <summary>`22-17`'s own answer to "decide whether a grant carries an end date": it may, but an
     /// owner is not asked to type an unbounded one. A grant that never ends is legitimate (the repair
@@ -84,17 +84,25 @@ public sealed class EnableModuleForSiteAsOwnerHandler(
         }
 
         ModuleKey moduleKey;
-        Uri entryPoint;
         ModuleCredential credential;
         try
         {
             moduleKey = new ModuleKey(command.ModuleKey);
-            entryPoint = new Uri(command.EntryPoint, UriKind.Absolute);
             credential = new ModuleCredential(command.Credential);
         }
-        catch (Exception ex) when (ex is ArgumentException or UriFormatException)
+        catch (ArgumentException ex)
         {
             return ConversationErrors.ModuleInvalid(ex.Message);
+        }
+
+        // `23-92`/`adr/0154`: resolved from this deployment's own configuration, never from the
+        // caller - see IModuleEntryPointProvider's own remarks for why a null here names the missing
+        // key rather than falling back to a blank or a guess.
+        if (entryPoints.TryGet(moduleKey) is not { } entryPoint)
+        {
+            return ConversationErrors.ModuleEntryPointNotConfigured(
+                $"This deployment has not declared an entry point for module '{moduleKey.Value}' - set "
+                + $"ModuleEntryPoints:{moduleKey.Value} before granting it.");
         }
 
         // `adr/0150`: read from Ago.Chat.Api's own configuration, never from the caller - see
@@ -105,11 +113,6 @@ public sealed class EnableModuleForSiteAsOwnerHandler(
             return ConversationErrors.ModuleProvisioningNotConfigured(
                 "This deployment has not configured a module-provisioning secret yet, so the platform "
                 + "owner cannot grant a module from here.");
-        }
-
-        if (entryPoint.Scheme != Uri.UriSchemeHttp && entryPoint.Scheme != Uri.UriSchemeHttps)
-        {
-            return ConversationErrors.ModuleInvalid("A module entry point must be an absolute http(s) URL.");
         }
 
         // See EnableModuleForSiteHandler's own identical guard for why this is checked ahead of the
