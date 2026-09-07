@@ -146,6 +146,14 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property(c => c.BlockedAt).HasColumnName("blocked_at");
         builder.Property(c => c.BlockedBy).HasColumnName("blocked_by").HasConversion(IdConverters.NullableOperator);
 
+        // `23-75`: a shadow property, the identical `active_chats` split right below this file's own
+        // `HasIndex(c => c.SiteId)` block a screen up - this column has a raw-SQL atomic
+        // compare-and-set writer (IConversationAttachmentBudget) an EF load-mutate-save could race,
+        // so it is never loaded or mutated through the Conversation aggregate itself. No index: read
+        // only as part of the one atomic UPDATE that already locates the row by primary key, never
+        // filtered or ordered on.
+        builder.Property<long>("AttachmentBytesReserved").HasColumnName("attachment_bytes_reserved").HasDefaultValue(0L);
+
         // `18-07`: EF's own convention had already created an unnamed single-column index on
         // VisitorId here (for the HasOne&lt;Visitor&gt; foreign key below) - not a real gap, just
         // never spelled out in this file the way every other index on this table is, so a

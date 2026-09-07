@@ -22,6 +22,8 @@ public sealed class CreateAttachmentHandler(
     IFileStorage fileStorage,
     IRateLimiter rateLimiter,
     IPermissionChecker permissions,
+    IConversationAttachmentBudget conversationBudget,
+    IUnitOfWork unitOfWork,
     AttachmentOptions options,
     AttachmentRateLimitOptions rateLimitOptions,
     IIdGenerator idGenerator,
@@ -115,6 +117,29 @@ public sealed class CreateAttachmentHandler(
         var attachmentId = new AttachmentId(idGenerator.NewId(now));
         var objectKey = $"site/{conversation.SiteId.Value}/conv/{conversation.Id.Value}/{attachmentId.Value}{extension}";
 
+        // `23-75`: the conversation's own byte budget, reserved atomically inside the same
+        // transaction that is about to create this attachment's `pending` row - CLAUDE.md rule 8, and
+        // IConversationAttachmentBudget's own remarks on why a cached or separately-read total cannot
+        // be trusted here. Presigning happens *inside* this transaction too (immediately below), not
+        // before it: `GetPreSignedUrlRequest` is a local signing computation, not a network call to
+        // storage, so the row lock this reservation's UPDATE holds is held for microseconds, not for
+        // an S3 round trip - and folding it in here means a presign failure after a successful
+        // reservation rolls the reservation back with it, rather than leaking a reservation with no
+        // attachment row for the sweep to ever find.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        var reservation = await conversationBudget.TryReserveAsync(
+            conversation.Id, declaredSizeBytes, options.MaxConversationBytes, cancellationToken);
+        if (!reservation.Reserved)
+        {
+            // Disposing `transaction` without a commit rolls back - even the no-op write
+            // ConversationAttachmentBudgetStore's own locked read-then-write issues on a refusal
+            // (see its own remarks) never survives, so the conversation's row is left exactly as it
+            // was. The same shape every other mid-transaction refusal in this codebase uses
+            // (TransferConversationHandler's own remarks).
+            return ConversationErrors.AttachmentConversationBudgetExceeded(declaredSizeBytes, reservation.RemainingBytes);
+        }
+
         var presigned = await fileStorage.CreateUploadAsync(
             new ObjectKey(objectKey),
             new UploadConstraints(contentType, declaredSizeBytes, options.UploadLifetime),
@@ -124,6 +149,7 @@ public sealed class CreateAttachmentHandler(
             attachmentId, conversation.SiteId, conversation.Id, objectKey, contentType, declaredSizeBytes, now);
         await attachments.SaveAsync(attachment, cancellationToken);
 
+        await transaction.CommitAsync(cancellationToken);
         return new PresignedAttachmentUpload(attachmentId.Value, presigned.Url, presigned.ExpiresAt);
     }
 }

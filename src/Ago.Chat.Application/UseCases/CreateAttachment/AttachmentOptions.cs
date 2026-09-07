@@ -16,6 +16,15 @@ public sealed class AttachmentOptions
 
     public long MaxSizeBytes { get; set; } = 10 * 1024 * 1024;
 
+    /// <summary>`23-75`: the conversation's own byte budget - not a per-file ceiling (that is
+    /// <see cref="MaxSizeBytes"/> above), a running total across every attachment a conversation has
+    /// ever reserved, spent by a visitor and an operator alike (`CreateAttachmentHandler`'s single
+    /// shared <c>CreateAsync</c> path enforces it identically for both entry points). 100 MiB
+    /// inherits this class's own honesty about its numbers: not measured or load-tested, a judgement
+    /// about what a real support conversation's worth of screenshots and documents needs, stated here
+    /// rather than left to acquire authority by being newer than <see cref="MaxSizeBytes"/>.</summary>
+    public long MaxConversationBytes { get; set; } = 100 * 1024 * 1024;
+
     public Dictionary<string, string> AllowedContentTypes { get; set; } = new()
     {
         ["image/png"] = ".png",

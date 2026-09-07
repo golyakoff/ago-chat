@@ -96,13 +96,15 @@ public sealed class AttachmentUploadFlowTests(AttachmentFixture fixture)
         Assert.Equal("Attachment.VerificationFailed", confirmed.Error!.Value.Code);
     }
 
-    private CreateAttachmentHandler CreateHandler(AgoChatDbContext db) => new(
+    private CreateAttachmentHandler CreateHandler(AgoChatDbContext db, AttachmentOptions? options = null) => new(
         new ConversationRepository(db),
         new AttachmentRepository(db),
         fixture.FileStorage,
         new FakeRateLimiter(),
         new PermissionChecker(db),
-        new AttachmentOptions(),
+        new ConversationAttachmentBudgetStore(db),
+        new EfUnitOfWork(db),
+        options ?? new AttachmentOptions(),
         new AttachmentRateLimitOptions(),
         new UuidV7Generator(),
         new SystemClock());
