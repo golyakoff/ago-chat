@@ -232,6 +232,11 @@ public static class ErrorExtensions
                 // being wrong, the identical reasoning ChannelCredential.NotAvailable/ReplyDraft.Unavailable's
                 // own comment gives for its group.
                 or "Module.RegistrationFailed"
+                // `23-65`/`adr/0150`: the platform owner's own grant/revoke no longer takes the
+                // provisioning secret from the caller - a deployment that has not configured it yet is
+                // the identical "a dependency of this request is missing, not anything the caller
+                // supplied being wrong" shape, not a caller error.
+                or "Module.ProvisioningNotConfigured"
                 // `24-05`: the identical "a dependency of this request is missing" shape as
                 // Site.AgreementUnavailable right above - a site turned on RequireContactConsent (or a
                 // visitor is trying to accept) before its own consent document was ever published under

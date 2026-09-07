@@ -16,30 +16,30 @@ public class EnableModuleForSiteAsOwnerHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private const string ValidCredential = "a-shared-secret-of-sixteen-plus-chars";
-    private const string ValidProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars";
 
     private sealed record Fixture(
         EnableModuleForSiteAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
         FakeEnabledModuleReadStore ReadStore, FakeModuleRegistrationGateway RegistrationGateway,
-        FakeSiteRepository Sites);
+        FakeModuleProvisioningSecretProvider ProvisioningSecrets, FakeSiteRepository Sites);
 
     private static Fixture CreateFixture()
     {
         var modules = new FakeEnabledModuleRepository();
         var readStore = new FakeEnabledModuleReadStore();
         var registrationGateway = new FakeModuleRegistrationGateway();
+        var provisioningSecrets = new FakeModuleProvisioningSecretProvider();
         var sites = new FakeSiteRepository();
         sites.Seed(new Site(SiteId, "owner-grant-target", allowedOrigins: [], name: "Prospect Barbershop"));
 
         var handler = new EnableModuleForSiteAsOwnerHandler(
-            modules, readStore, registrationGateway, sites, new FakeClock(Now), new FakeIdGenerator());
-        return new Fixture(handler, modules, readStore, registrationGateway, sites);
+            modules, readStore, registrationGateway, provisioningSecrets, sites, new FakeClock(Now),
+            new FakeIdGenerator());
+        return new Fixture(handler, modules, readStore, registrationGateway, provisioningSecrets, sites);
     }
 
     private static Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner Command(
         DateTimeOffset? expiresAt) =>
-        new(SiteId, "calendar", ["/booking"], "https://calendar.example.com", ValidCredential, ValidProvisioningSecret,
-            expiresAt);
+        new(SiteId, "calendar", ["/booking"], "https://calendar.example.com", ValidCredential, expiresAt);
 
     /// <summary>The end-to-end claim this item's own report has to demonstrate: no permission checker
     /// exists on this handler at all (constructor signature), and the write still lands - proving the
@@ -167,5 +167,39 @@ public class EnableModuleForSiteAsOwnerHandlerTests
 
         var call = Assert.Single(fixture.RegistrationGateway.RegisterCalls);
         Assert.Equal("Prospect Barbershop", call.DisplayName);
+    }
+
+    /// <summary>`23-65`/`adr/0150`'s own headline claim, proven at the Application level: nothing in
+    /// <see cref="Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner"/> carries a
+    /// caller-supplied secret at all (see this type's own <c>Command</c> helper - there is no field to
+    /// pass one in), and the value the module-registration gateway actually receives is exactly the one
+    /// <see cref="IModuleProvisioningSecretProvider"/> was configured with - proof the secret this
+    /// handler uses comes from configuration, not from anything a caller could ever control.</summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheRegistrationGateway_WithTheConfiguredSecret_NeverACallerSuppliedOne()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        var call = Assert.Single(fixture.RegistrationGateway.RegisterCalls);
+        Assert.Equal(FakeModuleProvisioningSecretProvider.DefaultSecret, call.ProvisioningSecret.Value);
+    }
+
+    /// <summary>`adr/0150`'s own deployment-state case: this handler must refuse per call, not merely
+    /// assume the secret exists - see <see cref="IModuleProvisioningSecretProvider"/>'s own remarks for
+    /// why a whole-host boot failure is the wrong shape for an unconfigured owner-only feature.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNoProvisioningSecretIsConfigured_ReturnsProvisioningNotConfigured_AndGrantsNothing()
+    {
+        var fixture = CreateFixture();
+        fixture.ProvisioningSecrets.Secret = null;
+
+        var result = await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.ProvisioningNotConfigured", result.Error!.Value.Code);
+        Assert.Empty(fixture.Modules.All);
+        Assert.Empty(fixture.RegistrationGateway.RegisterCalls);
     }
 }

@@ -22,6 +22,11 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 /// report for the full argument. <see langword="null"/> means "does not expire" - a deliberate,
 /// legitimate choice for the repair scenario (restoring what a failed payment should have delivered),
 /// never a default nobody chose.</param>
+/// <remarks>`adr/0150`: carries no <c>ProvisioningSecret</c> - the console's caller (the platform
+/// owner, authenticated by <c>RequirePlatformOwner</c>) never holds `adr/0095`'s deployment-wide
+/// secret at all. <see cref="EnableModuleForSiteAsOwnerHandler"/> reads it from
+/// <see cref="Application.Abstractions.IModuleProvisioningSecretProvider"/> instead - `Ago.Chat.Api`'s
+/// own configuration, never the request body.</remarks>
 public sealed record EnableModuleForSiteAsOwner(
     SiteId SiteId, string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, string Credential,
-    string ProvisioningSecret, DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt);

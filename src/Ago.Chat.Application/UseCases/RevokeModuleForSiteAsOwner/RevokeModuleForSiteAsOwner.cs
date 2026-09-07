@@ -31,5 +31,9 @@ namespace Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 /// own row needs a "who" and the platform owner carries no <see cref="OperatorId"/> a domain type could
 /// name them by (`adr/0032`).</para>
 /// </summary>
+/// <remarks>`adr/0150`: carries no <c>ProvisioningSecret</c> either, the identical amendment
+/// <see cref="EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner"/>'s own remarks state for
+/// itself - <see cref="RevokeModuleForSiteAsOwnerHandler"/> reads it from
+/// <see cref="Application.Abstractions.IModuleProvisioningSecretProvider"/> instead.</remarks>
 public sealed record RevokeModuleForSiteAsOwner(
-    SiteId SiteId, string ModuleKey, string ProvisioningSecret, string RevokedBy, bool Force = false, string? Reason = null);
+    SiteId SiteId, string ModuleKey, string RevokedBy, bool Force = false, string? Reason = null);

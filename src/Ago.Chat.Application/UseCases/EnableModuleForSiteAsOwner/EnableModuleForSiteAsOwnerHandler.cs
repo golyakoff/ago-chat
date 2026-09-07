@@ -49,7 +49,8 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 /// </summary>
 public sealed class EnableModuleForSiteAsOwnerHandler(
     IEnabledModuleRepository modules, IEnabledModuleReadStore moduleReadStore,
-    IModuleRegistrationGateway registrationGateway, ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
+    IModuleRegistrationGateway registrationGateway, IModuleProvisioningSecretProvider provisioningSecrets,
+    ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
 {
     /// <summary>`22-17`'s own answer to "decide whether a grant carries an end date": it may, but an
     /// owner is not asked to type an unbounded one. A grant that never ends is legitimate (the repair
@@ -85,17 +86,25 @@ public sealed class EnableModuleForSiteAsOwnerHandler(
         ModuleKey moduleKey;
         Uri entryPoint;
         ModuleCredential credential;
-        ModuleProvisioningSecret provisioningSecret;
         try
         {
             moduleKey = new ModuleKey(command.ModuleKey);
             entryPoint = new Uri(command.EntryPoint, UriKind.Absolute);
             credential = new ModuleCredential(command.Credential);
-            provisioningSecret = new ModuleProvisioningSecret(command.ProvisioningSecret);
         }
         catch (Exception ex) when (ex is ArgumentException or UriFormatException)
         {
             return ConversationErrors.ModuleInvalid(ex.Message);
+        }
+
+        // `adr/0150`: read from Ago.Chat.Api's own configuration, never from the caller - see
+        // IModuleProvisioningSecretProvider's own remarks for why a null here is a deployment state
+        // this handler refuses per call rather than something the host fails to boot over.
+        if (provisioningSecrets.TryGet() is not { } provisioningSecret)
+        {
+            return ConversationErrors.ModuleProvisioningNotConfigured(
+                "This deployment has not configured a module-provisioning secret yet, so the platform "
+                + "owner cannot grant a module from here.");
         }
 
         if (entryPoint.Scheme != Uri.UriSchemeHttp && entryPoint.Scheme != Uri.UriSchemeHttps)

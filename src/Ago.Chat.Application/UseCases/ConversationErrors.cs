@@ -547,6 +547,16 @@ public static class ConversationErrors
     public static Error ModuleRevokeReasonRequired(string reason) =>
         new("Module.RevokeReasonRequired", reason);
 
+    /// <summary>`23-65`/`adr/0150`: <c>EnableModuleForSiteAsOwnerHandler</c>/<c>RevokeModuleForSiteAsOwnerHandler</c>'s
+    /// own answer when <see cref="Abstractions.IModuleProvisioningSecretProvider.TryGet"/> returns
+    /// <see langword="null"/> - this deployment has not configured `ModuleProvisioning:Secret` (or set
+    /// it to something that does not parse). `503`, the identical status
+    /// <see cref="ChannelNotAvailable"/> already uses for its own "the caller's request is fine, this
+    /// deployment is the thing not ready" case: nothing about the caller's identity or the request body
+    /// is in question, a dependency of completing it is simply absent.</summary>
+    public static Error ModuleProvisioningNotConfigured(string reason) =>
+        new("Module.ProvisioningNotConfigured", reason);
+
     // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of

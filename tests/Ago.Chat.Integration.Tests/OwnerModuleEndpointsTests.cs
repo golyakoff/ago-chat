@@ -15,6 +15,7 @@ using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RotateModuleCredential;
 using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Hosting;
@@ -74,7 +75,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/owner-granted"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
         Assert.Equal(HttpStatusCode.OK, grantResponse.StatusCode);
@@ -113,7 +113,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/granted"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
             });
         Assert.Equal(HttpStatusCode.OK, grant.StatusCode);
@@ -147,7 +146,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/to-be-revoked"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
 
@@ -158,7 +156,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
         {
             Content = JsonContent.Create(
-                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest("a-provisioning-secret-of-sixteen-plus-chars")),
+                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest()),
         });
         Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
 
@@ -193,7 +191,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
         {
             Content = JsonContent.Create(
-                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest("a-provisioning-secret-of-sixteen-plus-chars")),
+                new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest()),
         });
         Assert.Equal(HttpStatusCode.Conflict, revokeResponse.StatusCode);
 
@@ -228,7 +226,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         {
             Content = JsonContent.Create(
                 new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest(
-                    "a-provisioning-secret-of-sixteen-plus-chars", Force: true, Reason: reason)),
+                    Force: true, Reason: reason)),
         });
         Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
 
@@ -265,7 +263,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         {
             Content = JsonContent.Create(
                 new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest(
-                    "a-provisioning-secret-of-sixteen-plus-chars", Force: true, Reason: null)),
+                    Force: true, Reason: null)),
         });
         Assert.Equal(HttpStatusCode.BadRequest, revokeResponse.StatusCode);
 
@@ -295,7 +293,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/owner-granted-forced"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
 
@@ -304,7 +301,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         {
             Content = JsonContent.Create(
                 new OwnerModuleEndpoints.RevokeModuleAsOwnerRequest(
-                    "a-provisioning-secret-of-sixteen-plus-chars", Force: true, Reason: "not actually needed")),
+                    Force: true, Reason: "not actually needed")),
         });
         Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
 
@@ -334,13 +331,122 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/expired"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = DateTimeOffset.UtcNow.AddDays(-1),
             });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var modules = await GetModulesAsync(operatorClient);
         Assert.DoesNotContain(modules.Modules, m => m.ModuleKey == moduleKey);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // `23-65`/`adr/0150`: the provisioning secret never reaches the browser - proven over the real
+    // HTTP pipeline, not by reading `GrantModuleRequest`'s own shape. `GrantModuleRequest` and
+    // `RevokeModuleAsOwnerRequest` no longer have a `ProvisioningSecret` member at all, which already
+    // makes it impossible for this file's own well-typed calls above to send one; the two tests below
+    // go one step further and send the raw JSON an attacker or a stale client might still try, over
+    // the wire, and show the module-registration gateway never sees it.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The headline demonstration: a request body carrying the field's old name,
+    /// `provisioningSecret`, sent as raw JSON rather than through <see cref="OwnerModuleEndpoints.GrantModuleRequest"/>
+    /// (which has no such property to serialize it from). The grant still succeeds - the field is
+    /// silently ignored by minimal-API model binding, exactly as an unrecognised member always is -
+    /// and the value the module-registration gateway actually receives is
+    /// <see cref="ConfiguredProvisioningSecret"/>, this test host's own configured value, never the
+    /// one the request body carried.</summary>
+    [Fact]
+    public async Task OwnerToken_Grants_IgnoresAnySmuggledProvisioningSecretInTheRawBody_AndUsesTheConfiguredOne()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var rawBody = JsonContent.Create(new
+        {
+            moduleKey,
+            triggerWords = new[] { "/smuggled" },
+            entryPoint = "https://calendar.example.com",
+            credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+            expiresAt = (DateTimeOffset?)null,
+            provisioningSecret = "an-attacker-supplied-value-of-sixteen-plus-chars",
+        });
+
+        var response = await ownerClient.PutAsync(OwnerRoute, rawBody);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        var call = Assert.Single(gateway.RegisterCalls, c => c.Module.ModuleKey.Value == moduleKey);
+        Assert.Equal(ConfiguredProvisioningSecret, call.ProvisioningSecret.Value);
+        Assert.NotEqual("an-attacker-supplied-value-of-sixteen-plus-chars", call.ProvisioningSecret.Value);
+    }
+
+    /// <summary>The identical demonstration for revoke - <see cref="OwnerModuleEndpoints.RevokeModuleAsOwnerRequest"/>
+    /// has no `ProvisioningSecret` member either, and a raw body still carrying the field's old name
+    /// is silently dropped, not read.</summary>
+    [Fact]
+    public async Task OwnerToken_Revokes_IgnoresAnySmuggledProvisioningSecretInTheRawBody_AndUsesTheConfiguredOne()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        await ownerClient.PutAsJsonAsync(
+            OwnerRoute, new OwnerModuleEndpoints.GrantModuleRequest
+            {
+                ModuleKey = moduleKey,
+                TriggerWords = ["/to-be-revoked-raw"],
+                EntryPoint = "https://calendar.example.com",
+                Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+                ExpiresAt = null,
+            });
+
+        var rawBody = JsonContent.Create(new
+        {
+            force = false,
+            reason = (string?)null,
+            provisioningSecret = "an-attacker-supplied-value-of-sixteen-plus-chars",
+        });
+        var revokeResponse = await ownerClient.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{OwnerRoute}/{moduleKey}")
+        {
+            Content = rawBody,
+        });
+        Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        var call = Assert.Single(gateway.RevokeCalls, c => c.Module.ModuleKey.Value == moduleKey);
+        Assert.Equal(ConfiguredProvisioningSecret, call.ProvisioningSecret.Value);
+        Assert.NotEqual("an-attacker-supplied-value-of-sixteen-plus-chars", call.ProvisioningSecret.Value);
+    }
+
+    /// <summary>`adr/0150`'s own deployment-state case, proven over the real HTTP pipeline: a host
+    /// that genuinely has not been configured with a provisioning secret refuses the grant with a
+    /// clear `503`, rather than sending an empty or missing header the module might itself treat as
+    /// "unauthenticated" in some less deliberate way (`adr/0095`'s own "an absent or empty configured
+    /// secret never authenticates anything" - the module-registration gateway here is never even
+    /// called, so there is no empty header to send in the first place).</summary>
+    [Fact]
+    public async Task OwnerToken_Grants_WhenThisDeploymentHasNoProvisioningSecretConfigured_Returns503_AndCallsNoGateway()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync(configureProvisioningSecret: false);
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            OwnerRoute, new OwnerModuleEndpoints.GrantModuleRequest
+            {
+                ModuleKey = moduleKey,
+                TriggerWords = ["/unconfigured"],
+                EntryPoint = "https://calendar.example.com",
+                Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+                ExpiresAt = null,
+            });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        Assert.Empty(gateway.RegisterCalls);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -360,7 +466,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/x"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "a-perfectly-valid-shaped-secret-value-x",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
 
@@ -384,7 +489,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/x"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "a-perfectly-valid-shaped-secret-value-x",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
 
@@ -404,7 +508,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
                 TriggerWords = ["/x"],
                 EntryPoint = "https://calendar.example.com",
                 Credential = "a-perfectly-valid-shaped-secret-value-x",
-                ProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
 
@@ -455,7 +558,13 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         return client;
     }
 
-    private async Task<WebApplication> BuildTestHostAsync()
+    /// <summary>`23-65`/`adr/0150`: the value this test host's own `Ago.Chat.Api` is "deployed with" -
+    /// distinct, deliberately, from every other secret-shaped literal this file already sends as
+    /// caller input (e.g. `Credential`), so a test can prove the two are never confused. Never sent by
+    /// any client in this file - the whole point of the wire-proof tests below.</summary>
+    private const string ConfiguredProvisioningSecret = "the-deployments-own-configured-secret-value";
+
+    private async Task<WebApplication> BuildTestHostAsync(bool configureProvisioningSecret = true)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -478,8 +587,19 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // A fake, not a real HTTP call - this suite is about the wire from operator/owner to
         // handler, not about whether a module deployment answers (the identical judgement
         // ModuleEndpointsTests's own remarks make for its sibling).
-        builder.Services.AddSingleton<IModuleRegistrationGateway>(new AlwaysSucceedsModuleRegistrationGateway());
+        builder.Services.AddSingleton<IModuleRegistrationGateway>(new RecordingModuleRegistrationGateway());
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
+
+        // `23-65`/`adr/0150`: the real `ChatModule.cs` wiring, reproduced here rather than resolved
+        // through `AddChatModule` - the same "each integration suite wires exactly the handlers it
+        // needs" posture every other registration on this page already follows. `configureProvisioningSecret`
+        // lets a test build a host that has genuinely not been given a secret, the deployment state
+        // `IModuleProvisioningSecretProvider`'s own remarks describe.
+        builder.Services.AddSingleton(new ModuleProvisioningOptions
+        {
+            Secret = configureProvisioningSecret ? ConfiguredProvisioningSecret : string.Empty,
+        });
+        builder.Services.AddSingleton<IModuleProvisioningSecretProvider, ConfiguredModuleProvisioningSecretProvider>();
 
         builder.Services.AddScoped<EnableModuleForSiteHandler>();
         builder.Services.AddScoped<RotateModuleCredentialHandler>();
@@ -539,23 +659,37 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         return app;
     }
 
-    /// <summary>Always succeeds, recording nothing this suite needs - the identical fake-gateway
-    /// shape <c>ModuleEndpointsTests</c>'s own private nested class already establishes for its
-    /// sibling suite (not shared as a type, since each integration suite keeps its own minimal
-    /// double rather than a shared test-only dependency).</summary>
-    private sealed class AlwaysSucceedsModuleRegistrationGateway : IModuleRegistrationGateway
+    /// <summary>Always succeeds - the identical fake-gateway shape <c>ModuleEndpointsTests</c>'s own
+    /// private nested class already establishes for its sibling suite (not shared as a type, since
+    /// each integration suite keeps its own minimal double rather than a shared test-only dependency).
+    /// `23-65`: records every call's <see cref="ModuleProvisioningSecret"/>, unlike its predecessor
+    /// (`AlwaysSucceedsModuleRegistrationGateway`, renamed) - the wire-proof tests below need to see
+    /// which secret actually reached the module-registration boundary, not merely that the call
+    /// succeeded.</summary>
+    private sealed class RecordingModuleRegistrationGateway : IModuleRegistrationGateway
     {
+        public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> RegisterCalls { get; } = [];
+
+        public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> RevokeCalls { get; } = [];
+
         public Task RegisterAsync(
             ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
-            string displayName, CancellationToken cancellationToken) => Task.CompletedTask;
+            string displayName, CancellationToken cancellationToken)
+        {
+            RegisterCalls.Add((module, provisioningSecret));
+            return Task.CompletedTask;
+        }
 
         public Task RotateAsync(
             ModuleRegistrationTarget module, ModuleCredential newCredential, ModuleProvisioningSecret provisioningSecret,
             CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task RevokeAsync(
-            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
+        {
+            RevokeCalls.Add((module, provisioningSecret));
+            return Task.CompletedTask;
+        }
 
         public Task<ModuleRegistrationRemoteStatus> GetStatusAsync(
             ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>

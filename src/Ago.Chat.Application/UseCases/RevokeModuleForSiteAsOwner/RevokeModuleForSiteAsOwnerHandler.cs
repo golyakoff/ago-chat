@@ -44,7 +44,8 @@ namespace Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 /// </summary>
 public sealed class RevokeModuleForSiteAsOwnerHandler(
     IEnabledModuleRepository modules, IModuleRegistrationGateway registrationGateway,
-    IModuleRevokeOverrideRepository overrides, IClock clock, IIdGenerator idGenerator)
+    IModuleProvisioningSecretProvider provisioningSecrets, IModuleRevokeOverrideRepository overrides,
+    IClock clock, IIdGenerator idGenerator)
 {
     /// <summary>An implementer's-call safety rail against an unbounded free-text reason, the same
     /// "not a measured number, only a mistake-catcher" posture
@@ -77,15 +78,22 @@ public sealed class RevokeModuleForSiteAsOwnerHandler(
         }
 
         ModuleKey moduleKey;
-        ModuleProvisioningSecret provisioningSecret;
         try
         {
             moduleKey = new ModuleKey(command.ModuleKey);
-            provisioningSecret = new ModuleProvisioningSecret(command.ProvisioningSecret);
         }
         catch (ArgumentException ex)
         {
             return ConversationErrors.ModuleInvalid(ex.Message);
+        }
+
+        // `adr/0150`: read from Ago.Chat.Api's own configuration, never from the caller - the
+        // identical amendment EnableModuleForSiteAsOwnerHandler's own remarks make for the grant side.
+        if (provisioningSecrets.TryGet() is not { } provisioningSecret)
+        {
+            return ConversationErrors.ModuleProvisioningNotConfigured(
+                "This deployment has not configured a module-provisioning secret yet, so the platform "
+                + "owner cannot revoke a module from here.");
         }
 
         var existing = await modules.GetAsync(command.SiteId, moduleKey, cancellationToken);
