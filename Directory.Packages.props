@@ -70,6 +70,12 @@
          stopping. Both types gained a required `ILogger<T>` constructor parameter, which is
          source-breaking only for a direct `new` - this repository resolves both through
          `AddRabbitMqMessaging`, so nothing here changed.
+         **This happened again on 2026-09-08, and the paragraph below is why it was avoidable.** A
+         Dependabot batch raised `AWSSDK.S3` to `4.0.102.5` in ago-platform; this file kept `4.0.102.4`;
+         the node's redeploy packed the platform from source and `dotnet restore` failed with the exact
+         NU1109 this comment names, stopping a deploy. The batch's own pull request had argued the bump
+         could not reach consumers because the published package version had not changed - true of the
+         published feed, false of the node, which packs from source. Raised to `4.0.102.5` here.
          **Polly.Core and AWSSDK.S3 move with it, and that is the part worth reading.** `0.19.0`
          declares `Polly.Core >= 8.7.0` and `AWSSDK.S3 >= 4.0.102.4` because Dependabot raised them in
          ago-platform and this file never followed; central package management turns that into
@@ -177,7 +183,7 @@
          Testcontainers package's pinned version in this project. -->
     <PackageVersion Include="Testcontainers.Keycloak" Version="4.14.0" />
     <!-- AttachmentFixture builds the bucket directly via the S3 API, same version ago-platform pins. -->
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.102.4" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.102.5" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
