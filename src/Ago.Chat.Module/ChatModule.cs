@@ -591,6 +591,15 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<IModuleRegistrationGateway, HttpModuleRegistrationGateway>();
         services.AddSingleton<IModuleCredentialGenerator, ModuleCredentialGenerator>();
 
+        // `23-65`/`adr/0150`: bound, deliberately, with no `.Validate()`/`.ValidateOnStart()` - see
+        // ModuleProvisioningOptions' own remarks for why an unset value here must not fail this host's
+        // boot the way ChannelCredentialCipherOptions right above it is required to.
+        services
+            .AddOptions<ModuleProvisioningOptions>()
+            .Bind(configuration.GetSection(ModuleProvisioningOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ModuleProvisioningOptions>>().Value);
+        services.AddSingleton<IModuleProvisioningSecretProvider, ConfiguredModuleProvisioningSecretProvider>();
+
         services.AddScoped<EnableModuleForSiteHandler>();
         services.AddScoped<RotateModuleCredentialHandler>();
         services.AddScoped<RevokeModuleForSiteHandler>();

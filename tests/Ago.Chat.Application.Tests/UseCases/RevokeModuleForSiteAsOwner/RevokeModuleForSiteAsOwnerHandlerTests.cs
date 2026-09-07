@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Tests.Fakes;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Domain;
 
@@ -14,18 +15,19 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private static readonly ModuleKey Calendar = new("calendar");
     private static readonly Uri EntryPoint = new("https://calendar.example.com");
-    private const string ValidProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars";
     private const string PlatformOwnerSubject = "keycloak-sub-of-the-platform-owner";
     private const string ValidReason = "Tenant is under active law-enforcement investigation; module access must stop immediately.";
 
     private sealed record Fixture(
         RevokeModuleForSiteAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
-        FakeModuleRegistrationGateway RegistrationGateway, FakeModuleRevokeOverrideRepository Overrides);
+        FakeModuleRegistrationGateway RegistrationGateway, FakeModuleProvisioningSecretProvider ProvisioningSecrets,
+        FakeModuleRevokeOverrideRepository Overrides);
 
     private static async Task<Fixture> CreateFixtureAsync(bool seeded = true, bool grantedByOwner = true)
     {
         var modules = new FakeEnabledModuleRepository();
         var registrationGateway = new FakeModuleRegistrationGateway();
+        var provisioningSecrets = new FakeModuleProvisioningSecretProvider();
         var overrides = new FakeModuleRevokeOverrideRepository();
 
         if (seeded)
@@ -37,13 +39,13 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
         }
 
         var handler = new RevokeModuleForSiteAsOwnerHandler(
-            modules, registrationGateway, overrides, new FakeClock(Now), new FakeIdGenerator());
-        return new Fixture(handler, modules, registrationGateway, overrides);
+            modules, registrationGateway, provisioningSecrets, overrides, new FakeClock(Now), new FakeIdGenerator());
+        return new Fixture(handler, modules, registrationGateway, provisioningSecrets, overrides);
     }
 
     private static Application.UseCases.RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwner Command(
         bool force = false, string? reason = null) =>
-        new(SiteId, Calendar.Value, ValidProvisioningSecret, PlatformOwnerSubject, force, reason);
+        new(SiteId, Calendar.Value, PlatformOwnerSubject, force, reason);
 
     [Fact]
     public async Task HandleAsync_ForAnOwnerGrant_WithNoForce_CallsTheGateway_AndDeletesTheRow()
@@ -201,6 +203,38 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Module.NotEnabled", result.Error!.Value.Code);
+        Assert.Empty(fixture.RegistrationGateway.RevokeCalls);
+    }
+
+    /// <summary>`23-65`/`adr/0150`'s own headline claim, proven at the Application level: nothing in
+    /// <see cref="Application.UseCases.RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwner"/> carries a
+    /// caller-supplied secret (this type's own <c>Command</c> helper has no field for one), and the
+    /// value the module-registration gateway actually receives is exactly the one
+    /// <see cref="IModuleProvisioningSecretProvider"/> was configured with.</summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheRegistrationGateway_WithTheConfiguredSecret_NeverACallerSuppliedOne()
+    {
+        var fixture = await CreateFixtureAsync(grantedByOwner: true);
+
+        await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        var call = Assert.Single(fixture.RegistrationGateway.RevokeCalls);
+        Assert.Equal(FakeModuleProvisioningSecretProvider.DefaultSecret, call.ProvisioningSecret.Value);
+    }
+
+    /// <summary>The identical deployment-state case `EnableModuleForSiteAsOwnerHandlerTests`'s own
+    /// sibling test proves for the grant side.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNoProvisioningSecretIsConfigured_ReturnsProvisioningNotConfigured_AndLeavesTheRowInPlace()
+    {
+        var fixture = await CreateFixtureAsync(grantedByOwner: true);
+        fixture.ProvisioningSecrets.Secret = null;
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.ProvisioningNotConfigured", result.Error!.Value.Code);
+        Assert.Single(fixture.Modules.All);
         Assert.Empty(fixture.RegistrationGateway.RevokeCalls);
     }
 }

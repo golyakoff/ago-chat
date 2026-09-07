@@ -60,7 +60,7 @@ public static class OwnerModuleEndpoints
         var result = await handler.HandleAsync(
             new EnableModuleForSiteAsOwner(
                 new SiteId(siteId), request.ModuleKey, request.TriggerWords, request.EntryPoint, request.Credential,
-                request.ProvisioningSecret, request.ExpiresAt),
+                request.ExpiresAt),
             cancellationToken);
 
         if (result.IsFailure)
@@ -106,8 +106,7 @@ public static class OwnerModuleEndpoints
         }
 
         var result = await handler.HandleAsync(
-            new RevokeModuleForSiteAsOwner(
-                new SiteId(siteId), moduleKey, request.ProvisioningSecret, revokedBy, request.Force, request.Reason),
+            new RevokeModuleForSiteAsOwner(new SiteId(siteId), moduleKey, revokedBy, request.Force, request.Reason),
             cancellationToken);
 
         if (result.IsFailure)
@@ -140,10 +139,12 @@ public static class OwnerModuleEndpoints
     /// </summary>
     /// <param name="Credential">Never echoed back - the same hygiene
     /// <see cref="Modules.ModuleEndpoints.EnableModuleRequest"/>'s own remarks describe.</param>
-    /// <param name="ProvisioningSecret">`22-11`: proves this call may provision on the module
-    /// deployment's own behalf.</param>
     /// <param name="ExpiresAt">See <see cref="EnableModuleForSiteAsOwner"/>'s own remarks for the full
     /// argument for why this is required rather than optional.</param>
+    /// <remarks>`23-65`/`adr/0150`: carries no <c>ProvisioningSecret</c> - the console never holds
+    /// `adr/0095`'s deployment-wide secret. <c>Ago.Chat.Api</c> supplies it from its own configuration
+    /// (<see cref="Application.Abstractions.IModuleProvisioningSecretProvider"/>); the caller is
+    /// authorised by <c>RequirePlatformOwner</c> on this route, unchanged.</remarks>
     public sealed class GrantModuleRequest
     {
         public required string ModuleKey { get; init; }
@@ -153,8 +154,6 @@ public static class OwnerModuleEndpoints
         public required string EntryPoint { get; init; }
 
         public required string Credential { get; init; }
-
-        public required string ProvisioningSecret { get; init; }
 
         public required DateTimeOffset? ExpiresAt { get; init; }
     }
@@ -169,8 +168,6 @@ public static class OwnerModuleEndpoints
     /// uses: omitting <see cref="Force"/> unambiguously means "not forcing", which needs no ceremony,
     /// unlike omitting an expiry.
     /// </summary>
-    /// <param name="ProvisioningSecret">`22-11`: proves this call may act on the module deployment's
-    /// own behalf, unchanged from before this item.</param>
     /// <param name="Force">Revoking a grant the platform owner made needs nothing more than this
     /// defaulting to <see langword="false"/>. Revoking a tenant's own self-service purchase
     /// (<see cref="Domain.EnabledModule.GrantedByOwner"/> <see langword="false"/>) is refused unless
@@ -181,5 +178,7 @@ public static class OwnerModuleEndpoints
     /// the same failure as a defaulted expiry"). Free text, recorded verbatim in
     /// <see cref="Application.Abstractions.IModuleRevokeOverrideRepository"/>'s own row when the
     /// override is actually exercised.</param>
-    public sealed record RevokeModuleAsOwnerRequest(string ProvisioningSecret, bool Force = false, string? Reason = null);
+    /// <remarks>`23-65`/`adr/0150`: carries no <c>ProvisioningSecret</c> either - the identical
+    /// amendment <see cref="GrantModuleRequest"/>'s own remarks state for itself.</remarks>
+    public sealed record RevokeModuleAsOwnerRequest(bool Force = false, string? Reason = null);
 }
