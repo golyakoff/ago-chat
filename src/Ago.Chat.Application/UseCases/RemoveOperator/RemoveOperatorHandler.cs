@@ -26,6 +26,17 @@ namespace Ago.Chat.Application.UseCases.RemoveOperator;
 /// together make it a compare-and-set read taken inside this write's own transaction (CLAUDE.md rule
 /// 8), never a cached count - see that port's own remarks for why two concurrent removals of a site's
 /// last two managers is exactly the race this closes.</para>
+///
+/// <para><b>`23-67`: this guard is that item's Done-when for removal, not new work.</b> `23-67` restates
+/// the invariant as "no action may leave a tenant with nobody able to sign in and manage operators" -
+/// checked, not assumed, against what `23-26` already enforces: since `23-71`,
+/// <see cref="Operator.CanSignIn"/> is <see langword="true"/> for any non-removed operator who holds
+/// <see cref="Permission.SiteManageOperators"/>, seat or no seat, so "at least one non-removed holder of
+/// that permission survives" and "at least one operator who can sign in and manage operators survives"
+/// are the same fact for this handler. `RemoveOperatorHandlerTests` already proves the count; `23-67`
+/// added <c>OperatorSignInEligibilityTests.CanSignInAsync_TheSurvivingManagerAfterARefusedSelfRemoval_CanStillSignIn</c>
+/// to close the gap between counting a holder and that holder actually being able to sign in, which
+/// nothing before `23-67` had asserted end to end.</para>
 /// </summary>
 public sealed class RemoveOperatorHandler(
     IOperatorRepository operators, IPermissionChecker permissions, IUnitOfWork unitOfWork,
