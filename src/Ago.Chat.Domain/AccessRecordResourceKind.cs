@@ -25,4 +25,10 @@ public enum AccessRecordResourceKind
     /// <summary><see cref="AccessRecordKind.OwnerModuleGrant"/>/<see cref="AccessRecordKind.OwnerModuleRevoke"/>'s
     /// own resource.</summary>
     EnabledModule,
+
+    /// <summary>`23-66`: <see cref="AccessRecordKind.OwnerModuleQuantityGrant"/>'s own resource - a
+    /// different row (<c>module_quantity_grants</c>) from <see cref="EnabledModule"/>, keyed by
+    /// (site, module) rather than by a synthetic id (`Domain.ModuleQuantityGrant`'s own remarks).
+    /// </summary>
+    ModuleQuantityGrant,
 }

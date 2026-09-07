@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.GetSiteForOwner;
@@ -39,7 +40,7 @@ namespace Ago.Chat.Application.UseCases.GetSiteForOwner;
 /// </summary>
 public sealed class GetSiteForOwnerHandler(
     IPlatformOverviewReadStore siteReadStore, IEnabledModuleReadStore moduleReadStore, ISiteRepository siteRepository,
-    IClock clock)
+    IModuleQuantityGrantStore quantityGrants, IClock clock)
 {
     public async Task<Result<OwnerSiteDetailResponse>> HandleAsync(
         GetSiteForOwner query, CancellationToken cancellationToken)
@@ -67,6 +68,10 @@ public sealed class GetSiteForOwnerHandler(
         var aggregate = await siteRepository.GetByIdAsync(query.SiteId, cancellationToken);
         var allowedOrigins = aggregate?.AllowedOrigins ?? [];
 
+        // `23-66`: one read alongside the modules list above, not one per row - a site enables a
+        // handful of modules at most, so this is a single extra query rather than an N+1.
+        var quantities = await quantityGrants.GetAllForSiteAsync(query.SiteId, cancellationToken);
+
         return new OwnerSiteDetailResponse(
             site.Id.Value,
             site.Name,
@@ -78,15 +83,17 @@ public sealed class GetSiteForOwnerHandler(
             site.LastMessageAt,
             site.AttachmentBytes,
             ListSitesForOwnerHandler.RecentWindowDays,
-            modules.Select(ToModuleDto).ToList(),
+            modules.Select(module => ToModuleDto(module, quantities)).ToList(),
             allowedOrigins);
     }
 
-    private static OwnerSiteModuleDto ToModuleDto(EnabledModuleDetailSummary module) => new(
+    private static OwnerSiteModuleDto ToModuleDto(
+        EnabledModuleDetailSummary module, IReadOnlyDictionary<ModuleKey, int> quantities) => new(
         module.ModuleKey.Value,
         module.TriggerWords,
         module.EntryPoint.ToString(),
         module.GrantedByOwner,
         module.ExpiresAt,
-        module.IsActive);
+        module.IsActive,
+        quantities.TryGetValue(module.ModuleKey, out var quantity) ? quantity : null);
 }

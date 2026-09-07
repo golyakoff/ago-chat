@@ -58,10 +58,18 @@ public sealed record OwnerSiteDetailResponse(
 /// directly rather than comparing <see cref="ExpiresAt"/> against its own clock (this item's own
 /// Done-when: "matching what the live read-store query already decides rather than re-deriving it in
 /// the console").</param>
+/// <param name="Quantity">`23-66`: this module's own granted countable quantity - the calendar
+/// add-on's "N masters" is the first real instance, opaque here exactly like <see cref="ModuleKey"/>
+/// itself. <see langword="null"/> when no quantity was ever granted for this module, distinct from
+/// <c>0</c> (a quantity explicitly granted as zero) - collapsing the two would tell a platform owner
+/// "not granted" when a tenant with the module and zero workers is a legitimate state
+/// (`IModuleQuantityGrantStore.GetAllForSiteAsync`'s own remarks state the same distinction on the
+/// read side this field is sourced from).</param>
 public sealed record OwnerSiteModuleDto(
     string ModuleKey,
     IReadOnlyList<string> TriggerWords,
     string EntryPoint,
     bool GrantedByOwner,
     DateTimeOffset? ExpiresAt,
-    bool IsActive);
+    bool IsActive,
+    int? Quantity);

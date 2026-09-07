@@ -46,4 +46,10 @@ public enum AccessRecordKind
 
     /// <summary>`14-12`/`adr/0079`: the platform owner's unconditional channel-identity unlink.</summary>
     OwnerChannelIdentityUnlink,
+
+    /// <summary>`23-66`/`adr/0093`/`adr/0150`: the platform owner granting a module's own countable
+    /// quantity for a named tenant - the calendar add-on's "N masters" is the first real instance,
+    /// carrying no word of that here (the identical opacity <see cref="OwnerModuleGrant"/>'s own
+    /// resource already keeps for the module key itself).</summary>
+    OwnerModuleQuantityGrant,
 }

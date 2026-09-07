@@ -46,6 +46,7 @@ using Ago.Chat.Application.UseCases.GetAllConversationsForSite;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.GrantModuleQuantity;
+using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
@@ -616,6 +617,10 @@ public sealed class ChatModule : IProductModule
         // masters" is the first real caller. No tenant-facing endpoint yet, the same accepted gap
         // EnableModuleForSiteHandler's own remarks name for itself.
         services.AddScoped<GrantModuleQuantityHandler>();
+        // `23-66`: the platform owner's own caller of the identical store above - see
+        // GrantModuleQuantityAsOwner's own remarks for why this is a separate command/handler rather
+        // than a nullable-OperatorId branch on GrantModuleQuantityHandler.
+        services.AddScoped<GrantModuleQuantityAsOwnerHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();
