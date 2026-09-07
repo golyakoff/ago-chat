@@ -52,7 +52,31 @@ public interface IModuleRegistrationGateway
 
     Task<ModuleRegistrationRemoteStatus> GetStatusAsync(
         ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `22-30`/`adr/0149` rule 2: "a lifecycle operation completes when the module proves it." Asks
+    /// the module to erase everything it holds for this tenant and reads back what it found - never
+    /// merely whether the call succeeded. Deliberately on this interface, authenticated by the
+    /// deployment-wide <paramref name="provisioningSecret"/> like every other method here, rather than
+    /// on <see cref="IModuleGateway"/> with a per-site <see cref="ModuleCredential"/>: the whole point
+    /// of this call is to still reach a module for a site whose per-site credential may have been
+    /// revoked, may have lapsed, or may never have existed (`22-30`'s own backlog names all three as
+    /// cases this call must still answer for), which is exactly what the provisioning secret does not
+    /// depend on.
+    /// </summary>
+    Task<TenantDataErasureResult> EraseTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken);
 }
+
+/// <param name="TenantExisted">Whether the module reports it held a row for this tenant at all -
+/// informational, the identical "not what a caller should branch on" status
+/// <c>Ago.Calendar.Application.Abstractions.TenantErasureResult.TenantExisted</c>'s own remarks give
+/// its wire-side counterpart.</param>
+/// <param name="Confirmed">The module's own proof, read back over the wire: a fresh read of *its*
+/// database found nothing left for this tenant. This is the fact <c>Ago.Chat.Worker.SiteErasureJob</c>
+/// gates on - never <paramref name="TenantExisted"/>, and never merely "the HTTP call returned
+/// 200".</param>
+public readonly record struct TenantDataErasureResult(bool TenantExisted, bool Confirmed);
 
 /// <summary>Which module, which site, where to reach it - the coordinates every call above needs, and
 /// nothing about a credential: unlike <see cref="EnabledModuleEndpoint"/>, this type is built before a

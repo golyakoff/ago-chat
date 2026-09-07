@@ -126,4 +126,51 @@ public class EnabledModuleTests
             new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, ["/booking"], EntryPoint, Credential, Now,
             grantedByOwner: true, expiresAt: Now.AddSeconds(secondsBeforeEnabledAt)));
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // `22-30`: Revoke - a stamp, not the delete RevokeModuleForSiteAsOwnerHandler used to perform.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Revoke_OnAnUnrevokedRow_StampsRevokedAt_AndCarriesEveryOtherFieldUnchanged()
+    {
+        var module = new EnabledModule(
+            new EnabledModuleId(Guid.NewGuid()), SiteId, Calendar, ["/booking"], EntryPoint, Credential, Now,
+            grantedByOwner: true, expiresAt: Now.AddDays(30));
+        var revokedAt = Now.AddDays(1);
+
+        var revoked = module.Revoke(revokedAt);
+
+        Assert.Equal(revokedAt, revoked.RevokedAt);
+        Assert.Equal(module.Id, revoked.Id);
+        Assert.Equal(module.SiteId, revoked.SiteId);
+        Assert.Equal(module.ModuleKey, revoked.ModuleKey);
+        Assert.Equal(module.TriggerWords, revoked.TriggerWords);
+        Assert.Equal(module.EntryPoint, revoked.EntryPoint);
+        Assert.Equal(module.Credential, revoked.Credential);
+        Assert.Equal(module.EnabledAt, revoked.EnabledAt);
+        Assert.True(revoked.GrantedByOwner);
+        Assert.Equal(module.ExpiresAt, revoked.ExpiresAt);
+        // The original instance is untouched - this type reconstructs rather than mutates
+        // (this type's own remarks).
+        Assert.Null(module.RevokedAt);
+    }
+
+    [Fact]
+    public void Revoke_OnAnAlreadyRevokedRow_Throws()
+    {
+        var module = Build().Revoke(Now.AddDays(1));
+
+        Assert.Throws<InvalidOperationException>(() => module.Revoke(Now.AddDays(2)));
+    }
+
+    [Fact]
+    public void WithCredential_CarriesRevokedAtThroughUnchanged()
+    {
+        var module = Build().Revoke(Now.AddDays(1));
+
+        var rotated = module.WithCredential(new ModuleCredential("a-different-shared-secret-of-length"));
+
+        Assert.Equal(module.RevokedAt, rotated.RevokedAt);
+    }
 }

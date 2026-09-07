@@ -47,15 +47,20 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
         bool force = false, string? reason = null) =>
         new(SiteId, Calendar.Value, PlatformOwnerSubject, force, reason);
 
+    /// <summary>`22-30`: revoking now stamps <see cref="EnabledModule.RevokedAt"/> instead of deleting
+    /// the row - see that property's own remarks for why (a later tenant erasure needs to find every
+    /// module a site has ever had, including a revoked one). The module-side call still runs, and
+    /// still runs first.</summary>
     [Fact]
-    public async Task HandleAsync_ForAnOwnerGrant_WithNoForce_CallsTheGateway_AndDeletesTheRow()
+    public async Task HandleAsync_ForAnOwnerGrant_WithNoForce_CallsTheGateway_AndStampsTheRowRevoked()
     {
         var fixture = await CreateFixtureAsync(grantedByOwner: true);
 
         var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Empty(fixture.Modules.All);
+        var remaining = Assert.Single(fixture.Modules.All);
+        Assert.Equal(Now, remaining.RevokedAt);
         var call = Assert.Single(fixture.RegistrationGateway.RevokeCalls);
         Assert.Equal(Calendar, call.Module.ModuleKey);
         Assert.Equal(SiteId, call.Module.SiteId);
@@ -99,7 +104,8 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
         var result = await fixture.Handler.HandleAsync(Command(force: true, reason: ValidReason), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Empty(fixture.Modules.All);
+        var remaining = Assert.Single(fixture.Modules.All);
+        Assert.Equal(Now, remaining.RevokedAt);
         Assert.Single(fixture.RegistrationGateway.RevokeCalls);
 
         var recorded = Assert.Single(fixture.Overrides.Records);
@@ -160,7 +166,8 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
         var result = await fixture.Handler.HandleAsync(Command(force: true, reason: ValidReason), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Empty(fixture.Modules.All);
+        var remaining = Assert.Single(fixture.Modules.All);
+        Assert.Equal(Now, remaining.RevokedAt);
         Assert.Empty(fixture.Overrides.Records);
     }
 
@@ -192,6 +199,44 @@ public class RevokeModuleForSiteAsOwnerHandlerTests
         Assert.True(result.IsFailure);
         Assert.Single(fixture.Modules.All);
         Assert.Empty(fixture.Overrides.Records);
+    }
+
+    /// <summary>`22-30`: the tombstone must not weaken the guarantee the handler's own name promises -
+    /// a revoked module still reads as "not enabled" for every ordinary purpose. Proven here through
+    /// the same read <c>RotateModuleCredentialHandler</c>/<c>VerifyModuleRegistrationAsOwnerHandler</c>
+    /// use (<see cref="IEnabledModuleRepository.GetAsync"/>), not by inspecting the row directly - a
+    /// row existing in storage and a row this codebase still treats as enabled are different
+    /// facts.</summary>
+    [Fact]
+    public async Task HandleAsync_ThenGetAsync_NoLongerFindsTheRevokedRow()
+    {
+        var fixture = await CreateFixtureAsync(grantedByOwner: true);
+
+        await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.Null(await fixture.Modules.GetAsync(SiteId, Calendar, CancellationToken.None));
+    }
+
+    /// <summary>The handler's own second call after a first revoke succeeded must not throw
+    /// <see cref="InvalidOperationException"/> (<see cref="EnabledModule.Revoke"/>'s own guard against
+    /// stamping an already-revoked row) - it must never reach that guard at all, because
+    /// <see cref="IEnabledModuleRepository.GetAsync"/> already hides the revoked row from this handler,
+    /// the same way it would have returned <c>Module.NotEnabled</c> for a row `RevokeModuleForSiteHandler`
+    /// had genuinely deleted before this item.</summary>
+    [Fact]
+    public async Task HandleAsync_CalledTwice_TheSecondCallReturnsModuleNotEnabled_RatherThanThrowing()
+    {
+        var fixture = await CreateFixtureAsync(grantedByOwner: true);
+        await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        var second = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(second.IsFailure);
+        Assert.Equal("Module.NotEnabled", second.Error!.Value.Code);
+        // Still exactly one row, still revoked at the first call's own instant - the second call
+        // changed nothing.
+        var remaining = Assert.Single(fixture.Modules.All);
+        Assert.Equal(Now, remaining.RevokedAt);
     }
 
     [Fact]

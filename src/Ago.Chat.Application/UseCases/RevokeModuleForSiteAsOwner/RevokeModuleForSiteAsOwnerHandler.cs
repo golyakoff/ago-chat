@@ -123,11 +123,18 @@ public sealed class RevokeModuleForSiteAsOwnerHandler(
             return ConversationErrors.ModuleRegistrationFailed(ex.Message);
         }
 
-        await modules.DeleteAsync(existing.Id, cancellationToken);
+        var now = clock.UtcNow;
+
+        // `22-30`: a stamp, not a delete - see EnabledModule.RevokedAt's own remarks. The module-side
+        // call above still runs first and still makes the credential stop authenticating immediately;
+        // only which row survives on this side changes, so that this site's own history of every
+        // module it has ever had (a fact `Ago.Chat.Worker.SiteErasureJob` reads later, for a tenant
+        // whose module was revoked before erasure was ever requested) is not destroyed by the same
+        // act that turns the module off.
+        await modules.UpdateAsync(existing.Revoke(now), cancellationToken);
 
         if (overridingAPurchase && command.Force)
         {
-            var now = clock.UtcNow;
             await overrides.RecordAsync(
                 idGenerator.NewId(now), command.SiteId, moduleKey.Value, command.RevokedBy, command.Reason!.Trim(),
                 now, cancellationToken);

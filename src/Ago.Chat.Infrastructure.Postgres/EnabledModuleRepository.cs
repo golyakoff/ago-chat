@@ -18,8 +18,15 @@ public sealed class EnabledModuleRepository(AgoChatDbContext db) : IEnabledModul
     // that way, not by inspection, when RotateModuleCredentialHandlerTests's own real-Postgres sibling
     // in Ago.Chat.Integration.Tests threw "cannot be tracked because another instance with the same
     // key value is already being tracked."
+    // `22-30`: excludes a revoked row - a revoke no longer deletes (EnabledModule.RevokedAt's own
+    // remarks), so without this filter a site that revoked a module and re-enabled it would carry two
+    // rows for the same (SiteId, ModuleKey), and this method's own lack of an ORDER BY would make
+    // which one Rotate/Revoke/Verify act on non-deterministic. Filtering here is what keeps this
+    // method's external answer - "the current registration for this site and module, or none" -
+    // identical to what it already was when a revoke genuinely removed the row.
     public Task<EnabledModule?> GetAsync(SiteId siteId, ModuleKey moduleKey, CancellationToken cancellationToken) =>
-        db.EnabledModules.AsNoTracking().FirstOrDefaultAsync(m => m.SiteId == siteId && m.ModuleKey == moduleKey, cancellationToken);
+        db.EnabledModules.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.SiteId == siteId && m.ModuleKey == moduleKey && m.RevokedAt == null, cancellationToken);
 
     public async Task SaveAsync(EnabledModule module, CancellationToken cancellationToken)
     {

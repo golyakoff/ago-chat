@@ -5,6 +5,7 @@ using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -38,6 +39,8 @@ public sealed class SiteErasureJob(
     CacheInvalidationPublisher cacheInvalidation,
     IIdGenerator idGenerator,
     IClock clock,
+    IServiceScopeFactory scopeFactory,
+    IModuleProvisioningSecretProvider provisioningSecrets,
     IOptions<SiteErasureJobOptions> options,
     ILogger<SiteErasureJob> logger) : BackgroundService
 {
@@ -77,7 +80,8 @@ public sealed class SiteErasureJob(
         {
             try
             {
-                if (await ProcessSiteAsync(candidate.SiteId, candidate.ErasureRecordId, cancellationToken))
+                if (await ProcessSiteAsync(
+                        candidate.SiteId, candidate.ErasureRecordId, candidate.RequestedAt, cancellationToken))
                 {
                     erased++;
                 }
@@ -141,7 +145,8 @@ public sealed class SiteErasureJob(
     /// remarks explain: a throw anywhere in here marks the receipt <c>Failed</c> before rethrowing, so
     /// <see cref="SweepAsync"/>'s own catch still logs and retries next cycle exactly as before.
     /// </remarks>
-    internal async Task<bool> ProcessSiteAsync(Guid siteId, Guid? erasureRecordId, CancellationToken cancellationToken)
+    internal async Task<bool> ProcessSiteAsync(
+        Guid siteId, Guid? erasureRecordId, DateTimeOffset requestedAt, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
         try
@@ -157,6 +162,16 @@ public sealed class SiteErasureJob(
                     // draining these in bounded batches. Nothing more for this tick to do for this site.
                     return false;
                 }
+            }
+
+            // `22-30`/`adr/0149` rule 2: the module gate. Every module this site has ever had - active,
+            // lapsed or revoked, none of which delete the row any more (EnabledModule.RevokedAt's own
+            // remarks) - must *prove* it holds nothing left for this tenant before the site row (and
+            // with it, the address of every one of those modules) is allowed to disappear. See
+            // EraseModulesAsync's own remarks for the full ordering argument.
+            if (!await EraseModulesAsync(siteId, erasureRecordId, requestedAt, now, cancellationToken))
+            {
+                return false;
             }
 
             // `24-09`: read every archive object this site has *before* the site row goes - message_archives
@@ -239,5 +254,114 @@ public sealed class SiteErasureJob(
                 failureConnection, erasureRecordId, ex.GetType().Name, clock.UtcNow, cancellationToken);
             throw;
         }
+    }
+
+    /// <summary>
+    /// `22-30`/`adr/0149` rule 2: "a lifecycle operation completes when the module proves it, never
+    /// when chat has sent it." Reads every module this site has ever had -
+    /// <see cref="IEnabledModuleReadStore.GetAllForSiteAsync"/>'s own unfiltered read, which after this
+    /// item includes a revoked or lapsed grant exactly as much as an active one, because neither case
+    /// deletes the row any more - and asks each one, over the deployment-wide provisioning secret (not
+    /// a per-site <see cref="ModuleCredential"/>: <see cref="IModuleRegistrationGateway.EraseTenantDataAsync"/>'s
+    /// own remarks explain why that is the channel that still reaches a tenant whose per-site
+    /// credential is gone), to erase this tenant's data and prove nothing remains.
+    ///
+    /// <para><b>Why this runs before the archive read and the site delete, not after.</b> The site row
+    /// (and, cascading with it, <c>enabled_modules</c> - <c>EnabledModuleConfiguration</c>'s own
+    /// <c>HasOne&lt;Site&gt;()</c>) is this deployment's only record of which modules a tenant ever had
+    /// and where to reach them. The moment it is deleted, a module that has not yet confirmed can never
+    /// be asked again and can never even be *named* in a later failure - `22-30`'s own backlog states
+    /// this as the load-bearing ordering, the same class of reasoning <see cref="ProcessSiteAsync"/>'s
+    /// own remarks already give for reading archive keys and Keycloak subject ids before the site
+    /// row goes.</para>
+    ///
+    /// <para><b>A module that does not confirm never auto-completes.</b> Genuinely unreachable
+    /// (<see cref="ModuleUnreachableException"/>) and reachable-but-not-yet-confirmed
+    /// (<see cref="TenantDataErasureResult.Confirmed"/> <see langword="false"/>) are treated
+    /// identically: this tick returns <see langword="false"/> and the site stays flagged for the next
+    /// one, the same "not an error and not a stall" shape the conversation gate just above already
+    /// uses. Only once <paramref name="requestedAt"/> is more than
+    /// <see cref="SiteErasureJobOptions.ModuleUnreachableWindow"/> in the past does this method also
+    /// mark the <c>erasure_records</c> receipt <c>Failed</c>, naming the module - a bound stated as an
+    /// implementer's-call safety rail, not a measurement (`CLAUDE.md`: "do not invent numbers... a
+    /// typical production figure" - the identical posture <c>EnableModuleForSiteAsOwnerHandler.MaxGrantDuration</c>'s
+    /// own remarks already take for an unmeasured bound). <see cref="ErasureRecordStatus.Failed"/> is
+    /// not terminal here either (that type's own remarks): the very next cycle that finds every module
+    /// confirmed moves the record straight to <c>Completed</c>, the same way a conversation-drain
+    /// failure already recovers.</para>
+    /// </summary>
+    /// <returns><see langword="true"/> only once every module this site has ever had confirms nothing
+    /// remains.</returns>
+    private async Task<bool> EraseModulesAsync(
+        Guid siteId, Guid? erasureRecordId, DateTimeOffset requestedAt, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var moduleReadStore = scope.ServiceProvider.GetRequiredService<IEnabledModuleReadStore>();
+        var registrationGateway = scope.ServiceProvider.GetRequiredService<IModuleRegistrationGateway>();
+
+        var modules = await moduleReadStore.GetAllForSiteAsync(new SiteId(siteId), now, cancellationToken);
+        if (modules.Count == 0)
+        {
+            // The ordinary case: a site with no module ever enabled has nothing for this gate to do,
+            // unchanged from before this item.
+            return true;
+        }
+
+        ModuleKey? unconfirmedModule = null;
+        var provisioningSecret = provisioningSecrets.TryGet();
+
+        if (provisioningSecret is null)
+        {
+            // This deployment has never configured a module-provisioning secret at all - every module
+            // is unreachable by construction, not by any one module's own fault. Named as its own
+            // reason rather than a module key, since no call was ever attempted.
+            logger.LogWarning(
+                "Site {SiteId} has {ModuleCount} module(s) enabled but this deployment has no module " +
+                "provisioning secret configured; erasure cannot reach any of them yet.", siteId, modules.Count);
+        }
+        else
+        {
+            foreach (var module in modules)
+            {
+                try
+                {
+                    var target = new ModuleRegistrationTarget(module.ModuleKey, new SiteId(siteId), module.EntryPoint);
+                    var result = await registrationGateway.EraseTenantDataAsync(
+                        target, provisioningSecret.Value, cancellationToken);
+                    if (!result.Confirmed)
+                    {
+                        unconfirmedModule ??= module.ModuleKey;
+                    }
+                }
+                catch (ModuleUnreachableException)
+                {
+                    unconfirmedModule ??= module.ModuleKey;
+                }
+            }
+        }
+
+        if (unconfirmedModule is null && provisioningSecret is not null)
+        {
+            return true;
+        }
+
+        var staleness = now - requestedAt;
+        if (staleness > options.Value.ModuleUnreachableWindow)
+        {
+            var reason = provisioningSecret is null
+                ? "ModuleUnreachable:no-provisioning-secret-configured"
+                : $"ModuleUnreachable:{unconfirmedModule!.Value.Value}";
+
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            await ErasureRecordQuery.FailSiteErasureAsync(connection, erasureRecordId, reason, now, cancellationToken);
+
+            logger.LogWarning(
+                "Site {SiteId} erasure has been waiting on a module for {Staleness} (past the " +
+                "configured {Window} window); marked Failed. {Reason}",
+                siteId, staleness, options.Value.ModuleUnreachableWindow, reason);
+        }
+
+        return false;
     }
 }
