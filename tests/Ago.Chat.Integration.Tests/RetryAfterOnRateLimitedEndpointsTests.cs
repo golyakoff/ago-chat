@@ -409,6 +409,9 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
 
         public Task<PublishedDocumentVersion?> FindCurrentAsync(string documentKey, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A rate-limited caller must never reach document lookup.");
+
+        public Task<IReadOnlyList<PublishedDocumentVersion>> ListVersionsAsync(string documentKey, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach document lookup.");
     }
 
     private sealed class NeverCalledExportRequestRepository : IExportRequestRepository

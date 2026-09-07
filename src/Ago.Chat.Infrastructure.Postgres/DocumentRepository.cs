@@ -75,4 +75,11 @@ public sealed class DocumentRepository(AgoChatDbContext db) : IDocumentRepositor
             .Where(v => v.DocumentKey == documentKey)
             .OrderByDescending(v => v.Sequence)
             .FirstOrDefaultAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<PublishedDocumentVersion>> ListVersionsAsync(
+        string documentKey, CancellationToken cancellationToken) =>
+        await db.PublishedDocumentVersions
+            .Where(v => v.DocumentKey == documentKey)
+            .OrderByDescending(v => v.Sequence)
+            .ToListAsync(cancellationToken);
 }

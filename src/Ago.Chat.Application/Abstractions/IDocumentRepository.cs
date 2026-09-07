@@ -43,4 +43,13 @@ public interface IDocumentRepository
     /// if nothing has ever been published under that key at all (an unknown document key, or a real
     /// one this deployment has not yet published anything for).</summary>
     Task<PublishedDocumentVersion?> FindCurrentAsync(string documentKey, CancellationToken cancellationToken);
+
+    /// <summary>`23-37`: every version ever published under this key, newest first - the read
+    /// `GetSiteConsentDocumentsHandler` needs and neither existing read shape provides:
+    /// <see cref="GetByKeyAsync"/> hands back the whole write-path <see cref="Document"/> aggregate
+    /// (oldest-first, shaped for <see cref="Document.Publish"/>'s own append), and
+    /// <see cref="FindCurrentAsync"/> answers only "what does it say right now". A fourth read shape
+    /// on the same port, not a new one - <see cref="IDocumentRepository"/>'s own remarks already state
+    /// why reads live here shaped by their own caller rather than behind one generic query.</summary>
+    Task<IReadOnlyList<PublishedDocumentVersion>> ListVersionsAsync(string documentKey, CancellationToken cancellationToken);
 }

@@ -21,4 +21,8 @@ public sealed class FakeAcceptanceRepository : IAcceptanceRepository
         AcceptanceSubjectKind subjectKind, Guid subjectId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<AcceptanceRecord>>(
             _records.Where(r => r.SubjectKind == subjectKind && r.SubjectId == subjectId).OrderBy(r => r.AcceptedAt).ToList());
+
+    public Task<IReadOnlyList<AcceptanceRecord>> GetForDocumentKeyAsync(string documentKey, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AcceptanceRecord>>(
+            _records.Where(r => r.DocumentKey == documentKey).OrderByDescending(r => r.AcceptedAt).ToList());
 }

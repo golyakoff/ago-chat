@@ -3,15 +3,19 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using Ago.Chat.Api.Auth;
+using Ago.Chat.Api.Consent;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
+using Ago.Chat.Application.UseCases.GetSiteConsentAcceptances;
+using Ago.Chat.Application.UseCases.GetSiteConsentDocuments;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
+using Ago.Chat.Application.UseCases.PublishDocumentVersion;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
@@ -125,6 +129,80 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         var victimSite = await new SiteRepository(db).GetByIdAsync(scenario.VictimSiteId, CancellationToken.None);
         Assert.Equal(VictimColorHex, victimSite!.WidgetConfig.PrimaryColorHex);
         Assert.Equal(Position.BottomRight, victimSite.WidgetConfig.Position);
+    }
+
+    /// <summary>
+    /// `23-37`: the fourth client-supplied-`siteId` route group - `SiteConsentDocumentEndpoints`'s own
+    /// `GET .../consent-documents` (list) and `POST .../consent-documents/{purpose}` (publish), both
+    /// gated by <see cref="Permission.SiteConfigure"/>, the identical permission the widget-config
+    /// routes above already exercise for this same caller. The `acceptances` route is proven separately
+    /// (<see cref="ConsentAcceptancesRoute_RefusesAnotherTenantsSite"/>) because it needs its own
+    /// `purpose` segment and its own positive-control data.
+    ///
+    /// <para>This is also this item's own fault-injection proof: with
+    /// <c>GetSiteConsentDocumentsHandler</c>'s permission check temporarily commented out (or with
+    /// <c>PublishDocumentVersionHandler.HandleAsSiteConsentAsync</c>'s), the "victim" assertions below
+    /// turn `200`/`201` and this test fails loudly - performed once by hand while building this item,
+    /// then reverted; see the item's own report for the exact before/after.</para>
+    /// </summary>
+    [Fact]
+    public async Task ConsentDocumentRoutes_RefuseAnotherTenantsSite_AndPublishNothing()
+    {
+        var scenario = await SetUpAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, scenario.AccessToken);
+
+        var own = $"/api/v1/sites/{scenario.CallerSiteId.Value}/consent-documents";
+        var victim = $"/api/v1/sites/{scenario.VictimSiteId.Value}/consent-documents";
+        var victimPublish = $"{victim}/Contact";
+
+        // Positive control first, the same reasoning every route group above states: a 403 on the
+        // victim route means "this site, not you" only if the identical caller's own site really does
+        // answer 200.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(own)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(victim)).StatusCode);
+        var publishAttempt = await client.PostAsJsonAsync(
+            victimPublish, new { title = "Hijacked consent text", body = "Written by an operator of a different tenant." });
+        Assert.Equal(HttpStatusCode.Forbidden, publishAttempt.StatusCode);
+
+        // The refused publish really did not land - the same "check the row, not only the status code"
+        // discipline every write route above already applies.
+        await using var db = fixture.CreateDbContext();
+        var victimKey = SiteConsentDocumentKey.For(scenario.VictimSiteId, VisitorConsentPurpose.Contact);
+        var victimDocument = await new DocumentRepository(db).GetByKeyAsync(victimKey, CancellationToken.None);
+        Assert.Null(victimDocument);
+    }
+
+    /// <summary>`23-37`'s third route - `GET .../consent-documents/{purpose}/acceptances` - proven
+    /// separately from <see cref="ConsentDocumentRoutes_RefuseAnotherTenantsSite_AndPublishNothing"/>
+    /// because a positive control needs a real acceptance recorded against the victim's own document
+    /// key first, so "the caller sees nothing" is checked against a route that has something to leak.</summary>
+    [Fact]
+    public async Task ConsentAcceptancesRoute_RefusesAnotherTenantsSite()
+    {
+        var scenario = await SetUpAsync();
+        var victimKey = SiteConsentDocumentKey.For(scenario.VictimSiteId, VisitorConsentPurpose.Contact);
+        await using (var db = fixture.CreateDbContext())
+        {
+            var document = Document.Create(new DocumentId(Guid.NewGuid()), victimKey);
+            document.Publish(new PublishedDocumentVersionId(Guid.NewGuid()), "Victim's own consent text", "Body.", Now);
+            await new DocumentRepository(db).SaveAsync(document, CancellationToken.None);
+            await new AcceptanceRepository(db).SaveAsync(
+                AcceptanceRecord.ForVisitor(new AcceptanceRecordId(Guid.NewGuid()), new VisitorId(Guid.NewGuid()), victimKey, "v1", Now),
+                CancellationToken.None);
+        }
+
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, scenario.AccessToken);
+
+        var own = $"/api/v1/sites/{scenario.CallerSiteId.Value}/consent-documents/Contact/acceptances";
+        var victim = $"/api/v1/sites/{scenario.VictimSiteId.Value}/consent-documents/Contact/acceptances";
+
+        // Positive control: the caller's own (empty) list still answers 200, so a 403 on the victim
+        // route below means "this site, not you".
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(own)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(victim)).StatusCode);
     }
 
     /// <summary>
@@ -367,6 +445,14 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<GetWebhookDeliveriesHandler>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
+        // `23-37`: the fourth client-supplied-`siteId` route group, on the same terms as the three
+        // above - `SiteConsentDocumentEndpoints`'s own three routes (publish, list, acceptances).
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IDocumentRepository, DocumentRepository>();
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IAcceptanceRepository, AcceptanceRepository>();
+        builder.Services.AddSingleton<Ago.Platform.Abstractions.ICache, NoOpCache>();
+        builder.Services.AddScoped<PublishDocumentVersionHandler>();
+        builder.Services.AddScoped<GetSiteConsentDocumentsHandler>();
+        builder.Services.AddScoped<GetSiteConsentAcceptancesHandler>();
 
         builder.Services.AddAuthentication()
             .AddJwtBearer(JwtSchemes.Operator, options =>
@@ -395,6 +481,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         app.MapWebhookEndpoints();
         // `10-06`
         app.MapSiteInstallationEndpoints();
+        // `23-37`
+        app.MapSiteConsentDocumentEndpoints();
 
         await app.StartAsync();
         return app;

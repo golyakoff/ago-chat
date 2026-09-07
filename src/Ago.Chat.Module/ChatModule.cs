@@ -20,6 +20,8 @@ using Ago.Chat.Application.UseCases.RecordAcceptance;
 using Ago.Chat.Application.UseCases.GetAcceptancesForSubject;
 using Ago.Chat.Application.UseCases.PublishDocumentVersion;
 using Ago.Chat.Application.UseCases.GetDocumentVersion;
+using Ago.Chat.Application.UseCases.GetSiteConsentAcceptances;
+using Ago.Chat.Application.UseCases.GetSiteConsentDocuments;
 using Ago.Chat.Application.UseCases.GetRequiredDocumentsForSubjectKind;
 using Ago.Chat.Application.UseCases.GetTenantAgreementsForSite;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
@@ -1028,6 +1030,11 @@ public sealed class ChatModule : IProductModule
         // handler on this page is.
         services.AddScoped<PublishDocumentVersionHandler>();
         services.AddScoped<GetDocumentVersionHandler>();
+        // `23-37`: the console's own read side for the site-consent-document surface right above -
+        // "list every version of both purposes" and "who accepted this purpose, and when", registered
+        // here the same way every other handler on this page is.
+        services.AddScoped<GetSiteConsentDocumentsHandler>();
+        services.AddScoped<GetSiteConsentAcceptancesHandler>();
         // `24-03`: "which documents must this subject kind accept, and what does each currently say" -
         // the read a pre-account registration screen needs, backing DocumentEndpoints's own second
         // unauthenticated route (`GET /api/v1/documents/required/{subjectKind}`), registered here the

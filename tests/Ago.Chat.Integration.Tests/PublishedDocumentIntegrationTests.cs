@@ -198,5 +198,8 @@ public sealed class PublishedDocumentIntegrationTests(PostgresFixture fixture)
 
         public Task<PublishedDocumentVersion?> FindCurrentAsync(string documentKey, CancellationToken cancellationToken) =>
             inner.FindCurrentAsync(documentKey, cancellationToken);
+
+        public Task<IReadOnlyList<PublishedDocumentVersion>> ListVersionsAsync(string documentKey, CancellationToken cancellationToken) =>
+            inner.ListVersionsAsync(documentKey, cancellationToken);
     }
 }

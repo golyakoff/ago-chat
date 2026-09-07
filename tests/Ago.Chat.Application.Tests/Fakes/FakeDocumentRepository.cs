@@ -28,4 +28,10 @@ public sealed class FakeDocumentRepository : IDocumentRepository
 
     public Task<PublishedDocumentVersion?> FindCurrentAsync(string documentKey, CancellationToken cancellationToken) =>
         Task.FromResult(_documents.GetValueOrDefault(documentKey)?.Current);
+
+    public Task<IReadOnlyList<PublishedDocumentVersion>> ListVersionsAsync(string documentKey, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PublishedDocumentVersion>>(
+            _documents.TryGetValue(documentKey, out var document)
+                ? document.Versions.OrderByDescending(v => v.Sequence).ToList()
+                : []);
 }
