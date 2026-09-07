@@ -74,6 +74,20 @@ public static class ConversationErrors
     public static Error AttachmentTooLarge(long declaredSizeBytes, long maxSizeBytes) =>
         new("Attachment.TooLarge", $"Declared size {declaredSizeBytes} bytes exceeds the {maxSizeBytes}-byte limit.");
 
+    /// <summary>`23-75`: distinct from <see cref="AttachmentTooLarge"/> above - that one is a single
+    /// file's own ceiling, checked with nothing else in view; this one is the conversation's running
+    /// total, and the caller needs a different number to act on. The message names
+    /// <paramref name="remainingBudgetBytes"/> rather than just refusing, per this item's own "the
+    /// refusal names the remaining budget, not just 'no'" requirement - an operator who cannot send a
+    /// file needs to know whether to wait (a pending reservation may still expire and free room, via
+    /// the same sweep that releases it) or to compress the file instead.
+    /// </summary>
+    public static Error AttachmentConversationBudgetExceeded(long declaredSizeBytes, long remainingBudgetBytes) =>
+        new(
+            "Attachment.ConversationBudgetExceeded",
+            $"Declared size {declaredSizeBytes} bytes would exceed this conversation's attachment budget - " +
+            $"{remainingBudgetBytes} byte(s) remaining.");
+
     /// <summary>The client's "uploaded" claim did not survive a HEAD-verify against the real object -
     /// no real upload found, or its size/content-type does not match what was declared at presign
     /// time. The attachment itself stays `Pending` (<see cref="Domain.Attachment.ConfirmReady"/>), so

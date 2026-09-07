@@ -14,6 +14,22 @@ namespace Ago.Chat.Worker;
 /// `FOR UPDATE SKIP LOCKED` in the inner subquery additionally means a row a concurrent confirm is
 /// still in the middle of updating (locked, not yet committed) is skipped outright rather than making
 /// this statement wait on it - proven directly in <c>AttachmentOrphanSweepJobTests</c>.
+///
+/// <para><b>`23-75`: the same statement also releases each swept row's own conversation-budget
+/// reservation</b> - a second CTE, <c>released</c>, folded into this identical atomic statement rather
+/// than a separate <c>IConversationAttachmentBudget.ReleaseAsync</c> call issued afterward for every
+/// claimed row. "Reserved when the slot is issued, released by the existing pending sweep" (`23-75`'s
+/// own design point) only actually holds if the release cannot land without the delete, or the delete
+/// without the release - two statements, even in a loop over the same connection with no intervening
+/// commit, would still leave a window where a crash between them deletes the row but leaves its
+/// reservation stuck forever, invisible to any future sweep (nothing ever looks at a row that no
+/// longer exists). One statement closes that window by construction: Postgres either applies both CTEs
+/// or neither, the same "this single statement is the ordering guarantee" property `ClaimExpiredPendingBatchAsync`
+/// already relies on for the delete half alone. <c>released</c> groups by <c>conversation_id</c> and
+/// sums <c>size_bytes</c> before applying one <c>UPDATE</c> per distinct conversation in the batch,
+/// rather than one release per attachment row - a batch of orphans rarely belongs to one conversation
+/// alone, but summing first means a conversation with several expired attachments in the same batch
+/// gets exactly one row-lock acquisition, not one per orphan.</para>
 /// </summary>
 public static class AttachmentOrphanSweepQuery
 {
@@ -21,16 +37,30 @@ public static class AttachmentOrphanSweepQuery
         NpgsqlConnection connection, DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken)
     {
         const string sql = """
-            DELETE FROM attachments
-            WHERE id IN (
-                SELECT id
-                FROM attachments
-                WHERE state = 'Pending' AND created_at < @olderThan
-                ORDER BY created_at
-                LIMIT @batchSize
-                FOR UPDATE SKIP LOCKED
+            WITH claimed AS (
+                DELETE FROM attachments
+                WHERE id IN (
+                    SELECT id
+                    FROM attachments
+                    WHERE state = 'Pending' AND created_at < @olderThan
+                    ORDER BY created_at
+                    LIMIT @batchSize
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, object_key, conversation_id, size_bytes
+            ),
+            released AS (
+                UPDATE conversations c
+                SET attachment_bytes_reserved = GREATEST(c.attachment_bytes_reserved - agg.total, 0)
+                FROM (
+                    SELECT conversation_id, SUM(size_bytes) AS total
+                    FROM claimed
+                    GROUP BY conversation_id
+                ) agg
+                WHERE c.id = agg.conversation_id
+                RETURNING c.id
             )
-            RETURNING id, object_key
+            SELECT id, object_key FROM claimed
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);

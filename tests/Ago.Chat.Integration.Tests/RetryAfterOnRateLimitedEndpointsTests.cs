@@ -74,6 +74,8 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             new NeverCalledFileStorage(),
             new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(732)),
             new NeverCalledPermissionChecker(),
+            new NeverCalledConversationAttachmentBudget(),
+            new NeverCalledUnitOfWork(),
             new AttachmentOptions(),
             rateLimitOptions,
             new UuidV7Generator(),
@@ -368,6 +370,25 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         // `23-26`: same "a visitor path must never reach this" contract as HasPermissionAsync above.
         public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
+    }
+
+    // `23-75`: a rate-limited caller must never reach the conversation's own byte budget or open a
+    // transaction for it - both sit after the rate-limit check in CreateAttachmentHandler.CreateAsync,
+    // the identical position NeverCalledFileStorage/NeverCalledAttachmentRepository already occupy.
+    private sealed class NeverCalledConversationAttachmentBudget : IConversationAttachmentBudget
+    {
+        public Task<AttachmentBudgetResult> TryReserveAsync(
+            ConversationId conversationId, long bytes, long budgetBytes, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach the conversation attachment budget.");
+
+        public Task ReleaseAsync(ConversationId conversationId, long bytes, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+    }
+
+    private sealed class NeverCalledUnitOfWork : IUnitOfWork
+    {
+        public Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never open a transaction.");
     }
 
     private sealed class AllowAllPermissionChecker : IPermissionChecker

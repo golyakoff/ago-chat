@@ -40,6 +40,10 @@ public static class ServiceCollectionExtensions
         // in the same SaveChangesAsync as the conversation's.
         services.AddScoped<IConversationAssignmentLog, ConversationAssignmentLog>();
         services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+        // `23-75`: the conversation's own byte budget, the same shape as IOperatorCapacity right
+        // below - see that port's own remarks for why a compare-and-set like this gets a dedicated
+        // port rather than a method on IAttachmentRepository/IConversationRepository.
+        services.AddScoped<IConversationAttachmentBudget, ConversationAttachmentBudgetStore>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         // `14-01`
