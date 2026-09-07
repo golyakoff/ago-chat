@@ -5,6 +5,8 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
+using Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -22,10 +24,11 @@ namespace Ago.Chat.Api.Owner;
 /// registration mechanism.
 ///
 /// <para><b>Gated exclusively by <c>RequirePlatformOwner</c></b> - the entire access-control story for
-/// both routes, the same single-gate shape every other owner surface in this codebase already uses:
-/// neither handler this file resolves calls <see cref="Application.Abstractions.IPermissionChecker"/>,
-/// and could not (see <see cref="EnableModuleForSiteAsOwnerHandler"/>'s own remarks for why), which is
-/// precisely why this route must never be mapped with any weaker policy.</para>
+/// every write this file maps (grant, revoke, quantity, and `23-83`'s rotate/verify), the same
+/// single-gate shape every other owner surface in this codebase already uses: no handler this file
+/// resolves calls <see cref="Application.Abstractions.IPermissionChecker"/>, and none could (see
+/// <see cref="EnableModuleForSiteAsOwnerHandler"/>'s own remarks for why), which is precisely why this
+/// route must never be mapped with any weaker policy.</para>
 ///
 /// <para><b>Generic across every module, not calendar-specific</b> - the identical
 /// <c>ModuleKeyLiteralRule</c> discipline <see cref="Modules.ModuleEndpoints"/>'s own remarks describe:
@@ -55,6 +58,13 @@ public static class OwnerModuleEndpoints
         // each other (raising a quota for an already-enabled module is the common case, not a
         // re-registration).
         group.MapPut("/{moduleKey}/quantity", HandleGrantQuantityAsync);
+
+        // `23-83`/`adr/0151`: the two writes `22-11` never gave the platform owner, added only once
+        // the tenant's own copies (`Api.Modules.ModuleEndpoints`) stopped existing as routes - not
+        // repaired there and duplicated here, moved, so nothing that was genuinely possible before
+        // this item becomes impossible after it.
+        group.MapPost("/{moduleKey}/rotate", HandleRotateAsync);
+        group.MapPost("/{moduleKey}/verify", HandleVerifyAsync);
     }
 
     private static async Task<IResult> HandleGrantAsync(
@@ -172,6 +182,50 @@ public static class OwnerModuleEndpoints
         return Results.Ok(new GrantModuleQuantityResponse(moduleKey, request.Quantity));
     }
 
+    /// <summary>`23-83`/`adr/0151`: mints a fresh credential on the platform owner's own behalf - see
+    /// <see cref="RotateModuleCredentialAsOwnerHandler"/>'s own remarks. No access record is written
+    /// here, unlike the grant/revoke/quantity handlers above: <see cref="AccessRecordKind"/> is a
+    /// closed, database-checked set (`24-12`'s own "deliberately just the defensible set" rule), and
+    /// widening it for this call would need a migration - out of scope for a lane with none
+    /// (`CLAUDE.md` rule 13's migration-lane rule). Flagged rather than silently added or silently
+    /// skipped; `23-83`'s own report names this as a decision, not an oversight.</summary>
+    private static async Task<IResult> HandleRotateAsync(
+        Guid siteId,
+        string moduleKey,
+        RotateModuleCredentialAsOwnerHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new RotateModuleCredentialAsOwner(new SiteId(siteId), moduleKey), cancellationToken);
+
+        // `22-11`'s own "shown once" hygiene, restated for this owner caller: the one place this
+        // codebase ever echoes a credential it minted itself.
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new RotateModuleCredentialResponse(result.Value.NewCredential.Value));
+    }
+
+    /// <summary>`23-83`/`adr/0151`: the reconciliation check, on the platform owner's own behalf - see
+    /// <see cref="VerifyModuleRegistrationAsOwnerHandler"/>'s own remarks for what this can and cannot
+    /// prove. No access record, the identical reasoning <see cref="HandleRotateAsync"/>'s own remarks
+    /// give: this call writes nothing, so there is no mutation for `24-12`'s vocabulary to name even if
+    /// it had a member free for one.</summary>
+    private static async Task<IResult> HandleVerifyAsync(
+        Guid siteId,
+        string moduleKey,
+        VerifyModuleRegistrationAsOwnerRequest request,
+        VerifyModuleRegistrationAsOwnerHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new VerifyModuleRegistrationAsOwner(new SiteId(siteId), moduleKey, request.EntryPoint), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(new VerifyModuleRegistrationResponse(
+            result.Value.ChatHasRegistration, result.Value.ModuleHasRegistration, result.Value.Agree));
+    }
+
     /// <summary>`23-66`: the body <c>PUT /api/v1/owner/sites/{siteId}/modules/{moduleKey}/quantity</c>
     /// takes - a bare integer, never negative (refused by
     /// <see cref="GrantModuleQuantityAsOwnerHandler"/>, `Module.Invalid`). No expiry, no credential:
@@ -182,8 +236,8 @@ public static class OwnerModuleEndpoints
     public sealed record GrantModuleQuantityResponse(string ModuleKey, int Quantity);
 
     /// <summary>
-    /// A property-declared record rather than this file's usual positional shape (contrast
-    /// <see cref="Modules.ModuleEndpoints.EnableModuleRequest"/>) for exactly one reason:
+    /// A property-declared record rather than this file's usual positional shape for exactly one
+    /// reason:
     /// <see cref="ExpiresAt"/> needs the <see langword="required"/> modifier, which C#'s positional
     /// record syntax has no way to express on an individual parameter. <see langword="required"/> on a
     /// nullable member is what makes this item's own "decide, don't default" rule mechanical rather
@@ -193,8 +247,8 @@ public static class OwnerModuleEndpoints
     /// normally. Omitting the key and choosing <c>null</c> are different acts under this shape; they
     /// are indistinguishable under a plain optional property.
     /// </summary>
-    /// <param name="Credential">Never echoed back - the same hygiene
-    /// <see cref="Modules.ModuleEndpoints.EnableModuleRequest"/>'s own remarks describe.</param>
+    /// <param name="Credential">Never echoed back - the same "a secret is accepted, never returned"
+    /// hygiene a password field would get.</param>
     /// <param name="ExpiresAt">See <see cref="EnableModuleForSiteAsOwner"/>'s own remarks for the full
     /// argument for why this is required rather than optional.</param>
     /// <remarks>`23-65`/`adr/0150`: carries no <c>ProvisioningSecret</c> - the console never holds
@@ -237,4 +291,14 @@ public static class OwnerModuleEndpoints
     /// <remarks>`23-65`/`adr/0150`: carries no <c>ProvisioningSecret</c> either - the identical
     /// amendment <see cref="GrantModuleRequest"/>'s own remarks state for itself.</remarks>
     public sealed record RevokeModuleAsOwnerRequest(bool Force = false, string? Reason = null);
+
+    public sealed record RotateModuleCredentialResponse(string NewCredential);
+
+    /// <summary>`23-83`: the body <c>POST .../modules/{moduleKey}/verify</c> takes - just the entry
+    /// point, the identical single field the deleted tenant route's own request carried. No
+    /// <c>ProvisioningSecret</c> member: <see cref="VerifyModuleRegistrationAsOwnerHandler"/> reads it
+    /// from configuration, the same as every other write on this route.</summary>
+    public sealed record VerifyModuleRegistrationAsOwnerRequest(string EntryPoint);
+
+    public sealed record VerifyModuleRegistrationResponse(bool ChatHasRegistration, bool ModuleHasRegistration, bool Agree);
 }

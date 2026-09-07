@@ -21,9 +21,12 @@ namespace Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 /// that guard exactly as this handler's absence did.
 ///
 /// <para><b>Gated on <see cref="Permission.SiteConfigure"/>, the same permission its four write
-/// siblings already use</b> (<c>EnableModuleForSiteHandler</c>, <c>RevokeModuleForSiteHandler</c>,
-/// <c>RotateModuleCredentialHandler</c>, <c>VerifyModuleRegistrationHandler</c>), not a new, narrower
-/// permission. `authorization.md`'s own precedent for this route group already answers the "read vs.
+/// siblings used before `23-83`/`adr/0151` removed all four</b> (<c>EnableModuleForSiteHandler</c>,
+/// <c>RevokeModuleForSiteHandler</c>, <c>RotateModuleCredentialHandler</c>,
+/// <c>VerifyModuleRegistrationHandler</c> - a tenant never provisions a module for themselves, so this
+/// read is now the entire tenant-facing surface on this route group, not one of five). Not a new,
+/// narrower permission of its own, though: `authorization.md`'s own precedent for this route group
+/// already answers the "read vs.
 /// write" question: `docs/architecture/authorization.md`'s section on `site:configure` states plainly
 /// that a single site-level setting does not earn a permission of its own, and every other
 /// <c>Get*Handler</c> on a <c>/sites/{siteId}/...</c> route reads under the identical permission that

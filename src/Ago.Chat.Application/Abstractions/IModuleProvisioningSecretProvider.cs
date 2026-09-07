@@ -7,10 +7,15 @@ namespace Ago.Chat.Application.Abstractions;
 /// (<see cref="UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwnerHandler"/>,
 /// <see cref="UseCases.RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler"/>) used to take
 /// `adr/0095`'s deployment-wide <see cref="ModuleProvisioningSecret"/> as raw caller input, the same
-/// way the tenant's own self-service module endpoints still do
-/// (<see cref="UseCases.EnableModuleForSite.EnableModuleForSite"/>'s own remarks - that route is
-/// unchanged by this item). A console screen cannot put that secret in a request body without putting
-/// it in a browser, so `adr/0150` moves the owner's two callers to a port instead:
+/// way the tenant's own self-service module endpoints did at the time
+/// (<c>Api.Modules.ModuleEndpoints</c>'s own remarks - that route was unchanged by this item, but
+/// `23-83`/`adr/0151` later removed it rather than moving it to this port: a tenant never holds this
+/// secret at all, in a request body or in configuration). A console screen cannot put that secret in a
+/// request body without putting it in a browser, so `adr/0150` moves the owner's two callers to a port
+/// instead, and `23-83` adds two more owner callers
+/// (<see cref="UseCases.RotateModuleCredentialAsOwner.RotateModuleCredentialAsOwnerHandler"/>,
+/// <see cref="UseCases.VerifyModuleRegistrationAsOwner.VerifyModuleRegistrationAsOwnerHandler"/>) to
+/// the same port rather than inventing a second one:
 /// <c>Ago.Chat.Api</c>'s own configuration supplies the value, and the platform owner's authorisation
 /// (`RequirePlatformOwner`, unchanged) is what the call is trusted on.
 ///

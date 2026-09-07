@@ -37,7 +37,6 @@ using Ago.Chat.Application.UseCases.DeleteAttachment;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
 using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
-using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.ExportConversation;
 using Ago.Chat.Application.UseCases.ExportVisitor;
@@ -107,11 +106,10 @@ using Ago.Chat.Application.UseCases.ResolveTeamMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveTeamMessageRemovalDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
-using Ago.Chat.Application.UseCases.RevokeModuleForSite;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
-using Ago.Chat.Application.UseCases.RotateModuleCredential;
+using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
-using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
+using Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner;
 using Ago.Chat.Application.UseCases.RevokeWebhookEndpoint;
 using Ago.Chat.Application.UseCases.SearchConversations;
 using Ago.Chat.Application.UseCases.SendMessage;
@@ -601,10 +599,10 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ModuleProvisioningOptions>>().Value);
         services.AddSingleton<IModuleProvisioningSecretProvider, ConfiguredModuleProvisioningSecretProvider>();
 
-        services.AddScoped<EnableModuleForSiteHandler>();
-        services.AddScoped<RotateModuleCredentialHandler>();
-        services.AddScoped<RevokeModuleForSiteHandler>();
-        services.AddScoped<VerifyModuleRegistrationHandler>();
+        // `23-83`/`adr/0151`: the tenant's own self-service enable/rotate/revoke/verify handlers that
+        // used to be registered here are gone, not merely unrouted - see `Api.Modules.ModuleEndpoints`'s
+        // own remarks for why. Only the read (`ListEnabledModulesForSiteHandler` below) survives on the
+        // tenant's own side.
         // `23-01`: the console's own read of this route group - see the handler's own remarks for why
         // it exists at all (the endpoint used to call IEnabledModuleReadStore directly, ungated).
         services.AddScoped<ListEnabledModulesForSiteHandler>();
@@ -613,9 +611,14 @@ public sealed class ChatModule : IProductModule
         // route rather than by IPermissionChecker (OwnerModuleEndpoints' own remarks).
         services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
+        // `23-83`/`adr/0151`: the platform owner's own rotate/verify, added once the tenant's own
+        // copies stopped existing as routes - the identical RequirePlatformOwner-only gating as the
+        // pair above.
+        services.AddScoped<RotateModuleCredentialAsOwnerHandler>();
+        services.AddScoped<VerifyModuleRegistrationAsOwnerHandler>();
         // `22-07`/`adr/0093`: grants a module's own countable quantity - the calendar add-on's "N
-        // masters" is the first real caller. No tenant-facing endpoint yet, the same accepted gap
-        // EnableModuleForSiteHandler's own remarks name for itself.
+        // masters" is the first real caller. No tenant-facing endpoint yet, the same accepted gap this
+        // module's own self-service enable route once named for itself.
         services.AddScoped<GrantModuleQuantityHandler>();
         // `23-66`: the platform owner's own caller of the identical store above - see
         // GrantModuleQuantityAsOwner's own remarks for why this is a separate command/handler rather

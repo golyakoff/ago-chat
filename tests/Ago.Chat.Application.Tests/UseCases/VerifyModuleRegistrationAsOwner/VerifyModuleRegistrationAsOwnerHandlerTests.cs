@@ -1,45 +1,38 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Tests.Fakes;
-using Ago.Chat.Application.UseCases.VerifyModuleRegistration;
+using Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner;
 using Ago.Chat.Domain;
 
-namespace Ago.Chat.Application.Tests.UseCases.VerifyModuleRegistration;
+namespace Ago.Chat.Application.Tests.UseCases.VerifyModuleRegistrationAsOwner;
 
-/// <summary>`22-11`'s own fourth Done-when: "the two sides cannot silently disagree: a registration
-/// that exists on one side only is detectable." Proven here at the Application level with a fake
-/// gateway scripted to disagree with Chat's own row - the real HTTP round trip against a real module
-/// server lives in <c>ago-calendar</c>'s/<c>ago-faq</c>'s own integration suites, which is the only
-/// place a real "module-only" row can exist to be detected against, since no single test can span two
-/// repositories with no shared reference between them.</summary>
-public class VerifyModuleRegistrationHandlerTests
+/// <summary>
+/// `23-83`/`adr/0151`: the platform owner's own half of `22-11`'s fourth Done-when - the identical
+/// behaviour <c>VerifyModuleRegistrationHandlerTests</c> proved for the deleted tenant handler, minus
+/// the permission check that handler had and plus the "provisioning secret not configured" case.
+/// </summary>
+public class VerifyModuleRegistrationAsOwnerHandlerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
     private static readonly SiteId SiteId = new(Guid.NewGuid());
-    private static readonly OperatorId OperatorId = new(Guid.NewGuid());
     private static readonly ModuleKey Calendar = new("calendar");
     private static readonly Uri EntryPoint = new("https://calendar.example.com");
-    private const string ValidProvisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars";
 
     private sealed record Fixture(
-        VerifyModuleRegistrationHandler Handler, FakeEnabledModuleRepository Modules, FakePermissionChecker Permissions,
-        FakeModuleRegistrationGateway RegistrationGateway);
+        VerifyModuleRegistrationAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
+        FakeModuleRegistrationGateway RegistrationGateway, FakeModuleProvisioningSecretProvider ProvisioningSecrets);
 
-    private static Fixture CreateFixture(bool permitted = true)
+    private static Fixture CreateFixture()
     {
         var modules = new FakeEnabledModuleRepository();
-        var permissions = new FakePermissionChecker();
         var registrationGateway = new FakeModuleRegistrationGateway();
-        if (permitted)
-        {
-            permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
-        }
+        var provisioningSecrets = new FakeModuleProvisioningSecretProvider();
 
-        var handler = new VerifyModuleRegistrationHandler(modules, permissions, registrationGateway);
-        return new Fixture(handler, modules, permissions, registrationGateway);
+        var handler = new VerifyModuleRegistrationAsOwnerHandler(modules, registrationGateway, provisioningSecrets);
+        return new Fixture(handler, modules, registrationGateway, provisioningSecrets);
     }
 
-    private static Application.UseCases.VerifyModuleRegistration.VerifyModuleRegistration Command() =>
-        new(OperatorId, SiteId, Calendar.Value, EntryPoint.ToString(), ValidProvisioningSecret);
+    private static Application.UseCases.VerifyModuleRegistrationAsOwner.VerifyModuleRegistrationAsOwner Command() =>
+        new(SiteId, Calendar.Value, EntryPoint.ToString());
 
     [Fact]
     public async Task HandleAsync_WhenBothSidesHaveARow_ReportsAgree()
@@ -60,9 +53,8 @@ public class VerifyModuleRegistrationHandlerTests
         Assert.True(result.Value.Agree);
     }
 
-    /// <summary>The item's own sharpest claim: chat has a row, the module does not (or vice versa) -
-    /// exactly the drift a two-sided write without a distributed transaction can leave behind, and
-    /// exactly what this check exists to surface rather than hide.</summary>
+    /// <summary>The item's own sharpest claim: chat has a row, the module does not - exactly the
+    /// drift a two-sided write without a distributed transaction can leave behind.</summary>
     [Fact]
     public async Task HandleAsync_WhenOnlyChatHasARow_ReportsDisagree()
     {
@@ -111,17 +103,6 @@ public class VerifyModuleRegistrationHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_WithoutPermission_ReturnsForbidden()
-    {
-        var fixture = CreateFixture(permitted: false);
-
-        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
-
-        Assert.True(result.IsFailure);
-        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
-    }
-
-    [Fact]
     public async Task HandleAsync_WhenTheModuleIsUnreachable_ReturnsModuleRegistrationFailed()
     {
         var fixture = CreateFixture();
@@ -131,5 +112,20 @@ public class VerifyModuleRegistrationHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Module.RegistrationFailed", result.Error!.Value.Code);
+    }
+
+    /// <summary>`adr/0150`'s own deployment-state case, extended to this second owner caller: no
+    /// configured secret means no gateway call at all, chat-side or module-side.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNoProvisioningSecretIsConfigured_ReturnsModuleProvisioningNotConfigured()
+    {
+        var fixture = CreateFixture();
+        fixture.ProvisioningSecrets.Secret = null;
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.ProvisioningNotConfigured", result.Error!.Value.Code);
+        Assert.Empty(fixture.RegistrationGateway.RegisterCalls);
     }
 }
