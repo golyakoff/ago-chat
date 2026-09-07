@@ -26,6 +26,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -81,7 +82,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/owner-granted"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -118,7 +118,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = grantedKey,
                 TriggerWords = ["/granted"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
             });
@@ -151,7 +150,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/to-be-revoked"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -286,7 +284,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/owner-granted-forced"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -324,7 +321,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/expired"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = DateTimeOffset.UtcNow.AddDays(-1),
             });
@@ -490,7 +486,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/to-be-revoked-raw"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -532,7 +527,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/unconfigured"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -541,6 +535,71 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
 
         var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
         Assert.Empty(gateway.RegisterCalls);
+    }
+
+    /// <summary>`23-92`/`adr/0154`'s own deployment-state case, proven over the real HTTP pipeline: a
+    /// host that has not declared an entry point for this module refuses the grant with a clear `503`
+    /// naming the module key - never a blank that would only fail later, once the module is actually
+    /// called, as a `404` (this item's own brief).</summary>
+    [Fact]
+    public async Task OwnerToken_Grants_WhenThisDeploymentHasNoEntryPointConfiguredForTheModule_Returns503_AndCallsNoGateway()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync(configureEntryPoint: false);
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            OwnerRoute, new OwnerModuleEndpoints.GrantModuleRequest
+            {
+                ModuleKey = moduleKey,
+                TriggerWords = ["/unconfigured-entry-point"],
+                Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+                ExpiresAt = null,
+            });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        // The readable half, the same shape `ModuleEndpointsTests` reads: `title` carries
+        // `ConversationErrors`' own stable code (`Module.EntryPointNotConfigured`), and `detail` is this
+        // handler's own message naming the missing module key - never a bare 503 the caller has to
+        // guess the cause of.
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("Module.EntryPointNotConfigured", problem.Title);
+        Assert.Contains(moduleKey, problem.Detail);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        Assert.Empty(gateway.RegisterCalls);
+    }
+
+    /// <summary>`23-92`/`adr/0154`'s own headline claim, over the real HTTP pipeline: a request body
+    /// carrying the field's old name, `entryPoint`, sent as raw JSON rather than through
+    /// <see cref="OwnerModuleEndpoints.GrantModuleRequest"/> (which has no such property to serialize it
+    /// from). The grant still succeeds - the field is silently ignored by minimal-API model binding,
+    /// exactly as an unrecognised member always is - and the entry point the module-registration gateway
+    /// actually receives is <see cref="ConfiguredEntryPoint"/>, this test host's own declared value,
+    /// never the one the request body carried.</summary>
+    [Fact]
+    public async Task OwnerToken_Grants_IgnoresAnySmuggledEntryPointInTheRawBody_AndUsesTheConfiguredOne()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var rawBody = JsonContent.Create(new
+        {
+            moduleKey,
+            triggerWords = new[] { "/smuggled-entry-point" },
+            entryPoint = "https://an-attacker-supplied-entry-point.example.com",
+            credential = "an-owner-minted-secret-of-sixteen-plus-chars",
+            expiresAt = (DateTimeOffset?)null,
+        });
+
+        var response = await ownerClient.PutAsync(OwnerRoute, rawBody);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var gateway = (RecordingModuleRegistrationGateway)host.Services.GetRequiredService<IModuleRegistrationGateway>();
+        var call = Assert.Single(gateway.RegisterCalls, c => c.Module.ModuleKey.Value == moduleKey);
+        Assert.Equal(ConfiguredEntryPoint, call.Module.EntryPoint.ToString().TrimEnd('/'));
     }
 
     // ------------------------------------------------------------------------------------------
@@ -564,7 +623,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/to-be-rotated"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -628,7 +686,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = moduleKey,
                 TriggerWords = ["/to-be-verified"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "an-owner-minted-secret-of-sixteen-plus-chars",
                 ExpiresAt = null,
             });
@@ -728,7 +785,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = UniqueModuleKey(),
                 TriggerWords = ["/x"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "a-perfectly-valid-shaped-secret-value-x",
                 ExpiresAt = null,
             });
@@ -751,7 +807,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = UniqueModuleKey(),
                 TriggerWords = ["/x"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "a-perfectly-valid-shaped-secret-value-x",
                 ExpiresAt = null,
             });
@@ -770,7 +825,6 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             {
                 ModuleKey = UniqueModuleKey(),
                 TriggerWords = ["/x"],
-                EntryPoint = "https://calendar.example.com",
                 Credential = "a-perfectly-valid-shaped-secret-value-x",
                 ExpiresAt = null,
             });
@@ -846,7 +900,14 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     /// any client in this file - the whole point of the wire-proof tests below.</summary>
     private const string ConfiguredProvisioningSecret = "the-deployments-own-configured-secret-value";
 
-    private async Task<WebApplication> BuildTestHostAsync(bool configureProvisioningSecret = true)
+    /// <summary>`23-92`/`adr/0154`: the value this test host's own deployment "declares" for every
+    /// module key - distinct from `Credential`'s own literal for the identical reason
+    /// <see cref="ConfiguredProvisioningSecret"/> is distinct from it, so a test can prove the resolved
+    /// entry point is the configured one, never anything a caller could smuggle in.</summary>
+    private const string ConfiguredEntryPoint = "https://the-deployments-own-configured-entry-point.example.com";
+
+    private async Task<WebApplication> BuildTestHostAsync(
+        bool configureProvisioningSecret = true, bool configureEntryPoint = true)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -882,6 +943,16 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             Secret = configureProvisioningSecret ? ConfiguredProvisioningSecret : string.Empty,
         });
         builder.Services.AddSingleton<IModuleProvisioningSecretProvider, ConfiguredModuleProvisioningSecretProvider>();
+
+        // `23-92`/`adr/0154`: the identical shape, for the module's own entry point.
+        // `AnyKeyModuleEntryPointProvider` rather than the real `ConfiguredModuleEntryPointProvider`
+        // bound to a config section - this suite's own module keys are randomly generated per test
+        // (`UniqueModuleKey()`), so a section keyed by one literal module name would not exercise the
+        // real HTTP-to-handler wire this file proves for every other field; the config-parsing half is
+        // covered where it lives (`Ago.Chat.Application.Tests`' own `FakeModuleEntryPointProvider`, and
+        // `ConfiguredModuleEntryPointProvider`'s own unit coverage).
+        builder.Services.AddSingleton<IModuleEntryPointProvider>(
+            new AnyKeyModuleEntryPointProvider(configureEntryPoint ? new Uri(ConfiguredEntryPoint) : null));
 
         // `23-83`/`adr/0151`: the tenant's own self-service handlers that used to be registered here
         // (EnableModuleForSiteHandler/RotateModuleCredentialHandler/RevokeModuleForSiteHandler/
@@ -961,6 +1032,15 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     /// (`AlwaysSucceedsModuleRegistrationGateway`, renamed) - the wire-proof tests below need to see
     /// which secret actually reached the module-registration boundary, not merely that the call
     /// succeeded.</summary>
+    /// <summary>`23-92`/`adr/0154`: resolves every module key to the identical configured entry point
+    /// (or none, when built with a <see langword="null"/> value) - see <see cref="BuildTestHostAsync"/>'s
+    /// own remarks for why this stands in for the real <c>ConfiguredModuleEntryPointProvider</c> in this
+    /// suite.</summary>
+    private sealed class AnyKeyModuleEntryPointProvider(Uri? entryPoint) : IModuleEntryPointProvider
+    {
+        public Uri? TryGet(ModuleKey moduleKey) => entryPoint;
+    }
+
     private sealed class RecordingModuleRegistrationGateway : IModuleRegistrationGateway
     {
         public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> RegisterCalls { get; } = [];

@@ -599,6 +599,13 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ModuleProvisioningOptions>>().Value);
         services.AddSingleton<IModuleProvisioningSecretProvider, ConfiguredModuleProvisioningSecretProvider>();
 
+        // `23-92`/`adr/0154`: the identical reasoning above, applied to a module's entry point - see
+        // IModuleEntryPointProvider's own remarks for why this reads IConfiguration directly rather
+        // than binding a fixed-property options class (there is no fixed property list: the keys are
+        // module keys, which this assembly must never enumerate). IConfiguration is already registered
+        // by the host, so no explicit AddOptions/Bind step is needed here.
+        services.AddSingleton<IModuleEntryPointProvider, ConfiguredModuleEntryPointProvider>();
+
         // `23-83`/`adr/0151`: the tenant's own self-service enable/rotate/revoke/verify handlers that
         // used to be registered here are gone, not merely unrouted - see `Api.Modules.ModuleEndpoints`'s
         // own remarks for why. Only the read (`ListEnabledModulesForSiteHandler` below) survives on the

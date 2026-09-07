@@ -20,7 +20,8 @@ public class EnableModuleForSiteAsOwnerHandlerTests
     private sealed record Fixture(
         EnableModuleForSiteAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
         FakeEnabledModuleReadStore ReadStore, FakeModuleRegistrationGateway RegistrationGateway,
-        FakeModuleProvisioningSecretProvider ProvisioningSecrets, FakeSiteRepository Sites);
+        FakeModuleProvisioningSecretProvider ProvisioningSecrets, FakeModuleEntryPointProvider EntryPoints,
+        FakeSiteRepository Sites);
 
     private static Fixture CreateFixture()
     {
@@ -28,18 +29,19 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         var readStore = new FakeEnabledModuleReadStore();
         var registrationGateway = new FakeModuleRegistrationGateway();
         var provisioningSecrets = new FakeModuleProvisioningSecretProvider();
+        var entryPoints = new FakeModuleEntryPointProvider();
         var sites = new FakeSiteRepository();
         sites.Seed(new Site(SiteId, "owner-grant-target", allowedOrigins: [], name: "Prospect Barbershop"));
 
         var handler = new EnableModuleForSiteAsOwnerHandler(
-            modules, readStore, registrationGateway, provisioningSecrets, sites, new FakeClock(Now),
+            modules, readStore, registrationGateway, provisioningSecrets, entryPoints, sites, new FakeClock(Now),
             new FakeIdGenerator());
-        return new Fixture(handler, modules, readStore, registrationGateway, provisioningSecrets, sites);
+        return new Fixture(handler, modules, readStore, registrationGateway, provisioningSecrets, entryPoints, sites);
     }
 
     private static Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner Command(
         DateTimeOffset? expiresAt) =>
-        new(SiteId, "calendar", ["/booking"], "https://calendar.example.com", ValidCredential, expiresAt);
+        new(SiteId, "calendar", ["/booking"], ValidCredential, expiresAt);
 
     /// <summary>The end-to-end claim this item's own report has to demonstrate: no permission checker
     /// exists on this handler at all (constructor signature), and the write still lands - proving the
@@ -199,6 +201,47 @@ public class EnableModuleForSiteAsOwnerHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Module.ProvisioningNotConfigured", result.Error!.Value.Code);
+        Assert.Empty(fixture.Modules.All);
+        Assert.Empty(fixture.RegistrationGateway.RegisterCalls);
+    }
+
+    /// <summary>`23-92`/`adr/0154`'s own headline claim, proven at the Application level: nothing in
+    /// <see cref="Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner"/> carries a
+    /// caller-supplied entry point at all (see this type's own <c>Command</c> helper - there is no field
+    /// to pass one in), and the address the module-registration gateway actually receives, and the one
+    /// the persisted row carries, is exactly the one <see cref="IModuleEntryPointProvider"/> was
+    /// configured with for this module's key.</summary>
+    [Fact]
+    public async Task HandleAsync_CallsTheRegistrationGateway_WithTheConfiguredEntryPoint_NeverACallerSuppliedOne()
+    {
+        var fixture = CreateFixture();
+        var configuredEntryPoint = new Uri("https://calendar-really-lives-here.example.com");
+        fixture.EntryPoints.Seed(new ModuleKey("calendar"), configuredEntryPoint);
+
+        var result = await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var call = Assert.Single(fixture.RegistrationGateway.RegisterCalls);
+        Assert.Equal(configuredEntryPoint, call.Module.EntryPoint);
+        var saved = Assert.Single(fixture.Modules.All);
+        Assert.Equal(configuredEntryPoint, saved.EntryPoint);
+    }
+
+    /// <summary>`23-92`'s own Done-when: a module this deployment has not declared an entry point for is
+    /// refused with a message naming what is missing - never a blank that only fails later once the
+    /// module is actually called (this item's own brief: "not a blank that fails later as a 404, which is
+    /// precisely today's failure with an extra step").</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNoEntryPointIsConfiguredForTheModule_ReturnsEntryPointNotConfigured_AndGrantsNothing()
+    {
+        var fixture = CreateFixture();
+        fixture.EntryPoints.Clear();
+
+        var result = await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.EntryPointNotConfigured", result.Error!.Value.Code);
+        Assert.Contains("calendar", result.Error!.Value.Message, StringComparison.Ordinal);
         Assert.Empty(fixture.Modules.All);
         Assert.Empty(fixture.RegistrationGateway.RegisterCalls);
     }
