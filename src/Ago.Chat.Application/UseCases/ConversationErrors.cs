@@ -586,6 +586,19 @@ public static class ConversationErrors
     public static Error ModuleProvisioningNotConfigured(string reason) =>
         new("Module.ProvisioningNotConfigured", reason);
 
+    /// <summary>`23-92`/`adr/0150`'s own extension of the identical reasoning
+    /// <see cref="ModuleProvisioningNotConfigured"/> states for its sibling field:
+    /// <see cref="Abstractions.IModuleEntryPointProvider.TryGet"/> returned <see langword="null"/> for
+    /// the module key the platform owner named - this deployment has declared no
+    /// <c>ModuleEntryPoints:&lt;key&gt;</c> value (or set one that does not parse as an absolute
+    /// http(s) URI). `503`, the identical status <see cref="ModuleProvisioningNotConfigured"/> already
+    /// uses for the same shape of gap: the caller named a real module, nothing about the request itself
+    /// is wrong, this deployment simply has not declared where that module lives yet. The message names
+    /// the missing key directly - a legible refusal, never a blank that fails later as a 404
+    /// (`23-92`'s own brief).</summary>
+    public static Error ModuleEntryPointNotConfigured(string reason) =>
+        new("Module.EntryPointNotConfigured", reason);
+
     // `19-01`: same shared vocabulary, same reason - GenerateReplyDraftHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>Distinct code from every other <c>RateLimited</c> above, the same reasoning each of

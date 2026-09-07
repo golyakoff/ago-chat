@@ -26,7 +26,16 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 /// owner, authenticated by <c>RequirePlatformOwner</c>) never holds `adr/0095`'s deployment-wide
 /// secret at all. <see cref="EnableModuleForSiteAsOwnerHandler"/> reads it from
 /// <see cref="Application.Abstractions.IModuleProvisioningSecretProvider"/> instead - `Ago.Chat.Api`'s
-/// own configuration, never the request body.</remarks>
+/// own configuration, never the request body.
+///
+/// <para><b>`23-92`/`adr/0154` extends the identical reasoning to a second field: carries no
+/// <c>EntryPoint</c> either.</b> The platform owner can read a module's own address from the cluster
+/// exactly as they could already read its provisioning secret; asking them to retype it is a second
+/// inconvenience, not a second safeguard - it authorises nothing an entry point could gate.
+/// <see cref="EnableModuleForSiteAsOwnerHandler"/> resolves it from
+/// <see cref="Application.Abstractions.IModuleEntryPointProvider"/> instead, keyed by
+/// <see cref="ModuleKey"/> - never a caller-supplied string, and never a literal this assembly
+/// names.</para></remarks>
 public sealed record EnableModuleForSiteAsOwner(
-    SiteId SiteId, string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, string Credential,
+    SiteId SiteId, string ModuleKey, IReadOnlyList<string> TriggerWords, string Credential,
     DateTimeOffset? ExpiresAt);
