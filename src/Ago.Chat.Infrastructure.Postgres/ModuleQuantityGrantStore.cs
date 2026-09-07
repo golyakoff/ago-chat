@@ -22,6 +22,15 @@ public sealed class ModuleQuantityGrantStore(AgoChatDbContext db, IOutboxWriter 
         return grant?.Quantity ?? 0;
     }
 
+    public async Task<IReadOnlyDictionary<ModuleKey, int>> GetAllForSiteAsync(
+        SiteId siteId, CancellationToken cancellationToken)
+    {
+        var grants = await db.ModuleQuantityGrants.AsNoTracking()
+            .Where(g => g.SiteId == siteId)
+            .ToListAsync(cancellationToken);
+        return grants.ToDictionary(g => g.ModuleKey, g => g.Quantity);
+    }
+
     public async Task GrantAsync(
         SiteId siteId, ModuleKey moduleKey, int quantity, DateTimeOffset now, CancellationToken cancellationToken)
     {

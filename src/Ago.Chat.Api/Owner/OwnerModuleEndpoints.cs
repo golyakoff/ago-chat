@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
@@ -45,6 +46,15 @@ public static class OwnerModuleEndpoints
 
         group.MapPut("", HandleGrantAsync);
         group.MapDelete("/{moduleKey}", HandleRevokeAsync);
+
+        // `23-66`/`adr/0093`: a module's own countable quantity - the calendar add-on's "N masters"
+        // is the first real caller. A separate route from the grant/revoke pair above, not a field on
+        // GrantModuleRequest: EnableModuleForSiteAsOwner registers a module at all (entry point,
+        // trigger words, credential), while this sets a number an already-registered module
+        // interprets for itself - two different acts a platform owner may perform independently of
+        // each other (raising a quota for an already-enabled module is the common case, not a
+        // re-registration).
+        group.MapPut("/{moduleKey}/quantity", HandleGrantQuantityAsync);
     }
 
     private static async Task<IResult> HandleGrantAsync(
@@ -124,6 +134,52 @@ public static class OwnerModuleEndpoints
 
         return Results.Ok();
     }
+
+    /// <summary>
+    /// `23-66`: sets <c>moduleKey</c>'s own granted quantity for this site - never asks the module
+    /// anything (rule 8: <see cref="GrantModuleQuantityAsOwnerHandler"/>'s own remarks), so this
+    /// returns as soon as chat's own row and outbox entry commit. The calendar (or any other module
+    /// interpreting its own quantity) applies the change asynchronously, off the outbox this write
+    /// stages - `23-66`'s own report states the bound on that wait; this route makes no promise about
+    /// it.
+    /// </summary>
+    private static async Task<IResult> HandleGrantQuantityAsync(
+        Guid siteId,
+        string moduleKey,
+        GrantModuleQuantityRequest request,
+        GrantModuleQuantityAsOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new GrantModuleQuantityAsOwner(new SiteId(siteId), moduleKey, request.Quantity), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        // `24-12`: no resourceId - like the revoke above, ModuleQuantityGrant is named by (SiteId,
+        // ModuleKey) rather than a synthetic id (Domain.ModuleQuantityGrant's own remarks), so there
+        // is no id a second lookup would buy this record.
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerModuleQuantityGrant,
+            new SiteId(siteId), AccessRecordResourceKind.ModuleQuantityGrant, resourceId: null, cancellationToken);
+
+        return Results.Ok(new GrantModuleQuantityResponse(moduleKey, request.Quantity));
+    }
+
+    /// <summary>`23-66`: the body <c>PUT /api/v1/owner/sites/{siteId}/modules/{moduleKey}/quantity</c>
+    /// takes - a bare integer, never negative (refused by
+    /// <see cref="GrantModuleQuantityAsOwnerHandler"/>, `Module.Invalid`). No expiry, no credential:
+    /// unlike <see cref="GrantModuleRequest"/> this sets a number on an already-registered module,
+    /// it does not register one.</summary>
+    public sealed record GrantModuleQuantityRequest(int Quantity);
+
+    public sealed record GrantModuleQuantityResponse(string ModuleKey, int Quantity);
 
     /// <summary>
     /// A property-declared record rather than this file's usual positional shape (contrast

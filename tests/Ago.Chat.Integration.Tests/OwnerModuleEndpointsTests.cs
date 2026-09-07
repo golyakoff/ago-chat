@@ -8,6 +8,7 @@ using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeModuleForSite;
@@ -18,8 +19,10 @@ using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -340,6 +343,105 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     }
 
     // ------------------------------------------------------------------------------------------
+    // `23-66`: the quantity grant this route never had a way to make - `22-07`'s own gap, closed.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The item's own headline claim, end to end: the platform owner can raise a module's
+    /// granted quantity, and chat's own row (what `ago-calendar`'s consumer will eventually project)
+    /// really changed - not merely a `200`.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsAQuantity_AndChatsOwnRowReflectsIt()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(5));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.GrantModuleQuantityResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(moduleKey, body.ModuleKey);
+        Assert.Equal(5, body.Quantity);
+
+        var stored = await GetStoredQuantityAsync(moduleKey);
+        Assert.Equal(5, stored);
+    }
+
+    /// <summary>Zero is a legitimate quantity to grant (this item's own warning) - accepted, not
+    /// refused as though it meant nothing.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsAZeroQuantity_Succeeds()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(0));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OwnerToken_GrantsANegativeQuantity_IsRejected()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(-1));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>Calling it twice with a different quantity overwrites rather than accumulates - a
+    /// snapshot, never a delta (`Domain.ModuleQuantityGrant`'s own remarks), proven here at the wire
+    /// rather than only at the store.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsAQuantityTwice_TheSecondCallOverwritesTheFirst()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(5));
+        var second = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(2));
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        var stored = await GetStoredQuantityAsync(moduleKey);
+        Assert.Equal(2, stored);
+    }
+
+    [Fact]
+    public async Task OrdinaryOperatorToken_CannotGrantAQuantity()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, await fixture.GetDemoOperatorAccessTokenAsync());
+
+        var response = await client.PutAsJsonAsync(
+            $"{OwnerRoute}/{UniqueModuleKey()}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(5));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task NoToken_CannotGrantAQuantity()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token: null);
+
+        var response = await client.PutAsJsonAsync(
+            $"{OwnerRoute}/{UniqueModuleKey()}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(5));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // `23-65`/`adr/0150`: the provisioning secret never reaches the browser - proven over the real
     // HTTP pipeline, not by reading `GrantModuleRequest`'s own shape. `GrantModuleRequest` and
     // `RevokeModuleAsOwnerRequest` no longer have a `ProvisioningSecret` member at all, which already
@@ -545,6 +647,17 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         return body;
     }
 
+    /// <summary>Reads chat's own granted quantity straight off Postgres, one real
+    /// <see cref="AgoChatDbContext"/> shared between the store and its outbox writer (unlike a call
+    /// that only reads, <see cref="ModuleQuantityGrantStore.GetQuantityAsync"/> touches no outbox row,
+    /// but the constructor still needs a writer to satisfy the type).</summary>
+    private async Task<int> GetStoredQuantityAsync(string moduleKey)
+    {
+        await using var db = fixture.CreateDbContext();
+        return await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator())
+            .GetQuantityAsync(fixture.SeededSiteId, new ModuleKey(moduleKey), CancellationToken.None);
+    }
+
     private static string UniqueModuleKey() => $"owner-grant-{Guid.NewGuid():N}"[..24];
 
     private static HttpClient CreateClient(WebApplication host, string? token)
@@ -612,6 +725,12 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<VerifyModuleRegistrationHandler>();
         builder.Services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
+        // `23-66`: the platform owner's own quantity grant, alongside the pair above - real Postgres
+        // store, real outbox writer, the same "this suite already runs against a real Postgres" posture
+        // ModuleQuantityGrantedOutboxTests already established for this exact store.
+        builder.Services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
+        builder.Services.AddScoped<GrantModuleQuantityAsOwnerHandler>();
         // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves this
         // straight from DI, the same way the production host does. IClock/IIdGenerator are already
         // registered above (AddPlatformKernel).

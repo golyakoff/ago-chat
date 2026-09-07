@@ -362,6 +362,17 @@ internal static class TenantScopeExemptions
             + "tenant's own self-service purchase, but neither is a second permission check - RequirePlatformOwner "
             + "on the route remains the entire access-control story unchanged; force/reason gate a business "
             + "decision (was this override meant), not who may call the route at all.",
+        ["Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwnerHandler.HandleAsync"] =
+            "`23-66`, the platform owner's own write for a module's granted quantity - the identical category as "
+            + "EnableModuleForSiteAsOwnerHandler/RevokeModuleForSiteAsOwnerHandler above: SiteId names the tenant "
+            + "being granted a quantity, chosen by the owner, not a resource the caller already owns, and "
+            + "RequirePlatformOwner on OwnerModuleEndpoints is the entire access-control story - Ago.Chat.Application "
+            + "still has no port that can see a Keycloak realm-role claim, so a permission check here would be a "
+            + "second, weaker copy of a rule the policy already decided. A wholly separate handler from the "
+            + "tenant-facing GrantModuleQuantityHandler (which does take an OperatorId and does check "
+            + "IPermissionChecker against Permission.SiteConfigure) rather than a nullable-OperatorId branch on it - "
+            + "the identical 'one flag flips off every check' hazard EnableModuleForSiteAsOwnerHandler's own entry "
+            + "above already names for its own tenant-facing sibling.",
         ["Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner.UpdateSiteAllowedOriginsAsOwnerHandler.HandleAsync"] =
             "`23-48`, the platform owner's own write for a tenant's allowed origins - the author's own decision "
             + "('the answer', docs/backlog/23-48-*.md) is that only the platform owner may ever call this, not the "

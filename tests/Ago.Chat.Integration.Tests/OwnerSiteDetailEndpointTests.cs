@@ -11,7 +11,9 @@ using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -131,6 +133,70 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         Assert.False(expired.IsActive);
     }
 
+    /// <summary>`23-66`'s own warning, checked mechanically: a module nobody ever granted a quantity
+    /// for reports <see langword="null"/>, not <c>0</c> - the two must never render the same on the
+    /// owner's own screen.</summary>
+    [Fact]
+    public async Task OwnerToken_AModuleWithNoQuantityGrant_ReportsANullQuantity_NotZero()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedBareTenantAsync(siteId, "No Quantity Grant Tenant", DateTimeOffset.UtcNow);
+        await SeedModuleAsync(siteId, "calendar", grantedByOwner: true, enabledAt: DateTimeOffset.UtcNow, expiresAt: null);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        var module = Assert.Single(body.Modules, m => m.ModuleKey == "calendar");
+        Assert.Null(module.Quantity);
+    }
+
+    /// <summary>The other half of the same warning: a quantity explicitly granted as zero - a tenant
+    /// who has the module and has not created a worker yet - reports <c>0</c>, distinguishable from
+    /// the "never granted" case above rather than collapsing into it.</summary>
+    [Fact]
+    public async Task OwnerToken_AModuleGrantedAZeroQuantity_ReportsZero_NotNull()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        await SeedBareTenantAsync(siteId, "Zero Quantity Tenant", now);
+        await SeedModuleAsync(siteId, "calendar", grantedByOwner: true, enabledAt: now, expiresAt: null);
+        await SeedQuantityGrantAsync(siteId, "calendar", quantity: 0, now);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        var module = Assert.Single(body.Modules, m => m.ModuleKey == "calendar");
+        Assert.NotNull(module.Quantity);
+        Assert.Equal(0, module.Quantity.Value);
+    }
+
+    /// <summary>A quantity granted above zero, the ordinary case - present and equal to what was
+    /// granted, proven alongside the two edge cases above rather than assumed from them.</summary>
+    [Fact]
+    public async Task OwnerToken_AModuleGrantedAQuantity_ReportsIt()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        await SeedBareTenantAsync(siteId, "Quantity Tenant", now);
+        await SeedModuleAsync(siteId, "calendar", grantedByOwner: true, enabledAt: now, expiresAt: null);
+        await SeedQuantityGrantAsync(siteId, "calendar", quantity: 3, now);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        var module = Assert.Single(body.Modules, m => m.ModuleKey == "calendar");
+        Assert.Equal(3, module.Quantity);
+    }
+
     [Fact]
     public async Task OwnerToken_ForANonexistentSite_Returns404()
     {
@@ -206,6 +272,16 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         await db.SaveChangesAsync();
     }
 
+    /// <summary>`23-66`: writes a real <c>module_quantity_grants</c> row through the real store, not a
+    /// hand-built entity - the same "seed through the mechanism, not around it" posture
+    /// <see cref="SeedModuleAsync"/> already follows for <c>EnabledModule</c>.</summary>
+    private async Task SeedQuantityGrantAsync(SiteId siteId, string moduleKey, int quantity, DateTimeOffset now)
+    {
+        await using var db = fixture.CreateDbContext();
+        await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator())
+            .GrantAsync(siteId, new ModuleKey(moduleKey), quantity, now, CancellationToken.None);
+    }
+
     private async Task SeedModuleAsync(
         SiteId siteId, string moduleKey, bool grantedByOwner, DateTimeOffset enabledAt, DateTimeOffset? expiresAt)
     {
@@ -252,6 +328,11 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         // make them, the same shape OwnerSitesEndpointTests' own host-builder uses.
         builder.Services.AddScoped<IPlatformOverviewReadStore, PlatformOverviewReadStore>();
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `23-66`: GetSiteForOwnerHandler's own third read, alongside the two above - the module's
+        // own granted quantity, kept apart from "not granted" (Quantity's own remarks on
+        // OwnerSiteModuleDto).
+        builder.Services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         // `23-48`: GetSiteForOwnerHandler's own second dependency, added alongside the read stores
         // above - it loads the write-side aggregate directly for AllowedOrigins, the one field
         // IPlatformOverviewReadStore does not carry (that handler's own remarks).

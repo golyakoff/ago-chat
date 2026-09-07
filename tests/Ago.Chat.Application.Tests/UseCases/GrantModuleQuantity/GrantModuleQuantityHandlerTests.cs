@@ -105,6 +105,11 @@ public sealed class FakeModuleQuantityGrantStore : IModuleQuantityGrantStore
     public Task<int> GetQuantityAsync(SiteId siteId, ModuleKey moduleKey, CancellationToken cancellationToken) =>
         Task.FromResult(Grants.GetValueOrDefault((siteId, moduleKey)));
 
+    public Task<IReadOnlyDictionary<ModuleKey, int>> GetAllForSiteAsync(
+        SiteId siteId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<ModuleKey, int>>(
+            Grants.Where(kv => kv.Key.Item1 == siteId).ToDictionary(kv => kv.Key.Item2, kv => kv.Value));
+
     public Task GrantAsync(
         SiteId siteId, ModuleKey moduleKey, int quantity, DateTimeOffset now, CancellationToken cancellationToken)
     {

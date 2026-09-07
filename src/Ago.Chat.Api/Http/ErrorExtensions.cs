@@ -104,6 +104,16 @@ public static class ErrorExtensions
                 // future, or reaches further out than EnableModuleForSiteAsOwnerHandler.MaxGrantDuration
                 // allows.
                 or "Module.GrantExpiryInvalid"
+                // `23-66`: found while wiring the platform owner's own quantity-grant route - a
+                // malformed ModuleKey or a negative Quantity, the caller's own mistake to fix. This
+                // code has existed since `20-07`/`EnableModuleForSiteHandler` but had never reached an
+                // HTTP response before (every prior caller either passed a valid key by construction in
+                // its own tests, or checked the Error value directly at the Application layer without
+                // ever going through ToProblem) - unmapped here fell through to the default 500 below,
+                // turning an ordinary bad request into a fault. Fixed here rather than filed separately:
+                // it is a one-line addition to an existing switch, not a second promise (rule 15), and
+                // it is what this item's own new route needs to answer a negative quantity correctly.
+                or "Module.Invalid"
                 // `23-13`: the caller's own mistake to fix - Force was set with no non-blank reason, or
                 // one longer than RevokeModuleForSiteAsOwnerHandler.MaxReasonLength allows. The same
                 // "decide, don't default" shape Module.GrantExpiryInvalid already gives its own guard.

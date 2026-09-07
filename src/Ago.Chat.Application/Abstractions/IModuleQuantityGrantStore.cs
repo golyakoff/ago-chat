@@ -20,6 +20,17 @@ public interface IModuleQuantityGrantStore
     Task<int> GetQuantityAsync(SiteId siteId, ModuleKey moduleKey, CancellationToken cancellationToken);
 
     /// <summary>
+    /// `23-66`: every module this site has an explicit grant row for, keyed by <see cref="ModuleKey"/> -
+    /// deliberately not <see cref="GetQuantityAsync"/> widened to a site-wide read, because that method's
+    /// own "missing means zero" collapses exactly the distinction the platform owner's detail screen
+    /// must not lose: a module with <b>no</b> row here has never been granted a quantity at all, while a
+    /// module present with value <c>0</c> was granted zero on purpose (this item's own "zero is a
+    /// legitimate quota" warning). A module absent from the returned map is the caller's cue to render
+    /// "not granted"; a module present at <c>0</c> is the caller's cue to render "granted: 0".
+    /// </summary>
+    Task<IReadOnlyDictionary<ModuleKey, int>> GetAllForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Sets the granted quantity to exactly <paramref name="quantity"/> and enqueues
     /// <c>ModuleQuantityGranted</c> in the same transaction as the row it describes - rule 4, and the
     /// reason this is not <see cref="GetQuantityAsync"/> followed by a separate save. A snapshot, not a
