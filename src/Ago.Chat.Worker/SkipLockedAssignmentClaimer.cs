@@ -147,10 +147,20 @@ public sealed class SkipLockedAssignmentClaimer(NpgsqlDataSource dataSource, ICl
         return assignedCount;
     }
 
+    /// <summary>`23-71`: <c>HoldsSeat &amp;&amp; RemovedAt == null</c> added alongside the pre-existing
+    /// `Status == Online` filter - a real gap this item found, not merely reasoned about. Before this
+    /// item, "signed in" and "seated" were the same fact (only a seated operator could ever obtain the
+    /// `OperatorId` claim needed to connect and go `Online` in the first place), so this filter never
+    /// needed to say so explicitly. Now that an administrator can sign in and connect the console with
+    /// no seat, nothing stops their `Status` from becoming `Online` too (`Operator.NoteConnected` asks
+    /// nothing about the seat) - without this filter they would be an ordinary candidate here, exactly
+    /// the back door `AssignConversationHandler`'s own new seat check closes for a deliberate take;
+    /// this closes it for the automatic engine. Proven against real Postgres, not merely read here -
+    /// <c>OperatorConnectAssignabilityTests.AnOnlineOperatorWithNoSeat_IsNeverAssignedAConversation</c>.</summary>
     private static async Task<OperatorId?> FindCandidateOperatorAsync(
         AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
         await db.Operators.AsNoTracking()
-            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online)
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null)
             .Where(o => EF.Property<int>(o, "active_chats") < o.Capacity)
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => (OperatorId?)o.Id)
@@ -160,11 +170,13 @@ public sealed class SkipLockedAssignmentClaimer(NpgsqlDataSource dataSource, ICl
     /// dropped - the identical `Status == Online` filter, deliberately not re-derived, so an `Away`
     /// (or `Offline`) operator is excluded from this pass for exactly the same reason it is excluded
     /// from the first: there is one `Online` filter in this file, not two that could drift apart.
+    /// `23-71`: the same is now true of <c>HoldsSeat &amp;&amp; RemovedAt == null</c> -
+    /// <see cref="FindCandidateOperatorAsync"/>'s own remarks apply identically to this pass.
     /// </summary>
     private static async Task<OperatorId?> FindLeastActiveOnlineOperatorAsync(
         AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
         await db.Operators.AsNoTracking()
-            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online)
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null)
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => (OperatorId?)o.Id)
             .FirstOrDefaultAsync(cancellationToken);

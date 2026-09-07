@@ -358,6 +358,21 @@ public static class ConversationErrors
             "This site must always have at least one operator who can manage operators. Grant that " +
             "permission to another operator before removing this one.");
 
+    /// <summary>
+    /// `23-71`: `AssignConversationHandler`'s own self-claim guard - `decisions/0006` separated "may
+    /// sign in" from "may be routed a conversation" once an administrator can sign in with no seat
+    /// (`Operator.HoldsSeat`'s own remarks: a seat is what "holds a seat" has always meant, unchanged).
+    /// This holder genuinely holds `conversation:assign` (that check already ran, and passed) but holds
+    /// no seat, so claiming a conversation for themselves would put them in the routing pool by the
+    /// back door - the one thing this item's own Scope says must never happen. The message names the
+    /// remedy, matching `OperatorIsLastManager`'s own convention: a shop owner reads this, not an
+    /// engineer.
+    /// </summary>
+    public static Error OperatorHasNoSeat(Guid operatorId) =>
+        new(
+            "Conversation.OperatorHasNoSeat",
+            $"Operator {operatorId} holds no seat and cannot be assigned conversations. Take a seat on the operators screen first.");
+
     // `18-02`: same shared vocabulary, same reason - TransferConversationHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>

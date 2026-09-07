@@ -155,6 +155,13 @@ public sealed class ActiveSiteHubResolutionTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<Application.Abstractions.IOperatorRepository, Infrastructure.Postgres.OperatorRepository>();
+        // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - a seatless
+        // operator's own site:manage_operators grant is what lets them sign in at all, so this
+        // stripped-down host must resolve it too (this file's own real, un-piped test failure - a
+        // `500` on hub negotiate from the missing registration, not a genuine refusal - is what a
+        // properly redirected verification run actually caught, restated here as the reason this line
+        // exists rather than left silent).
+        builder.Services.AddScoped<Application.Abstractions.IPermissionChecker, Infrastructure.Postgres.PermissionChecker>();
         builder.Services.AddScoped<Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();

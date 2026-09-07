@@ -210,6 +210,12 @@ public sealed class OfflineAutoReplyDeliveryEndToEndTests(ConnectionFanoutFixtur
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<ISiteRepository, SiteRepository>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker (a seatless
+        // operator's own site:manage_operators grant is what lets them sign in at all) - every
+        // stripped-down host that maps it must resolve this too, the same "every handler dependency
+        // this host maps must resolve, even one this test never calls" reason IOperatorRepository's
+        // own registration above already establishes.
+        services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IConversationReadStore>(_ => new ConversationReadStore(fixture.DataSource));
         services.AddSingleton<ICache>(_ => new RedisCache(
             fixture.RedisMultiplexer,

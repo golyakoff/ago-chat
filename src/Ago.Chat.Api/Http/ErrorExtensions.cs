@@ -55,7 +55,11 @@ public static class ErrorExtensions
                 // that does not have that module enabled - the same "nothing to act on" shape every
                 // other NotFound code in this group already gets.
                 or "Module.NotEnabled" => StatusCodes.Status404NotFound,
-            "Conversation.Forbidden" => StatusCodes.Status403Forbidden,
+            // `23-71`: the identical shape as Conversation.Forbidden right above - a real permission
+            // holder refused for a second, orthogonal reason (holding no seat), not a malformed
+            // request or a conflict with anything concurrent. ConversationErrors.OperatorHasNoSeat's
+            // own remarks.
+            "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"

@@ -12,7 +12,7 @@ public class AssignConversationHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
     private static (AssignConversationHandler Handler, FakeConversationRepository Conversations, FakePermissionChecker Permissions, FakeConversationAssignmentLog AssignmentLog, FakeOperatorCapacity Capacity, FakeUnitOfWork UnitOfWork, Conversation Conversation)
-        CreateHandlerWithWaitingConversation(bool grantPermission = true)
+        CreateHandlerWithWaitingConversation(bool grantPermission = true, bool holdsSeat = true)
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
@@ -24,11 +24,14 @@ public class AssignConversationHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ConversationAssign);
         }
 
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5, holdsSeat: holdsSeat));
+
         var assignmentLog = new FakeConversationAssignmentLog();
         var capacity = new FakeOperatorCapacity();
         var unitOfWork = new FakeUnitOfWork();
         var handler = new AssignConversationHandler(
-            conversations, assignmentLog, permissions, capacity, unitOfWork, new FakeIdGenerator(), new FakeClock(Now));
+            conversations, assignmentLog, permissions, operators, capacity, unitOfWork, new FakeIdGenerator(), new FakeClock(Now));
         return (handler, conversations, permissions, assignmentLog, capacity, unitOfWork, conversation);
     }
 
@@ -134,8 +137,10 @@ public class AssignConversationHandlerTests
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationAssign);
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5));
         var handler = new AssignConversationHandler(
-            conversations, new FakeConversationAssignmentLog(), permissions, new FakeOperatorCapacity(),
+            conversations, new FakeConversationAssignmentLog(), permissions, operators, new FakeOperatorCapacity(),
             new FakeUnitOfWork(), new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
@@ -174,9 +179,11 @@ public class AssignConversationHandlerTests
         // operator is still refused, not that an unpermitted one is.
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationAssign);
+        var operators = new FakeOperatorRepository();
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5));
         var assignmentLog = new FakeConversationAssignmentLog();
         var handler = new AssignConversationHandler(
-            conversations, assignmentLog, permissions, new FakeOperatorCapacity(), new FakeUnitOfWork(),
+            conversations, assignmentLog, permissions, operators, new FakeOperatorCapacity(), new FakeUnitOfWork(),
             new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
@@ -216,6 +223,32 @@ public class AssignConversationHandlerTests
     /// same "an operator never sees `40P01`" guarantee `TransferConversationHandler` already gives for
     /// its own transaction.
     /// </summary>
+    /// <summary>
+    /// `23-71`: the self-claim conflation this item exists to close. This operator genuinely holds
+    /// `conversation:assign` (the permission check alone would pass) but holds no seat - exactly the
+    /// newly-reachable shape once an administrator can sign in without one (the Operator role, which
+    /// grants `conversation:assign`, is held alongside Admin by every account's own registering owner).
+    /// Refused before the conversation is ever touched, the same "before touching the conversation"
+    /// shape <see cref="HandleAsync_WhenNotPermitted_ReturnsForbidden_BeforeTouchingTheConversation"/>
+    /// already proves for the permission check right above this one.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheOperatorHoldsNoSeat_ReturnsOperatorHasNoSeat_BeforeTouchingTheConversation()
+    {
+        var (handler, _, _, assignmentLog, capacity, _, conversation) =
+            CreateHandlerWithWaitingConversation(grantPermission: true, holdsSeat: false);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.AssignConversation.AssignConversation(conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.OperatorHasNoSeat", result.Error!.Value.Code);
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Empty(assignmentLog.Opened);
+        Assert.Empty(capacity.UnconditionalClaims);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenCapacityClaimAlwaysLosesToContention_ReturnsClaimContended()
     {

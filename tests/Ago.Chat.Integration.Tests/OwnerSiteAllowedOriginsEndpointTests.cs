@@ -250,6 +250,9 @@ public sealed class OwnerSiteAllowedOriginsEndpointTests(OperatorOidcFixture fix
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
 
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - see
+        // OfflineAutoReplyDeliveryEndToEndTests' own remarks on this same addition.
+        builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();

@@ -43,6 +43,7 @@ public class SendOfflineAutoReplyHandlerTests
         bool enabled = true,
         bool onlineOperator = false,
         bool offlineOperator = false,
+        bool seatlessOnlineOperator = false,
         bool assigned = false,
         bool blocked = false,
         string visitorText = "hello, anybody there?")
@@ -61,6 +62,15 @@ public class SendOfflineAutoReplyHandlerTests
         if (offlineOperator)
         {
             operators.Seed(new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, 5));
+        }
+
+        if (seatlessOnlineOperator)
+        {
+            // `23-71`: a seatless administrator who happens to be connected (Online) is not staff
+            // covering the queue - the identical "on duty means seated" reasoning
+            // IOperatorRepository.AnyOnlineForSiteAsync's own remarks give, proven here rather than
+            // merely reasoned about: WhenTheOnlyOnlineOperatorHoldsNoSeat_TheReplyIsStillSent below.
+            operators.Seed(new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Online, 5, holdsSeat: false));
         }
 
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
@@ -215,6 +225,20 @@ public class SendOfflineAutoReplyHandlerTests
 
         Assert.Equal(OfflineAutoReplyOutcome.OperatorOnline, result.Value);
         Assert.Empty(fixture.Outbox.Enqueued);
+    }
+
+    /// <summary>`23-71`: fault injection for the routing side of this item's own guarantee - a
+    /// seatless administrator connected and `Online` (now reachable, since this item lets them sign in
+    /// at all) must not be read as "somebody is covering the queue", which would silently swallow the
+    /// scripted reply a genuinely unstaffed shop is supposed to send.</summary>
+    [Fact]
+    public async Task WhenTheOnlyOnlineOperatorHoldsNoSeat_TheReplyIsStillSent()
+    {
+        var fixture = CreateFixture(seatlessOnlineOperator: true);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(OfflineAutoReplyOutcome.Sent, result.Value);
     }
 
     [Fact]

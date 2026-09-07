@@ -167,7 +167,7 @@ public sealed class AssignConversationConcurrencyTests(ConcurrencyTestFixture fi
         await using var db = fixture.CreateDbContext();
         var handler = new AssignConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-            new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+            new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
 
         return await handler.HandleAsync(
             new AssignConversation(conversationId, operatorId, seed.SiteId), CancellationToken.None);

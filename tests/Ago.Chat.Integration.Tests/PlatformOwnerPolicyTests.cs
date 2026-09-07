@@ -144,6 +144,9 @@ public sealed class PlatformOwnerPolicyTests(OperatorOidcFixture fixture)
                     services.AddDbContext<AgoChatDbContext>((provider, options) =>
                         options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
                     services.AddScoped<IOperatorRepository, OperatorRepository>();
+                    // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - see
+                    // OfflineAutoReplyDeliveryEndToEndTests' own remarks on this same addition.
+                    services.AddScoped<IPermissionChecker, PermissionChecker>();
                     services.AddScoped<ResolveOperatorIdentityHandler>();
                     services.AddHttpContextAccessor();
                     services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
