@@ -7,6 +7,7 @@ using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
+using Ago.Chat.Application.UseCases.GetTenantAgreementsForSite;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -263,6 +264,76 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
     }
 
     /// <summary>
+    /// `23-52`'s own "what must be demonstrated": a tenant can read back, through their own operator
+    /// token, exactly the acceptance registration recorded - naming the version, not merely that
+    /// something was accepted. Continues the sibling test right above (same seeding, same
+    /// registration call) with the one thing that test does not prove: that the tenant's own account
+    /// can see it without a database open in front of anyone. A *fresh* token is required
+    /// (`RegisterSite_TheCreatedOperatorsToken_SubsequentlyWorksThroughRequireOperatorIdentity`'s own
+    /// reasoning) because the registering token predates the `operators` row and carries no
+    /// `OperatorId`/`SiteId` claim for `RequireOperatorIdentity` to check.
+    /// </summary>
+    [Fact]
+    public async Task GetTenantAgreements_AfterARequiredDocumentWasAccepted_ReturnsItsRecordedVersion()
+    {
+        var (registrationToken, username) = await fixture.CreateFreshUserAccessTokenAsync();
+        var documentKey = $"tenant-terms-{Guid.NewGuid():N}";
+
+        await using (var seedDb = fixture.CreateDbContext())
+        {
+            seedDb.RequiredDocuments.Add(new RequiredDocumentRecord
+            {
+                Id = Guid.NewGuid(),
+                SubjectKind = AcceptanceSubjectKind.Tenant,
+                DocumentKey = documentKey,
+            });
+            var document = Document.Create(new DocumentId(Guid.NewGuid()), documentKey);
+            document.Publish(
+                new PublishedDocumentVersionId(Guid.NewGuid()), "Tenant Terms", "DRAFT v1 - awaiting legal review.", DateTimeOffset.UtcNow);
+            seedDb.Documents.Add(document);
+            await seedDb.SaveChangesAsync();
+        }
+
+        try
+        {
+            await using var host = await BuildTestHostAsync();
+
+            Guid siteId;
+            using (var registrationClient = host.GetTestClient())
+            {
+                registrationClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", registrationToken);
+                var response = await registrationClient.PostAsJsonAsync(
+                    "/api/v1/sites", new SitesEndpoints.RegisterSiteRequest("Acme Support", "https://shop.example.com"));
+                Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+                var body = await response.Content.ReadFromJsonAsync<SitesEndpoints.RegisterSiteResponse>();
+                Assert.NotNull(body);
+                siteId = body.SiteId;
+            }
+
+            var operatorToken = await fixture.RefreshAccessTokenAsync(username);
+            using var operatorClient = host.GetTestClient();
+            operatorClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", operatorToken);
+
+            var agreementsResponse = await operatorClient.GetAsync($"/api/v1/sites/{siteId}/agreements");
+
+            Assert.Equal(HttpStatusCode.OK, agreementsResponse.StatusCode);
+            var agreements = await agreementsResponse.Content.ReadFromJsonAsync<List<SitesEndpoints.TenantAgreementResponse>>();
+            Assert.NotNull(agreements);
+            var agreement = Assert.Single(agreements, a => a.DocumentKey == documentKey);
+            Assert.Equal("v1", agreement.DocumentVersion);
+        }
+        finally
+        {
+            // See the sibling test above's own remarks - real, global, undeleted-by-design state on a
+            // fixture shared with the rest of this collection.
+            await using var cleanup = fixture.CreateDbContext();
+            await cleanup.RequiredDocuments.Where(r => r.DocumentKey == documentKey).ExecuteDeleteAsync();
+            await cleanup.PublishedDocumentVersions.Where(v => v.DocumentKey == documentKey).ExecuteDeleteAsync();
+            await cleanup.Documents.Where(d => d.DocumentKey == documentKey).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>
     /// `24-03`'s own registration-blocking case: the owner declared <paramref name="documentKey"/>
     /// (a fresh, unpublished one, seeded below) required before publishing anything under it. Real
     /// host, real database - registration must fail with `Site.AgreementUnavailable` and create
@@ -349,6 +420,12 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IDocumentRepository, DocumentRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
+        // `23-52`: SitesEndpoints now also maps the tenant's own read of what their account accepted
+        // (`MapTenantAgreementsEndpoint`, its own separate Map call - see that method's own remarks
+        // for why). Same "every handler for every route this file maps must resolve from this host's
+        // own container" reasoning as the export/message-archive registrations below.
+        builder.Services.AddScoped<IAcceptanceRepository, AcceptanceRepository>();
+        builder.Services.AddScoped<GetTenantAgreementsForSiteHandler>();
         // `16-03`: SitesEndpoints now also maps the export routes - every handler for every route it
         // maps must resolve from this host's own container, even one this test never calls, because
         // ASP.NET Core builds every mapped endpoint's metadata eagerly the first time any request is
@@ -406,6 +483,9 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
 
         // The real production mapping - no duplicated route/handler logic.
         app.MapSitesEndpoints();
+        // `23-52`: own Map call, deliberately not folded into MapSitesEndpoints - see
+        // MapTenantAgreementsEndpoint's own remarks.
+        app.MapTenantAgreementsEndpoint();
         app.MapGet("/operator-only", (HttpContext _) => Results.Ok())
             .RequireAuthorization(new AuthorizeAttribute
             {

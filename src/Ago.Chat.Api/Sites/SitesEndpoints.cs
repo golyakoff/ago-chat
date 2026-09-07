@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
 using Ago.Chat.Application.UseCases.GetContactRevealsForSite;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
+using Ago.Chat.Application.UseCases.GetTenantAgreementsForSite;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
@@ -107,6 +108,20 @@ public static class SitesEndpoints
     public static void MapContactRevealsEndpoint(this WebApplication app)
     {
         app.MapGet("/api/v1/sites/{siteId:guid}/contact-reveals", HandleGetContactRevealsAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+    }
+
+    /// <summary>
+    /// `23-52`: `GET /api/v1/sites/{siteId}/agreements` - the tenant's own read of what their account
+    /// accepted from AGO, and when. Its own <c>Map</c> call, the identical reason
+    /// <see cref="MapAccessRecordsEndpoint"/>/<see cref="MapContactRevealsEndpoint"/> above are their
+    /// own: several stripped-down integration test hosts call <see cref="MapSitesEndpoints"/> without
+    /// registering every route's own handler in their DI container, and Minimal API cannot build any
+    /// endpoint's metadata once one endpoint's service parameter cannot be resolved.
+    /// </summary>
+    public static void MapTenantAgreementsEndpoint(this WebApplication app)
+    {
+        app.MapGet("/api/v1/sites/{siteId:guid}/agreements", HandleGetTenantAgreementsAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -319,6 +334,30 @@ public static class SitesEndpoints
     private static ContactRevealDto ToDto(ContactRevealItem item) => new(
         item.Id, item.OccurredAt, item.ConversationId, item.ContactDetailId, item.OperatorId, item.Surface);
 
+    /// <summary>
+    /// `23-52`: `GET /api/v1/sites/{siteId}/agreements` - a flat, unpaginated list (the same
+    /// "small and bounded" shape `IAcceptanceRepository.GetForSubjectAsync`'s own remarks accept,
+    /// `HandleListMessageArchivesAsync`'s own bare-array response right below is the identical
+    /// precedent), never a keyset page the way access-records/contact-reveals above are - a tenant
+    /// accepts a handful of documents over the life of an account, not thousands.
+    /// </summary>
+    private static async Task<IResult> HandleGetTenantAgreementsAsync(
+        Guid siteId, GetTenantAgreementsForSiteHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetTenantAgreementsForSite(new SiteId(siteId), user.GetOperatorId()), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(result.Value
+            .Select(a => new TenantAgreementResponse(a.DocumentKey, a.DocumentVersion, a.AcceptedAt, a.ClientIp, a.UserAgent))
+            .ToList());
+    }
+
     /// <summary>`13-06`: `GET /api/v1/sites/{siteId}/message-archives` - every retention period this
     /// site currently has an archive object for, newest first.</summary>
     private static async Task<IResult> HandleListMessageArchivesAsync(
@@ -385,4 +424,12 @@ public static class SitesEndpoints
     public sealed record MessageArchiveResponse(string RetentionClass, DateOnly PeriodStart, DateOnly PeriodEnd, DateTimeOffset ArchivedAt);
 
     public sealed record MessageArchiveDownloadResponse(Uri DownloadUrl);
+
+    /// <summary>`23-52`'s own wire shape - one accepted document version, on this site's own account.
+    /// <paramref name="DocumentVersion"/> is the same `"v{n}"` string a support conversation would
+    /// quote (`adr/0114`); reading the version's own text is `GET /api/v1/documents/{DocumentKey}/versions/{DocumentVersion}`,
+    /// the identical unauthenticated published surface `DocumentEndpoints` already serves - this
+    /// response deliberately does not duplicate the text itself.</summary>
+    public sealed record TenantAgreementResponse(
+        string DocumentKey, string DocumentVersion, DateTimeOffset AcceptedAt, string? ClientIp, string? UserAgent);
 }
