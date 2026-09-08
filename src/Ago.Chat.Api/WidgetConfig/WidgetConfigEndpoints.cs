@@ -3,6 +3,7 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Domain;
+using System.Text.Json.Serialization;
 
 namespace Ago.Chat.Api.WidgetConfig;
 
@@ -73,9 +74,32 @@ public static class WidgetConfigEndpoints
         new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
             dto.RequireContactConsent);
 
+    /// <summary>
+    /// <para>
+    /// `23-108`: <see cref="RequireContactConsent"/> carries <c>[JsonRequired]</c> and the others do
+    /// not, and the asymmetry is the point. This is a PUT - a full replacement - so every field is
+    /// meant to be sent, but only one of them is a <b>gate</b>: while it is on, no contact detail is
+    /// recorded until the visitor has accepted the tenant's consent document
+    /// (<c>GetConsentRequirement</c>).
+    /// </para>
+    /// <para>
+    /// A missing <c>bool</c> binds to <c>false</c>, silently, and for a gate that means an omission
+    /// turns enforcement off while looking like an ordinary save. `ago-console` did exactly that for
+    /// as long as this field existed: its own DTO had no such property and it serialises that object
+    /// as the whole body, so saving a colour would have cleared the gate. Nobody noticed because the
+    /// console also had no way to switch the gate on, so the value was never anything but
+    /// <c>false</c> to begin with.
+    /// </para>
+    /// <para>
+    /// The other fields are left as they are deliberately. A missing colour binding to <c>null</c>
+    /// means "no colour", which is a legitimate value a tenant can choose, and the same is true of the
+    /// notice text and its URL - there is no state those can silently destroy. Marking every field
+    /// required would be tidier and would say something false about what is at stake.
+    /// </para>
+    /// </summary>
     public sealed record UpdateWidgetConfigRequest(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
-        bool RequireContactConsent);
+        [property: JsonRequired] bool RequireContactConsent);
 
     public sealed record WidgetConfigResponse(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,

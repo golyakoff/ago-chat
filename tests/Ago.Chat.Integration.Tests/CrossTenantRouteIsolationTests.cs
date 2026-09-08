@@ -329,9 +329,17 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
 
     private const string VictimColorHex = "#0000ff";
 
+    /// <summary>
+    /// `23-108`: the body states <c>requireContactConsent</c> because
+    /// <c>UpdateWidgetConfigRequest</c> now marks it <c>[JsonRequired]</c> - a gate that binds to
+    /// <c>false</c> when omitted is a gate an omission switches off. Without it this test still
+    /// passed its own headline claim - nothing was changed on the victim site - but for the wrong
+    /// reason: the request failed to bind at all, so it never reached the authorization check this
+    /// test exists to exercise, and a 400 stood in for a 403.
+    /// </summary>
     private static Task<HttpResponseMessage> Put(HttpClient client, string route, string? colorHex, string position) =>
         client.PutAsync(route, new StringContent(
-            $$"""{"primaryColorHex":{{(colorHex is null ? "null" : $"\"{colorHex}\"")}},"position":"{{position}}"}""",
+            $$"""{"primaryColorHex":{{(colorHex is null ? "null" : $"\"{colorHex}\"")}},"position":"{{position}}","requireContactConsent":false}""",
             Encoding.UTF8,
             "application/json"));
 
