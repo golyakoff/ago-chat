@@ -69,12 +69,15 @@ public sealed class MessageArchiveJob(
     {
         var now = clock.UtcNow;
         var currentMonthStart = new DateOnly(now.Year, now.Month, 1);
-        // `13-08`: the identical per-class cutoff map MessagePartitionPruneJob.PruneAsync builds - both
-        // read the same MessagePartitionPruneJobOptions instance, so a class's window can never drift
-        // between "archived" and "removed" (this type's own remarks on why it shares that options type
-        // at all).
-        var cutoffsByClass = RetentionClass.KnownClasses.ToDictionary(
-            c => c, c => currentMonthStart.AddMonths(-pruneOptions.Value.EffectiveHorizonMonths(c)));
+        // `13-08`/`23-74`: the identical per-class cutoff map MessagePartitionPruneJob.PruneAsync builds
+        // - both read the same MessagePartitionPruneJobOptions instance, so a class's window can never
+        // drift between "archived" and "removed", and a class with no time-based window at all (`23-74`:
+        // starter/growth, "forever, while paid") is never archived either - there is nothing to archive
+        // ahead of a removal that is never going to happen.
+        var cutoffsByClass = RetentionClass.KnownClasses
+            .Select(c => (Class: c, Horizon: pruneOptions.Value.EffectiveHorizonMonths(c)))
+            .Where(x => x.Horizon is not null)
+            .ToDictionary(x => x.Class, x => currentMonthStart.AddMonths(-x.Horizon!.Value));
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 

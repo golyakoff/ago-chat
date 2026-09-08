@@ -60,12 +60,15 @@ public sealed class MessagePartitionPruneJob(
     {
         var startedAt = clock.UtcNow;
         var currentMonthStart = new DateOnly(startedAt.Year, startedAt.Month, 1);
-        // `13-08`: one cutoff per known retention class, each the class's own effective (ceiling-capped)
-        // horizon - MessagePartitionPruneJobOptions.EffectiveHorizonMonths's own remarks explain why the
-        // ceiling always wins. Computed once per cycle, not once per bucket - the same fixed 64-bucket,
-        // 3-class grid every call below reuses.
-        var cutoffsByClass = RetentionClass.KnownClasses.ToDictionary(
-            c => c, c => currentMonthStart.AddMonths(-options.Value.EffectiveHorizonMonths(c)));
+        // `13-08`/`23-74`: one cutoff per known retention class that actually has a time-based window -
+        // MessagePartitionPruneJobOptions.EffectiveHorizonMonths's own remarks explain why an absent
+        // entry (starter/growth, "forever, while paid") is left out of this map entirely rather than
+        // defaulted to the ceiling. Computed once per cycle, not once per bucket - the same fixed
+        // 64-bucket grid every call below reuses.
+        var cutoffsByClass = RetentionClass.KnownClasses
+            .Select(c => (Class: c, Horizon: options.Value.EffectiveHorizonMonths(c)))
+            .Where(x => x.Horizon is not null)
+            .ToDictionary(x => x.Class, x => currentMonthStart.AddMonths(-x.Horizon!.Value));
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
@@ -94,9 +97,11 @@ public sealed class MessagePartitionPruneJob(
                 var attachmentIds = await MessagePartitionPruneQuery.ListReferencedAttachmentIdsAsync(connection, slice, cancellationToken);
 
                 var removedRows = await DeleteSliceAsync(connection, slice, cancellationToken);
+                // slice was only discovered because its class has a non-null entry in cutoffsByClass
+                // above, so EffectiveHorizonMonths cannot be null here.
                 logger.LogInformation(
                     "Removed {RowCount} message(s) for site {SiteId}, class {RetentionClass}, period {PeriodStart} (past its {Months}-month retention horizon).",
-                    removedRows, slice.SiteId, slice.RetentionClass, slice.PeriodStart, options.Value.EffectiveHorizonMonths(slice.RetentionClass));
+                    removedRows, slice.SiteId, slice.RetentionClass, slice.PeriodStart, options.Value.EffectiveHorizonMonths(slice.RetentionClass)!.Value);
                 removedSlices++;
 
                 await SweepAttachmentsAsync(connection, attachmentIds, slice, cancellationToken);
