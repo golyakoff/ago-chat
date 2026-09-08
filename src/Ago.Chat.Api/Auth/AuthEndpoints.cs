@@ -113,7 +113,8 @@ public static class AuthEndpoints
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl));
+                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl,
+                site.WidgetAttractAttention));
     }
 
     /// <summary>
@@ -230,7 +231,8 @@ public static class AuthEndpoints
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl));
+            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl,
+            site.WidgetAttractAttention));
     }
 
     public sealed record VisitorSessionRequest(string PublicKey);
@@ -260,6 +262,12 @@ public static class AuthEndpoints
     /// position - a malformed or non-`https://` URL here (a wire value never trusted blindly, `WidgetConfig`'s
     /// own server-side validation notwithstanding) falls back to rendering no link, never a thrown
     /// exception on the host page.
+    ///
+    /// `23-63`: <see cref="WidgetAttractAttention"/> joins as one more additive, plain bool field -
+    /// off for every site that has not turned it on. `ago-widget`'s own `scheduleAttractAttention`
+    /// (`ui/widget.ts`) is what actually decides whether to animate - reading `false` unconditionally
+    /// when `prefers-reduced-motion: reduce` is set, whatever this field says - so this server-side
+    /// field only ever states the tenant's own setting, never the effective, motion-aware decision.
     /// </summary>
     public sealed record VisitorSessionResponse(
         string Token,
@@ -268,5 +276,6 @@ public static class AuthEndpoints
         string WidgetPosition,
         string WidgetLocale,
         string? WidgetNoticeText,
-        string? WidgetNoticeUrl);
+        string? WidgetNoticeUrl,
+        bool WidgetAttractAttention);
 }

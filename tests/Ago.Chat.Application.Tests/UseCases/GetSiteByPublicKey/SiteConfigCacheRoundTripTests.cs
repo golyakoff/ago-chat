@@ -27,7 +27,7 @@ public class SiteConfigCacheRoundTripTests
         string? noticeUrl = "https://tenant.example/privacy") =>
         new(
             Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply,
-            "free", noticeText, noticeUrl, ContactVisibility.Visible);
+            "free", noticeText, noticeUrl, ContactVisibility.Visible, false);
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;

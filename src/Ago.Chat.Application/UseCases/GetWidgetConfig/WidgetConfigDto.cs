@@ -22,6 +22,8 @@ namespace Ago.Chat.Application.UseCases.GetWidgetConfig;
 /// `24-05`: <see cref="RequireContactConsent"/> joins as one more additive field, straight off
 /// `Ago.Chat.Domain.WidgetConfig` - the same "no second domain method to read from" shape
 /// <see cref="NoticeText"/>/<see cref="NoticeUrl"/> already established for themselves.
+/// `23-63`: <see cref="AttractAttention"/> joins on the identical terms - straight off
+/// `Ago.Chat.Domain.WidgetConfig`, nothing to validate, no second domain method to read from.
 public sealed record WidgetConfigDto(
     string? PrimaryColorHex, Position Position, Locale Locale, string? NoticeText, string? NoticeUrl,
-    bool RequireContactConsent);
+    bool RequireContactConsent, bool AttractAttention);

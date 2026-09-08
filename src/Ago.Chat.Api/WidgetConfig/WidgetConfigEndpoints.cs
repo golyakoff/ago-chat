@@ -24,6 +24,10 @@ namespace Ago.Chat.Api.WidgetConfig;
 ///
 /// `16-04`: `NoticeText`/`NoticeUrl` join as two more additive, nullable string fields - no enum
 /// conversion needed, they cross the wire exactly as `Ago.Chat.Domain.WidgetConfig` holds them.
+///
+/// `23-63`: `AttractAttention` joins as a plain bool, off by default - a tenant turns «Привлекать
+/// внимание» on here, and it rides `SiteSettingsChanged`/`SiteConfigDto` onto a returning visitor's
+/// own bootstrap the same way every other field on this endpoint already does.
 /// </summary>
 public static class WidgetConfigEndpoints
 {
@@ -63,7 +67,8 @@ public static class WidgetConfigEndpoints
                 request.Locale,
                 request.NoticeText,
                 request.NoticeUrl,
-                request.RequireContactConsent),
+                request.RequireContactConsent,
+                request.AttractAttention),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
@@ -71,13 +76,13 @@ public static class WidgetConfigEndpoints
 
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
         new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
-            dto.RequireContactConsent);
+            dto.RequireContactConsent, dto.AttractAttention);
 
     public sealed record UpdateWidgetConfigRequest(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
-        bool RequireContactConsent);
+        bool RequireContactConsent, bool AttractAttention);
 
     public sealed record WidgetConfigResponse(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
-        bool RequireContactConsent);
+        bool RequireContactConsent, bool AttractAttention);
 }

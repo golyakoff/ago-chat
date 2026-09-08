@@ -52,8 +52,14 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// describe ("composes rather than duplicates") - so the same event that evicts every other cached
 /// setting (<c>SiteSettingsChanged</c>, via <c>SiteContactVisibilityUpdatedMapper</c>) keeps this field
 /// fresh too, with no new cache-invalidation code.
+/// `23-63`: <see cref="WidgetAttractAttention"/> joins on the identical terms <see cref="WidgetNoticeText"/>
+/// did - an additive field on the existing cached DTO, populated identically by both loaders, and
+/// <b>put on the wire</b> by the handshake: whether the launcher animates is a fact the widget's own
+/// bootstrap needs to render correctly, the opposite of <see cref="OfflineAutoReply"/>/<see cref="Tier"/>'s
+/// "never expose to the public key" reasoning.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
     OfflineAutoReplySettings OfflineAutoReply, string Tier,
-    string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility);
+    string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility,
+    bool WidgetAttractAttention);
