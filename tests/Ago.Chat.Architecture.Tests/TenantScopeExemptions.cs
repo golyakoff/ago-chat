@@ -108,6 +108,26 @@ internal static class TenantScopeExemptions
             + "established (gated by SiteManageOperators the ordinary way) - the presented code is what proves the "
             + "caller was actually handed an invite for that site, structurally the same 'ownership already proven "
             + "by construction' shape the visitor entries above use their signed token for.",
+        ["Ago.Chat.Application.UseCases.PreviewOperatorInvite.PreviewOperatorInviteHandler.HandleAsync"] =
+            "`23-70`, the landing page a colleague reaches by opening the invite link before signing in at all - "
+            + "carries no SiteId and no RequestedBy at all, one step earlier in the same flow "
+            + "RedeemOperatorInviteHandler's own entry above describes: that handler's caller at least holds a "
+            + "validated Keycloak token (RequireKeycloakIdentity); this one's caller may hold no session "
+            + "whatsoever (AllowAnonymous(), OperatorInviteEndpoints), because 'a stranger opening a link they "
+            + "were sent' (this item's own backlog text) is the entire premise. The route is POST "
+            + "/api/v1/operator-invites/preview with the code in the request body, not a GET with the code in "
+            + "the path - found live against this deployment's own Jaeger that a GET path segment reaches "
+            + "traces verbatim where a POST body does not, so the console resubmits the code it read off its "
+            + "own /invite/{code} browser route rather than this API route ever carrying it in a URL. What "
+            + "scopes the read is the presented code itself, not a claim: "
+            + "IOperatorInvitePreviewReadStore.GetByCodeHashAsync looks the row up by its own code_hash - the "
+            + "identical high-entropy, CSPRNG-generated secret "
+            + "CreateOperatorInviteHandler already produced under a real SiteManageOperators gate - and returns "
+            + "only the three fields this item's own trap allows a stranger to see (site name, inviter's "
+            + "display name, expiry), never a role, a plan or any other tenant's data. A code matching no row "
+            + "answers the identical info-hiding NotFound RedeemOperatorInviteHandler's own entry already "
+            + "argues for the redemption side of this exact code. Read-only - nothing is written, redeemable "
+            + "state included.",
 
         // ---------------------------------------------------------------------------------------
         // Consumer and worker side. No external caller reaches these: the input is an integration

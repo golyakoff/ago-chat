@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
+using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
@@ -408,6 +409,112 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// `23-70`'s own Done-when: "a colleague opening the link sees what they are joining and when it
+    /// expires." No `Authorization` header on this call at all - proving `AllowAnonymous()` actually
+    /// works, not merely asserted from the route registration. `POST` with the code in the body, not
+    /// `GET` with it in the path - `OperatorInviteEndpoints`' own class-level remarks have the
+    /// live-Jaeger reasoning for why.
+    /// </summary>
+    [Fact]
+    public async Task Preview_ARealInvite_ReturnsTheSiteNameAndInviterWithNoAuthorizationHeaderAtAll()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        using var createClient = host.GetTestClient();
+        var invite = await CreateInviteAsync(createClient, adminToken, adminSite, "Operator");
+
+        using var anonymousClient = host.GetTestClient();
+        var response = await anonymousClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/preview", new OperatorInviteEndpoints.PreviewOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await response.Content.ReadFromJsonAsync<OperatorInviteEndpoints.OperatorInvitePreviewResponse>();
+        Assert.NotNull(preview);
+        Assert.Equal("Acme Support", preview.SiteName);
+        Assert.Equal("Valid", preview.Status);
+        // Sub-millisecond tolerance, not exact equality - `invite.ExpiresAt` is the in-memory value
+        // `CreateOperatorInviteHandler` returned before this row ever touched Postgres; `preview.ExpiresAt`
+        // is read back from the stored `timestamptz` column, which keeps microsecond precision, not the
+        // full 100ns tick precision .NET carries in memory. The identical tolerance
+        // `OwnerSiteDetailEndpointTests`/`OwnerSitesEndpointTests` already use for the same round-trip
+        // truncation on their own `CreatedAt`/`ExpiresAt` columns.
+        Assert.True((preview.ExpiresAt - invite.ExpiresAt).Duration() < TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>The "not 404 and not throw" trap this item's own backlog names, proven against a real
+    /// expired row: a `200` carrying `Status: "Expired"`, never a bare `410`/`404` with no body a
+    /// landing page could render a sentence from.</summary>
+    [Fact]
+    public async Task Preview_AnExpiredInvite_ReturnsOkWithExpiredStatus_NotAnErrorStatusCode()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var inviteRow = await db.OperatorInvites.SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
+            db.Entry(inviteRow).Property("ExpiresAt").CurrentValue = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        using var anonymousClient = host.GetTestClient();
+        var response = await anonymousClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/preview", new OperatorInviteEndpoints.PreviewOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await response.Content.ReadFromJsonAsync<OperatorInviteEndpoints.OperatorInvitePreviewResponse>();
+        Assert.NotNull(preview);
+        Assert.Equal("Expired", preview.Status);
+    }
+
+    /// <summary>The other half of the same trap, against a real redeemed row.</summary>
+    [Fact]
+    public async Task Preview_AnAlreadyRedeemedInvite_ReturnsOkWithRedeemedStatus()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+
+        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+        Assert.Equal(HttpStatusCode.OK, redeemResponse.StatusCode);
+
+        using var anonymousClient = host.GetTestClient();
+        var response = await anonymousClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/preview", new OperatorInviteEndpoints.PreviewOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var preview = await response.Content.ReadFromJsonAsync<OperatorInviteEndpoints.OperatorInvitePreviewResponse>();
+        Assert.NotNull(preview);
+        Assert.Equal("Redeemed", preview.Status);
+    }
+
+    /// <summary>The genuinely-wrong-code case - `IOperatorInvitePreviewReadStore`'s own info-hiding
+    /// precedent: a mistyped code and a code that never existed both answer the identical `404`.</summary>
+    [Fact]
+    public async Task Preview_ANonExistentCode_IsRejectedNotFound()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/operator-invites/preview", new OperatorInviteEndpoints.PreviewOperatorInviteRequest("invite_does-not-exist"));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private async Task<(Guid SiteId, Guid OperatorId, string Token)> RegisterFreshSiteAsync(HttpClient client)
     {
         var (token, _) = await fixture.CreateFreshUserAccessTokenAsync();
@@ -474,6 +581,15 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<CreateOperatorInviteHandler>();
         builder.Services.AddScoped<RedeemOperatorInviteHandler>();
+        // `23-70`: the anonymous landing-page read - its own read store and options, same "resolve
+        // from this stripped-down host's own container" shape as every other registration here.
+        builder.Services.AddScoped<IOperatorInvitePreviewReadStore, OperatorInvitePreviewReadStore>();
+        builder.Services.AddScoped<PreviewOperatorInviteHandler>();
+        // `IOptions<T>`, not the bare class - unlike RegisterSiteRateLimitOptions/SiteExportRateLimitOptions
+        // right above (both injected as plain classes by their own endpoints), HandlePreviewAsync takes
+        // `IOptions<OperatorInvitePreviewRateLimitOptions>`, the identical shape DocumentEndpoints' own
+        // rate-limited handlers use.
+        builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new OperatorInvitePreviewRateLimitOptions()));
         // `16-03`: SitesEndpoints now also maps the export routes - see SiteRegistrationTests'
         // own remarks (this file's own precedent for a stripped-down host). IPermissionChecker is
         // already registered above.

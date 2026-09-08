@@ -79,6 +79,10 @@ public static class ServiceCollectionExtensions
         // `23-22`: the team screen's own read - a sibling to IOperatorAnalyticsReadStore over the same
         // table, not a fourth method on IOperatorRepository (that port's own remarks on why).
         services.AddScoped<IOperatorTeamReadStore, OperatorTeamReadStore>();
+        // `23-70`: the invite landing page's own anonymous read - its own port, not a fifth method on
+        // IOperatorInviteRepository/IOperatorInviteRedemptionRepository (IOperatorInvitePreviewReadStore's
+        // own remarks on why).
+        services.AddScoped<IOperatorInvitePreviewReadStore, OperatorInvitePreviewReadStore>();
 
         // `23-17`: an operator's own work, reported against the load they carried it under - its own
         // port, not a fifth method here (IOperatorLoadReportReadStore's own remarks on why).
