@@ -203,6 +203,13 @@ builder.Services
     .Bind(builder.Configuration.GetSection(PublishedDocumentReadRateLimitOptions.SectionName))
     .ValidateOnStart();
 
+// `23-70`: the invite landing page's own per-IP bucket - bound here, not ChatModule, the identical
+// "the endpoint lives in Ago.Chat.Api itself" reasoning the two options right above already give.
+builder.Services
+    .AddOptions<OperatorInvitePreviewRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorInvitePreviewRateLimitOptions.SectionName))
+    .ValidateOnStart();
+
 // 3-06: a per-process random key (this project's original Stage 1 choice) only tolerates a single
 // Ago.Chat.Api instance - found live, against the 3-replica overlay, when a token issued by one pod
 // 401'd on a negotiate request the Gateway's least_conn balancer routed to a different pod (no
