@@ -927,6 +927,12 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // `23-13`: a real repository, not a fake - this suite already runs against a real Postgres
         // (fixture.DataSource), and the whole point of the new tests below is proving a real row lands.
         builder.Services.AddScoped<IModuleRevokeOverrideRepository, ModuleRevokeOverrideRepository>();
+        // `23-102`: EnableModuleForSiteAsOwnerHandler now also seeds a module's own permissions into
+        // this site's roles - a real repository, the same "already runs against a real Postgres"
+        // posture as IModuleRevokeOverrideRepository right above, not a fake, since this suite's own
+        // fixture.SeededSiteId carries a real "Admin" role row this handler's own AddPermissionsAsync
+        // call would otherwise have nothing to resolve DI against.
+        builder.Services.AddScoped<IRoleRepository, RoleRepository>();
         // A fake, not a real HTTP call - this suite is about the wire from operator/owner to
         // handler, not about whether a module deployment answers (the identical judgement
         // ModuleEndpointsTests's own remarks make for its sibling).
@@ -953,6 +959,19 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // `ConfiguredModuleEntryPointProvider`'s own unit coverage).
         builder.Services.AddSingleton<IModuleEntryPointProvider>(
             new AnyKeyModuleEntryPointProvider(configureEntryPoint ? new Uri(ConfiguredEntryPoint) : null));
+
+        // `23-102`: the identical "any key resolves the same fixed answer" shape as
+        // AnyKeyModuleEntryPointProvider right above, for the module's own permission set.
+        // ModulePermissionSet.Empty - not a real ModulePermissionSet - deliberately: this suite's
+        // fixture.SeededSiteId's "Admin" role is shared, real Postgres state across every test in this
+        // collection (OperatorOidcFixture.InitializeAsync's own remarks), so a non-empty default here
+        // would have one test's grant silently widen every later test's "Admin" role - the exact
+        // cross-test pollution this suite's own real-repository choices elsewhere are careful to avoid.
+        // The seeding behaviour itself (a non-empty ModulePermissionSet actually landing in the role)
+        // is proven in isolation by RoleRepositoryTests and at the Application level by
+        // EnableModuleForSiteAsOwnerHandlerTests - this file's own job is the HTTP-to-handler wire, not
+        // re-proving that.
+        builder.Services.AddSingleton<IModulePermissionsProvider>(new AnyKeyModulePermissionsProvider(ModulePermissionSet.Empty));
 
         // `23-83`/`adr/0151`: the tenant's own self-service handlers that used to be registered here
         // (EnableModuleForSiteHandler/RotateModuleCredentialHandler/RevokeModuleForSiteHandler/
@@ -1039,6 +1058,16 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     private sealed class AnyKeyModuleEntryPointProvider(Uri? entryPoint) : IModuleEntryPointProvider
     {
         public Uri? TryGet(ModuleKey moduleKey) => entryPoint;
+    }
+
+    /// <summary>`23-102`: resolves every module key to the identical configured
+    /// <see cref="ModulePermissionSet"/> - the same "stands in for the real
+    /// ConfiguredModulePermissionsProvider" role <see cref="AnyKeyModuleEntryPointProvider"/> already
+    /// plays for its sibling port, for the identical reason (this suite's module keys are randomly
+    /// generated per test, so a config section keyed by one literal name would not exercise anything).</summary>
+    private sealed class AnyKeyModulePermissionsProvider(ModulePermissionSet permissions) : IModulePermissionsProvider
+    {
+        public ModulePermissionSet Get(ModuleKey moduleKey) => permissions;
     }
 
     private sealed class RecordingModuleRegistrationGateway : IModuleRegistrationGateway

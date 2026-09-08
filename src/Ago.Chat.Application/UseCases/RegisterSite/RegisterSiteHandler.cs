@@ -76,6 +76,13 @@ public sealed class RegisterSiteHandler(
             // Operator/Admin by day-to-day-vs-configuration everywhere else, so the split
             // continues rather than being re-derived: booking actions and lead-card edits are
             // ordinary operator work, calendar:configure joins Admin below instead.
+            // `23-102`: this exact list is restated a fourth time, in `ago-deploy`'s own
+            // ModulePermissions__calendar__Operator__* configuration - see
+            // ConfiguredModulePermissionsProvider's own remarks for why a fourth restatement, not a
+            // shared reference, is what ModuleKeyLiteralRule leaves available once a per-module lookup
+            // has to be keyed by an opaque ModuleKey at runtime. This array is what a *new* site's
+            // baseline carries at registration, unconditionally; that configuration is what an
+            // *existing* site's roles get brought up to when the calendar module is actually granted.
             Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
             Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
         ];
@@ -95,6 +102,8 @@ public sealed class RegisterSiteHandler(
             Permission.ConversationBlock.Value,
             // `22-05`/`adr/0093`: calendar:configure joins the Admin set - the configuration-shaped
             // action, the same category SiteConfigure already occupies here.
+            // `23-102`: the fourth-restatement note on this array's own Operator sibling above applies
+            // here too - the matching entry is ModulePermissions__calendar__Admin__0 in `ago-deploy`.
             Permission.CalendarConfigure.Value,
             // `24-12`: the tenant's own read of who accessed their data - the same Admin-only,
             // compliance-shaped placement SiteErase/SiteExport already have.

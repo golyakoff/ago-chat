@@ -606,6 +606,11 @@ public sealed class ChatModule : IProductModule
         // by the host, so no explicit AddOptions/Bind step is needed here.
         services.AddSingleton<IModuleEntryPointProvider, ConfiguredModuleEntryPointProvider>();
 
+        // `23-102`: the identical shape again, applied to a module's own permission set - see
+        // IModulePermissionsProvider's own remarks for why this, too, must be a generic keyed lookup
+        // rather than a bound options class or a switch on the module key.
+        services.AddSingleton<IModulePermissionsProvider, ConfiguredModulePermissionsProvider>();
+
         // `23-83`/`adr/0151`: the tenant's own self-service enable/rotate/revoke/verify handlers that
         // used to be registered here are gone, not merely unrouted - see `Api.Modules.ModuleEndpoints`'s
         // own remarks for why. Only the read (`ListEnabledModulesForSiteHandler` below) survives on the

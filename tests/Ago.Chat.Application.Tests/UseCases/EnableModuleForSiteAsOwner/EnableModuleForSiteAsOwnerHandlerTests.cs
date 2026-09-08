@@ -21,7 +21,7 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         EnableModuleForSiteAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
         FakeEnabledModuleReadStore ReadStore, FakeModuleRegistrationGateway RegistrationGateway,
         FakeModuleProvisioningSecretProvider ProvisioningSecrets, FakeModuleEntryPointProvider EntryPoints,
-        FakeSiteRepository Sites);
+        FakeModulePermissionsProvider ModulePermissions, FakeRoleRepository Roles, FakeSiteRepository Sites);
 
     private static Fixture CreateFixture()
     {
@@ -30,13 +30,17 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         var registrationGateway = new FakeModuleRegistrationGateway();
         var provisioningSecrets = new FakeModuleProvisioningSecretProvider();
         var entryPoints = new FakeModuleEntryPointProvider();
+        var modulePermissions = new FakeModulePermissionsProvider();
+        var roles = new FakeRoleRepository();
         var sites = new FakeSiteRepository();
         sites.Seed(new Site(SiteId, "owner-grant-target", allowedOrigins: [], name: "Prospect Barbershop"));
 
         var handler = new EnableModuleForSiteAsOwnerHandler(
-            modules, readStore, registrationGateway, provisioningSecrets, entryPoints, sites, new FakeClock(Now),
-            new FakeIdGenerator());
-        return new Fixture(handler, modules, readStore, registrationGateway, provisioningSecrets, entryPoints, sites);
+            modules, readStore, registrationGateway, provisioningSecrets, entryPoints, modulePermissions, roles,
+            sites, new FakeClock(Now), new FakeIdGenerator());
+        return new Fixture(
+            handler, modules, readStore, registrationGateway, provisioningSecrets, entryPoints, modulePermissions,
+            roles, sites);
     }
 
     private static Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner Command(
@@ -244,5 +248,67 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         Assert.Contains("calendar", result.Error!.Value.Message, StringComparison.Ordinal);
         Assert.Empty(fixture.Modules.All);
         Assert.Empty(fixture.RegistrationGateway.RegisterCalls);
+    }
+
+    /// <summary>`23-102`'s own headline claim: granting a module does not merely record the entitlement,
+    /// it also grows the site's own "Operator"/"Admin" roles by exactly the permissions this deployment
+    /// declared for the module - the gap the backlog item's own report found: a granted site whose roles
+    /// carry nothing a booking action, a booking screen, or a calendar-configuration screen checks.</summary>
+    [Fact]
+    public async Task HandleAsync_SeedsTheModulesPermissions_IntoTheSitesOperatorAndAdminRoles()
+    {
+        var fixture = CreateFixture();
+        fixture.ModulePermissions.Seed(
+            new ModuleKey("calendar"),
+            new ModulePermissionSet(
+                OperatorPermissions: ["booking:confirm", "booking:reject"], AdminPermissions: ["calendar:configure"]));
+
+        var result = await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(
+            new HashSet<string> { "booking:confirm", "booking:reject" },
+            fixture.Roles.PermissionsFor(SiteId, "Operator"));
+        Assert.Equal(new HashSet<string> { "calendar:configure" }, fixture.Roles.PermissionsFor(SiteId, "Admin"));
+    }
+
+    /// <summary>The other half of the same claim, proven the way a fails-before proof would: a module the
+    /// deployment declared *no* extra permissions for adds nothing and still succeeds - the "empty is a
+    /// legitimate answer" half of <c>IModulePermissionsProvider</c>'s own contract, unlike the entry
+    /// point's hard refusal right above.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleDeclaresNoExtraPermissions_GrantsTheModule_AndAddsNothingToEitherRole()
+    {
+        var fixture = CreateFixture();
+        fixture.ModulePermissions.DefaultForEveryKey = ModulePermissionSet.Empty;
+
+        var result = await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(fixture.Roles.PermissionsFor(SiteId, "Operator"));
+        Assert.Empty(fixture.Roles.PermissionsFor(SiteId, "Admin"));
+    }
+
+    /// <summary>The acceptance test the author is about to run for real: re-granting a module a site
+    /// already holds re-seeds the identical permissions rather than erroring or duplicating - proof that
+    /// repairing one of the four sites this item's own backlog item names is exactly a re-grant, not a
+    /// separate mechanism. <see cref="FakeRoleRepository.AddPermissionsAsync"/>'s own union-of-a-`HashSet`
+    /// shape already makes a second identical add inert; this test is what pins that behaviour to this
+    /// handler's own call site rather than merely to the fake.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteAlreadyHoldsAPermissionTheModuleNeeds_AddsItOnlyOnce()
+    {
+        var fixture = CreateFixture();
+        fixture.Roles.SeedPermissions(SiteId, "Operator", "booking:confirm");
+        fixture.ModulePermissions.Seed(
+            new ModuleKey("calendar"),
+            new ModulePermissionSet(OperatorPermissions: ["booking:confirm", "booking:reject"], AdminPermissions: []));
+
+        var result = await fixture.Handler.HandleAsync(Command(expiresAt: null), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(
+            new HashSet<string> { "booking:confirm", "booking:reject" },
+            fixture.Roles.PermissionsFor(SiteId, "Operator"));
     }
 }
