@@ -29,6 +29,12 @@ public sealed class FakeBillingSubscriptionRepository : IBillingSubscriptionRepo
     public Task<BillingSubscription?> GetLatestForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
         Task.FromResult(_all.Where(s => s.SiteId == siteId).OrderByDescending(s => s.CreatedAt).FirstOrDefault());
 
+    /// <summary>`23-86`: mirrors <c>BillingSubscriptionRepository.GetBaseForSiteAsync</c>'s own
+    /// predicate exactly - the identical narrowing to <c>OptionKey is null</c>.</summary>
+    public Task<BillingSubscription?> GetBaseForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        Task.FromResult(
+            _all.Where(s => s.SiteId == siteId && s.OptionKey is null).OrderByDescending(s => s.CreatedAt).FirstOrDefault());
+
     /// <summary>Mirrors <c>BillingSubscriptionRepository.ListDueForRenewalAsync</c>'s own predicate
     /// exactly - a fake that quietly used a different rule than the adapter would let a test pass
     /// against a condition production does not implement.</summary>

@@ -88,4 +88,13 @@ internal static class IdConverters
     public static readonly ValueConverter<ChannelIdentityId?, Guid?> NullableChannelIdentity = new(
         id => id.HasValue ? id.Value.Value : (Guid?)null,
         value => value.HasValue ? new ChannelIdentityId(value.Value) : (ChannelIdentityId?)null);
+
+    /// <summary>`23-86`: <see cref="BillingSubscription.OptionKey"/> - null for the account's own base
+    /// row, a real value for every option row, the same "no value for every row" shape
+    /// <see cref="NullableOperator"/> already establishes for a strongly-typed id, applied here to a
+    /// plain string wrapper (<see cref="ModuleKey"/>'s own converter is this one's non-nullable
+    /// sibling).</summary>
+    public static readonly ValueConverter<BillingOptionKey?, string?> NullableBillingOptionKey = new(
+        key => key.HasValue ? key.Value.Value : null,
+        value => value != null ? new BillingOptionKey(value) : (BillingOptionKey?)null);
 }

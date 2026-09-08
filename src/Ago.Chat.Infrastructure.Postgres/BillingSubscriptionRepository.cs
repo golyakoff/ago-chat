@@ -33,6 +33,18 @@ public sealed class BillingSubscriptionRepository(AgoChatDbContext db) : IBillin
             .OrderByDescending(s => s.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
+    /// <summary>`23-86`: the identical query as <see cref="GetLatestForSiteAsync"/>, narrowed to
+    /// `OptionKey IS NULL` - see the port's own remarks for why this exists. No new index: this reuses
+    /// `ix_billing_subscriptions_site_id_created_at` exactly as <see cref="GetLatestForSiteAsync"/>
+    /// already does, since `option_key` is not part of that index's own key and this is the same
+    /// low-frequency, single-operator-driven console read that method's own remarks already justify not
+    /// indexing further.</summary>
+    public Task<BillingSubscription?> GetBaseForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        db.BillingSubscriptions
+            .Where(s => s.SiteId == siteId && s.OptionKey == null)
+            .OrderByDescending(s => s.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public async Task<IReadOnlyList<BillingSubscriptionId>> ListDueForRenewalAsync(
         DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
     {

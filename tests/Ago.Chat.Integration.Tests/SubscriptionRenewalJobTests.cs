@@ -1,7 +1,9 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Infrastructure.YooKassa;
@@ -16,6 +18,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -186,6 +189,201 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         Assert.Equal(5, site.SeatLimit);
     }
 
+    // `23-86`/`adr/0159`: an option's own renewal grants its entitlement, its own lapse revokes it -
+    // proven directly against SubscriptionRenewalApplier rather than through the whole job/handler
+    // pipeline, since ProcessSubscriptionRenewalHandler deliberately refuses to compute a recurring
+    // charge amount for an option (no price source exists in this item's scope - see that handler's
+    // own remarks). The applier is exactly where this item's brief places the requirement ("same
+    // transaction as the existing applier writes"), so it is exactly what these tests exercise.
+
+    [Fact]
+    public async Task ApplyRenewalSuccessAsync_ForAnOptionSubscription_GrantsItsEntitlement_AndLeavesTheSiteUntouched()
+    {
+        var (siteId, _) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now + TimeSpan.FromDays(20));
+        var optionId = await SeedDueOptionSubscriptionAsync(siteId, new BillingOptionKey("channel-telegram"), periodEnd: Now);
+
+        await using var db = fixture.CreateDbContext();
+        var applier = BuildApplier(db, new Dictionary<string, string?> { ["channel-telegram"] = "channel" });
+
+        await applier.ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        var option = await verify.BillingSubscriptions.SingleAsync(s => s.Id == optionId);
+        Assert.Equal(BillingSubscriptionStatus.Succeeded, option.Status);
+        Assert.Equal(Now + BillingSubscription.PeriodLength, option.CurrentPeriodEnd);
+
+        var grant = await verify.ModuleQuantityGrants.SingleAsync(g => g.SiteId == siteId && g.ModuleKey == new ModuleKey("channel"));
+        Assert.Equal(1, grant.Quantity);
+
+        var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(
+            o => o.Type == nameof(ModuleQuantityGranted) && o.PartitionKey == siteId.Value.ToString());
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ModuleQuantityGranted>(outboxRow.Payload)!;
+        Assert.Equal("channel", contract.ModuleKey);
+        Assert.Equal(1, contract.Quantity);
+
+        // The site's own Tier/SeatLimit are the base subscription's business alone - an option's own
+        // renewal must never touch them.
+        var site = await verify.Sites.SingleAsync(s => s.Id == siteId);
+        Assert.Equal(SubscriptionTierBands.Starter, site.Tier);
+        Assert.Equal(5, site.SeatLimit);
+    }
+
+    [Fact]
+    public async Task ApplyLapseAsync_ForAnOptionSubscription_RevokesItsEntitlement_AndLeavesTheBaseSiteUntouched()
+    {
+        var (siteId, _) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now + TimeSpan.FromDays(20));
+        var optionId = await SeedDueOptionSubscriptionAsync(siteId, new BillingOptionKey("channel-telegram"), periodEnd: Now);
+        var mappings = new Dictionary<string, string?> { ["channel-telegram"] = "channel" };
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            // First renewal grants it - a lapse must find something real to take away, not merely
+            // exercise the revoke path against a row that was never granted.
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None);
+        }
+
+        await MarkPastDueAsync(optionId, Now);
+
+        await using var db2 = fixture.CreateDbContext();
+        var applier = BuildApplier(db2, mappings);
+        await applier.ApplyLapseAsync(optionId, Now + BillingSubscription.PastDueRetryWindow, CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        var option = await verify.BillingSubscriptions.SingleAsync(s => s.Id == optionId);
+        Assert.Equal(BillingSubscriptionStatus.Lapsed, option.Status);
+
+        var grant = await verify.ModuleQuantityGrants.SingleAsync(g => g.SiteId == siteId && g.ModuleKey == new ModuleKey("channel"));
+        Assert.Equal(0, grant.Quantity);
+
+        // `adr/0160`: an option's own lapse must never touch the
+        // base's own Tier/SeatLimit - the two subscriptions have no relationship a charge, or a lapse,
+        // can traverse.
+        var site = await verify.Sites.SingleAsync(s => s.Id == siteId);
+        Assert.Equal(SubscriptionTierBands.Starter, site.Tier);
+        Assert.Equal(5, site.SeatLimit);
+    }
+
+    [Fact]
+    public async Task ApplyLapseAsync_ForTheBaseSubscription_NeverTouchesAnOptionsOwnEntitlement()
+    {
+        // The reverse direction of `adr/0160`'s decision - a paid option is not cancelled by a base
+        // lapse, it runs on its own subscription and its own money: the base lapsing must not revoke an
+        // option that is still paid for.
+        var (siteId, baseId) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now);
+        var optionId = await SeedDueOptionSubscriptionAsync(siteId, new BillingOptionKey("channel-telegram"), periodEnd: Now + TimeSpan.FromDays(20));
+        var mappings = new Dictionary<string, string?> { ["channel-telegram"] = "channel" };
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None);
+        }
+
+        await using var db2 = fixture.CreateDbContext();
+        await BuildApplier(db2, mappings).ApplyLapseAsync(baseId, Now, CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        var site = await verify.Sites.SingleAsync(s => s.Id == siteId);
+        Assert.Equal("free", site.Tier);
+        Assert.Equal(1, site.SeatLimit);
+
+        var grant = await verify.ModuleQuantityGrants.SingleAsync(g => g.SiteId == siteId && g.ModuleKey == new ModuleKey("channel"));
+        Assert.Equal(1, grant.Quantity);
+    }
+
+    [Fact]
+    public async Task ApplyRenewalSuccessAsync_ForAnOptionWithNoConfiguredEntitlementMapping_ThrowsRatherThanGrantingSilently()
+    {
+        var (siteId, _) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now + TimeSpan.FromDays(20));
+        var optionId = await SeedDueOptionSubscriptionAsync(siteId, new BillingOptionKey("channel-telegram"), periodEnd: Now);
+
+        await using var db = fixture.CreateDbContext();
+        // Deliberately empty - this deployment has not declared BillingOptionEntitlements:channel-telegram.
+        var applier = BuildApplier(db, new Dictionary<string, string?>());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => applier.ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveAsync_ThenGetByIdAsync_PersistsAnOptionSubscription_AlignedToTheBasesPeriod()
+    {
+        var (siteId, _) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now + TimeSpan.FromDays(237));
+
+        await using var db = fixture.CreateDbContext();
+        var subscriptions = new BillingSubscriptionRepository(db);
+        var basePeriodEnd = (await subscriptions.GetBaseForSiteAsync(siteId, CancellationToken.None))!.CurrentPeriodEnd!.Value;
+
+        var optionId = new BillingSubscriptionId(Guid.NewGuid());
+        var option = BillingSubscription.CreateOption(optionId, siteId, "pmt_option_write_down", new BillingOptionKey("channel-telegram"), Now);
+        option.MarkSucceeded("card_on_file", Now, alignedPeriodEnd: basePeriodEnd);
+        await subscriptions.SaveAsync(option, CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        var reloaded = await verify.BillingSubscriptions.SingleAsync(s => s.Id == optionId);
+        Assert.Equal(new BillingOptionKey("channel-telegram"), reloaded.OptionKey);
+        Assert.Equal(basePeriodEnd, reloaded.CurrentPeriodEnd);
+        Assert.Equal(Now + TimeSpan.FromDays(237), reloaded.CurrentPeriodEnd);
+    }
+
+    [Fact]
+    public async Task GetBaseForSiteAsync_UnlikeGetLatestForSiteAsync_IgnoresANewerOptionRow()
+    {
+        var (siteId, baseId) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now + TimeSpan.FromDays(20));
+        var optionId = await SeedDueOptionSubscriptionAsync(siteId, new BillingOptionKey("channel-telegram"), periodEnd: Now + TimeSpan.FromDays(20));
+
+        await using var db = fixture.CreateDbContext();
+        var subscriptions = new BillingSubscriptionRepository(db);
+
+        var latest = await subscriptions.GetLatestForSiteAsync(siteId, CancellationToken.None);
+        Assert.Equal(optionId, latest!.Id);
+
+        var baseOnly = await subscriptions.GetBaseForSiteAsync(siteId, CancellationToken.None);
+        Assert.Equal(baseId, baseOnly!.Id);
+    }
+
+    private static SubscriptionRenewalApplier BuildApplier(AgoChatDbContext db, IReadOnlyDictionary<string, string?> entitlementMappings)
+    {
+        var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+        var idGenerator = new UuidV7Generator();
+        var entitlementGrants = new ModuleQuantityGrantStore(db, outbox, idGenerator);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            entitlementMappings.ToDictionary(kv => $"{ConfiguredBillingOptionEntitlementProvider.SectionName}:{kv.Key}", kv => kv.Value)).Build();
+        var optionEntitlements = new ConfiguredBillingOptionEntitlementProvider(config);
+        return new SubscriptionRenewalApplier(db, outbox, idGenerator, entitlementGrants, optionEntitlements);
+    }
+
+    /// <summary>Seeds an option subscription, already `Succeeded` (mirroring `SeedSucceededSubscriptionAsync`'s
+    /// own shape for the base) with <paramref name="periodEnd"/> set directly by SQL for the identical
+    /// reason that helper's own remarks give - the domain has no "set an arbitrary period end"
+    /// writer.</summary>
+    private async Task<BillingSubscriptionId> SeedDueOptionSubscriptionAsync(SiteId siteId, BillingOptionKey optionKey, DateTimeOffset periodEnd)
+    {
+        var optionId = new BillingSubscriptionId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var option = BillingSubscription.CreateOption(optionId, siteId, $"pmt_{optionId.Value:N}", optionKey, Now - BillingSubscription.PeriodLength);
+            // The value passed here is immediately overwritten by the direct SQL update below (the
+            // domain has no "set an arbitrary period end" writer - SeedSucceededSubscriptionAsync's own
+            // remarks); any value satisfying MarkSucceeded's own "an option must be given one" guard
+            // will do.
+            option.MarkSucceeded("card_on_file", Now - BillingSubscription.PeriodLength, alignedPeriodEnd: Now);
+            db.BillingSubscriptions.Add(option);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "UPDATE billing_subscriptions SET current_period_end = @periodEnd WHERE id = @id", connection))
+        {
+            command.Parameters.AddWithValue("periodEnd", periodEnd);
+            command.Parameters.AddWithValue("id", optionId.Value);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        return optionId;
+    }
+
     private SubscriptionRenewalJob CreateJob(string yooKassaBaseUrl, IClock clock) => new(
         new DirectScopeFactory(fixture, clock, yooKassaBaseUrl),
         clock,
@@ -285,7 +483,10 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
     /// own precedent, extended to resolve two types instead of one since this job's own
     /// <see cref="SubscriptionRenewalJob.RunOnceAsync"/> needs both out of the same kind of scope.
     /// </summary>
-    private sealed class DirectScopeFactory(PostgresFixture fixture, IClock clock, string yooKassaBaseUrl) : IServiceScopeFactory
+    private sealed class DirectScopeFactory(
+        PostgresFixture fixture, IClock clock, string yooKassaBaseUrl,
+        IReadOnlyDictionary<string, string?>? entitlementMappings = null)
+        : IServiceScopeFactory
     {
         public IServiceScope CreateScope()
         {
@@ -293,7 +494,16 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
             var subscriptions = new BillingSubscriptionRepository(db);
             var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
             var idGenerator = new UuidV7Generator();
-            var applier = new SubscriptionRenewalApplier(db, outbox, idGenerator);
+            var entitlementGrants = new ModuleQuantityGrantStore(db, outbox, idGenerator);
+            // `23-86`: the real ConfiguredBillingOptionEntitlementProvider, backed by an in-memory
+            // configuration rather than a fake - proves the actual `BillingOptionEntitlements:<key>`
+            // lookup this deployment will configure, not a stand-in for it. Empty for every test that
+            // never touches an option row.
+            var entitlementConfig = new ConfigurationBuilder()
+                .AddInMemoryCollection(entitlementMappings ?? new Dictionary<string, string?>())
+                .Build();
+            var optionEntitlements = new ConfiguredBillingOptionEntitlementProvider(entitlementConfig);
+            var applier = new SubscriptionRenewalApplier(db, outbox, idGenerator, entitlementGrants, optionEntitlements);
 
             var httpClient = new HttpClient { BaseAddress = new Uri(yooKassaBaseUrl) };
             var yooKassa = new YooKassaPaymentsApiClient(httpClient);

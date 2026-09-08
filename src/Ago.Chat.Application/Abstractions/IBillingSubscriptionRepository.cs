@@ -40,6 +40,17 @@ public interface IBillingSubscriptionRepository
     /// tier by construction, `13-01`'s own default).</summary>
     Task<BillingSubscription?> GetLatestForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
 
+    /// <summary>`23-86`/`adr/0159`: <see cref="GetLatestForSiteAsync"/> narrowed to the one row per
+    /// site that is the account's base - the fix for the trap this item's own brief names by name:
+    /// `GetBillingStatusHandler` calls `GetLatestForSiteAsync` and means "the site's base subscription",
+    /// which was true only while every row for a site was one. With options in the same table, the
+    /// newest row for a site may well be a channel bought yesterday, not the tier the caller actually
+    /// asked about - this method is what makes that distinction a query rather than a caller's own
+    /// filtering discipline. <see langword="null"/> for a site that has never started a checkout at all,
+    /// the identical "still on the free tier by construction" case <see cref="GetLatestForSiteAsync"/>'s
+    /// own remarks describe.</summary>
+    Task<BillingSubscription?> GetBaseForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
     /// <summary>`13-03`: the recurring-charge job's own candidate list - every row a `Succeeded`
     /// renewal or a `PastDue` retry is owed right now (<see cref="BillingSubscription.IsDueForRenewal"/>/
     /// <see cref="BillingSubscription.IsRetryDue"/>'s own predicates, expressed as one `WHERE` clause so

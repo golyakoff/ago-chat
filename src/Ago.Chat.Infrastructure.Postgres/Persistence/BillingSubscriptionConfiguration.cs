@@ -32,6 +32,11 @@ internal sealed class BillingSubscriptionConfiguration : IEntityTypeConfiguratio
         builder.Property(s => s.PendingSeatCount).HasColumnName("pending_seat_count");
         builder.Property(s => s.PendingTier).HasColumnName("pending_tier");
 
+        // `23-86`/`adr/0159`: null for the account's own base row, a real value naming the purchased
+        // option for every other row - see BillingSubscription.OptionKey's own remarks.
+        builder.Property(s => s.OptionKey).HasColumnName("option_key")
+            .HasMaxLength(BillingOptionKey.MaxLength).HasConversion(IdConverters.NullableBillingOptionKey);
+
         builder.HasOne<Site>().WithMany().HasForeignKey(s => s.SiteId);
 
         // Serves BillingWebhookApplier's own lookup: WHERE site_id = @x, most-recent-first - the same

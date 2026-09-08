@@ -253,4 +253,93 @@ public class BillingSubscriptionTests
         Assert.False(subscription.IsDueForRenewal(periodEnd - TimeSpan.FromSeconds(1)));
         Assert.True(subscription.IsDueForRenewal(periodEnd));
     }
+
+    // `23-86`/`adr/0159`: an option is its own subscription, aligned to the account's base period.
+
+    [Fact]
+    public void CreateOption_WhenValid_StartsPending_WithZeroSeatsAndNoTier()
+    {
+        var option = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_option", new BillingOptionKey("channel-telegram"), Now);
+
+        Assert.Equal(BillingSubscriptionStatus.Pending, option.Status);
+        Assert.True(option.IsOption);
+        Assert.False(option.IsBase);
+        Assert.Equal(new BillingOptionKey("channel-telegram"), option.OptionKey);
+        Assert.Equal(0, option.RequestedSeats);
+        Assert.Equal(string.Empty, option.Tier);
+    }
+
+    [Fact]
+    public void Create_ForTheBase_HasNoOptionKey_AndIsBase()
+    {
+        var baseSubscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, Now);
+
+        Assert.Null(baseSubscription.OptionKey);
+        Assert.True(baseSubscription.IsBase);
+        Assert.False(baseSubscription.IsOption);
+    }
+
+    [Fact]
+    public void MarkSucceeded_ForAnOption_RequiresAnAlignedPeriodEnd_AndUsesItRatherThanNowPlusPeriodLength()
+    {
+        var option = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_option", new BillingOptionKey("channel-telegram"), Now);
+        var baseCurrentPeriodEnd = Now + TimeSpan.FromDays(237); // the account's own base, mid-cycle
+
+        option.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseCurrentPeriodEnd);
+
+        // Not Now + PeriodLength (30 days) - copied from the base, exactly as `adr/0159` requires, so
+        // both rows renew on the identical date.
+        Assert.Equal(baseCurrentPeriodEnd, option.CurrentPeriodEnd);
+    }
+
+    [Fact]
+    public void MarkSucceeded_ForAnOption_WithNoAlignedPeriodEnd_Throws()
+    {
+        var option = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_option", new BillingOptionKey("channel-telegram"), Now);
+
+        Assert.Throws<ArgumentException>(() => option.MarkSucceeded("card_abc", Now));
+    }
+
+    [Fact]
+    public void MarkSucceeded_ForTheBase_WithAnExplicitAlignedPeriodEnd_Throws()
+    {
+        var baseSubscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, Now);
+
+        Assert.Throws<ArgumentException>(() => baseSubscription.MarkSucceeded("card_abc", Now, alignedPeriodEnd: Now + TimeSpan.FromDays(1)));
+    }
+
+    [Fact]
+    public void MarkSucceeded_ForTheBase_WithNoOverride_StillDefaultsToNowPlusPeriodLength()
+    {
+        // Unchanged behaviour from before this item - MarkSucceeded's own optional trailing parameter
+        // must not alter the base's own default when the caller omits it.
+        var baseSubscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, Now);
+
+        baseSubscription.MarkSucceeded("card_abc", Now);
+
+        Assert.Equal(Now + BillingSubscription.PeriodLength, baseSubscription.CurrentPeriodEnd);
+    }
+
+    [Fact]
+    public void RecordRenewalSuccess_ForAnOption_AdvancesFromItsOwnAlignedPeriodEnd_KeepingItInStepWithTheBase()
+    {
+        var option = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_option", new BillingOptionKey("channel-telegram"), Now);
+        var baseCurrentPeriodEnd = Now + TimeSpan.FromDays(237);
+        option.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseCurrentPeriodEnd);
+
+        option.RecordRenewalSuccess(baseCurrentPeriodEnd, paymentMethodId: null);
+
+        // Both the option's and (by the identical, unchanged renewal-job code path) the base's own
+        // CurrentPeriodEnd advance by the same PeriodLength from their own prior value - this is what
+        // keeps a base and its options renewing on the same date after the first alignment, with no
+        // further "re-align" step anywhere in this codebase.
+        Assert.Equal(baseCurrentPeriodEnd + BillingSubscription.PeriodLength, option.CurrentPeriodEnd);
+    }
 }

@@ -722,6 +722,11 @@ public sealed class ChatModule : IProductModule
             new YooKassaWebhookSignatureVerifier(sp.GetRequiredService<IOptions<YooKassaOptions>>().Value));
         services.AddScoped<CreateCheckoutSessionHandler>();
         services.AddScoped<ProcessYooKassaWebhookHandler>();
+        // `23-86`/`adr/0159`: the option-to-entitlement mapping, the identical generic-keyed-lookup
+        // shape IModuleEntryPointProvider/IModulePermissionsProvider already use just above - see
+        // IBillingOptionEntitlementProvider's own remarks.
+        services.AddSingleton<IBillingOptionEntitlementProvider, ConfiguredBillingOptionEntitlementProvider>();
+
         // `13-03`: the recurring-charge job's own multi-aggregate transaction, and the two write paths
         // this item's own new billing endpoints need - see each type's own remarks.
         services.AddScoped<ISubscriptionRenewalApplier, SubscriptionRenewalApplier>();

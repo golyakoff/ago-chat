@@ -82,6 +82,24 @@ public sealed class ProcessSubscriptionRenewalHandler(
                 $"Billing subscription {command.SubscriptionId.Value} is due for renewal but has no stored payment method id.");
         }
 
+        if (subscription.IsOption)
+        {
+            // `23-86` deliberately does not invent a price for an option's own recurring charge - "no
+            // price, anywhere" (this item's own Scope); the per-seat formula below is the base
+            // subscription's own pricing and is meaningless for an option row (RequestedSeats is
+            // always zero there - BillingSubscription.OptionKey's own remarks). Charging Rub 0 or
+            // reusing the seat formula would both be silently wrong, so this refuses loudly instead -
+            // the same "unreachable, thrown rather than translated" shape the PaymentMethodId guard just
+            // above already uses. No production code path creates a due-for-renewal option row today
+            // (that is `23-115`'s own scope, "a tenant can buy an option themselves") - reaching this is
+            // itself the signal that a price source for an option's recurring charge still needs to be
+            // supplied before that item ships.
+            throw new InvalidOperationException(
+                $"Billing subscription {command.SubscriptionId.Value} is an option subscription (key "
+                + $"'{subscription.OptionKey!.Value.Value}') due for renewal, but no price source for an option's "
+                + "recurring charge exists yet - see this item's own report.");
+        }
+
         var amount = billingOptions.PricePerSeatRub * subscription.RequestedSeats;
         var description = $"AGO Chat - {subscription.Tier} tier renewal, {subscription.RequestedSeats} seats";
         // Deterministic, not a fresh id per call - ChargeStoredPaymentMethodRequest's own remarks on why
