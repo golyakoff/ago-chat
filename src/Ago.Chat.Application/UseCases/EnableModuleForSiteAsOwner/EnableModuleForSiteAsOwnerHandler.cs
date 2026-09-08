@@ -46,11 +46,22 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 /// endpoint at all, the same reason `RequirePlatformOwner`'s own gate is sufficient authorization for
 /// <see cref="ListSitesForOwner.ListSitesForOwnerHandler"/> and <c>UnlinkChannelIdentityAsOwnerHandler</c>
 /// with no second check.</para>
+///
+/// <para><b>`23-102`/`adr/0151`: this call now also seeds the module's own permissions into the site's
+/// seeded roles</b> - the entitlement (<see cref="EnabledModule"/>) and the vocabulary to act on it
+/// (`Operator`/`Admin`'s own permission lists) land in the same call, so a grant a tenant's own
+/// administrator opens never finds nobody able to use it. See <see cref="Abstractions.IModulePermissionsProvider"/>'s
+/// own remarks for why this cannot be a literal `"calendar" =&gt; [...]` branch here, and this handler's
+/// own body for why it runs before <see cref="Abstractions.IEnabledModuleRepository.SaveAsync"/>, not
+/// after. Deliberately unconditional on whether the module was already enabled for this site: a re-grant
+/// of an already-granted module re-runs the identical, idempotent seeding, which is how a site granted
+/// before this item existed gets repaired - not a separate backfill.</para>
 /// </summary>
 public sealed class EnableModuleForSiteAsOwnerHandler(
     IEnabledModuleRepository modules, IEnabledModuleReadStore moduleReadStore,
     IModuleRegistrationGateway registrationGateway, IModuleProvisioningSecretProvider provisioningSecrets,
-    IModuleEntryPointProvider entryPoints, ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
+    IModuleEntryPointProvider entryPoints, IModulePermissionsProvider modulePermissions, IRoleRepository roles,
+    ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
 {
     /// <summary>`22-17`'s own answer to "decide whether a grant carries an end date": it may, but an
     /// owner is not asked to type an unbounded one. A grant that never ends is legitimate (the repair
@@ -165,6 +176,20 @@ public sealed class EnableModuleForSiteAsOwnerHandler(
         {
             return ConversationErrors.ModuleRegistrationFailed(ex.Message);
         }
+
+        // `23-102`/`adr/0151`: the entitlement this call is about to persist below is worthless without
+        // the vocabulary to exercise it - see IModulePermissionsProvider's own remarks for what "the
+        // permissions module K needs" means and where it comes from. Seeded before EnabledModule itself
+        // is persisted, not after: IRoleRepository.AddPermissionsAsync is idempotent (safe to run on
+        // every grant, including a repeat of one that already ran), so ordering it first means a failure
+        // here never leaves an EnabledModule row granting an entitlement nobody can yet act on - exactly
+        // the gap this item exists to close, one step earlier rather than one step later. Runs
+        // unconditionally on every call, including a re-grant of a module this site already holds -
+        // that repeat is exactly how the four sites this item's own backlog item names get fixed: no
+        // separate backfill, the same write path a fresh grant already takes.
+        var permissions = modulePermissions.Get(moduleKey);
+        await roles.AddPermissionsAsync(command.SiteId, "Operator", permissions.OperatorPermissions, cancellationToken);
+        await roles.AddPermissionsAsync(command.SiteId, "Admin", permissions.AdminPermissions, cancellationToken);
 
         await modules.SaveAsync(module, cancellationToken);
         return module.Id;
