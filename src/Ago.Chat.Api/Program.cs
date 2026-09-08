@@ -521,6 +521,9 @@ app.MapOwnerChannelIdentityEndpoints();
 // `22-17`: the platform owner's own module grant/revoke - a deliberate cross-tenant write, gated by
 // RequirePlatformOwner exactly as the two owner surfaces above are (OwnerModuleEndpoints' own remarks).
 app.MapOwnerModuleEndpoints();
+// `23-68`: the platform owner's own recovery write - restoring a locked-out operator's seat, gated by
+// RequirePlatformOwner exactly as every owner surface above is (OwnerOperatorsEndpoints' own remarks).
+app.MapOwnerOperatorsEndpoints();
 // `23-48`: the platform owner's own write for a tenant's allowed origins - its own Map call, the same
 // "own file, own registration" discipline OwnerSiteAllowedOriginsEndpoints' own remarks describe.
 app.MapOwnerSiteAllowedOriginsEndpoint();

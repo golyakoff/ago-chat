@@ -40,7 +40,7 @@ namespace Ago.Chat.Application.UseCases.GetSiteForOwner;
 /// </summary>
 public sealed class GetSiteForOwnerHandler(
     IPlatformOverviewReadStore siteReadStore, IEnabledModuleReadStore moduleReadStore, ISiteRepository siteRepository,
-    IModuleQuantityGrantStore quantityGrants, IClock clock)
+    IModuleQuantityGrantStore quantityGrants, IOperatorTeamReadStore operatorTeam, IClock clock)
 {
     public async Task<Result<OwnerSiteDetailResponse>> HandleAsync(
         GetSiteForOwner query, CancellationToken cancellationToken)
@@ -72,6 +72,11 @@ public sealed class GetSiteForOwnerHandler(
         // handful of modules at most, so this is a single extra query rather than an N+1.
         var quantities = await quantityGrants.GetAllForSiteAsync(query.SiteId, cancellationToken);
 
+        // `23-68`: the identical read GetOperatorTeamHandler already serves a tenant's own team screen
+        // (IOperatorTeamReadStore.GetForSiteAsync) - reused unchanged rather than a second query shape,
+        // so the console can name a locked-out operator to restore a seat for.
+        var operators = await operatorTeam.GetForSiteAsync(query.SiteId, cancellationToken);
+
         return new OwnerSiteDetailResponse(
             site.Id.Value,
             site.Name,
@@ -84,8 +89,12 @@ public sealed class GetSiteForOwnerHandler(
             site.AttachmentBytes,
             ListSitesForOwnerHandler.RecentWindowDays,
             modules.Select(module => ToModuleDto(module, quantities)).ToList(),
-            allowedOrigins);
+            allowedOrigins,
+            operators.Select(ToOperatorDto).ToList());
     }
+
+    private static OwnerSiteOperatorDto ToOperatorDto(OperatorTeamMemberItem item) => new(
+        item.OperatorId.Value, item.DisplayName, item.Email, item.HoldsSeat, item.RoleNames);
 
     private static OwnerSiteModuleDto ToModuleDto(
         EnabledModuleDetailSummary module, IReadOnlyDictionary<ModuleKey, int> quantities) => new(

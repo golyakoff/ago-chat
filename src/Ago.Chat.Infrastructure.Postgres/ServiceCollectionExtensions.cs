@@ -165,6 +165,10 @@ public static class ServiceCollectionExtensions
         // `23-13`: the exercised-override write/read - see IModuleRevokeOverrideRepository's own
         // remarks for why this is its own table rather than a column on enabled_modules.
         services.AddScoped<IModuleRevokeOverrideRepository, ModuleRevokeOverrideRepository>();
+        // `23-68`: the seat-restore's own exercised-override write/read - see
+        // IOperatorSeatRestoreOverrideRepository's own remarks for why this is a second, narrow table
+        // rather than a widened IModuleRevokeOverrideRepository.
+        services.AddScoped<IOperatorSeatRestoreOverrideRepository, OperatorSeatRestoreOverrideRepository>();
         // `24-11`: the subject-scoped export archive builder - see IPersonExportArchiveWriter's own
         // remarks on why this is a second, smaller writer rather than SiteExportArchiveWriter widened.
         services.AddScoped<IPersonExportArchiveWriter, PersonExportArchiveWriter>();
