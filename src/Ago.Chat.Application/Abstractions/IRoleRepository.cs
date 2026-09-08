@@ -33,6 +33,16 @@ public interface IRoleRepository
     /// to do" shape <see cref="IModulePermissionsProvider"/>'s own <c>ModulePermissionSet.Empty</c>
     /// already represents one level up, so a module that needs nothing extra costs this method nothing to
     /// call.
+    ///
+    /// <para><b>`23-104`: also publishes.</b> A permission change is worthless to whichever product reads
+    /// permissions from a replicated projection (`adr/0093`) until that projection learns it, so this
+    /// method enqueues one <c>RoleAssignmentsChanged</c> - through the same outbox every other publisher
+    /// of that event uses, in the same transaction as the permission change itself (rule 4) - for every
+    /// operator currently holding <paramref name="roleName"/> on this site who has a linked external
+    /// identity, not only whichever operator's request happened to trigger this call. An operator with no
+    /// linked identity yet has no projection row anywhere to correct, so they are skipped, not thrown for
+    /// - the implementation's own remarks give the fuller reasoning, including how this stays correct
+    /// against a concurrent operator removal.</para>
     /// </summary>
     Task AddPermissionsAsync(SiteId siteId, string roleName, IReadOnlyCollection<string> permissions, CancellationToken cancellationToken);
 }
