@@ -13,7 +13,7 @@ public class RecordVisitorContactDetailHandlerTests
 
     private sealed record Fixture(
         RecordVisitorContactDetailHandler Handler, FakeVisitorContactDetailRepository ContactDetails, ConversationId ConversationId,
-        FakeAcceptanceRepository Acceptances);
+        FakeAcceptanceRepository Acceptances, FakeOutboxWriter Outbox);
 
     private static Fixture CreateFixture(
         bool grantPermission = true, SiteId? conversationSiteId = null, Ago.Platform.Abstractions.IRateLimiter? rateLimiter = null,
@@ -42,11 +42,12 @@ public class RecordVisitorContactDetailHandlerTests
 
         var acceptances = new FakeAcceptanceRepository();
         var contactDetails = new FakeVisitorContactDetailRepository();
+        var outbox = new FakeOutboxWriter();
         var handler = new RecordVisitorContactDetailHandler(
             conversations, contactDetails, sites, acceptances, permissions, rateLimiter ?? new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), new FakeIdGenerator(), new FakeClock(Now));
+            new ContactDetailRateLimitOptions(), outbox, new FakeIdGenerator(), new FakeClock(Now));
 
-        return new Fixture(handler, contactDetails, conversation.Id, acceptances);
+        return new Fixture(handler, contactDetails, conversation.Id, acceptances, outbox);
     }
 
     [Fact]
@@ -71,6 +72,13 @@ public class RecordVisitorContactDetailHandlerTests
         Assert.Equal("Operator", result.Value.Source);
         Assert.False(result.Value.Verified);
         Assert.Equal(OperatorId.Value, result.Value.RecordedByOperatorId);
+
+        // `23-59`/`adr/0147`: chat publishes unconditionally, in the same call that saves the row -
+        // this handler's own remarks. Fails before this item: nothing was ever staged for a contact
+        // write, because IOutboxWriter was not even a dependency of this handler.
+        var staged = Assert.Single(fixture.Outbox.Enqueued);
+        Assert.Equal(nameof(Ago.Chat.Contracts.ContactCollected), staged.Type);
+        Assert.Equal(saved.Id.Value.ToString(), staged.PartitionKey);
     }
 
     [Fact]
@@ -85,6 +93,7 @@ public class RecordVisitorContactDetailHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Empty(fixture.ContactDetails.All);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
     [Fact]
@@ -170,6 +179,12 @@ public class RecordVisitorContactDetailHandlerTests
         Assert.Equal("Visitor", result.Value.Source);
         Assert.False(result.Value.Verified);
         Assert.Null(result.Value.RecordedByOperatorId);
+
+        // `23-59`/`adr/0147`: the visitor's own entry point publishes exactly like the operator's -
+        // "recording a fact is not more sensitive than replying" extends to this too.
+        var staged = Assert.Single(fixture.Outbox.Enqueued);
+        Assert.Equal(nameof(Ago.Chat.Contracts.ContactCollected), staged.Type);
+        Assert.Equal(saved.Id.Value.ToString(), staged.PartitionKey);
     }
 
     /// <summary>Done-when: "the visitor cannot write a contact detail onto a conversation that is
@@ -189,6 +204,7 @@ public class RecordVisitorContactDetailHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Empty(fixture.ContactDetails.All);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
     [Fact]

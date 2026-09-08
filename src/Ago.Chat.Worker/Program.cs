@@ -360,6 +360,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<SiteErasureJob>();
 
+// `23-59`/`adr/0147`: the automatic retroactive contact carry-over - see ContactCarryoverJob's own
+// remarks for why this is a recurring sweep rather than a manually-run tool.
+builder.Services
+    .AddOptions<ContactCarryoverJobOptions>()
+    .Bind(builder.Configuration.GetSection(ContactCarryoverJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ContactCarryoverJob>();
+
 // `16-03`: tenant export. SiteExportJobOptions is bound both as IOptions<T> (SiteExportJob itself,
 // the same shape SiteErasureJobOptions uses) and as a plain singleton value
 // (SiteExportArchiveWriter, the same "plain value, not IOptions<T>" shape RegisterSiteRateLimitOptions

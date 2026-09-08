@@ -56,12 +56,18 @@ namespace Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 /// after. Deliberately unconditional on whether the module was already enabled for this site: a re-grant
 /// of an already-granted module re-runs the identical, idempotent seeding, which is how a site granted
 /// before this item existed gets repaired - not a separate backfill.</para>
+///
+/// <para><b>`23-59`/`adr/0147`: this call now also requests a retroactive contact carry-over</b> -
+/// see this handler's own remarks at the bottom of <see cref="HandleAsync"/> for why that request is
+/// unconditional on which module was granted, and <c>IContactCarryoverRequestStore</c>'s own remarks
+/// for why the actual work happens later, in <c>Ago.Chat.Worker.ContactCarryoverJob</c>, rather than
+/// here.</para>
 /// </summary>
 public sealed class EnableModuleForSiteAsOwnerHandler(
     IEnabledModuleRepository modules, IEnabledModuleReadStore moduleReadStore,
     IModuleRegistrationGateway registrationGateway, IModuleProvisioningSecretProvider provisioningSecrets,
     IModuleEntryPointProvider entryPoints, IModulePermissionsProvider modulePermissions, IRoleRepository roles,
-    ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
+    IContactCarryoverRequestStore contactCarryover, ISiteRepository sites, IClock clock, IIdGenerator idGenerator)
 {
     /// <summary>`22-17`'s own answer to "decide whether a grant carries an end date": it may, but an
     /// owner is not asked to type an unbounded one. A grant that never ends is legitimate (the repair
@@ -192,6 +198,24 @@ public sealed class EnableModuleForSiteAsOwnerHandler(
         await roles.AddPermissionsAsync(command.SiteId, "Admin", permissions.AdminPermissions, cancellationToken);
 
         await modules.SaveAsync(module, cancellationToken);
+
+        // `23-59`/`adr/0147`: the second, independent fact - "this site's contacts collected before
+        // today are now owed a retroactive carry-over" - recorded only once the grant itself is
+        // durable, so a failure staging this request never leaves an EnabledModule row nobody actually
+        // granted. Deliberately unconditional on ModuleKey, unlike IModulePermissionsProvider.Get just
+        // above: adr/0065 decision 2 keeps this assembly ignorant of what a module even is, and a
+        // literal `moduleKey.Value == "calendar"` branch here would be exactly the leak that decision
+        // forbids (the same "chat must not know what a module is" reasoning IModulePermissionsProvider's
+        // own remarks give for its own opaque-key lookup). The alternative considered - a second
+        // deployment-configured provider, "does module K want a contact carry-over" - was rejected as
+        // premature generalisation for a yes/no that today has exactly one real answer: unlike
+        // permissions, where different modules genuinely need different sets, there is only one kind of
+        // fact chat could ever carry over (a contact), so every grant requesting one costs a few no-op
+        // outbox rows for a module nobody subscribes to and buys no real flexibility in return. Staging
+        // this request is cheap (one upsert) regardless of which module was granted; the request itself
+        // is inert until ContactCarryoverJob processes it.
+        await contactCarryover.RequestAsync(command.SiteId, now, cancellationToken);
+
         return module.Id;
     }
 }

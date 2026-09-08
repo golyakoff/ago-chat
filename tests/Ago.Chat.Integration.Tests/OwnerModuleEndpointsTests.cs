@@ -933,6 +933,10 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // fixture.SeededSiteId carries a real "Admin" role row this handler's own AddPermissionsAsync
         // call would otherwise have nothing to resolve DI against.
         builder.Services.AddScoped<IRoleRepository, RoleRepository>();
+        // `23-59`: EnableModuleForSiteAsOwnerHandler now also requests this site's own retroactive
+        // contact carry-over - a real repository, the same "already runs against a real Postgres"
+        // posture as IRoleRepository right above, not a fake.
+        builder.Services.AddScoped<IContactCarryoverRequestStore, ContactCarryoverRequestStore>();
         // A fake, not a real HTTP call - this suite is about the wire from operator/owner to
         // handler, not about whether a module deployment answers (the identical judgement
         // ModuleEndpointsTests's own remarks make for its sibling).

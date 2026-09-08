@@ -43,7 +43,7 @@ public class ConsentGateDoesNotBlockConversationTests
         var acceptances = new FakeAcceptanceRepository();
         var contactHandler = new RecordVisitorContactDetailHandler(
             conversations, contactDetails, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), new FakeIdGenerator(), new FakeClock(Now));
+            new ContactDetailRateLimitOptions(), new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now));
 
         var pipeline = new FakeMessagePipeline();
         var messageHandler = new SendVisitorMessageHandler(
