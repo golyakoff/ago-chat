@@ -179,7 +179,8 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
         var httpContext = BuildHttpContext(origin: null);
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
-            new AuthEndpoints.VisitorSessionRequest(publicKey), getSite, signalRepository, new FakeRateLimiter(),
+            new AuthEndpoints.VisitorSessionRequest(publicKey), getSite, signalRepository,
+            new EnabledModuleReadStore(fixture.DataSource), new FakeRateLimiter(),
             Options.Create(new VisitorSessionRateLimitOptions()), new UuidV7Generator(), new SystemClock(), tokens,
             httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);
@@ -203,7 +204,8 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
         var httpContext = BuildHttpContext(origin: "https://www.tenant.example");
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
-            new AuthEndpoints.VisitorSessionRequest(publicKey), getSite, signalRepository, new FakeRateLimiter(),
+            new AuthEndpoints.VisitorSessionRequest(publicKey), getSite, signalRepository,
+            new EnabledModuleReadStore(fixture.DataSource), new FakeRateLimiter(),
             Options.Create(new VisitorSessionRateLimitOptions()), new UuidV7Generator(), new SystemClock(), tokens,
             httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);

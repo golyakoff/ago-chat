@@ -52,6 +52,7 @@ public static class AuthEndpoints
         VisitorSessionRequest request,
         GetSiteConfigByPublicKeyHandler getSite,
         ISiteInstallationSignalRepository installationSignals,
+        IEnabledModuleReadStore moduleReadStore,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRateLimitOptions> rateLimitOptions,
         IIdGenerator idGenerator,
@@ -109,11 +110,12 @@ public static class AuthEndpoints
 
         var visitorId = new VisitorId(idGenerator.NewId(clock.UtcNow));
         var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
+        var enabledModules = await GetEnabledModuleKeysAsync(moduleReadStore, new SiteId(site.SiteId), clock, cancellationToken);
         return Results.Created(
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl));
+                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules));
     }
 
     /// <summary>
@@ -145,6 +147,7 @@ public static class AuthEndpoints
         VisitorSessionRequest request,
         GetSiteConfigByPublicKeyHandler getSite,
         ISiteInstallationSignalRepository installationSignals,
+        IEnabledModuleReadStore moduleReadStore,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRenewalRateLimitOptions> rateLimitOptions,
         IClock clock,
@@ -228,9 +231,26 @@ public static class AuthEndpoints
         await installationSignals.RecordSightingAsync(tokenSiteId, clock.UtcNow, cancellationToken);
 
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
+        var enabledModules = await GetEnabledModuleKeysAsync(moduleReadStore, tokenSiteId, clock, cancellationToken);
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl));
+            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules));
+    }
+
+    /// <summary>
+    /// `23-105`: what the handshake and the renewal both need from <see cref="IEnabledModuleReadStore"/>
+    /// - raw <see cref="Domain.ModuleKey"/> values, read live (rule 8: an entitlement is a write-adjacent
+    /// decision and this store is never behind the 5-minute <see cref="GetSiteConfigByPublicKeyHandler"/>
+    /// cache), never filtered or renamed to a single product's boolean here. The identical read
+    /// <see cref="GetMyPermissions.GetMyPermissionsHandler"/> already does for
+    /// <see cref="OperatorPermissionsResponse.EnabledModules"/> (`23-21`) - this is that same shape
+    /// applied to the visitor-facing handshake instead of the operator-facing one, not a second design.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> GetEnabledModuleKeysAsync(
+        IEnabledModuleReadStore moduleReadStore, SiteId siteId, IClock clock, CancellationToken cancellationToken)
+    {
+        var modules = await moduleReadStore.GetForSiteAsync(siteId, clock.UtcNow, cancellationToken);
+        return modules.Select(m => m.ModuleKey.Value).ToArray();
     }
 
     public sealed record VisitorSessionRequest(string PublicKey);
@@ -260,6 +280,23 @@ public static class AuthEndpoints
     /// position - a malformed or non-`https://` URL here (a wire value never trusted blindly, `WidgetConfig`'s
     /// own server-side validation notwithstanding) falls back to rendering no link, never a thrown
     /// exception on the host page.
+    ///
+    /// `23-105`: <see cref="EnabledModules"/> joins on the identical "additive field on the existing
+    /// handshake shape" terms - raw <see cref="Domain.ModuleKey"/> values (e.g. <c>"calendar"</c>),
+    /// never a single product's boolean. Before this item a shop's own page asserted
+    /// <c>data-booking="true"</c> and the widget believed it with nothing to check it against - the
+    /// one fact on this whole response that was not the platform's to hand over, and the only one not
+    /// already server-driven the way colour, position, locale and the notice text are
+    /// (`docs/backlog/23-105-*.md`, `adr/0151`: an entitlement is granted by the platform, never
+    /// asserted by the tenant's own HTML). This is the fix: "what has this site been granted", read
+    /// live through <see cref="Abstractions.IEnabledModuleReadStore"/> the same way
+    /// <see cref="GetMyPermissions.GetMyPermissionsHandler"/> already reads it for
+    /// <see cref="OperatorPermissionsResponse.EnabledModules"/> (`23-21`) - not a second design, the
+    /// same one reaching a second, visitor-facing response. `Ago.Chat.*` still contains no
+    /// <c>"calendar"</c> literal (`adr/0065` guard 9, `Domain.ModuleKey`'s own remarks): this handler
+    /// hands back whatever keys the site actually has, opaque, and it is <c>ago-widget</c> - a
+    /// separate repository the guard does not reach - that is allowed to know which one key means
+    /// "show the booking chip".
     /// </summary>
     public sealed record VisitorSessionResponse(
         string Token,
@@ -268,5 +305,6 @@ public static class AuthEndpoints
         string WidgetPosition,
         string WidgetLocale,
         string? WidgetNoticeText,
-        string? WidgetNoticeUrl);
+        string? WidgetNoticeUrl,
+        IReadOnlyList<string> EnabledModules);
 }

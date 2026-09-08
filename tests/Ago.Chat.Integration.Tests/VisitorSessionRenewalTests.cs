@@ -270,6 +270,99 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         Assert.Equal(nameof(Locale.Ru), body.WidgetLocale);
     }
 
+    /// <summary>
+    /// `23-105`'s own fails-before proof, mint side: `docs/backlog/23-105-*.md`'s "granting the
+    /// calendar makes booking appear on an untouched page" starts here, before `ago-widget` is even
+    /// involved - the site's granted modules must actually reach the handshake response. Before this
+    /// item <see cref="AuthEndpoints.VisitorSessionResponse"/> carried nothing of the kind, and a shop
+    /// with no grant at all had no way to learn that from the server - the tenant's own page asserted
+    /// booking through `data-booking="true"` instead, which is exactly what `adr/0151` says a tenant
+    /// may not assert.
+    ///
+    /// A real <see cref="EnabledModule"/> row, seeded directly against Postgres - the same "no
+    /// self-service write exists" posture <see cref="ModuleEndpointsTests"/> already takes since
+    /// `23-83` removed the tenant's own registration route (`adr/0151`: only the platform grants).
+    /// </summary>
+    [Fact]
+    public async Task TheMint_Returns_TheSitesGrantedModuleKeys()
+    {
+        var site = await SeedSiteAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), new SiteId(site.SiteId), new ModuleKey("calendar"),
+                ["/book"], new Uri("https://calendar.example.com"),
+                new ModuleCredential("a-calendar-secret-of-sixteen-plus-chars"), DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Contains("calendar", body!.EnabledModules);
+    }
+
+    /// <summary>
+    /// The other half of the same proof, and the more dangerous half to get wrong: a site nobody has
+    /// granted anything to must come back with **no** module keys, not merely "not `calendar`" - an
+    /// empty list is what lets `ago-widget` treat "no booking" as the honest default for the untouched
+    /// page this item's own Scope names, rather than one more attribute a shop's page would need to
+    /// get right.
+    /// </summary>
+    [Fact]
+    public async Task TheMint_ForASiteWithNoGrantedModules_Returns_AnEmptyList()
+    {
+        var site = await SeedSiteAsync();
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Empty(body!.EnabledModules);
+    }
+
+    /// <summary>
+    /// The renewal side of the identical proof - the path `ago-widget`'s `CONFIG_REFRESH_INTERVAL_MS`
+    /// (`adr/0140`) actually calls, once a day, for a visitor who was already on the page before the
+    /// grant happened. A grant made after a visitor's first mint must still reach them, without a
+    /// re-paste of anything on the tenant's page - the whole point named in this item's own "an
+    /// untouched page" scope note.
+    /// </summary>
+    [Fact]
+    public async Task ARenewal_Returns_TheSitesGrantedModuleKeysAtRenewalTime()
+    {
+        var site = await SeedSiteAsync();
+        var token = IssueToken(new VisitorId(Guid.NewGuid()), site.SiteId, MintedDaysAgo(0));
+
+        // The grant happens after the token was minted - the exact "was on the page already, then
+        // got granted the module" ordering `docs/backlog/23-105-*.md` is about, not a grant that
+        // happened to exist before anyone ever loaded the page.
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), new SiteId(site.SiteId), new ModuleKey("calendar"),
+                ["/book"], new Uri("https://calendar.example.com"),
+                new ModuleCredential("a-calendar-secret-of-sixteen-plus-chars"), DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await RenewAsync(app, token, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Contains("calendar", body!.EnabledModules);
+    }
+
+    private static Task<HttpResponseMessage> MintAsync(WebApplication app, string publicKey)
+    {
+        var client = app.GetTestClient();
+        return client.PostAsJsonAsync("/api/v1/visitor-sessions", new AuthEndpoints.VisitorSessionRequest(publicKey));
+    }
+
     private static Task<HttpResponseMessage> RenewAsync(
         WebApplication app, string token, string publicKey, string? origin = null)
     {
@@ -323,6 +416,10 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         // the real Postgres-backed implementation, the same "real dependency, not a fake" posture
         // every other registration in this test host already takes.
         builder.Services.AddScoped<ISiteInstallationSignalRepository, SiteInstallationSignalRepository>();
+        // `23-105`: the real Postgres-backed read, the identical "real dependency, not a fake" posture
+        // this file's own remarks already give for ISiteInstallationSignalRepository above - both mint
+        // and renewal now read a site's entitlements the same live way rule 8 requires.
+        builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
         builder.Services.AddSingleton<ICache>(new RedisCache(
             fixture.RedisMultiplexer,
             new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(),
