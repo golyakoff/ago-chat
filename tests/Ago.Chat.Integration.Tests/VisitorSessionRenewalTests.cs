@@ -254,7 +254,8 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var row = await db.Sites.SingleAsync(s => s.Id == new SiteId(site.SiteId));
-            row.UpdateWidgetConfig(new WidgetConfig("#ff8800", Position.BottomLeft), DateTimeOffset.UtcNow);
+            row.UpdateWidgetConfig(
+                new WidgetConfig("#ff8800", Position.BottomLeft, attractAttention: true), DateTimeOffset.UtcNow);
             row.UpdateLocale(Locale.Ru, DateTimeOffset.UtcNow);
             await db.SaveChangesAsync();
         }
@@ -268,6 +269,10 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         Assert.Equal("#ff8800", body!.WidgetPrimaryColorHex);
         Assert.Equal(nameof(Position.BottomLeft), body.WidgetPosition);
         Assert.Equal(nameof(Locale.Ru), body.WidgetLocale);
+        // `23-63`: rides the identical config-refresh path adr/0140 built for color/position/locale -
+        // this is the one test proving a returning visitor's renewal actually carries the setting, not
+        // only that the DTO type compiles with the field present.
+        Assert.True(body.WidgetAttractAttention);
     }
 
     /// <summary>

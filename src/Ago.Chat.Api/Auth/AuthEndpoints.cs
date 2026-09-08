@@ -115,7 +115,8 @@ public static class AuthEndpoints
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules));
+                site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
+                site.WidgetAttractAttention));
     }
 
     /// <summary>
@@ -234,7 +235,8 @@ public static class AuthEndpoints
         var enabledModules = await GetEnabledModuleKeysAsync(moduleReadStore, tokenSiteId, clock, cancellationToken);
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
-            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules));
+            site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
+            site.WidgetAttractAttention));
     }
 
     /// <summary>
@@ -297,6 +299,12 @@ public static class AuthEndpoints
     /// hands back whatever keys the site actually has, opaque, and it is <c>ago-widget</c> - a
     /// separate repository the guard does not reach - that is allowed to know which one key means
     /// "show the booking chip".
+    ///
+    /// `23-63`: <see cref="WidgetAttractAttention"/> joins as one more additive, plain bool field -
+    /// off for every site that has not turned it on. `ago-widget`'s own `scheduleAttractAttention`
+    /// (`ui/widget.ts`) is what actually decides whether to animate - reading `false` unconditionally
+    /// when `prefers-reduced-motion: reduce` is set, whatever this field says - so this server-side
+    /// field only ever states the tenant's own setting, never the effective, motion-aware decision.
     /// </summary>
     public sealed record VisitorSessionResponse(
         string Token,
@@ -306,5 +314,6 @@ public static class AuthEndpoints
         string WidgetLocale,
         string? WidgetNoticeText,
         string? WidgetNoticeUrl,
-        IReadOnlyList<string> EnabledModules);
+        IReadOnlyList<string> EnabledModules,
+        bool WidgetAttractAttention);
 }

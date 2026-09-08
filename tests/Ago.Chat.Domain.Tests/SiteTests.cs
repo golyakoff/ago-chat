@@ -40,6 +40,34 @@ public class SiteTests
         // consent before accepting a contact detail - the unchanged-default requirement the backlog
         // item's own Scope names explicitly.
         Assert.False(site.WidgetConfig.RequireContactConsent);
+        // `23-63`: every existing tenant, and every freshly created one, has a motionless launcher -
+        // the item's own Decision: "a setting, off unless the tenant turns it on."
+        Assert.False(site.WidgetConfig.AttractAttention);
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenAttractAttentionIsSetTrue_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, attractAttention: true), now);
+
+        Assert.True(site.WidgetConfig.AttractAttention);
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenAttractAttentionIsOmitted_DefaultsFalse()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, attractAttention: true), now);
+
+        // The identical "a later call that omits the flag must not silently carry the old value
+        // forward" guard RequireContactConsent's own test states, for the sixth field on this same type.
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomLeft), now);
+
+        Assert.False(site.WidgetConfig.AttractAttention);
     }
 
     [Fact]

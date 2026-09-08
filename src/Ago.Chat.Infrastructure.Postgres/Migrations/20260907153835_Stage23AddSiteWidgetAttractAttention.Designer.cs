@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907153835_Stage23AddSiteWidgetAttractAttention")]
+    partial class Stage23AddSiteWidgetAttractAttention
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -150,11 +153,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Property<DateTimeOffset?>("LastRenewalAttemptAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_renewal_attempt_at");
-
-                    b.Property<string>("OptionKey")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("option_key");
 
                     b.Property<DateTimeOffset?>("PastDueSince")
                         .HasColumnType("timestamp with time zone")
@@ -729,10 +727,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("module_key");
-
-                    b.Property<DateTimeOffset?>("RevokedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("revoked_at");
 
                     b.Property<Guid>("SiteId")
                         .HasColumnType("uuid")
@@ -2091,50 +2085,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.ToTable("required_documents", (string)null);
                 });
 
-            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.RoleChangeRecordEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("ChangedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("changed_at");
-
-                    b.Property<Guid>("ChangedByOperatorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("changed_by_operator_id");
-
-                    b.Property<Guid>("ChangedOperatorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("changed_operator_id");
-
-                    b.Property<string>("NewRoleName")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("new_role_name");
-
-                    b.PrimitiveCollection<List<string>>("PreviousRoleNames")
-                        .IsRequired()
-                        .HasColumnType("text[]")
-                        .HasColumnName("previous_role_names");
-
-                    b.Property<Guid>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ChangedByOperatorId");
-
-                    b.HasIndex("ChangedOperatorId");
-
-                    b.HasIndex("SiteId", "ChangedAt")
-                        .HasDatabaseName("ix_role_change_records_site_id_changed_at");
-
-                    b.ToTable("role_change_records", (string)null);
-                });
-
             modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.RoleRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2663,27 +2613,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasOne("Ago.Chat.Infrastructure.Postgres.Persistence.RoleRecord", null)
                         .WithMany()
                         .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Ago.Chat.Infrastructure.Postgres.Persistence.RoleChangeRecordEntity", b =>
-                {
-                    b.HasOne("Ago.Chat.Domain.Operator", null)
-                        .WithMany()
-                        .HasForeignKey("ChangedByOperatorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Ago.Chat.Domain.Operator", null)
-                        .WithMany()
-                        .HasForeignKey("ChangedOperatorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Ago.Chat.Domain.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

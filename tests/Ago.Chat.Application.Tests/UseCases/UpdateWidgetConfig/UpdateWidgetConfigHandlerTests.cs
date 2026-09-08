@@ -36,8 +36,9 @@ public class UpdateWidgetConfigHandlerTests
         string position = nameof(Position.BottomRight),
         string locale = nameof(Locale.En),
         string? noticeText = null,
-        string? noticeUrl = null) =>
-        new(SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl);
+        string? noticeUrl = null,
+        bool attractAttention = false) =>
+        new(SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl, AttractAttention: attractAttention);
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_UpdatesTheSitesWidgetConfig()
@@ -96,6 +97,35 @@ public class UpdateWidgetConfigHandlerTests
 
     // `16-04`'s own Scope - both fields must be leaveable empty, and a tenant leaving them empty gets
     // no notice, not an AGO-authored one.
+    // `23-63`: the sixth field this same call writes - straight onto WidgetConfig itself, the
+    // identical "no third Site method needed" shape NoticeText/NoticeUrl already established.
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_UpdatesTheSitesAttractAttention()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(attractAttention: true), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.AttractAttention);
+
+        var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
+        Assert.True(saved!.WidgetConfig.AttractAttention);
+    }
+
+    // `23-63`'s own Decision: "a setting, off unless the tenant turns it on" - the default this
+    // handler must never silently flip.
+    [Fact]
+    public async Task HandleAsync_WhenAttractAttentionIsNotSupplied_LeavesItFalse()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.AttractAttention);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenNoticeFieldsAreNotSupplied_LeavesThemNull()
     {

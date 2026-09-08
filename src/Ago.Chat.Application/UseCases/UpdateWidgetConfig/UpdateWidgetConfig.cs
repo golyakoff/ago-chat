@@ -22,6 +22,9 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// `24-05`: <see cref="RequireContactConsent"/> joins on the identical terms - already a plain
 /// <see langword="bool"/> with nothing to validate, so it needs no parse step the way
 /// <see cref="Position"/>/<see cref="Locale"/> do, and rides the same `new WidgetConfig(...)` call.
+///
+/// `23-63`: <see cref="AttractAttention"/> joins on the identical terms - one more plain
+/// <see langword="bool"/> with nothing to validate, riding the same `new WidgetConfig(...)` call.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -31,4 +34,5 @@ public sealed record UpdateWidgetConfig(
     string Locale,
     string? NoticeText,
     string? NoticeUrl,
-    bool RequireContactConsent = false);
+    bool RequireContactConsent = false,
+    bool AttractAttention = false);

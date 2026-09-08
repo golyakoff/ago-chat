@@ -80,9 +80,20 @@ public readonly partial record struct WidgetConfig
     /// who wants it must ask for it.</summary>
     public bool RequireContactConsent { get; }
 
+    /// <summary>`23-63`: whether the launcher draws attention to itself - a brief, bounded, CSS-only
+    /// pulse on the closed launcher, off by default. Joins <see cref="RequireContactConsent"/> on
+    /// the identical terms: one more fixed, named, validated (here, nothing to validate - a plain
+    /// bool has no illegal value) field on this type, not a new configuration mechanism. Deliberately
+    /// defaults to <see langword="false"/> for every existing row - a tenant who wants a moving
+    /// launcher must ask for it, the same "a tenant cannot consent on their visitor's behalf by
+    /// staying silent" posture <c>RequireContactConsent</c> already established for itself, restated
+    /// here for a different reason: an unannounced behaviour change (every existing site suddenly
+    /// animating on the next deploy) is not something a schema default may cause on its own.</summary>
+    public bool AttractAttention { get; }
+
     public WidgetConfig(
         string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null,
-        bool requireContactConsent = false)
+        bool requireContactConsent = false, bool attractAttention = false)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -117,6 +128,7 @@ public readonly partial record struct WidgetConfig
         NoticeText = noticeText;
         NoticeUrl = noticeUrl;
         RequireContactConsent = requireContactConsent;
+        AttractAttention = attractAttention;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls
