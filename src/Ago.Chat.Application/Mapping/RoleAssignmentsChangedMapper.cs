@@ -6,13 +6,16 @@ using Ago.Platform.Kernel;
 namespace Ago.Chat.Application.Mapping;
 
 /// <summary>
-/// `22-05`: builds the <see cref="RoleAssignmentsChanged"/> envelope for all three of today's
-/// publishers - site registration and invite redemption (`Ago.Chat.Infrastructure.Postgres`, which may
-/// reference `Application` per the dependency rule) and operator removal
-/// (`Ago.Chat.Application.UseCases.RemoveOperator.RemoveOperatorHandler`). One mapper rather than three
-/// copies, for the same reason every other mapper in this folder exists: the envelope's shape
+/// `22-05`: builds the <see cref="RoleAssignmentsChanged"/> envelope for every one of today's
+/// publishers - site registration, invite redemption and <c>RoleRepository.AddPermissionsAsync</c>
+/// (`Ago.Chat.Infrastructure.Postgres`, which may reference `Application` per the dependency rule),
+/// operator removal (`Ago.Chat.Application.UseCases.RemoveOperator.RemoveOperatorHandler`), and the
+/// one-shot `RoleAssignmentProjectionBackfill` (`22-16`). One mapper rather than one copy per
+/// publisher, for the same reason every other mapper in this folder exists: the envelope's shape
 /// (<see cref="EventEnvelope.PartitionKey"/>'s value, the topic name, the version) is a decision made
-/// once, not re-derived at each call site.
+/// once, not re-derived at each call site. Not an exhaustive list this comment promises to keep
+/// current as new callers arrive - see each publisher's own remarks for why it publishes what it
+/// does.
 ///
 /// <para><b>Keyed by <see cref="RoleAssignmentsChanged.ExternalSubjectId"/>, not by site.</b> The only
 /// ordering that matters is between successive facts about the same person - two different operators'
