@@ -321,11 +321,14 @@ public class ModuleTaskGatewayIntegrationTests
                     key, triggerWords, entryPoint, credential ?? DefaultCredential, GrantedByOwner: false, ExpiresAt: null)]);
 
         // `23-14`: interface parity only - this fixture is for the module-task gateway's own tests,
-        // none of which exercise the owner's detail read.
+        // none of which exercise the owner's detail read. `23-103`: `Id` synthesized fresh, same
+        // "nothing here asserts on it" reasoning FakeEnabledModuleReadStore's own remarks give.
         public Task<IReadOnlyList<EnabledModuleDetailSummary>> GetAllForSiteAsync(
             SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<EnabledModuleDetailSummary>>(
-                [new EnabledModuleDetailSummary(key, triggerWords, entryPoint, GrantedByOwner: false, ExpiresAt: null, IsActive: true)]);
+                [new EnabledModuleDetailSummary(
+                    new EnabledModuleId(Guid.NewGuid()), key, triggerWords, entryPoint, GrantedByOwner: false,
+                    ExpiresAt: null, RevokedAt: null, Status: "Active")]);
     }
 
     /// <summary>`20-09`: the minimal double the gate's own real-HTTP tests need - seeded with at most

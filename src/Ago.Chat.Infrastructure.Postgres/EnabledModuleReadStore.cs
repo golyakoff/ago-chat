@@ -31,19 +31,31 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
 
     // `23-14`: no `expires_at` filter at all - the platform owner's detail read needs the whole
     // history, including a lapsed grant, so that "the module vanished" and "the module was never
-    // granted" stay distinguishable (this file's own interface remarks). `is_active` is projected
-    // rather than filtered on, computed by the identical comparison `Sql`'s own `WHERE` clause above
-    // uses to decide inclusion - so a caller reading it is trusting the same live decision the
-    // production hot path makes, not a second one. `22-30`: no `revoked_at` filter either, for the
-    // identical reason - and the same reason `Ago.Chat.Worker.SiteErasureJob` reads through this very
-    // method to learn every module a site has ever had, revoked or lapsed included, now that neither
-    // case deletes the row.
+    // granted" stay distinguishable (this file's own interface remarks). `22-30`: no `revoked_at`
+    // filter either, for the identical reason - and the same reason `Ago.Chat.Worker.SiteErasureJob`
+    // reads through this very method to learn every module a site has ever had, revoked or lapsed
+    // included, now that neither case deletes the row.
+    // `23-103`: `status` replaces the old `is_active` boolean - projected, not filtered on, from the
+    // identical two comparisons `Sql`'s own `WHERE` clause above uses, so a caller reading it trusts
+    // the same live decision the production hot path makes, not a second one computed against a
+    // different clock. `revoked_at is not null` is checked first and wins when a grant is both expired
+    // and revoked - a revoke is the more specific, more recent fact (EnabledModuleDetailSummary's own
+    // remarks state the reasoning). `id` and `revoked_at` are new selections, both needed to make a
+    // revoke-then-re-grant's two rows for one module describable rather than merely present
+    // (`adr/0155`). `order by enabled_at` makes that same multi-row case stable to render - Postgres
+    // gives no ordering guarantee at all without one.
     private const string AllSql = """
-        select module_key as "ModuleKey", trigger_words as "TriggerWords", entry_point as "EntryPoint",
-               granted_by_owner as "GrantedByOwner", expires_at as "ExpiresAt",
-               ((expires_at is null or expires_at > @Now) and revoked_at is null) as "IsActive"
+        select id as "Id", module_key as "ModuleKey", trigger_words as "TriggerWords",
+               entry_point as "EntryPoint", granted_by_owner as "GrantedByOwner",
+               expires_at as "ExpiresAt", revoked_at as "RevokedAt",
+               (case
+                   when revoked_at is not null then 'Revoked'
+                   when expires_at is not null and expires_at <= @Now then 'Expired'
+                   else 'Active'
+                end) as "Status"
         from enabled_modules
         where site_id = @SiteId
+        order by enabled_at
         """;
 
     public async Task<IReadOnlyList<EnabledModuleSummary>> GetForSiteAsync(
@@ -77,12 +89,14 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
         r.ExpiresAt);
 
     private static EnabledModuleDetailSummary ToDetailSummary(EnabledModuleDetailRow r) => new(
+        new EnabledModuleId(r.Id),
         new ModuleKey(r.ModuleKey),
         JsonSerializer.Deserialize<List<string>>(r.TriggerWords, TriggerWordsOptions)!,
         new Uri(r.EntryPoint, UriKind.Absolute),
         r.GrantedByOwner,
         r.ExpiresAt,
-        r.IsActive);
+        r.RevokedAt,
+        r.Status);
 
     private sealed class EnabledModuleRow
     {
@@ -101,10 +115,13 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
 
     /// <summary>`23-14`: <see cref="EnabledModuleRow"/>'s shape minus <see cref="EnabledModuleRow.Credential"/>
     /// (never selected by <see cref="AllSql"/> - the owner detail read has no use for it, the same
-    /// hygiene <see cref="EnabledModuleDetailSummary"/>'s own remarks describe), plus
-    /// <see cref="IsActive"/>.</summary>
+    /// hygiene <see cref="EnabledModuleDetailSummary"/>'s own remarks describe), plus <see cref="Id"/>,
+    /// <see cref="RevokedAt"/> and <see cref="Status"/> (`23-103`, replacing the old <c>IsActive</c>
+    /// boolean this row type carried before).</summary>
     private sealed class EnabledModuleDetailRow
     {
+        public Guid Id { get; init; }
+
         public string ModuleKey { get; init; } = string.Empty;
 
         public string TriggerWords { get; init; } = string.Empty;
@@ -115,6 +132,8 @@ public sealed class EnabledModuleReadStore(NpgsqlDataSource dataSource) : IEnabl
 
         public DateTimeOffset? ExpiresAt { get; init; }
 
-        public bool IsActive { get; init; }
+        public DateTimeOffset? RevokedAt { get; init; }
+
+        public string Status { get; init; } = string.Empty;
     }
 }
