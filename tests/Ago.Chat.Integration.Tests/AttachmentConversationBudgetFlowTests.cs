@@ -25,7 +25,10 @@ public sealed class AttachmentConversationBudgetFlowTests(AttachmentFixture fixt
     public async Task HandleAsVisitorAsync_TenSimultaneousPresignRequests_NeverTogetherExceedTheConversationBudget()
     {
         var (_, visitorId, _, conversationId) = await SeedAssignedConversationAsync();
-        var options = new AttachmentOptions { MaxConversationBytes = 30 * 1024 * 1024 }; // 30 MiB
+        // `23-81` dropped the default per-file ceiling to 5 MiB; this test is about the
+        // *conversation* budget, not the per-file one, so it raises `MaxSizeBytes` explicitly
+        // rather than shrinking `declaredBytes` and losing "room for exactly three of ten".
+        var options = new AttachmentOptions { MaxConversationBytes = 30 * 1024 * 1024, MaxSizeBytes = 10 * 1024 * 1024 };
         const long declaredBytes = 10 * 1024 * 1024; // 10 MiB - room for exactly three of ten.
         const int attempts = 10;
 
@@ -59,7 +62,9 @@ public sealed class AttachmentConversationBudgetFlowTests(AttachmentFixture fixt
     public async Task MixedVisitorAndOperatorRequests_ShareOneConversationBudget()
     {
         var (siteId, visitorId, operatorId, conversationId) = await SeedAssignedConversationAsync();
-        var options = new AttachmentOptions { MaxConversationBytes = 30 * 1024 * 1024 };
+        // Same reasoning as the test above: `MaxSizeBytes` raised explicitly so 10 MiB per file
+        // still clears the per-file ceiling and this test keeps exercising the conversation budget.
+        var options = new AttachmentOptions { MaxConversationBytes = 30 * 1024 * 1024, MaxSizeBytes = 10 * 1024 * 1024 };
         const long declaredBytes = 10 * 1024 * 1024;
 
         var visitorCalls = Enumerable.Range(0, 5).Select(async _ =>
