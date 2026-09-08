@@ -24,4 +24,54 @@
     <AgoPlatformDevOverride Condition="'$(AgoPlatformDevOverride)' == ''">false</AgoPlatformDevOverride>
   </PropertyGroup>
 
+  <!-- `23-114`: keep only the native binaries a build could actually load.
+
+       SkiaSharp's native-asset packages carry every platform they support, and a build with no
+       `RuntimeIdentifier` copies all of them: 440 MB under `bin/Release/net10.0/runtimes/`, of which
+       win-x86 (98 MB) and win-arm64 (93 MB) are for machines this project has never run on. Multiplied
+       across worktrees that is tens of gigabytes; the workspace had reached 158 GB, 147 of it `bin`
+       and `obj`.
+
+       IT LIVES HERE, NOT IN Ago.Chat.Worker.csproj, AND THAT WAS FOUND BY MEASURING. Only the Worker
+       references SkiaSharp, so putting the target beside that reference looked right and took the
+       Worker's own output from 440 MB to 97 MB. The integration test project, which references the
+       Worker, still wrote all 440 MB - native assets are resolved per project, so every project that
+       transitively reaches the package copies its own full set. A repository-wide rule is what the
+       rule actually is.
+
+       WHAT IT DELIBERATELY CANNOT TOUCH. The container image comes from a RID-qualified,
+       framework-dependent publish (see `Dockerfile`), and such a publish already resolves exactly one
+       platform's assets, which is why that image is 67 MB and carries no `runtimes/` tree at all. The
+       condition is `'$(RuntimeIdentifier)' == ''`, so this cannot run on that path even by accident.
+
+       WHY NOT `ExcludeAssets` ON THE PACKAGE. Dropping `SkiaSharp.NativeAssets.Win32` would take
+       win-x64 with it and break local `dotnet run` and the thumbnail tests, which is what that
+       package is there for. The unwanted part is not the package, it is the platforms inside it.
+
+       The rule is "the OS this build runs on, and on Windows that OS's architecture", read from the
+       running process rather than hardcoded, so an arm64 machine keeps arm64 and loses x64 instead.
+       Linux keeps every `linux-*` variant: a musl or bionic container is a plausible host for the same
+       binaries, and the saving there is not what this is about.
+  -->
+  <Target Name="TrimUnloadableNativeRuntimes"
+          AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(RuntimeIdentifier)' == ''">
+    <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+      <_AgoKeepRid Include="win-$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant())" />
+      <_AgoUnloadable Include="@(RuntimeTargetsCopyLocalItems)"
+                      Condition="'%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' != '@(_AgoKeepRid)'" />
+    </ItemGroup>
+
+    <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+      <_AgoUnloadable Include="@(RuntimeTargetsCopyLocalItems)"
+                      Condition="$([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)').StartsWith('win'))
+                              or $([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)').StartsWith('osx'))" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <RuntimeTargetsCopyLocalItems Remove="@(_AgoUnloadable)" />
+      <ReferenceCopyLocalPaths Remove="@(_AgoUnloadable)" />
+    </ItemGroup>
+  </Target>
+
 </Project>
