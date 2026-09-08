@@ -89,11 +89,13 @@ public sealed class GetSiteForOwnerHandler(
 
     private static OwnerSiteModuleDto ToModuleDto(
         EnabledModuleDetailSummary module, IReadOnlyDictionary<ModuleKey, int> quantities) => new(
+        module.Id.Value,
         module.ModuleKey.Value,
         module.TriggerWords,
         module.EntryPoint.ToString(),
         module.GrantedByOwner,
         module.ExpiresAt,
-        module.IsActive,
+        module.RevokedAt,
+        module.Status,
         quantities.TryGetValue(module.ModuleKey, out var quantity) ? quantity : null);
 }
