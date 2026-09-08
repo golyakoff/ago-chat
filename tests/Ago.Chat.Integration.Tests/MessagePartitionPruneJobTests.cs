@@ -164,19 +164,19 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
     }
 
     /// <summary>
-    /// `13-08`'s own Done-when: "free-tier messages older than two months are pruned, and a paid
-    /// tier's are not - proven by two tiers, not reasoned about with one." One real Postgres, one prune
-    /// cycle, two sites of two different retention classes at the identical row age - the free-tier row
-    /// gone, the paid-tier row (`starter`, left at today's undifferentiated behaviour per this item's
-    /// own scope - no number of its own yet) still present.
+    /// `13-08`'s own Done-when, updated by `23-74`: "free-tier messages older than two months are
+    /// pruned, and a paid tier's are not - proven by two tiers, not reasoned about with one." One real
+    /// Postgres, one prune cycle, two sites of two different retention classes at the identical row age
+    /// - the free-tier row gone, the paid-tier row (`starter`) still present.
     ///
     /// <para>referenceNow = 2000-06-01, both rows dated 2000-03-15 (2.5 months old at that reference).
     /// `free`'s own effective horizon is `Min(2, ceiling 3) = 2` months, so its cutoff is 2000-04-01 -
     /// the row (2000-03-15) is before it, expired. `starter` has no entry in
-    /// <see cref="MessagePartitionPruneJobOptions.RetentionWindowMonthsByClass"/>, so it falls back to
-    /// the ceiling itself (3 months), cutoff 2000-03-01 - the row (2000-03-15) is *after* that, not yet
-    /// expired. The same two numbers <see cref="MessagePartitionPruneJobOptions.EffectiveHorizonMonths"/>'s
-    /// own remarks describe, exercised end to end rather than asserted as a unit.</para>
+    /// <see cref="MessagePartitionPruneJobOptions.RetentionWindowMonthsByClass"/>, so (`23-74`:
+    /// `ago-business/0012` §5, "forever, while paid") it never gets a cutoff at all - the row survives
+    /// regardless of age, not merely because it is not yet old enough for a fallback ceiling. See
+    /// <see cref="PruneAsync_NeverPrunesAPaidTierRow_NoMatterHowOld"/> for the test that tells the two
+    /// readings apart.</para>
     /// </summary>
     [Fact]
     public async Task PruneAsync_WithTwoRetentionClasses_PrunesTheExpiredFreeTierRow_AndLeavesThePaidTierRowOfTheSameAge()
@@ -226,6 +226,67 @@ public sealed class MessagePartitionPruneJobTests(PostgresFixture fixture)
         await job.PruneAsync(CancellationToken.None);
 
         Assert.False(await MessageExistsAsync(messageId));
+    }
+
+    /// <summary>
+    /// `23-74`'s own core proof: "forever, while paid" (`ago-business/0012` §5) means no time-based
+    /// cutoff is ever computed for a paid class, not merely that today's row happens to be too young for
+    /// one. Distinguishes that reading from the pre-`23-74` "no entry falls back to the ceiling" one -
+    /// under the old semantics this row (ten years old at referenceNow, comfortably past any plausible
+    /// ceiling) would have been removed; under `23-74`'s, a class absent from
+    /// <see cref="MessagePartitionPruneJobOptions.RetentionWindowMonthsByClass"/> never enters
+    /// <c>cutoffsByClass</c> at all, so age never matters for it.
+    /// </summary>
+    [Fact]
+    public async Task PruneAsync_NeverPrunesAPaidTierRow_NoMatterHowOld()
+    {
+        var (_, messageId) = await SeedExpiredMessageAsync(1990, 1, retentionClass: SubscriptionTierBands.Starter);
+
+        var job = CreateJob(referenceNow: new DateTimeOffset(2000, 6, 1, 0, 0, 0, TimeSpan.Zero), gate: new AlwaysConfirmedMessageArchiveGate());
+        await job.PruneAsync(CancellationToken.None);
+
+        Assert.True(await MessageExistsAsync(messageId));
+    }
+
+    /// <summary>
+    /// `23-74`'s Done-when: "history written while paid survives a later downgrade, proven -
+    /// `adr/0031` says it does, and nothing asserts it." `adr/0031`'s Decision 2 is that
+    /// <c>retention_class</c> is stamped once, from the tenant's tier at write time, and never
+    /// recomputed - so a message written while the site was `starter` keeps that class even after the
+    /// site's own <see cref="Site.Tier"/> changes. This seeds a message under `starter`, then changes the
+    /// owning site's tier to `free` directly (the downgrade itself - `Site.Tier`'s own domain method is
+    /// not exercised here because only the persisted column matters to this job, which reads
+    /// `messages.retention_class`, never `sites.tier`), and proves the message survives a prune cycle
+    /// that would delete a genuinely free-tier row of the same age. Without `adr/0031`'s immutability
+    /// actually holding at the storage layer - if pruning read the site's *current* tier instead of the
+    /// message's own stamped class - this row would be gone.
+    /// </summary>
+    [Fact]
+    public async Task PruneAsync_LeavesAMessageWrittenUnderAPaidClass_AfterTheOwningSiteLaterDowngradesToFree()
+    {
+        var (siteId, messageId) = await SeedExpiredMessageAsync(2000, 1, retentionClass: SubscriptionTierBands.Starter);
+        await DowngradeSiteToFreeAsync(siteId);
+
+        var job = new MessagePartitionPruneJob(
+            fixture.DataSource, new AlwaysConfirmedMessageArchiveGate(), new FakeFileStorage(),
+            new FixedClock(new DateTimeOffset(2000, 6, 1, 0, 0, 0, TimeSpan.Zero)),
+            Options.Create(new MessagePartitionPruneJobOptions
+            {
+                RetentionHorizonMonths = RetentionHorizonMonths,
+                RetentionWindowMonthsByClass = new Dictionary<string, int> { ["free"] = 2 },
+            }),
+            NullLogger<MessagePartitionPruneJob>.Instance);
+        await job.PruneAsync(CancellationToken.None);
+
+        Assert.True(await MessageExistsAsync(messageId));
+    }
+
+    private async Task DowngradeSiteToFreeAsync(SiteId siteId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand("update sites set tier = 'free' where id = @id", connection);
+        command.Parameters.AddWithValue("id", siteId.Value);
+        await command.ExecuteNonQueryAsync();
     }
 
     /// <summary>
