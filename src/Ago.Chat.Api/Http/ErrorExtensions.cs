@@ -54,7 +54,17 @@ public static class ErrorExtensions
                 // `22-11`: an operator tried to rotate/revoke/check a module registration for a site
                 // that does not have that module enabled - the same "nothing to act on" shape every
                 // other NotFound code in this group already gets.
-                or "Module.NotEnabled" => StatusCodes.Status404NotFound,
+                or "Module.NotEnabled"
+                // `23-72`: found while wiring this item's own new route - `RemoveOperatorHandler`/
+                // `ToggleOperatorSeatHandler` have returned this code since `13-03` and it was never
+                // mapped here, so naming a nonexistent operator id on either existing route has always
+                // fallen through to this switch's `500` default rather than the `404` a caller's own
+                // mistake deserves. `ChangeOperatorRoleHandler` returns the identical code
+                // (`ConversationErrors.OperatorNotFound`) on its own new route, so fixing the mapping is
+                // this item's own concern, not a drive-by fix of the older two handlers - see this
+                // item's own report for the two adjacent codes (`Operator.AlreadyRemoved`,
+                // `Operator.SeatLimitReached`) left exactly as found.
+                or "Operator.NotFound" => StatusCodes.Status404NotFound,
             // `23-71`: the identical shape as Conversation.Forbidden right above - a real permission
             // holder refused for a second, orthogonal reason (holding no seat), not a malformed
             // request or a conflict with anything concurrent. ConversationErrors.OperatorHasNoSeat's
@@ -65,6 +75,11 @@ public static class ErrorExtensions
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
                 or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken"
                 or "OperatorInvite.InvalidRole" or "Conversation.SearchInvalidQuery"
+                // `23-72`: the identical "the caller named a role that does not exist on this site"
+                // shape as `OperatorInvite.InvalidRole` right above - a distinct code because the two
+                // write paths (invite generation, role change) are otherwise unrelated
+                // (`ConversationErrors.OperatorRoleNotFound`'s own remarks), same status.
+                or "Operator.RoleNotFound"
                 // `18-02`: a real client mistake (naming the operator who already holds the
                 // conversation), not a conflict with anything concurrent - see the error's own remarks.
                 or "Conversation.TransferTargetIsCurrentOperator"

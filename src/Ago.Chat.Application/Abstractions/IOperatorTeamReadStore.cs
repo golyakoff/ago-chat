@@ -37,11 +37,28 @@ public interface IOperatorTeamReadStore
 
 /// <summary>
 /// One row of <see cref="IOperatorTeamReadStore.GetForSiteAsync"/> - a plain projection of the
-/// <c>operators</c> table, not the <see cref="Operator"/> aggregate (the same "read store returns
-/// rows, not aggregates" shape <see cref="ConversationSummaryItem"/> already established for the
-/// conversation side). <paramref name="DisplayName"/>/<paramref name="Email"/> are both
-/// <see langword="null"/> for the one row shape that carries neither - a minted demo tenant's own
-/// operator, which is never authenticated through Keycloak and so has no claims to copy
-/// (`adr/0104`).
+/// <c>operators</c> table (joined with <c>operator_roles</c>/<c>roles</c> for <see cref="RoleNames"/>),
+/// not the <see cref="Operator"/> aggregate (the same "read store returns rows, not aggregates" shape
+/// <see cref="ConversationSummaryItem"/> already established for the conversation side).
+/// <paramref name="DisplayName"/>/<paramref name="Email"/> are both <see langword="null"/> for the one
+/// row shape that carries neither - a minted demo tenant's own operator, which is never authenticated
+/// through Keycloak and so has no claims to copy (`adr/0104`).
+///
+/// <para><paramref name="RoleNames"/>: `23-72`'s own addition - every role name this operator currently
+/// holds, plural because the account's own founder holds both seeded roles from registration
+/// (<c>SiteRegistrationRepository</c>'s own remarks), not a single "the" role. The team screen needs this
+/// to show who already administers before offering to change anyone's role, the same reason
+/// `ChangeOperatorRoleHandler`'s own promotion/demotion branches need it server-side.</para>
 /// </summary>
-public sealed record OperatorTeamMemberItem(OperatorId OperatorId, string? DisplayName, string? Email, bool HoldsSeat);
+public sealed record OperatorTeamMemberItem(
+    OperatorId OperatorId, string? DisplayName, string? Email, bool HoldsSeat, IReadOnlyList<string> RoleNames)
+{
+    /// <summary>Trailing default, matching this codebase's own precedent for a column/field added to a
+    /// type with many existing call sites (<see cref="Domain.Site.Name"/>'s own remarks) - every test
+    /// that seeds a team row for a question unrelated to roles keeps compiling with no role names at
+    /// all, which is also an honest empty answer, not a guess.</summary>
+    public OperatorTeamMemberItem(OperatorId OperatorId, string? DisplayName, string? Email, bool HoldsSeat)
+        : this(OperatorId, DisplayName, Email, HoldsSeat, [])
+    {
+    }
+}

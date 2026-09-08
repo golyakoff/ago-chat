@@ -17,11 +17,20 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// </summary>
 public sealed class OperatorTeamReadStore(NpgsqlDataSource dataSource) : IOperatorTeamReadStore
 {
+    // `23-72`: left-joined, not inner-joined - an operator row with no operator_roles entry at all (it
+    // should not exist in practice, but this read has no reason to silently drop such a row from the
+    // team list the way an inner join would) still comes back with an empty RoleNames rather than
+    // vanishing from the page. array_agg over a left join produces one all-NULL array element for a
+    // roleless operator; the FILTER clause keeps that element out rather than returning `{NULL}`.
     private const string Sql = """
-        select id as "OperatorId", display_name as "DisplayName", email as "Email", holds_seat as "HoldsSeat"
-        from operators
-        where site_id = @SiteId and removed_at is null
-        order by display_name nulls last, id
+        select o.id as "OperatorId", o.display_name as "DisplayName", o.email as "Email", o.holds_seat as "HoldsSeat",
+               coalesce(array_agg(r.name) filter (where r.name is not null), array[]::text[]) as "RoleNames"
+        from operators o
+        left join operator_roles orl on orl.operator_id = o.id
+        left join roles r on r.id = orl.role_id
+        where o.site_id = @SiteId and o.removed_at is null
+        group by o.id, o.display_name, o.email, o.holds_seat
+        order by o.display_name nulls last, o.id
         """;
 
     public async Task<IReadOnlyList<OperatorTeamMemberItem>> GetForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
@@ -32,9 +41,21 @@ public sealed class OperatorTeamReadStore(NpgsqlDataSource dataSource) : IOperat
             Sql, new { SiteId = siteId.Value }, cancellationToken: cancellationToken));
 
         return rows
-            .Select(r => new OperatorTeamMemberItem(new OperatorId(r.OperatorId), r.DisplayName, r.Email, r.HoldsSeat))
+            .Select(r => new OperatorTeamMemberItem(new OperatorId(r.OperatorId), r.DisplayName, r.Email, r.HoldsSeat, r.RoleNames))
             .ToList();
     }
 
-    private sealed record OperatorTeamRow(Guid OperatorId, string? DisplayName, string? Email, bool HoldsSeat);
+    // `23-72`: a plain class with a parameterless constructor, not the positional-record shape this
+    // type had before - Dapper's constructor-matching materialiser cannot resolve a `text[]` column
+    // against a `string[]` constructor parameter ("System.Array RoleNames" in its own error), found
+    // running this change's own new integration tests. Property-setting (Dapper's other, older
+    // materialisation path, used whenever no matching constructor is found) has no such limitation.
+    private sealed class OperatorTeamRow
+    {
+        public Guid OperatorId { get; init; }
+        public string? DisplayName { get; init; }
+        public string? Email { get; init; }
+        public bool HoldsSeat { get; init; }
+        public string[] RoleNames { get; init; } = [];
+    }
 }

@@ -186,4 +186,19 @@ public sealed class RoleRepository(AgoChatDbContext db, IIdGenerator idGenerator
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// `23-72`: `ChangeOperatorRoleHandler`'s own lookup - see the port's own remarks on
+    /// <see cref="IRoleRepository.GetByNameAsync"/> for why this is a second method rather than a
+    /// widened <see cref="GetIdByNameAsync"/>.
+    /// </summary>
+    public async Task<RoleLookup?> GetByNameAsync(SiteId siteId, string name, CancellationToken cancellationToken)
+    {
+        var row = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId && r.Name == name)
+            .Select(r => new { r.Id, r.Permissions })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is null ? null : new RoleLookup(row.Id, row.Permissions);
+    }
 }

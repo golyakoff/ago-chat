@@ -24,7 +24,7 @@ public sealed class GetOperatorTeamHandler(IOperatorTeamReadStore team, IPermiss
         var rows = await team.GetForSiteAsync(query.SiteId, cancellationToken);
 
         return new OperatorTeamResponse(rows
-            .Select(r => new OperatorTeamMemberDto(r.OperatorId.Value, r.DisplayName, r.Email, r.HoldsSeat))
+            .Select(r => new OperatorTeamMemberDto(r.OperatorId.Value, r.DisplayName, r.Email, r.HoldsSeat, r.RoleNames))
             .ToList());
     }
 }

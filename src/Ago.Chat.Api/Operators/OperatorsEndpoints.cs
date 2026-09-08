@@ -2,6 +2,7 @@
 using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.ChangeOperatorRole;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
@@ -39,6 +40,12 @@ public static class OperatorsEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapPost("/api/v1/sites/{siteId:guid}/operators/{operatorId:guid}/remove", HandleRemoveOperatorAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-72`: "an administrator can change an existing colleague's role, both directions" - a new
+        // route, not folded into the seat/remove ones above, because it changes a genuinely different
+        // fact about the operator (which role they hold, never HoldsSeat/RemovedAt).
+        app.MapPost("/api/v1/sites/{siteId:guid}/operators/{operatorId:guid}/role", HandleChangeOperatorRoleAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapGet("/api/v1/sites/{siteId:guid}/operators/seat-assignment-summary", HandleGetSeatAssignmentSummaryAsync)
@@ -101,6 +108,22 @@ public static class OperatorsEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 
+    private static async Task<IResult> HandleChangeOperatorRoleAsync(
+        Guid siteId,
+        Guid operatorId,
+        ChangeOperatorRoleRequest request,
+        ChangeOperatorRoleHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new ChangeOperatorRole(user.GetOperatorId(), new SiteId(siteId), new OperatorId(operatorId), request.RoleName),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+    }
+
     private static async Task<IResult> HandleGetSeatAssignmentSummaryAsync(
         Guid siteId, GetSeatAssignmentSummaryHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
@@ -120,4 +143,6 @@ public static class OperatorsEndpoints
     }
 
     public sealed record ToggleOperatorSeatRequest(bool HoldsSeat);
+
+    public sealed record ChangeOperatorRoleRequest(string RoleName);
 }

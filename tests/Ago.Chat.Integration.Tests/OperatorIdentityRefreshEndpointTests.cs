@@ -5,6 +5,7 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Operators;
 using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.ChangeOperatorRole;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
 using Ago.Chat.Application.UseCases.GetOperatorTeam;
@@ -154,6 +155,14 @@ public sealed class OperatorIdentityRefreshEndpointTests(OperatorOidcFixture fix
         // exist to satisfy.
         builder.Services.AddScoped<IOperatorTeamReadStore, OperatorTeamReadStore>();
         builder.Services.AddScoped<GetOperatorTeamHandler>();
+        // `23-72`: the fifth route `MapOperatorsEndpoints()` now maps - the identical "every mapped
+        // endpoint's handler must be a registered service" requirement the lines above already exist to
+        // satisfy.
+        builder.Services.AddScoped<IRoleRepository, RoleRepository>();
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
+        builder.Services.AddScoped<IRoleChangeRecordRepository, RoleChangeRecordRepository>();
+        builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        builder.Services.AddScoped<ChangeOperatorRoleHandler>();
         // `SitesEndpoints.MapSitesEndpoints()` also maps the erasure/export/archive routes - ASP.NET
         // Core builds every mapped endpoint's metadata eagerly (`EndpointDataSource.Endpoints`), so a
         // service missing for *any* of them fails host startup, not only a request to that route. The

@@ -14,6 +14,16 @@ public sealed class FakeRoleRepository : IRoleRepository
 
     public void Seed(SiteId siteId, string name, Guid roleId) => _roleIds[(siteId, name)] = roleId;
 
+    /// <summary>`23-72`: the permission-carrying overload <see cref="ChangeOperatorRoleHandlerTests"/>
+    /// needs - <see cref="GetByNameAsync"/> answers both the id and the permission set the real
+    /// <c>RoleRepository</c> would, so a test can seed a role that does or does not grant
+    /// `site:manage_operators`.</summary>
+    public void Seed(SiteId siteId, string name, Guid roleId, IReadOnlyList<string> permissions)
+    {
+        _roleIds[(siteId, name)] = roleId;
+        _permissions[(siteId, name)] = [.. permissions];
+    }
+
     /// <summary>`23-102`: seeds a role's *starting* permission set - the union
     /// <see cref="AddPermissionsAsync"/> then grows, the same shape a real site's roles carry before a
     /// module grant ever runs.</summary>
@@ -50,4 +60,21 @@ public sealed class FakeRoleRepository : IRoleRepository
     /// only so a lookup on an unseeded pair does not throw.</summary>
     public IReadOnlySet<string> PermissionsFor(SiteId siteId, string roleName) =>
         _permissions.TryGetValue((siteId, roleName), out var current) ? current : new HashSet<string>();
+
+    /// <summary>`23-72`: `ChangeOperatorRoleHandler`'s own lookup - returns both the id and the
+    /// permission set for a role seeded by either <see cref="Seed(SiteId,string,Guid,IReadOnlyList{string})"/>
+    /// or grown afterward by <see cref="AddPermissionsAsync"/>/<see cref="SeedPermissions"/>, so the two
+    /// sides of this fake never disagree about what a role currently carries.</summary>
+    public Task<RoleLookup?> GetByNameAsync(SiteId siteId, string name, CancellationToken cancellationToken)
+    {
+        if (!_roleIds.TryGetValue((siteId, name), out var roleId))
+        {
+            return Task.FromResult<RoleLookup?>(null);
+        }
+
+        IReadOnlyList<string> permissions = _permissions.TryGetValue((siteId, name), out var current)
+            ? [.. current]
+            : [];
+        return Task.FromResult<RoleLookup?>(new RoleLookup(roleId, permissions));
+    }
 }
