@@ -346,8 +346,10 @@ internal static class TenantScopeExemptions
             + "which also takes a SiteId but is gated - it carries a RequestedBy its handler checks through "
             + "IPermissionChecker, because that read is a tenant's own operator looking at their own site; this one "
             + "carries no requester at all, because it is the platform owner looking at any site they name. Read-"
-            + "only; the SiteId is used only to load one row (IPlatformOverviewReadStore.GetSiteAsync) and that "
-            + "row's own modules (IEnabledModuleReadStore.GetAllForSiteAsync) - nothing is written.",
+            + "only; the SiteId is used only to load one row (IPlatformOverviewReadStore.GetSiteAsync), that row's "
+            + "own modules (IEnabledModuleReadStore.GetAllForSiteAsync), and - `23-68` - that row's own operator "
+            + "roster (IOperatorTeamReadStore.GetForSiteAsync, the identical read GetOperatorTeamHandler already "
+            + "serves a tenant's own team screen) - nothing is written.",
         ["Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner.UnlinkChannelIdentityAsOwnerHandler.HandleAsync"] =
             "`14-12`, the platform owner's own first write surface - see the handler's own remarks for why it is a "
             + "deliberately separate class from UnlinkChannelIdentityHandler rather than a nullable-OperatorId "
@@ -411,6 +413,21 @@ internal static class TenantScopeExemptions
             + "IPermissionChecker against Permission.SiteConfigure) rather than a nullable-OperatorId branch on it - "
             + "the identical 'one flag flips off every check' hazard EnableModuleForSiteAsOwnerHandler's own entry "
             + "above already names for its own tenant-facing sibling.",
+        ["Ago.Chat.Application.UseCases.RestoreOperatorSeatAsOwner.RestoreOperatorSeatAsOwnerHandler.HandleAsync"] =
+            "`23-68`, the platform owner's own recovery write - restores a named operator's seat on a named site, "
+            + "the console-reachable remedy for a tenant locked out with no other way back in. The identical "
+            + "category as EnableModuleForSiteAsOwnerHandler/RevokeModuleForSiteAsOwnerHandler above: SiteId names "
+            + "the tenant being acted on, chosen by the owner, not a resource the caller already owns, and "
+            + "RequirePlatformOwner on OwnerOperatorsEndpoints is the entire access-control story - "
+            + "Ago.Chat.Application still has no port that can see a Keycloak realm-role claim, so a permission "
+            + "check here would be a second, weaker copy of a rule the policy already decided. The SiteId is used "
+            + "to load the target Operator row - operators.GetByIdAsync(id, siteId) - so a caller cannot restore a "
+            + "different site's operator by naming its id against the wrong SiteId; the (site, operator) pair is "
+            + "the row's own key, the same structural protection ToggleOperatorSeatHandler's own operator-gated "
+            + "sibling gets from its additional IPermissionChecker call. A force flag and a recorded reason gate a "
+            + "seat-limit override this handler decides for itself (was the override meant), not who may call the "
+            + "route at all - the identical shape RevokeModuleForSiteAsOwnerHandler's own Force/Reason already "
+            + "establishes for a different override.",
         ["Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner.UpdateSiteAllowedOriginsAsOwnerHandler.HandleAsync"] =
             "`23-48`, the platform owner's own write for a tenant's allowed origins - the author's own decision "
             + "('the answer', docs/backlog/23-48-*.md) is that only the platform owner may ever call this, not the "

@@ -31,4 +31,11 @@ public enum AccessRecordResourceKind
     /// (site, module) rather than by a synthetic id (`Domain.ModuleQuantityGrant`'s own remarks).
     /// </summary>
     ModuleQuantityGrant,
+
+    /// <summary>`23-68`: <see cref="AccessRecordKind.OwnerOperatorSeatRestore"/>'s own resource - the
+    /// <c>operators</c> row whose seat was restored, named by its own <c>OperatorId</c>. A real
+    /// resource id, unlike <see cref="AccessRecordKind.OwnerSiteDetail"/>'s deliberate absence of
+    /// one - restoring a seat acts on one specific operator among possibly several on the same site,
+    /// so <c>site_id</c> alone would not say which.</summary>
+    Operator,
 }

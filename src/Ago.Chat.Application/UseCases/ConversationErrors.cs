@@ -358,6 +358,25 @@ public static class ConversationErrors
     public static Error OperatorAlreadyRemoved(Guid operatorId) =>
         new("Operator.AlreadyRemoved", $"Operator {operatorId} has already been removed.");
 
+    /// <summary>`23-68`: the platform owner's own seat-restore tried to push a site's held-seat count
+    /// past its own `seat_limit`, and the request set no `Force` - the identical "a real conflict with
+    /// existing state, resolved by an explicit second statement of intent" shape
+    /// <see cref="ModuleRevokePurchaseRequiresForce"/> already uses for its own override. The message
+    /// names the limit and the remedy, matching that code's own "a refusal a person can act on"
+    /// brief.</summary>
+    public static Error OperatorSeatRestoreExceedsLimitRequiresForce(int seatLimit) =>
+        new(
+            "Operator.SeatRestoreExceedsLimitRequiresForce",
+            $"Restoring this operator's seat would put the site over its seat limit of {seatLimit}. Set force=true "
+            + "with a reason to override, or ask the tenant to upgrade first.");
+
+    /// <summary>`23-68`: the request set `Force` but carried no non-blank reason, or one longer than
+    /// <see cref="UseCases.RestoreOperatorSeatAsOwner.RestoreOperatorSeatAsOwnerHandler.MaxReasonLength"/> -
+    /// the identical "decide, don't default" check <see cref="ModuleRevokeReasonRequired"/> already
+    /// makes for its own override, restated for this one.</summary>
+    public static Error OperatorSeatRestoreReasonRequired(string reason) =>
+        new("Operator.SeatRestoreReasonRequired", reason);
+
     /// <summary>`23-26`: refused because removing this operator would leave the site with nobody who
     /// holds `site:manage_operators` - the invariant is about the *site*, never about who is asking
     /// (self-removal is refused on exactly the same terms as anyone else removing this same last

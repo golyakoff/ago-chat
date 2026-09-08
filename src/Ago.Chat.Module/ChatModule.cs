@@ -106,6 +106,7 @@ using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveTeamMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveTeamMessageRemovalDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
+using Ago.Chat.Application.UseCases.RestoreOperatorSeatAsOwner;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
@@ -938,6 +939,10 @@ public sealed class ChatModule : IProductModule
         // see each handler's own remarks.
         services.AddScoped<ToggleOperatorSeatHandler>();
         services.AddScoped<RemoveOperatorHandler>();
+        // `23-68`: the platform owner's own recovery write - a second caller of Operator.ToggleSeat,
+        // gated entirely by RequirePlatformOwner at the route rather than by IPermissionChecker
+        // (RestoreOperatorSeatAsOwner's own remarks).
+        services.AddScoped<RestoreOperatorSeatAsOwnerHandler>();
         services.AddScoped<GetSeatAssignmentSummaryHandler>();
         // `23-22`: the team screen's own bootstrap read - see the handler's own remarks.
         services.AddScoped<GetOperatorTeamHandler>();

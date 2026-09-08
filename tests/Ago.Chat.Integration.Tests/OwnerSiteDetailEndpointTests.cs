@@ -71,6 +71,56 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         // `23-48`: the detail read's own new field - loaded off the write-side aggregate, not the
         // read-model row (GetSiteForOwnerHandler's own remarks).
         Assert.Equal(["https://shop.example"], body.AllowedOrigins);
+        // `23-68`: a bare tenant with no operators seeded reports an empty roster, not an omitted one.
+        Assert.Empty(body.Operators);
+    }
+
+    /// <summary>`23-68`'s own console-reachability claim: the detail read now names every non-removed
+    /// operator this tenant has, with the exact field the platform owner needs to spot the locked-out
+    /// candidate (<c>HoldsSeat: false</c>) and the role-vs-seat gap this item names but does not fix
+    /// (an empty <c>RoleNames</c>).</summary>
+    [Fact]
+    public async Task OwnerToken_SeesTheSitesOperatorRoster_WithSeatAndRoleState()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedBareTenantAsync(siteId, "Operator Roster Tenant", DateTimeOffset.UtcNow);
+        var lockedOutOperatorId = await SeedOperatorAsync(siteId, holdsSeat: false);
+        var seatedOperatorId = await SeedOperatorAsync(siteId, holdsSeat: true);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        Assert.Equal(2, body.Operators.Count);
+        var lockedOut = Assert.Single(body.Operators, o => o.OperatorId == lockedOutOperatorId.Value);
+        Assert.False(lockedOut.HoldsSeat);
+        // Seeded through the raw aggregate, with no role assignment - the "stripped their own last
+        // role" case this item names as out of scope, made visible rather than hidden.
+        Assert.Empty(lockedOut.RoleNames);
+        var seated = Assert.Single(body.Operators, o => o.OperatorId == seatedOperatorId.Value);
+        Assert.True(seated.HoldsSeat);
+    }
+
+    /// <summary>A removed operator is gone from this roster entirely - the identical
+    /// `removed_at IS NULL` definition the tenant's own team screen already uses
+    /// (<c>IOperatorTeamReadStore</c>'s own remarks), reused unchanged rather than re-derived for the
+    /// owner's cross-tenant read of the same rows.</summary>
+    [Fact]
+    public async Task OwnerToken_NeverSeesARemovedOperator_InTheRoster()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedBareTenantAsync(siteId, "Removed Operator Tenant", DateTimeOffset.UtcNow);
+        await SeedOperatorAsync(siteId, holdsSeat: false, removedAt: DateTimeOffset.UtcNow.AddDays(-1));
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        Assert.Empty(body.Operators);
     }
 
     /// <summary>The detail read's own reason to exist beyond the list: a module the platform owner
@@ -403,6 +453,20 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         await db.SaveChangesAsync();
     }
 
+    /// <summary>`23-68`: a bare operator row for the roster tests above - no external identity, no
+    /// role assignment, the minimum this screen needs to show a seat/role state. Written directly
+    /// through the aggregate, the same "seed through the mechanism, not around it" posture
+    /// <see cref="SeedModuleAsync"/> already follows.</summary>
+    private async Task<OperatorId> SeedOperatorAsync(SiteId siteId, bool holdsSeat, DateTimeOffset? removedAt = null)
+    {
+        await using var db = fixture.CreateDbContext();
+        var operatorId = new OperatorId(Guid.NewGuid());
+        db.Operators.Add(new Operator(
+            operatorId, siteId, OperatorStatus.Offline, capacity: 5, holdsSeat: holdsSeat, removedAt: removedAt));
+        await db.SaveChangesAsync();
+        return operatorId;
+    }
+
     private static HttpClient CreateClient(WebApplication host, string? token)
     {
         var client = host.GetTestClient();
@@ -436,6 +500,9 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         // own granted quantity, kept apart from "not granted" (Quantity's own remarks on
         // OwnerSiteModuleDto).
         builder.Services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
+        // `23-68`: GetSiteForOwnerHandler's own fourth read - the site's own operator roster, the
+        // identical read GetOperatorTeamHandler already serves a tenant's own team screen.
+        builder.Services.AddScoped<IOperatorTeamReadStore, OperatorTeamReadStore>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         // `23-48`: GetSiteForOwnerHandler's own second dependency, added alongside the read stores
         // above - it loads the write-side aggregate directly for AllowedOrigins, the one field

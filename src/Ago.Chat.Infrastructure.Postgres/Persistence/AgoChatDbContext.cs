@@ -107,6 +107,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // migration-scaffolding only - see ContactCarryoverRequestEntity's own remarks.
     internal DbSet<ContactCarryoverRequestEntity> ContactCarryoverRequests => Set<ContactCarryoverRequestEntity>();
 
+    // `23-68`: migration-scaffolding only, the same shape - OperatorSeatRestoreOverrideEntity's own remarks.
+    internal DbSet<OperatorSeatRestoreOverrideEntity> OperatorSeatRestoreOverrides => Set<OperatorSeatRestoreOverrideEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AgoChatDbContext).Assembly);

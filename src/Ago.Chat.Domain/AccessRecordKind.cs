@@ -52,4 +52,14 @@ public enum AccessRecordKind
     /// carrying no word of that here (the identical opacity <see cref="OwnerModuleGrant"/>'s own
     /// resource already keeps for the module key itself).</summary>
     OwnerModuleQuantityGrant,
+
+    /// <summary>`23-68`: the platform owner restoring a named operator's own seat - the recovery path
+    /// for a tenant locked out with no other way back in (`docs/backlog/23-68-*.md`'s own "Found": a
+    /// tenant locked itself out and the only way back was a hand-typed database `UPDATE`). Written on
+    /// every successful call, whether or not the site's own seat limit was exceeded to do it - the
+    /// seat-limit override itself is a second, narrower fact, attested separately by
+    /// <see cref="Ago.Chat.Application.Abstractions.IOperatorSeatRestoreOverrideRepository"/> only when
+    /// that override was actually exercised, the identical split <see cref="OwnerModuleRevoke"/>'s own
+    /// force/reason override already draws for its own table.</summary>
+    OwnerOperatorSeatRestore,
 }

@@ -21,6 +21,13 @@
 /// edit without a second round trip. Every entry is already in normalized form
 /// (<c>Ago.Chat.Application.UseCases.RegisterSite.OriginValidator</c> refuses anything else at write
 /// time), so this list needs no further formatting to be shown back verbatim.</param>
+/// <param name="Operators">`23-68`: every non-removed operator this site currently has, added so the
+/// owner's detail screen can name a locked-out operator to restore a seat for without a second round
+/// trip. The identical projection <c>GetOperatorTeamHandler</c> already serves a tenant's own team
+/// screen (<c>IOperatorTeamReadStore</c>, reused unchanged here) - this is the cross-tenant read of the
+/// same rows, not a second query shape. <see cref="OwnerSiteOperatorDto.RoleNames"/> is what lets the
+/// console show the seat/role distinction plainly rather than implying a seat restore also restores a
+/// stripped role - `23-68`'s own "Where this is likely to go wrong."</param>
 public sealed record OwnerSiteDetailResponse(
     Guid SiteId,
     string Name,
@@ -33,7 +40,28 @@ public sealed record OwnerSiteDetailResponse(
     long AttachmentBytes,
     int RecentWindowDays,
     IReadOnlyList<OwnerSiteModuleDto> Modules,
-    IReadOnlyList<string> AllowedOrigins);
+    IReadOnlyList<string> AllowedOrigins,
+    IReadOnlyList<OwnerSiteOperatorDto> Operators);
+
+/// <summary>
+/// `23-68`: one row of <see cref="OwnerSiteDetailResponse.Operators"/> - the identical shape
+/// <c>OperatorTeamMemberDto</c> already gives the tenant's own team screen, restated here because
+/// <c>Ago.Chat.Contracts</c> carries its own independent wire vocabulary rather than referencing
+/// `Ago.Chat.Application`'s (this project's own existing discipline - see every other DTO in this
+/// file).
+/// </summary>
+/// <param name="OperatorId">A raw <see cref="Guid"/>, never <c>Ago.Chat.Domain.OperatorId</c> - the
+/// identical "the wire carries values, not vocabulary" reasoning <see cref="OwnerSiteModuleDto.Id"/>'s
+/// own remarks state for itself; this project has no reference to <c>Ago.Chat.Domain</c>.</param>
+/// <param name="HoldsSeat">What the console's own "Restore seat" action is offered for -
+/// <see langword="false"/> is the locked-out candidate, exactly the fact the incident this item was
+/// filed from needed a way to see.</param>
+/// <param name="RoleNames">Every role this operator currently holds, the same field
+/// <c>OperatorTeamMemberDto.RoleNames</c> already carries - an empty list here is the "stripped their
+/// own last role" case this item's own scope names but does not fix, made visible rather than
+/// hidden.</param>
+public sealed record OwnerSiteOperatorDto(
+    Guid OperatorId, string? DisplayName, string? Email, bool HoldsSeat, IReadOnlyList<string> RoleNames);
 
 /// <summary>
 /// `23-14`: one row of <see cref="OwnerSiteDetailResponse.Modules"/> - a module this site has (or had)

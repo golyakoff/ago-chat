@@ -137,7 +137,12 @@ public static class ErrorExtensions
                 // real Domain.VisitorConsentPurpose member, the same "validate the enum, translate the
                 // miss" shape WidgetConfig.InvalidPosition/ChannelLinkRequest.InvalidKind already give
                 // their own enums.
-                or "Document.InvalidPurpose" => StatusCodes.Status400BadRequest,
+                or "Document.InvalidPurpose"
+                // `23-68`: the identical "decide, don't default" shape Module.RevokeReasonRequired
+                // already gives its own override, restated for the seat-restore override - Force was
+                // set with no non-blank reason, or one longer than
+                // RestoreOperatorSeatAsOwnerHandler.MaxReasonLength allows.
+                or "Operator.SeatRestoreReasonRequired" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -166,11 +171,27 @@ public static class ErrorExtensions
                 // "retry makes no sense, the remedy is a different action first" shape every other code
                 // in this group already gives for its own conflict.
                 or "Operator.IsLastManager"
+                // `23-68`: pre-existing since `13-03` (the same gap `23-72`'s own remarks a few lines up
+                // name for `Operator.NotFound`, and left unmapped there deliberately, out of that
+                // item's own scope) but genuinely reachable from this item's own new route: naming an
+                // already-removed operator on the platform owner's own restore-seat call falls through
+                // to this switch's `500` default without this line. A real conflict with the row's own
+                // current state (it is permanently gone, `Operator.Remove`'s own remarks), not a
+                // malformed request - the same "retry makes no sense" shape `Operator.IsLastManager`
+                // right above already gives its own conflict. Fixed here rather than filed separately,
+                // the identical `Module.Invalid`/`Operator.NotFound` precedent: this item's own new
+                // route needs it to answer correctly.
+                or "Operator.AlreadyRemoved"
                 // `23-13`: a real conflict with the row's own current state (it is a tenant's own
                 // self-service purchase, not a grant), resolved by an explicit second statement of
                 // intent rather than by fixing the request body - the same shape
                 // ChannelCredential.AlreadyConnected already gives its own conflict.
                 or "Module.RevokePurchaseRequiresForce"
+                // `23-68`: the identical "a real conflict, resolved by an explicit second statement of
+                // intent" shape Module.RevokePurchaseRequiresForce already gives its own override,
+                // restated for the seat-restore override - restoring this seat would put the site over
+                // its own seat limit, and the caller did not set Force.
+                or "Operator.SeatRestoreExceedsLimitRequiresForce"
                 // `24-10`: a real conflict with the conversation's own current block state, not a
                 // malformed request - the same "the remedy is a different action first" shape
                 // Tag.AlreadyExists/ChannelCredential.AlreadyConnected already give their own conflicts.
