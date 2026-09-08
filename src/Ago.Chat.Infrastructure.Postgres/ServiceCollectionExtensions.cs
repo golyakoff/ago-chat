@@ -208,6 +208,9 @@ public static class ServiceCollectionExtensions
         // masters count. One implicit-transaction port, not a repository + a separate outbox call -
         // see IModuleQuantityGrantStore's own remarks.
         services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
+        // `23-59`/`adr/0147`: "a grant carries over every contact ever collected" - the request-side
+        // half; `Ago.Chat.Worker.ContactCarryoverJob` does the actual, bounded, resumable work later.
+        services.AddScoped<IContactCarryoverRequestStore, ContactCarryoverRequestStore>();
         // `14-14`: unverified contact details - reachable from exactly three handlers, the same
         // narrow-by-design shape INoteRepository's own remarks describe for itself.
         services.AddScoped<IVisitorContactDetailRepository, VisitorContactDetailRepository>();

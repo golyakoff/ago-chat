@@ -103,6 +103,10 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `23-72`: migration-scaffolding only, the same shape - RoleChangeRecordEntity's own remarks.
     internal DbSet<RoleChangeRecordEntity> RoleChangeRecords => Set<RoleChangeRecordEntity>();
 
+    // `23-59`: read and written directly (ContactCarryoverBackfill/ContactCarryoverRequestStore), not
+    // migration-scaffolding only - see ContactCarryoverRequestEntity's own remarks.
+    internal DbSet<ContactCarryoverRequestEntity> ContactCarryoverRequests => Set<ContactCarryoverRequestEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AgoChatDbContext).Assembly);
