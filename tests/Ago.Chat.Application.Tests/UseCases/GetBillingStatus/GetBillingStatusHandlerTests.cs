@@ -115,4 +115,34 @@ public class GetBillingStatusHandlerTests
         Assert.Equal(newer.Id.Value, result.Value.LatestSubscription!.SubscriptionId);
         Assert.Equal("Pending", result.Value.LatestSubscription.Status);
     }
+
+    /// <summary>`23-86`/`adr/0159`: the trap this item's own brief names by name - "a tenant who just
+    /// bought a channel sees the channel where their tier belongs". A purchased option is newer than
+    /// the base and lives in the identical table; this handler must still report the base's own tier
+    /// and seats, and must not surface the option row as `LatestSubscription` in its place.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenAnOptionWasPurchasedAfterTheBase_StillReportsTheBaseSubscription_NotTheOption()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var baseSubscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_base", requestedSeats: 5, tier: SubscriptionTierBands.Starter,
+            Now - TimeSpan.FromDays(10));
+        baseSubscription.MarkSucceeded("card_abc", Now - TimeSpan.FromDays(10));
+        fixture.Subscriptions.Seed(baseSubscription);
+
+        // Bought after the base, so it is the newest row for this site - GetLatestForSiteAsync would
+        // hand this row back; GetBaseForSiteAsync must not.
+        var option = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_option", new BillingOptionKey("channel-telegram"), Now);
+        option.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+        fixture.Subscriptions.Seed(option);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(SubscriptionTierBands.Starter, result.Value.Tier);
+        Assert.Equal(5, result.Value.SeatLimit);
+        Assert.Equal(baseSubscription.Id.Value, result.Value.LatestSubscription!.SubscriptionId);
+        Assert.Equal(5, result.Value.LatestSubscription.RequestedSeats);
+    }
 }

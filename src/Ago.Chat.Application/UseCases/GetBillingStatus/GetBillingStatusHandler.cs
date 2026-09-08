@@ -32,7 +32,11 @@ public sealed class GetBillingStatusHandler(
         }
 
         var seatsUsed = await operators.CountHeldSeatsAsync(query.SiteId, cancellationToken);
-        var latest = await subscriptions.GetLatestForSiteAsync(query.SiteId, cancellationToken);
+        // `23-86`: GetBaseForSiteAsync, not GetLatestForSiteAsync - this screen means "the site's base
+        // subscription" (tier, seats), and with an option's own BillingSubscription rows now sharing
+        // this table, the newest row for a site can be a channel bought yesterday rather than the tier
+        // this screen is about. See IBillingSubscriptionRepository.GetBaseForSiteAsync's own remarks.
+        var latest = await subscriptions.GetBaseForSiteAsync(query.SiteId, cancellationToken);
 
         var latestDto = latest is null
             ? null

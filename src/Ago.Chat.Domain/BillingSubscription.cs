@@ -60,6 +60,24 @@ public sealed class BillingSubscription
 
     public SiteId SiteId { get; }
 
+    /// <summary>`23-86`/`adr/0159`: what this row is for - <see langword="null"/> for the one row per
+    /// account that is the base (tier and seats, exactly what this type carried before this item), a
+    /// real value for every other row, each naming one purchased option. <see cref="RequestedSeats"/>
+    /// and <see cref="Tier"/> are meaningless for an option row (zero and empty, set once at
+    /// construction and never written again) - an option is priced flat, not by seats
+    /// (`adr/0151`'s own price-list reading: "channels at +100 RUB each"), so there is no seat count or
+    /// tier band for it to carry. <see cref="IsOption"/>/<see cref="IsBase"/> are this field's own
+    /// readable spelling; `GetBillingStatusHandler`'s own remarks (Application) are the one place
+    /// getting this distinction wrong would have silently mattered before this item closed it.</summary>
+    public BillingOptionKey? OptionKey { get; }
+
+    /// <summary><see langword="true"/> for every row but the account's own base subscription.</summary>
+    public bool IsOption => OptionKey is not null;
+
+    /// <summary><see langword="true"/> only for the one row per account `adr/0159` calls the base -
+    /// tier and seats, exactly what this type carried before options existed.</summary>
+    public bool IsBase => OptionKey is null;
+
     /// <summary>ЮKassa's own payment id, assigned the moment
     /// <c>IYooKassaPaymentsClient.CreatePaymentAsync</c> returns - the natural key this item's own
     /// webhook applier looks a pending row up by, and half of the idempotency ledger's own composite
@@ -133,7 +151,8 @@ public sealed class BillingSubscription
         string tier,
         BillingSubscriptionStatus status,
         string? paymentMethodId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        BillingOptionKey? optionKey)
     {
         Id = id;
         SiteId = siteId;
@@ -143,6 +162,7 @@ public sealed class BillingSubscription
         Status = status;
         PaymentMethodId = paymentMethodId;
         CreatedAt = createdAt;
+        OptionKey = optionKey;
     }
 
     // EF Core materialization only (1-04's precedent) - never called by domain code.
@@ -159,7 +179,31 @@ public sealed class BillingSubscription
         }
 
         return new BillingSubscription(
-            id, siteId, yooKassaPaymentId, requestedSeats, tier, BillingSubscriptionStatus.Pending, paymentMethodId: null, createdAt);
+            id, siteId, yooKassaPaymentId, requestedSeats, tier, BillingSubscriptionStatus.Pending, paymentMethodId: null, createdAt,
+            optionKey: null);
+    }
+
+    /// <summary>`23-86`/`adr/0159`: the account's base subscription mints through <see cref="Create"/>
+    /// with <see cref="RequestedSeats"/>/<see cref="Tier"/> a real seat count and tier band; an option
+    /// has neither, so this factory takes only what an option row actually carries -
+    /// <paramref name="optionKey"/> in place of both, <see cref="RequestedSeats"/>/<see cref="Tier"/>
+    /// fixed at zero/empty (never written again - see this type's own <see cref="OptionKey"/> remarks).
+    /// A separate factory rather than an optional trailing parameter on <see cref="Create"/> - the same
+    /// "a materially different construction gets its own named entry point, not a flag" judgement this
+    /// codebase already applies elsewhere (`EnableModuleForSiteAsOwner` alongside `EnableModuleForSite`,
+    /// Application), so a caller reading `CreateOption(...)` at a call site does not have to also read
+    /// every other parameter's default to know what kind of row it is minting.</summary>
+    public static BillingSubscription CreateOption(
+        BillingSubscriptionId id, SiteId siteId, string yooKassaPaymentId, BillingOptionKey optionKey, DateTimeOffset createdAt)
+    {
+        if (string.IsNullOrWhiteSpace(yooKassaPaymentId))
+        {
+            throw new ArgumentException("ЮKassa payment id cannot be empty.", nameof(yooKassaPaymentId));
+        }
+
+        return new BillingSubscription(
+            id, siteId, yooKassaPaymentId, requestedSeats: 0, tier: string.Empty, BillingSubscriptionStatus.Pending,
+            paymentMethodId: null, createdAt, optionKey);
     }
 
     /// <summary>Applied by <see cref="BillingWebhookApplier"/> on a verified, first-seen
@@ -172,8 +216,17 @@ public sealed class BillingSubscription
     ///
     /// <para>`13-03`: also sets <see cref="CurrentPeriodEnd"/> to <paramref name="now"/> +
     /// <see cref="PeriodLength"/> - the first period this row is ever paid through, and the anchor every
-    /// later renewal advances from.</para></summary>
-    public void MarkSucceeded(string? paymentMethodId, DateTimeOffset now)
+    /// later renewal advances from.</para>
+    ///
+    /// <para>`23-86`/`adr/0159`: for an option (<see cref="IsOption"/>), <paramref name="alignedPeriodEnd"/>
+    /// is required and overrides that default - "an option's <see cref="CurrentPeriodEnd"/> is copied
+    /// from the base at purchase... so both renew on the same date" (`adr/0159`'s own Decision), never
+    /// a fresh <paramref name="now"/> + <see cref="PeriodLength"/> of its own. Enforced here, not left to
+    /// a caller to remember: a base row given an explicit override, or an option row given none, is a
+    /// caller bug this constructor-adjacent guard catches before a period ever drifts out of alignment -
+    /// the identical "there is no such thing as a validated-somewhere-else entity" posture
+    /// <see cref="EnabledModule"/>'s own expiry check applies for a different invariant.</para></summary>
+    public void MarkSucceeded(string? paymentMethodId, DateTimeOffset now, DateTimeOffset? alignedPeriodEnd = null)
     {
         if (Status != BillingSubscriptionStatus.Pending)
         {
@@ -181,9 +234,22 @@ public sealed class BillingSubscription
                 $"Billing subscription {Id.Value} is already {Status} and cannot be marked succeeded again.");
         }
 
+        if (IsOption && alignedPeriodEnd is null)
+        {
+            throw new ArgumentException(
+                "An option subscription's period must be aligned to the account's base subscription.", nameof(alignedPeriodEnd));
+        }
+
+        if (IsBase && alignedPeriodEnd is not null)
+        {
+            throw new ArgumentException(
+                "Only an option subscription's period is aligned to another row - a base subscription starts its own.",
+                nameof(alignedPeriodEnd));
+        }
+
         Status = BillingSubscriptionStatus.Succeeded;
         PaymentMethodId = paymentMethodId;
-        CurrentPeriodEnd = now + PeriodLength;
+        CurrentPeriodEnd = alignedPeriodEnd ?? now + PeriodLength;
     }
 
     /// <summary>Applied on a verified, first-seen <c>payment.canceled</c> event -
