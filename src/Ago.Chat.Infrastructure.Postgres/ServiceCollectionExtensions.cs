@@ -125,6 +125,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
         services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
+        // `23-72`: ChangeOperatorRoleHandler's own writes - see each interface's own remarks.
+        services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
+        services.AddScoped<IRoleChangeRecordRepository, RoleChangeRecordRepository>();
         services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();
         // `13-02`/`13-03`/`13-04`: the billing subscription's own read/write, and the webhook applier's
         // one-transaction multi-aggregate write - found missing here 2026-08-29 while landing `16-04`

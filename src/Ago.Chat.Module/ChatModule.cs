@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.BlockConversation;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.CategorizeConversation;
+using Ago.Chat.Application.UseCases.ChangeOperatorRole;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
@@ -940,6 +941,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetSeatAssignmentSummaryHandler>();
         // `23-22`: the team screen's own bootstrap read - see the handler's own remarks.
         services.AddScoped<GetOperatorTeamHandler>();
+        // `23-72`: "an administrator can change an existing colleague's role, both directions" - see the
+        // handler's own remarks.
+        services.AddScoped<ChangeOperatorRoleHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
         // `12-01`'s owner policy), registered here for the same reason as everything else on this
         // page - ChatModule is where handler registration lives, and a host that never maps the route

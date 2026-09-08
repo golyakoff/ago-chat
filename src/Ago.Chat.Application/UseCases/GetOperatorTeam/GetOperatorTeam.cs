@@ -14,7 +14,9 @@ public sealed record GetOperatorTeam(OperatorId RequestedBy, SiteId SiteId);
 
 /// <summary>One row on the wire - see <see cref="Application.Abstractions.OperatorTeamMemberItem"/>
 /// for what each field means and why <see cref="DisplayName"/>/<see cref="Email"/> can be
-/// <see langword="null"/>.</summary>
-public sealed record OperatorTeamMemberDto(Guid OperatorId, string? DisplayName, string? Email, bool HoldsSeat);
+/// <see langword="null"/>. `23-72`: <see cref="RoleNames"/> joins the wire shape here too - the console
+/// team screen needs it to show who already administers before offering to change anyone's role.</summary>
+public sealed record OperatorTeamMemberDto(
+    Guid OperatorId, string? DisplayName, string? Email, bool HoldsSeat, IReadOnlyList<string> RoleNames);
 
 public sealed record OperatorTeamResponse(IReadOnlyList<OperatorTeamMemberDto> Operators);

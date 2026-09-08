@@ -372,6 +372,17 @@ public static class ConversationErrors
             "This site must always have at least one operator who can manage operators. Grant that " +
             "permission to another operator before removing this one.");
 
+    // `23-72`: same shared vocabulary, same reason - ChangeOperatorRoleHandler adds its own codes here
+    // rather than a separate error class.
+    /// <summary>The named role does not exist on this site - the identical miss
+    /// <see cref="OperatorInviteInvalidRole"/> already gives for the invite path, restated for the
+    /// role-change path rather than reused: that code's own name is invite-specific, and a client
+    /// branching on `type` should not have to know the two write paths happen to share a resolver.
+    /// `400`, not `404` - the caller named a role, not an operator, and the role name is theirs to
+    /// fix.</summary>
+    public static Error OperatorRoleNotFound(string reason) =>
+        new("Operator.RoleNotFound", reason);
+
     /// <summary>
     /// `23-71`: `AssignConversationHandler`'s own self-claim guard - `decisions/0006` separated "may
     /// sign in" from "may be routed a conversation" once an administrator can sign in with no seat

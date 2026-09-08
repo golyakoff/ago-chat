@@ -45,4 +45,23 @@ public interface IRoleRepository
     /// against a concurrent operator removal.</para>
     /// </summary>
     Task AddPermissionsAsync(SiteId siteId, string roleName, IReadOnlyCollection<string> permissions, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `23-72`: `ChangeOperatorRoleHandler`'s own lookup - it needs both the id (to write the new
+    /// `operator_roles` row) and the permission set (to test whether the named role grants
+    /// `site:manage_operators`, and to publish the resulting `RoleAssignmentsChanged` fact) for the same
+    /// role in the same request, so one method returns both rather than making the caller round-trip
+    /// twice. Deliberately a second method rather than widening <see cref="GetIdByNameAsync"/>'s own
+    /// return shape - that method has one existing caller (`CreateOperatorInviteHandler`) that only ever
+    /// needed the id, and changing its return type for a second caller's needs would be exactly the kind
+    /// of ripple this port's own growth policy (`IRoleRepository`'s own remarks: "grow this only when a
+    /// second real caller needs a different question answered") means to avoid paying when an additive
+    /// method costs nothing.
+    /// </summary>
+    Task<RoleLookup?> GetByNameAsync(SiteId siteId, string name, CancellationToken cancellationToken);
 }
+
+/// <summary>One role, resolved by name for <see cref="IRoleRepository.GetByNameAsync"/> - a plain
+/// projection of the `roles` row, not a Domain model (roles have none yet, `OperatorInvite.RoleId`'s own
+/// remarks).</summary>
+public sealed record RoleLookup(Guid Id, IReadOnlyList<string> Permissions);

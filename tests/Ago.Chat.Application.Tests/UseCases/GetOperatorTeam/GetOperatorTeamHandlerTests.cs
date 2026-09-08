@@ -44,8 +44,8 @@ public class GetOperatorTeamHandlerTests
         var unnamed = new OperatorId(Guid.NewGuid());
         fixture.Team.Seed(
             SiteId,
-            new OperatorTeamMemberItem(named, "Ada Lovelace", "ada@example.invalid", HoldsSeat: true),
-            new OperatorTeamMemberItem(unnamed, null, null, HoldsSeat: false));
+            new OperatorTeamMemberItem(named, "Ada Lovelace", "ada@example.invalid", HoldsSeat: true, RoleNames: ["Admin"]),
+            new OperatorTeamMemberItem(unnamed, null, null, HoldsSeat: false, RoleNames: ["Operator"]));
 
         var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetOperatorTeam.GetOperatorTeam(RequestedBy, SiteId), CancellationToken.None);
 
@@ -56,11 +56,15 @@ public class GetOperatorTeamHandlerTests
         Assert.Equal("Ada Lovelace", adaRow.DisplayName);
         Assert.Equal("ada@example.invalid", adaRow.Email);
         Assert.True(adaRow.HoldsSeat);
+        // `23-72`: RoleNames joined the wire shape - the console team screen needs it to show who
+        // already administers.
+        Assert.Equal(["Admin"], adaRow.RoleNames);
 
         var unnamedRow = Assert.Single(result.Value.Operators, o => o.OperatorId == unnamed.Value);
         Assert.Null(unnamedRow.DisplayName);
         Assert.Null(unnamedRow.Email);
         Assert.False(unnamedRow.HoldsSeat);
+        Assert.Equal(["Operator"], unnamedRow.RoleNames);
     }
 
     [Fact]
