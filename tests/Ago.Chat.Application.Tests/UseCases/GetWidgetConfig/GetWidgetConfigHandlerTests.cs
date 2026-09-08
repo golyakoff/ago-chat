@@ -17,7 +17,9 @@ public class GetWidgetConfigHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
         var site = new Site(SiteId, "shop_7f3a", []);
         site.UpdateWidgetConfig(
-            new WidgetConfig("#112233", Position.BottomLeft, "We read what you send us.", "https://tenant.example/privacy"),
+            new WidgetConfig(
+                "#112233", Position.BottomLeft, "We read what you send us.", "https://tenant.example/privacy",
+                attractAttention: true),
             DateTimeOffset.UtcNow);
         site.UpdateLocale(Locale.Ru, DateTimeOffset.UtcNow);
         site.ClearDomainEvents();
@@ -33,6 +35,7 @@ public class GetWidgetConfigHandlerTests
         Assert.Equal(Locale.Ru, result.Value.Locale);
         Assert.Equal("We read what you send us.", result.Value.NoticeText);
         Assert.Equal("https://tenant.example/privacy", result.Value.NoticeUrl);
+        Assert.True(result.Value.AttractAttention);
     }
 
     // `16-04`: every site that predates this item, or has simply never set a notice, reads back
@@ -53,6 +56,24 @@ public class GetWidgetConfigHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Null(result.Value.NoticeText);
         Assert.Null(result.Value.NoticeUrl);
+    }
+
+    // `23-63`'s own Decision: "a setting, off unless the tenant turns it on" - a site that predates
+    // this item, or has simply never turned it on, reads back `false`.
+    [Fact]
+    public async Task HandleAsync_WhenAttractAttentionWasNeverSet_ReturnsFalse()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", []));
+        var handler = new GetWidgetConfigHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.AttractAttention);
     }
 
     // `11-10`: a site that never called `Site.UpdateLocale` - every existing tenant today - reads

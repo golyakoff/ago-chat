@@ -71,6 +71,7 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
             Assert.Equal(Locale.En, first.WidgetLocale);
             Assert.Null(first.WidgetNoticeText);
             Assert.Null(first.WidgetNoticeUrl);
+            Assert.False(first.WidgetAttractAttention);
         }
 
         // The real chain: OutboxDispatcher (Ago.Chat.Worker) -> RabbitMQ -> SiteCacheInvalidationConsumer
@@ -134,7 +135,8 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
                 var updated = await updateHandler.HandleAsync(
                     new UpdateWidgetConfig(
                         siteId, operatorId, "#ff8800", nameof(Position.BottomLeft), nameof(Locale.Ru),
-                        "We read what you send us.", "https://tenant.example/privacy"),
+                        "We read what you send us.", "https://tenant.example/privacy", RequireContactConsent: false,
+                        AttractAttention: true),
                     CancellationToken.None);
                 Assert.True(updated.IsSuccess, updated.IsFailure ? updated.Error!.Value.Message : null);
             }
@@ -157,6 +159,7 @@ public sealed class WidgetConfigCacheInvalidationEndToEndTests(ConnectionFanoutF
                     WidgetLocale: Locale.Ru,
                     WidgetNoticeText: "We read what you send us.",
                     WidgetNoticeUrl: "https://tenant.example/privacy",
+                    WidgetAttractAttention: true,
                 };
             }, TimeSpan.FromSeconds(15));
 

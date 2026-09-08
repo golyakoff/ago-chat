@@ -106,6 +106,17 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property<bool>("_requireContactConsent")
             .HasColumnName("widget_require_contact_consent")
             .HasDefaultValue(false);
+        // `23-63`: a fourth backing field on the same terms - a plain bool column, database default
+        // `false` so every row written before this migration (all seventeen sites on the live stand)
+        // reads back "not animating", never a behaviour change nobody asked for delivered by a schema
+        // default. No CHECK constraint, unlike widget_position/widget_locale above (this table's own
+        // first two): a boolean has exactly two legal values and the column type itself already
+        // enforces that, the same "nothing here for SQL to enumerate beyond what the type already does"
+        // reasoning that leaves widget_notice_text/widget_notice_url and widget_require_contact_consent
+        // without one too.
+        builder.Property<bool>("_attractAttention")
+            .HasColumnName("widget_attract_attention")
+            .HasDefaultValue(false);
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed
