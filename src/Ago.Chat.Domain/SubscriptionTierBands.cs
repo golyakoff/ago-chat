@@ -47,7 +47,21 @@ public static class SubscriptionTierBands
 
     public const int MaxSeats = 100;
 
-    private const int GrowthMinSeats = 10;
+    /// <summary>`25-20`: made `public` (was `private`) so a reader of the band boundaries - the owner's
+    /// own price-list screen (<c>GetPricingForOwnerHandler</c>) is the first - can list Starter's own
+    /// upper bound and Growth's own lower one without a second, hand-typed `10` drifting from this one.
+    /// No behavioural change: still the identical compile-time constant <see cref="TryResolveTier"/>
+    /// already compared against.</summary>
+    public const int GrowthMinSeats = 10;
+
+    /// <summary>`25-20`: the free tier's own seat ceiling, restated as a named constant rather than a
+    /// second literal `2` - this type's own remarks above already establish the fact
+    /// (<see cref="MinSeats"/> `- 1`is deliberate, not derived after the fact: "paid bands start at
+    /// the first seat count that actually adds capacity beyond what free already gives"), so a reader
+    /// needing "how many seats does the free tier include" (the owner's own price-list screen) gets it
+    /// from the identical source <see cref="MinSeats"/> itself came from, rather than a duplicate of
+    /// <see cref="Site.SeatLimit"/>'s own default that could drift from either.</summary>
+    public const int FreeSeatsIncluded = MinSeats - 1;
 
     /// <summary>
     /// <see langword="true"/> and the resolved tier name for any seat count in [<see cref="MinSeats"/>,
