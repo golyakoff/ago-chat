@@ -120,10 +120,27 @@ public readonly partial record struct WidgetConfig
     /// panel.</summary>
     public string? AutoOpenGreetingText { get; }
 
+    /// <summary>`25-39`: a tenant-level, off-by-default escape hatch around `20-09`'s own verified-phone
+    /// gate on the chat-driven booking flow - joins <see cref="RequireContactConsent"/>/
+    /// <see cref="AttractAttention"/>/<see cref="AutoOpenEnabled"/> on the identical terms (one more
+    /// fixed, named, validated - here, nothing to validate, a plain bool has no illegal value - field on
+    /// this type, not a new configuration mechanism). Exists only because `14-15` has no live SMS/voice
+    /// gateway account provisioned yet (`docs/backlog/14-15-*`'s own "undecided, needs a cost quote"),
+    /// so <c>RequiresVerifiedPhone: true</c> currently makes every chat-driven booking uncompletable
+    /// rather than protecting anything - see <c>Ago.Calendar.Application.UseCases.ChatModuleTask.ReplyToModuleTaskHandler</c>'s
+    /// own remarks for what turning this on actually changes. Deliberately defaults to
+    /// <see langword="false"/> for every existing row, the same "a tenant cannot consent on their
+    /// visitor's behalf by staying silent" posture <see cref="RequireContactConsent"/> already
+    /// established: a real vendor-verified phone stays the guarantee every tenant gets unless they
+    /// explicitly ask to relax it, and the console labels the toggle as a temporary workaround, not a
+    /// feature, for the same reason (`WidgetConfigPage.tsx`'s own copy).</summary>
+    public bool AcceptUnverifiedPhone { get; }
+
     public WidgetConfig(
         string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null,
         bool requireContactConsent = false, bool attractAttention = false, bool autoOpenEnabled = false,
-        AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30, string? autoOpenGreetingText = null)
+        AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30, string? autoOpenGreetingText = null,
+        bool acceptUnverifiedPhone = false)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -190,6 +207,7 @@ public readonly partial record struct WidgetConfig
         AutoOpenEnabled = autoOpenEnabled;
         AutoOpenDelaySeconds = autoOpenDelaySeconds;
         AutoOpenGreetingText = autoOpenGreetingText;
+        AcceptUnverifiedPhone = acceptUnverifiedPhone;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls

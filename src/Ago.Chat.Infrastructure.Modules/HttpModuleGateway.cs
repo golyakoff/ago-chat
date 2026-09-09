@@ -45,7 +45,8 @@ public sealed class HttpModuleGateway(HttpClient httpClient, IClock clock) : IMo
     {
         var uri = BuildUri(module.EntryPoint, "api/v1/module-tasks");
         var wireRequest = new StartTaskWireRequest(
-            request.ChatTaskId, request.SiteId.Value, request.ConversationId.Value, request.TriggerText);
+            request.ChatTaskId, request.SiteId.Value, request.ConversationId.Value, request.TriggerText,
+            request.Locale);
 
         var wireResponse = await PostAsync<StartTaskWireRequest, StartTaskWireResponse>(
             module, uri, wireRequest, cancellationToken);
@@ -59,7 +60,8 @@ public sealed class HttpModuleGateway(HttpClient httpClient, IClock clock) : IMo
     {
         var uri = BuildUri(module.EntryPoint, $"api/v1/module-tasks/{Uri.EscapeDataString(request.ExternalTaskId)}/replies");
         var wireRequest = new SubmitReplyWireRequest(
-            request.ChatTaskId, request.Kind.Value, request.Value, request.PhoneVerifiedAt);
+            request.ChatTaskId, request.Kind.Value, request.Value, request.PhoneVerifiedAt, request.Locale,
+            request.KnownPhone, request.AcceptUnverifiedPhone);
 
         var wireResponse = await PostAsync<SubmitReplyWireRequest, SubmitReplyWireResponse>(
             module, uri, wireRequest, cancellationToken);

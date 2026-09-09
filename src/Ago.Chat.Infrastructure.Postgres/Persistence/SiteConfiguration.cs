@@ -140,6 +140,17 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasConversion<int>()
             .HasDefaultValue(AutoOpenDelay.Seconds30);
         builder.Property<string?>("_autoOpenGreetingText").HasColumnName("widget_auto_open_greeting_text");
+        // `25-39`: one more flat backing field on the same terms - a plain bool column, database
+        // default `false` so every row written before this migration keeps today's guarantee (a
+        // chat-driven booking still requires a genuinely verified phone) rather than silently relaxing
+        // it for every existing tenant the moment this column exists - the identical "off by default,
+        // a tenant who wants it must ask for it" posture `_attractAttention`'s own comment states for
+        // itself. No CHECK constraint, for the identical "a boolean's own column type already enforces
+        // its two legal values" reasoning that leaves `_attractAttention`/`_requireContactConsent`
+        // without one too.
+        builder.Property<bool>("_acceptUnverifiedPhone")
+            .HasColumnName("widget_accept_unverified_phone")
+            .HasDefaultValue(false);
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

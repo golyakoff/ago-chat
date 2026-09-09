@@ -26,12 +26,21 @@ public class RouteConversationToModuleHandlerTests
 
     private sealed record Fixture(
         RouteConversationToModuleHandler Handler, Conversation Conversation, FakeModuleGateway Gateway,
-        FakeOutboxWriter Outbox, FakeInboxChecker Inbox, FakeChannelIdentityRepository ChannelIdentities);
+        FakeOutboxWriter Outbox, FakeInboxChecker Inbox, FakeChannelIdentityRepository ChannelIdentities,
+        FakeVisitorContactDetailRepository ContactDetails);
+
+    /// <summary>`25-37`/`25-39`: a freshly registered `Site` at this fixture's own `SiteId`, `Locale.En`
+    /// and `WidgetConfig.Default` (so `AcceptUnverifiedPhone` is off) - the same "every existing
+    /// row" default `ResolveLocaleAsync`/`ResolveModuleContextAsync` fall back to anyway when no site is
+    /// seeded at all, made explicit here so a test that wants a different locale or the setting turned
+    /// on has something to build on.</summary>
+    private static Site DefaultSite() => new(SiteId, $"pk-{SiteId.Value:N}", []);
 
     private static Fixture CreateFixture(
         bool moduleEnabled = true, Action<Conversation>? arrange = null,
         FakeModuleGateway? gateway = null, FakeInboxChecker? inbox = null,
-        FakeChannelIdentityRepository? channelIdentities = null)
+        FakeChannelIdentityRepository? channelIdentities = null, Site? site = null,
+        FakeVisitorContactDetailRepository? contactDetails = null, bool seedSite = true)
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         arrange?.Invoke(conversation);
@@ -52,11 +61,19 @@ public class RouteConversationToModuleHandlerTests
         var outbox = new FakeOutboxWriter();
         inbox ??= new FakeInboxChecker();
         channelIdentities ??= new FakeChannelIdentityRepository();
+        contactDetails ??= new FakeVisitorContactDetailRepository();
+
+        var sites = new FakeSiteRepository();
+        if (seedSite)
+        {
+            sites.Seed(site ?? DefaultSite());
+        }
 
         var handler = new RouteConversationToModuleHandler(
-            conversations, readStore, gateway, channelIdentities, outbox, inbox, new FakeClock(Now), new FakeIdGenerator());
+            conversations, readStore, gateway, channelIdentities, outbox, inbox, new FakeClock(Now),
+            new FakeIdGenerator(), sites, contactDetails);
 
-        return new Fixture(handler, conversation, gateway, outbox, inbox, channelIdentities);
+        return new Fixture(handler, conversation, gateway, outbox, inbox, channelIdentities, contactDetails);
     }
 
     private static Ago.Chat.Application.UseCases.RouteConversationToModule.RouteConversationToModule Trigger(
@@ -119,6 +136,43 @@ public class RouteConversationToModuleHandlerTests
 
         var call = Assert.Single(fixture.Gateway.StartCalls);
         Assert.Equal(Credential, call.Module.Credential);
+    }
+
+    /// <summary>`25-37`: the site's own configured widget language rides the very first call to a
+    /// module too, not merely a later reply - <see cref="StartModuleTaskRequest.Locale"/>'s own
+    /// remarks.</summary>
+    [Fact]
+    public async Task HandleAsync_WithATriggerMatch_ForwardsTheSitesConfiguredLocaleToTheGateway()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(site: site);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Equal("Ru", call.Request.Locale);
+    }
+
+    /// <summary>`25-37`: no site resolves at all (a genuinely narrow window - deleted between the
+    /// trigger's own dedup check and this read) reads as the safe English default, never a hard
+    /// failure of a reply this handler can otherwise still serve - <c>ResolveLocaleAsync</c>'s own
+    /// remarks.</summary>
+    [Fact]
+    public async Task HandleAsync_WithATriggerMatch_WhenTheSiteDoesNotResolve_DefaultsTheLocaleToEnglish()
+    {
+        var fixture = CreateFixture(seedSite: false);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Equal("En", call.Request.Locale);
     }
 
     [Fact]
@@ -235,6 +289,88 @@ public class RouteConversationToModuleHandlerTests
 
         var call = Assert.Single(fixture.Gateway.ReplyCalls);
         Assert.Equal("svc-2", call.Request.Value);
+    }
+
+    /// <summary>`25-37`: resent on every reply, not merely at task start -
+    /// <see cref="SubmitModuleReplyRequest.Locale"/>'s own remarks on why this is never persisted on
+    /// Calendar's own task.</summary>
+    [Fact]
+    public async Task HandleAsync_ContinuingAnActiveTask_ForwardsTheSitesConfiguredLocaleOnEveryReply()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(
+            site: site, arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal("Ru", call.Request.Locale);
+    }
+
+    /// <summary>`25-38`/`25-39`: the most recent phone number this visitor gave earlier in the
+    /// conversation rides along on a reply too - <see cref="SubmitModuleReplyRequest.KnownPhone"/>'s
+    /// own remarks. Two contact details seeded, most recent one recorded last, to prove this is not
+    /// merely "the first one found."</summary>
+    [Fact]
+    public async Task HandleAsync_ContinuingAnActiveTask_ForwardsTheVisitorsMostRecentlyKnownPhone()
+    {
+        var contactDetails = new FakeVisitorContactDetailRepository();
+        var older = VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Phone, "+79990000001",
+            Now.AddMinutes(-10));
+        var newer = VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Phone, "+79990000002",
+            Now.AddMinutes(-1));
+        contactDetails.Seed(older);
+        contactDetails.Seed(newer);
+        var fixture = CreateFixture(
+            contactDetails: contactDetails,
+            arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal("+79990000002", call.Request.KnownPhone);
+    }
+
+    /// <summary>`25-38`/`25-39`: a visitor who never gave a phone number forwards <see langword="null"/>,
+    /// never an invented one.</summary>
+    [Fact]
+    public async Task HandleAsync_ContinuingAnActiveTask_WithNoKnownPhone_ForwardsNull()
+    {
+        var fixture = CreateFixture(arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Null(call.Request.KnownPhone);
+    }
+
+    /// <summary>`25-39`: the site's own temporary setting rides along on every reply too - off by
+    /// default (<see cref="DefaultSite"/>'s own `WidgetConfig.Default`), proven on here rather than
+    /// merely off, since off is already every other reply test's own implicit assertion.</summary>
+    [Fact]
+    public async Task HandleAsync_ContinuingAnActiveTask_ForwardsTheSitesAcceptUnverifiedPhoneSetting()
+    {
+        var site = new Site(SiteId, $"pk-{SiteId.Value:N}", []);
+        site.UpdateWidgetConfig(
+            new WidgetConfig(null, Position.BottomRight, acceptUnverifiedPhone: true), Now);
+        var fixture = CreateFixture(
+            site: site, arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.True(call.Request.AcceptUnverifiedPhone);
     }
 
     [Fact]
@@ -540,9 +676,11 @@ public class RouteConversationToModuleHandlerTests
         readStore.Seed(
             SiteId, new EnabledModuleSummary(Calendar, ["/booking"], EntryPoint, Credential, GrantedByOwner: false, ExpiresAt: null));
         var gateway = new FakeModuleGateway { OnSubmitReply = _ => new SubmitModuleReplyResult(null, true) };
+        var sites = new FakeSiteRepository();
+        sites.Seed(DefaultSite());
         var handler = new RouteConversationToModuleHandler(
             repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
-            new FakeClock(Now), new FakeIdGenerator());
+            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RouteConversationToModule.RouteConversationToModule(
@@ -566,9 +704,11 @@ public class RouteConversationToModuleHandlerTests
         readStore.Seed(
             SiteId, new EnabledModuleSummary(Calendar, ["/booking"], EntryPoint, Credential, GrantedByOwner: false, ExpiresAt: null));
         var gateway = new FakeModuleGateway { OnSubmitReply = _ => new SubmitModuleReplyResult(null, true) };
+        var sites = new FakeSiteRepository();
+        sites.Seed(DefaultSite());
         var handler = new RouteConversationToModuleHandler(
             repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
-            new FakeClock(Now), new FakeIdGenerator());
+            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RouteConversationToModule.RouteConversationToModule(

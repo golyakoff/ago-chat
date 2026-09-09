@@ -39,6 +39,7 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             site.WidgetConfig.AttractAttention,
             site.WidgetConfig.AutoOpenEnabled,
             site.WidgetConfig.AutoOpenDelaySeconds,
-            site.WidgetConfig.AutoOpenGreetingText);
+            site.WidgetConfig.AutoOpenGreetingText,
+            site.WidgetConfig.AcceptUnverifiedPhone);
     }
 }

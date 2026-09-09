@@ -55,7 +55,17 @@ public sealed record EnabledModuleEndpoint(ModuleKey ModuleKey, SiteId SiteId, U
 /// payload in this codebase is validated at its own boundary rather than trusted deeper in.</summary>
 public sealed record ModuleStep(MessageContentKind Kind, MessagePayload? Payload, IReadOnlyList<MessageAction> Actions);
 
-public sealed record StartModuleTaskRequest(Guid ChatTaskId, SiteId SiteId, ConversationId ConversationId, string TriggerText);
+/// <param name="Locale">
+/// `25-37`: the site's own configured widget language, its Domain enum's PascalCase member name
+/// (`"En"`/`"Ru"`) - the identical wire convention <c>OperatorPermissionsResponse.Locale</c> already
+/// uses for the same value, crossing a different boundary. Calendar's own module boundary carried no
+/// locale at all before this item; a module renders its first step in it here, and
+/// <see cref="SubmitModuleReplyRequest.Locale"/> carries the identical value again on every later
+/// reply in the same task - see that parameter's own remarks for why this is resent rather than
+/// remembered.
+/// </param>
+public sealed record StartModuleTaskRequest(
+    Guid ChatTaskId, SiteId SiteId, ConversationId ConversationId, string TriggerText, string Locale);
 
 public sealed record StartModuleTaskResult(string ExternalTaskId, ModuleStep Step, bool Complete);
 
@@ -71,7 +81,36 @@ public sealed record StartModuleTaskResult(string ExternalTaskId, ModuleStep Ste
 /// what a non-null value means (`20-09`'s own claim-time gate); Chat's only obligation is never to send
 /// one it has not itself checked.
 /// </param>
+/// <param name="Locale">
+/// `25-37`: resent on every reply, not merely at task start (<see cref="StartModuleTaskRequest.Locale"/>'s
+/// own remarks) - deliberately not persisted on Calendar's own <c>ChatBookingTask</c>, which would have
+/// needed a new column this item's migration budget does not carry (one migration, spent on
+/// <see cref="AcceptUnverifiedPhone"/> below, `CLAUDE.md` rule 13's own "one migration lane"
+/// restated per item). A site's own configured language cannot change mid-conversation through any
+/// path this codebase has (<c>RouteConversationToModuleHandler</c>'s "at most one active task" routing
+/// already means nothing else can reach the console mid-flow), so resending the identical value on
+/// every call is a safe, cheap substitute for remembering it.
+/// </param>
+/// <param name="KnownPhone">
+/// `25-38`/`25-39`: the most recent phone number this visitor gave earlier in the conversation, self-
+/// reported and never proven reachable (<c>Ago.Chat.Domain.VisitorContactDetail</c>'s own remarks on
+/// why it carries no such proof) - null when nothing was ever recorded. Resent on every reply for the
+/// identical reason <see cref="Locale"/> is: it is never persisted on Calendar's own task, and a
+/// module task's own routing rules out it changing mid-flow (see <see cref="Locale"/>'s own remarks).
+/// A module reads it two ways: to prefill (never silently substitute for) the verified-phone step's
+/// own field (`25-38`), and - only when <see cref="AcceptUnverifiedPhone"/> is true - to book
+/// directly with it, unverified, the moment a slot is chosen (`25-39`).
+/// </param>
+/// <param name="AcceptUnverifiedPhone">
+/// `25-39`: this site's own <c>Ago.Chat.Domain.WidgetConfig.AcceptUnverifiedPhone</c>, off by
+/// default - resent on every reply for the identical "not persisted on Calendar's own task, cannot
+/// change mid-flow" reason <see cref="Locale"/> states for itself. Calendar decides what turning it on
+/// actually changes about the flow (skip the phone step outright when <see cref="KnownPhone"/> is
+/// already known, otherwise show it without the verification requirement) -
+/// <c>Ago.Calendar.Application.UseCases.ChatModuleTask.ReplyToModuleTaskHandler</c>'s own remarks.
+/// </param>
 public sealed record SubmitModuleReplyRequest(
-    string ExternalTaskId, Guid ChatTaskId, MessageContentKind Kind, string Value, DateTimeOffset? PhoneVerifiedAt = null);
+    string ExternalTaskId, Guid ChatTaskId, MessageContentKind Kind, string Value,
+    DateTimeOffset? PhoneVerifiedAt, string Locale, string? KnownPhone, bool AcceptUnverifiedPhone);
 
 public sealed record SubmitModuleReplyResult(ModuleStep? Step, bool Complete);

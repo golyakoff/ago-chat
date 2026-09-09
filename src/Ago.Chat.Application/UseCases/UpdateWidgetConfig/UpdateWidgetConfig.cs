@@ -33,6 +33,10 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// same enum-membership check that handler already runs for <see cref="Position"/>/<see cref="Locale"/>.
 /// <see cref="AutoOpenGreetingText"/> joins on the identical terms `NoticeText`/`NoticeUrl` already
 /// have - a raw, unvalidated string `Ago.Chat.Domain.WidgetConfig`'s own constructor validates.
+///
+/// `25-39`: <see cref="AcceptUnverifiedPhone"/> joins on the identical terms
+/// <see cref="RequireContactConsent"/>/<see cref="AttractAttention"/> already have - already a plain
+/// <see langword="bool"/> with nothing to validate, riding the same `new WidgetConfig(...)` call.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -46,4 +50,5 @@ public sealed record UpdateWidgetConfig(
     bool AttractAttention = false,
     bool AutoOpenEnabled = false,
     int AutoOpenDelaySeconds = 30,
-    string? AutoOpenGreetingText = null);
+    string? AutoOpenGreetingText = null,
+    bool AcceptUnverifiedPhone = false);
