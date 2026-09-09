@@ -91,6 +91,7 @@ using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
+using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RegisterSite;
@@ -935,6 +936,12 @@ public sealed class ChatModule : IProductModule
         // entitlement check's one enforcement point - see each handler's own remarks.
         services.AddScoped<CreateOperatorInviteHandler>();
         services.AddScoped<RedeemOperatorInviteHandler>();
+        // `23-70`: never registered when the preview endpoint was added - unnoticed because DI
+        // resolution for a minimal-API parameter is a runtime check, and nothing exercised
+        // `OperatorInviteEndpoints.HandlePreviewAsync` through the full authorization pipeline until a
+        // live pod's first policy-gated request enumerated every endpoint and failed to classify
+        // `handler` as a service. Found live on `ago-demo`, 2026-09-09.
+        services.AddScoped<PreviewOperatorInviteHandler>();
         // `13-03`: the seat-assignment and operator-removal mechanism `13-01` named but did not build -
         // see each handler's own remarks.
         services.AddScoped<ToggleOperatorSeatHandler>();
