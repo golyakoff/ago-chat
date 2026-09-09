@@ -27,7 +27,7 @@
 ///
 /// <para><b>Default is ten, unmeasured, and says so - the same "hardcode a sane unmeasured default"
 /// precedent `RegisterSiteRateLimitOptions` already sets, contrasted deliberately with
-/// <c>BillingOptions.PricePerSeatRub</c>'s own no-default rule.</b> A wrong guess here costs a
+/// <c>BillingOptions.BaseSeatPriceRub</c>'s own no-default rule.</b> A wrong guess here costs a
 /// reordered table row a site owner can see and mentally correct for; it never charges a card or
 /// silently drops data, which is the distinction `CLAUDE.md`'s "measure or stay silent" rule draws
 /// between a figure worth shipping unmeasured and one that is not. Ten is round and small enough that a

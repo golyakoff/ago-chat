@@ -15,53 +15,53 @@ namespace Ago.Chat.Application.Tests.UseCases.GetPricingForOwner;
 /// </summary>
 public sealed class GetPricingForOwnerHandlerTests
 {
+    // `25-29`: `ago-business` decision `0012`'s own base-plus-marginal formula, not `0008`'s
+    // superseded flat rate - this test now checks the three fields that state that formula
+    // completely, plus the legacy `PricePerSeatRub` field kept only for wire compatibility (see that
+    // field's own remarks on `OwnerSeatPricingDto` for why it reports the marginal rate).
     [Fact]
     public async Task HandleAsync_ReturnsTheRealSeatPricingFromBillingOptionsAndDomainConstants()
     {
         var billingOptions = new BillingOptions
         {
-            PricePerSeatRub = 590m,
+            BaseSeatPriceRub = 490m,
+            PricePerExtraSeatRub = 200m,
             CheckoutReturnUrl = "https://office.test.invalid/settings/billing",
         };
         var handler = new GetPricingForOwnerHandler(billingOptions);
 
         var response = await handler.HandleAsync(CancellationToken.None);
 
-        Assert.Equal(590m, response.SeatPricing.PricePerSeatRub);
+        Assert.Equal(200m, response.SeatPricing.PricePerSeatRub);
+        Assert.Equal(SubscriptionTierBands.BaseSeats, response.SeatPricing.BaseSeats);
+        Assert.Equal(490m, response.SeatPricing.BaseSeatPriceRub);
+        Assert.Equal(200m, response.SeatPricing.PricePerExtraSeatRub);
         Assert.Equal(BillingSubscription.PeriodLength.TotalDays, response.SeatPricing.BillingPeriodDays);
         Assert.Equal(SubscriptionTierBands.FreeSeatsIncluded, response.SeatPricing.FreeSeatsIncluded);
     }
 
+    // `25-29`: one tier, not two - `ago-business` decision `0012` prices exactly one Business band
+    // (2-5 seats), replacing this test's own previous two-tier ("Starter"/"Growth") assertion, which
+    // proved `0008`'s superseded grid.
     [Fact]
-    public async Task HandleAsync_ListsBothTiers_InAscendingOrder_MatchingSubscriptionTierBands()
+    public async Task HandleAsync_ListsExactlyOneTier_MatchingSubscriptionTierBands()
     {
-        var handler = new GetPricingForOwnerHandler(new BillingOptions { PricePerSeatRub = 1m });
+        var handler = new GetPricingForOwnerHandler(new BillingOptions { BaseSeatPriceRub = 1m, PricePerExtraSeatRub = 1m });
 
         var response = await handler.HandleAsync(CancellationToken.None);
 
-        Assert.Collection(
-            response.SeatPricing.Tiers,
-            starter =>
-            {
-                Assert.Equal(SubscriptionTierBands.Starter, starter.Key);
-                Assert.Equal(SubscriptionTierBands.MinSeats, starter.MinSeats);
-                Assert.Equal(SubscriptionTierBands.GrowthMinSeats - 1, starter.MaxSeats);
-            },
-            growth =>
-            {
-                Assert.Equal(SubscriptionTierBands.Growth, growth.Key);
-                Assert.Equal(SubscriptionTierBands.GrowthMinSeats, growth.MinSeats);
-                Assert.Equal(SubscriptionTierBands.MaxSeats, growth.MaxSeats);
-            });
+        var starter = Assert.Single(response.SeatPricing.Tiers);
+        Assert.Equal(SubscriptionTierBands.Starter, starter.Key);
+        Assert.Equal(SubscriptionTierBands.MinSeats, starter.MinSeats);
+        Assert.Equal(SubscriptionTierBands.MaxSeats, starter.MaxSeats);
 
         // Every seat count SubscriptionTierBands.TryResolveTier actually resolves must fall inside
-        // exactly one of the two tier rows this handler reports - the two sources must never disagree
-        // about where a boundary sits.
+        // the one tier row this handler reports - the two sources must never disagree about where the
+        // boundary sits.
         for (var seats = SubscriptionTierBands.MinSeats; seats <= SubscriptionTierBands.MaxSeats; seats++)
         {
             SubscriptionTierBands.TryResolveTier(seats, out var expectedTier);
-            var matching = Assert.Single(response.SeatPricing.Tiers, t => seats >= t.MinSeats && seats <= t.MaxSeats);
-            Assert.Equal(expectedTier, matching.Key);
+            Assert.Equal(expectedTier, starter.Key);
         }
     }
 
@@ -72,7 +72,7 @@ public sealed class GetPricingForOwnerHandlerTests
     [Fact]
     public async Task HandleAsync_ReturnsNoBillingOptions_NoMechanismExistsToPriceThemYet()
     {
-        var handler = new GetPricingForOwnerHandler(new BillingOptions { PricePerSeatRub = 1m });
+        var handler = new GetPricingForOwnerHandler(new BillingOptions { BaseSeatPriceRub = 1m, PricePerExtraSeatRub = 1m });
 
         var response = await handler.HandleAsync(CancellationToken.None);
 

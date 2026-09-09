@@ -18,7 +18,7 @@
 /// know which module this report is about.</para>
 ///
 /// <para>No code default is given for <see cref="ModuleKey"/>, for the identical reason
-/// <c>BillingOptions.PricePerSeatRub</c> ships none: an empty string would satisfy the CLR's default
+/// <c>BillingOptions.BaseSeatPriceRub</c> ships none: an empty string would satisfy the CLR's default
 /// binder with nothing to complain about, so <c>ChatModule</c>'s own <c>.Validate()</c> predicate (which
 /// constructs a real <see cref="Domain.ModuleKey"/> from the bound value and rejects anything that
 /// throws) is what turns a missing or malformed config key into a startup failure rather than a report

@@ -34,30 +34,56 @@ public sealed record OwnerPricingResponse(
 
 /// <summary>
 /// `13-02`/`13-08`: the per-seat subscription price and the seat bands it applies to - the only
-/// capability in this codebase's billing surface with a real, currently-charged number behind it
-/// (`Ago.Chat.Application.UseCases.CreateCheckoutSession.BillingOptions.PricePerSeatRub`, bound from
-/// this deployment's own `Billing:PricePerSeatRub` configuration, `ChatModule`'s own
-/// `.ValidateOnStart()` refusing to boot a deployment that left it at zero).
+/// capability in this codebase's billing surface with a real, currently-charged number behind it.
+///
+/// <para><b>`25-29`: the pricing this type describes stopped being flat, and this record grew to say
+/// so.</b> `ago-business` decision `0012` (2026-09-07, read directly) charges a flat base for the
+/// first few seats and a separate marginal rate past them - `BaseSeats`/`BaseSeatPriceRub`/
+/// `PricePerExtraSeatRub` are the three new fields that state that formula completely.
+/// <see cref="PricePerSeatRub"/> stays on the wire (`api-design.md`'s "add within a version, never
+/// remove or rename" - removing it outright would silently crash `ago-console`'s already-shipped
+/// `OwnerPricingPage.tsx`, which reads it with no null-guard), but it can no longer mean "the flat
+/// price every seat costs" - see its own remarks for what it holds instead and why that is still
+/// honest, not invented.</para>
 /// </summary>
-/// <param name="PricePerSeatRub">`BillingOptions.PricePerSeatRub`, unchanged - the flat per-seat
-/// charge every paid band uses alike (`SubscriptionTierBands`'s own remarks: "no per-band discount").
-/// Rubles, matching every other money figure this codebase already carries in this unit
-/// (`ЮKassa`/`YooKassaOptions`).</param>
+/// <param name="PricePerSeatRub">`25-29`: kept for wire compatibility, populated with
+/// <see cref="PricePerExtraSeatRub"/>'s own value rather than removed - the marginal rate is at least
+/// a real number this formula produces, unlike the flat rate this field used to hold, which no longer
+/// exists to report. <b>This is not the price of every seat any more</b> - a seat at or below
+/// <see cref="BaseSeats"/> costs a share of <see cref="BaseSeatPriceRub"/>, not this figure. Reading
+/// this field alone (the way `OwnerPricingPage.tsx`'s own "Price per seat" column does today) under-
+/// or over-states the true charge for any seat count that is not exactly one past the base - `25-29`'s
+/// own report flags this as a needed console follow-up rather than treating it as closed by this
+/// field's mere presence on the wire.</param>
+/// <param name="BaseSeats">`25-29`: <see cref="Domain.SubscriptionTierBands.BaseSeats"/> - how many
+/// seats <see cref="BaseSeatPriceRub"/> alone covers.</param>
+/// <param name="BaseSeatPriceRub">`25-29`: `BillingOptions.BaseSeatPriceRub` - the flat charge for
+/// <see cref="BaseSeats"/> seats or fewer.</param>
+/// <param name="PricePerExtraSeatRub">`25-29`: `BillingOptions.PricePerExtraSeatRub` - the marginal
+/// charge added once for every seat past <see cref="BaseSeats"/>.</param>
 /// <param name="BillingPeriodDays"><see cref="Domain.BillingSubscription.PeriodLength"/>'s own
-/// `TotalDays` - how often <see cref="PricePerSeatRub"/> is charged, read from the identical constant
-/// the renewal job itself uses, never a second `30` typed here.</param>
+/// `TotalDays` - how often this pricing is charged, read from the identical constant the renewal job
+/// itself uses, never a second `30` typed here.</param>
 /// <param name="FreeSeatsIncluded"><see cref="Domain.SubscriptionTierBands.FreeSeatsIncluded"/> -
 /// how many seats every site starts on before any purchase, at no charge.</param>
 /// <param name="Tiers">The named seat bands a purchase resolves to, in ascending order - see
 /// <see cref="OwnerSeatTierDto"/>'s own remarks.</param>
 public sealed record OwnerSeatPricingDto(
-    decimal PricePerSeatRub, double BillingPeriodDays, int FreeSeatsIncluded, IReadOnlyList<OwnerSeatTierDto> Tiers);
+    decimal PricePerSeatRub,
+    int BaseSeats,
+    decimal BaseSeatPriceRub,
+    decimal PricePerExtraSeatRub,
+    double BillingPeriodDays,
+    int FreeSeatsIncluded,
+    IReadOnlyList<OwnerSeatTierDto> Tiers);
 
 /// <summary>One named seat band from <see cref="Domain.SubscriptionTierBands"/> - <see cref="MinSeats"/>
 /// and <see cref="MaxSeats"/> are inclusive, matching <see cref="Domain.SubscriptionTierBands.TryResolveTier"/>'s
-/// own range check. Carries no price of its own: every tier charges the identical
-/// <see cref="OwnerSeatPricingDto.PricePerSeatRub"/>, which is why the price lives one level up rather
-/// than being repeated, unchanged, on each of these two rows.</summary>
+/// own range check. `25-29`: there is exactly one row today - `ago-business` decision `0012` prices one
+/// Business band (2-5 seats), not two - carried as a list rather than narrowed to a single record
+/// because nothing about this response's own shape assumes exactly one, and a future band (`0012`'s own
+/// designed-but-unreleased "Premium", 6-10 seats) can start appearing here the day it is priced, with
+/// no contract change.</summary>
 public sealed record OwnerSeatTierDto(string Key, int MinSeats, int MaxSeats);
 
 /// <summary>One `BillingOptionEntitlements:*` key this deployment has declared - see

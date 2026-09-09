@@ -6,17 +6,21 @@ using Ago.Chat.Domain;
 namespace Ago.Chat.Application.Tests.UseCases.ProcessSubscriptionRenewal;
 
 /// <summary>`23-86`: this handler's own recurring-charge amount computation is base-seat-priced only
-/// (`PricePerSeatRub * RequestedSeats`) - meaningless, and silently wrong (Rub 0), for an option
-/// subscription, since an option is priced flat and this item's own Scope forbids inventing that price
-/// ("no price, anywhere"). Proven here that the handler refuses loudly instead of computing a wrong
-/// charge - the one case this handler's own remarks name but nothing before this item exercised, since
-/// no production code path could hand it an option row until this item added
+/// (`SubscriptionTierBands.ComputeSeatPriceRub` against `RequestedSeats`) - meaningless, and silently
+/// wrong, for an option subscription, since an option is priced flat and this item's own Scope forbids
+/// inventing that price ("no price, anywhere"). The handler guards this with an explicit
+/// `IsOption` check that throws before the amount is ever computed, so the specific wrong number the
+/// formula would produce for `RequestedSeats == 0` (`25-29`'s own base-plus-marginal formula no longer
+/// gives Rub 0 the way `0008`'s superseded flat rate did - it gives the base seat price instead) never
+/// actually matters; what this test proves is that the guard fires first, not what the formula would
+/// have returned. The one case this handler's own remarks name but nothing before this item exercised,
+/// since no production code path could hand it an option row until this item added
 /// <see cref="BillingSubscription.OptionKey"/>.</summary>
 public class ProcessSubscriptionRenewalHandlerTests
 {
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 9, 8, 12, 0, 0, TimeSpan.Zero);
-    private static readonly BillingOptions Billing = new() { PricePerSeatRub = 500m, CheckoutReturnUrl = "https://console.example/return" };
+    private static readonly BillingOptions Billing = new() { BaseSeatPriceRub = 500m, PricePerExtraSeatRub = 100m, CheckoutReturnUrl = "https://console.example/return" };
 
     [Fact]
     public async Task HandleAsync_WhenTheDueSubscriptionIsAnOption_ThrowsRatherThanChargingAWrongOrZeroAmount()

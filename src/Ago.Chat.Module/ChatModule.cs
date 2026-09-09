@@ -677,15 +677,17 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AnalyticsOptions>>().Value);
 
         // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
-        // above - PricePerSeatRub deliberately ships no code default (BillingOptions' own remarks:
-        // "measure or stay silent" applies with more force to a figure that charges a real card), so
+        // above - `25-29`: BaseSeatPriceRub/PricePerExtraSeatRub (replacing the old flat
+        // PricePerSeatRub) deliberately ship no code default (BillingOptions' own remarks: "measure or
+        // stay silent" applies with more force to a figure that charges a real card), so
         // .ValidateOnStart() alone (no .Validate() predicate) is what turns "left at 0" into a startup
         // failure - a positive check is added explicitly below since the CLR default for `decimal` (0)
         // would otherwise satisfy a binder with nothing to complain about.
         services
             .AddOptions<BillingOptions>()
             .Bind(configuration.GetSection(BillingOptions.SectionName))
-            .Validate(o => o.PricePerSeatRub > 0, "Billing:PricePerSeatRub must be set to a positive value.")
+            .Validate(o => o.BaseSeatPriceRub > 0, "Billing:BaseSeatPriceRub must be set to a positive value.")
+            .Validate(o => o.PricePerExtraSeatRub > 0, "Billing:PricePerExtraSeatRub must be set to a positive value.")
             .Validate(o => Uri.IsWellFormedUriString(o.CheckoutReturnUrl, UriKind.Absolute), "Billing:CheckoutReturnUrl must be an absolute URL.")
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<BillingOptions>>().Value);

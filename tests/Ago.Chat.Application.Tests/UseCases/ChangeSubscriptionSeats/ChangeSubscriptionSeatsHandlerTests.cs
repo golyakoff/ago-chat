@@ -28,7 +28,7 @@ public class ChangeSubscriptionSeatsHandlerTests
 
         var handler = new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeatsHandler(
             subscriptions, permissions, yooKassa, applier,
-            new BillingOptions { PricePerSeatRub = 500m, CheckoutReturnUrl = "https://console.example/return" },
+            new BillingOptions { BaseSeatPriceRub = 500m, PricePerExtraSeatRub = 100m, CheckoutReturnUrl = "https://console.example/return" },
             new FakeIdGenerator(), new FakeClock(Now));
 
         return new Fixture(handler, subscriptions, yooKassa, applier);
@@ -58,6 +58,9 @@ public class ChangeSubscriptionSeatsHandlerTests
         Assert.Equal("Billing.SeatCountUnchanged", result.Error!.Value.Code);
     }
 
+    // `25-29`: upgrading 3 -> 5 seats (both within `ago-business` decision `0012`'s own Business band)
+    // rather than the old 5 -> 15 this test used against `0008`'s superseded, uncapped grid - 15 seats
+    // is no longer a purchasable count at all (`SubscriptionTierBands.MaxSeats` is 5).
     [Fact]
     public async Task HandleAsync_WhenAnUpgrade_ChargesTheProratedDifference_AndAppliesImmediately()
     {
@@ -67,19 +70,20 @@ public class ChangeSubscriptionSeatsHandlerTests
         // from Now - a clean, checkable remaining-days fraction (0.5) computed honestly through
         // MarkSucceeded's own "CurrentPeriodEnd = succeededAt + PeriodLength" rule, not forced.
         var halfPeriodAgo = Now - TimeSpan.FromDays(BillingSubscription.PeriodLength.TotalDays / 2);
-        SeedSucceeded(fixture.Subscriptions, id, seats: 5, tier: SubscriptionTierBands.Starter, succeededAt: halfPeriodAgo);
+        SeedSucceeded(fixture.Subscriptions, id, seats: 3, tier: SubscriptionTierBands.Starter, succeededAt: halfPeriodAgo);
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeats(OperatorId, SiteId, id, 15), CancellationToken.None);
+            new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeats(OperatorId, SiteId, id, 5), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         var upgraded = Assert.IsType<ChangeSubscriptionSeatsResult.Upgraded>(result.Value);
-        // (15*500 - 5*500) * 0.5 = 2500.00
-        Assert.Equal(2500.00m, upgraded.ProratedAmountRub);
+        // old (3 seats, at the base) = 500 + 0×100 = 500; new (5 seats, 2 past the base) =
+        // 500 + 2×100 = 700; (700 - 500) × 0.5 = 100.00
+        Assert.Equal(100.00m, upgraded.ProratedAmountRub);
         Assert.NotNull(fixture.YooKassa.LastChargeRequest);
-        Assert.Equal(2500.00m, fixture.YooKassa.LastChargeRequest!.AmountRub);
+        Assert.Equal(100.00m, fixture.YooKassa.LastChargeRequest!.AmountRub);
         Assert.Single(fixture.Applier.Applied);
-        Assert.Equal(15, fixture.Applier.Applied[0].NewSeatCount);
+        Assert.Equal(5, fixture.Applier.Applied[0].NewSeatCount);
     }
 
     [Fact]
@@ -87,11 +91,11 @@ public class ChangeSubscriptionSeatsHandlerTests
     {
         var fixture = CreateFixture();
         var id = new BillingSubscriptionId(Guid.NewGuid());
-        SeedSucceeded(fixture.Subscriptions, id, seats: 5, tier: SubscriptionTierBands.Starter);
+        SeedSucceeded(fixture.Subscriptions, id, seats: 3, tier: SubscriptionTierBands.Starter);
         fixture.YooKassa.ChargeResult = new ChargeStoredPaymentMethodResult.Refused("card declined");
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeats(OperatorId, SiteId, id, 15), CancellationToken.None);
+            new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeats(OperatorId, SiteId, id, 5), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.PaymentProviderRefused", result.Error!.Value.Code);

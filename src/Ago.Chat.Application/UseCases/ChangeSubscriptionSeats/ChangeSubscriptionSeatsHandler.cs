@@ -14,16 +14,22 @@ namespace Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 /// applied later by the recurring-charge job.
 ///
 /// <para><b>The proration formula, stated because the backlog left the rounding rule as this item's own
-/// call.</b> <c>(new_price - old_price) * remaining_days / period_length_days</c>, both prices computed
-/// from the flat <see cref="BillingOptions.PricePerSeatRub"/> (`SubscriptionTierBands`' own bands carry
-/// no separate per-tier price - seats are the only variable), <c>remaining_days</c> clamped to
-/// <c>[0, PeriodLength]</c> against the subscription's own real <see cref="BillingSubscription.CurrentPeriodEnd"/>,
-/// and the result rounded to two decimal places, away from zero - ЮKassa's own amount field is a
-/// fixed-point decimal string with exactly two fraction digits (<c>YooKassaAmount</c>'s own
-/// `"F2"` formatting), so a rounding rule has to exist somewhere, and "round the customer's own favour
-/// on a tie" is the same direction `CreateCheckoutSessionHandler`'s plain multiplication already rounds
-/// implicitly (a whole number of seats times a whole-Rouble price never needs rounding at all, so this
-/// is the first call site that actually exercises the choice).</para>
+/// call.</b> <c>(new_price - old_price) * remaining_days / period_length_days</c>, <c>remaining_days</c>
+/// clamped to <c>[0, PeriodLength]</c> against the subscription's own real
+/// <see cref="BillingSubscription.CurrentPeriodEnd"/>, and the result rounded to two decimal places,
+/// away from zero - ЮKassa's own amount field is a fixed-point decimal string with exactly two fraction
+/// digits (<c>YooKassaAmount</c>'s own `"F2"` formatting), so a rounding rule has to exist somewhere,
+/// and "round the customer's own favour on a tie" is the deliberate direction chosen.
+///
+/// <para><b>`25-29`: both prices are no longer a flat rate times a seat count.</b> This paragraph used
+/// to read "both prices computed from the flat `BillingOptions.PricePerSeatRub`... seats are the only
+/// variable" - true of `0008`'s superseded grid, false of `ago-business` decision `0012`'s real one.
+/// <c>oldPrice</c>/<c>newPrice</c> below both go through <see cref="SubscriptionTierBands.ComputeSeatPriceRub"/>,
+/// the identical banded formula <c>CreateCheckoutSessionHandler</c>/<c>ProcessSubscriptionRenewalHandler</c>
+/// charge with - an upgrade from 3 to 5 seats, for instance, prorates the difference between 890 ₽ and
+/// 490 ₽, never <c>(5-3) × one flat rate</c>. The rounding rule above still needs to exist for the
+/// identical reason it did before this item: a banded price can produce a genuinely fractional
+/// prorated amount just as easily as a flat one could.</para>
 /// </summary>
 public sealed class ChangeSubscriptionSeatsHandler(
     IBillingSubscriptionRepository subscriptions,
@@ -90,8 +96,10 @@ public sealed class ChangeSubscriptionSeatsHandler(
         var periodLengthDays = (decimal)BillingSubscription.PeriodLength.TotalDays;
         var remainingDays = Math.Clamp((decimal)(periodEnd - now).TotalDays, 0m, periodLengthDays);
 
-        var oldPrice = billingOptions.PricePerSeatRub * subscription.RequestedSeats;
-        var newPrice = billingOptions.PricePerSeatRub * command.RequestedSeats;
+        var oldPrice = SubscriptionTierBands.ComputeSeatPriceRub(
+            subscription.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
+        var newPrice = SubscriptionTierBands.ComputeSeatPriceRub(
+            command.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
         var proratedAmount = Math.Round((newPrice - oldPrice) * remainingDays / periodLengthDays, 2, MidpointRounding.AwayFromZero);
 
         var idempotenceKey = idGenerator.NewId(now).ToString();
