@@ -3,7 +3,9 @@ using System.Security.Claims;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
+using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
 using Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner;
@@ -58,6 +60,14 @@ public static class OwnerModuleEndpoints
         // each other (raising a quota for an already-enabled module is the common case, not a
         // re-registration).
         group.MapPut("/{moduleKey}/quantity", HandleGrantQuantityAsync);
+
+        // `23-88`: the async "how many would this exceed" preview - a request that starts the round
+        // trip (never waits on it, `RequestModuleQuantityImpactAsOwnerHandler`'s own remarks) and a
+        // read the console polls to see whether the module has answered yet
+        // (`GetModuleQuantityImpactPreviewAsOwnerHandler`'s own three-state result). Two routes, not
+        // one that blocks: the whole point is that neither one is a live call to the module.
+        group.MapPost("/{moduleKey}/quantity/impact", HandleRequestQuantityImpactAsync);
+        group.MapGet("/{moduleKey}/quantity/impact", HandleGetQuantityImpactAsync);
 
         // `23-83`/`adr/0151`: the two writes `22-11` never gave the platform owner, added only once
         // the tenant's own copies (`Api.Modules.ModuleEndpoints`) stopped existing as routes - not
@@ -168,7 +178,8 @@ public static class OwnerModuleEndpoints
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(
-            new GrantModuleQuantityAsOwner(new SiteId(siteId), moduleKey, request.Quantity), cancellationToken);
+            new GrantModuleQuantityAsOwner(new SiteId(siteId), moduleKey, request.Quantity, request.ExpectedAffectedCount),
+            cancellationToken);
 
         if (result.IsFailure)
         {
@@ -183,6 +194,47 @@ public static class OwnerModuleEndpoints
             new SiteId(siteId), AccessRecordResourceKind.ModuleQuantityGrant, resourceId: null, cancellationToken);
 
         return Results.Ok(new GrantModuleQuantityResponse(moduleKey, request.Quantity));
+    }
+
+    /// <summary>`23-88`: starts the async "how many would this exceed" round trip - returns the
+    /// moment chat's own row and outbox entry commit, the identical "no promise about the module's
+    /// own answer" shape <see cref="HandleGrantQuantityAsync"/>'s own remarks state for the grant
+    /// itself. No access record: this call writes nothing a platform owner did to a tenant's own
+    /// entitlement, only a question chat asked on the owner's behalf - the identical reasoning
+    /// <see cref="HandleVerifyAsync"/>'s own remarks give for its own read-shaped, unaudited call.</summary>
+    private static async Task<IResult> HandleRequestQuantityImpactAsync(
+        Guid siteId,
+        string moduleKey,
+        RequestModuleQuantityImpactRequest request,
+        RequestModuleQuantityImpactAsOwnerHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new RequestModuleQuantityImpactAsOwner(new SiteId(siteId), moduleKey, request.RequestedQuantity), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok();
+    }
+
+    /// <summary>`23-88`: the console's own poll for whether the module has answered yet - see
+    /// <see cref="GetModuleQuantityImpactPreviewAsOwnerHandler"/>'s own remarks for the three states
+    /// <see cref="ModuleQuantityImpactPreviewResponse"/> carries without collapsing any of them into
+    /// an invented error.</summary>
+    private static async Task<IResult> HandleGetQuantityImpactAsync(
+        Guid siteId,
+        string moduleKey,
+        GetModuleQuantityImpactPreviewAsOwnerHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new GetModuleQuantityImpactPreviewAsOwner(new SiteId(siteId), moduleKey), cancellationToken);
+
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new ModuleQuantityImpactPreviewResponse(
+                result.Value.Requested, result.Value.RequestedQuantity, result.Value.Answered,
+                result.Value.AffectedCount, result.Value.AffectedItemDisplayNames));
     }
 
     /// <summary>`23-83`/`adr/0151`: mints a fresh credential on the platform owner's own behalf - see
@@ -234,9 +286,25 @@ public static class OwnerModuleEndpoints
     /// <see cref="GrantModuleQuantityAsOwnerHandler"/>, `Module.Invalid`). No expiry, no credential:
     /// unlike <see cref="GrantModuleRequest"/> this sets a number on an already-registered module,
     /// it does not register one.</summary>
-    public sealed record GrantModuleQuantityRequest(int Quantity);
+    /// <param name="ExpectedAffectedCount">`23-88`: <see langword="null"/> (the default - omitting
+    /// the key entirely deserializes the same way) preserves this route's own original, unconditional
+    /// behaviour. A caller that went through <c>POST .../quantity/impact</c> and
+    /// <c>GET .../quantity/impact</c> first passes back the answered count exactly - see
+    /// <see cref="GrantModuleQuantityAsOwnerHandler"/>'s own remarks for what a mismatch does.</param>
+    public sealed record GrantModuleQuantityRequest(int Quantity, int? ExpectedAffectedCount = null);
 
     public sealed record GrantModuleQuantityResponse(string ModuleKey, int Quantity);
+
+    /// <summary>`23-88`: the body <c>POST .../modules/{moduleKey}/quantity/impact</c> takes - the
+    /// candidate quantity the owner is considering, not yet granted.</summary>
+    public sealed record RequestModuleQuantityImpactRequest(int RequestedQuantity);
+
+    /// <summary>`23-88`: the body <c>GET .../modules/{moduleKey}/quantity/impact</c> answers - see
+    /// <see cref="GetModuleQuantityImpactPreviewAsOwnerHandler"/>'s own remarks for what each of the
+    /// three states named by <see cref="Requested"/>/<see cref="Answered"/> means and why neither
+    /// collapses into an invented fourth "error" state.</summary>
+    public sealed record ModuleQuantityImpactPreviewResponse(
+        bool Requested, int? RequestedQuantity, bool Answered, int? AffectedCount, IReadOnlyList<string> AffectedItemDisplayNames);
 
     /// <summary>
     /// A property-declared record rather than this file's usual positional shape for exactly one

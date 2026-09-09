@@ -49,6 +49,8 @@ using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.GrantModuleQuantity;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
+using Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner;
+using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
@@ -642,6 +644,11 @@ public sealed class ChatModule : IProductModule
         // GrantModuleQuantityAsOwner's own remarks for why this is a separate command/handler rather
         // than a nullable-OperatorId branch on GrantModuleQuantityHandler.
         services.AddScoped<GrantModuleQuantityAsOwnerHandler>();
+        // `23-88`: the async preview round trip's own two handlers - request (owner-facing, this
+        // module has no tenant-facing route for either yet, the same accepted gap the grant itself
+        // once had) and the read the console polls through.
+        services.AddScoped<RequestModuleQuantityImpactAsOwnerHandler>();
+        services.AddScoped<GetModuleQuantityImpactPreviewAsOwnerHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();

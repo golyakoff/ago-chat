@@ -216,6 +216,9 @@ public static class ServiceCollectionExtensions
         // masters count. One implicit-transaction port, not a repository + a separate outbox call -
         // see IModuleQuantityGrantStore's own remarks.
         services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
+        // `23-88`: the identical shape, for the async impact-preview question rather than the grant
+        // itself - IModuleQuantityImpactPreviewStore's own remarks.
+        services.AddScoped<IModuleQuantityImpactPreviewStore, ModuleQuantityImpactPreviewStore>();
         // `23-59`/`adr/0147`: "a grant carries over every contact ever collected" - the request-side
         // half; `Ago.Chat.Worker.ContactCarryoverJob` does the actual, bounded, resumable work later.
         services.AddScoped<IContactCarryoverRequestStore, ContactCarryoverRequestStore>();
