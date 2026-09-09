@@ -111,7 +111,10 @@ public sealed class AttachmentConversationBudgetFlowTests(AttachmentFixture fixt
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
         db.Visitors.Add(new Visitor(visitorId, siteId, Now));
         db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
-        var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+        // `23-78`: granted at creation - this file's own budget tests exercise both the visitor and
+        // the operator upload path against this same conversation, and the visitor path now refuses
+        // without a grant before the budget is ever consulted.
+        var conversation = Conversation.Start(conversationId, siteId, visitorId, Now, attachmentUploadGrantedByDefault: true);
         conversation.AssignTo(operatorId, Now);
         db.Conversations.Add(conversation);
         await db.SaveChangesAsync();

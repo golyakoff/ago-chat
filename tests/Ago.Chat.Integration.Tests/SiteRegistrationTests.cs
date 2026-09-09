@@ -88,6 +88,8 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
             [
                 Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
                 Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+                // `23-78`: ConversationAttachmentUploadGrant joins the Operator set.
+                Permission.ConversationAttachmentUploadGrant.Value,
                 // `22-05`/`adr/0093`: the calendar's own day-to-day permissions, joined here unchanged.
                 Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
                 Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,

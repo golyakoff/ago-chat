@@ -136,11 +136,33 @@ public readonly partial record struct WidgetConfig
     /// feature, for the same reason (`WidgetConfigPage.tsx`'s own copy).</summary>
     public bool AcceptUnverifiedPhone { get; }
 
+    /// <summary>`23-78`: the tenant-level default this item's own author decision names -
+    /// off by default, joining <see cref="RequireContactConsent"/>/<see cref="AttractAttention"/>/
+    /// <see cref="AutoOpenEnabled"/>/<see cref="AcceptUnverifiedPhone"/> on the identical terms (one
+    /// more fixed, named, validated - here, nothing to validate, a plain bool has no illegal value -
+    /// field on this type, not a new configuration mechanism). Read once, by
+    /// <c>StartConversationHandler</c>, to seed a brand-new <see cref="Conversation"/>'s own
+    /// <see cref="Conversation.AttachmentUploadGrantedAt"/> at creation time
+    /// (<see cref="Conversation.Start"/>'s own <c>attachmentUploadGrantedByDefault</c> parameter) -
+    /// changing this flag later never reaches back into a conversation already started, the same
+    /// "a stamp taken once, not a live gate" shape <see cref="AcceptUnverifiedPhone"/>'s own consumer
+    /// reads it as. An operator can still override the seeded value in either direction for one
+    /// specific conversation afterward (`IConversationAttachmentUploadGrantRepository`) - this field
+    /// only ever decides what a conversation starts with, never what it stays at.
+    ///
+    /// Deliberately defaults to <see langword="false"/> for every existing row, the same "a tenant
+    /// cannot consent on their visitor's behalf by staying silent" posture <see cref="RequireContactConsent"/>
+    /// already established: a shop that fears junk uploads keeps the closed-by-default abuse property
+    /// this whole backlog item exists to build; a repair shop or claims desk that wants a photograph in
+    /// every second conversation turns this on and pays for it with the corresponding widening of the
+    /// vector the item's own "Why this is the strongest abuse control" section names.</summary>
+    public bool AllowAttachmentUploadsByDefault { get; }
+
     public WidgetConfig(
         string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null,
         bool requireContactConsent = false, bool attractAttention = false, bool autoOpenEnabled = false,
         AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30, string? autoOpenGreetingText = null,
-        bool acceptUnverifiedPhone = false)
+        bool acceptUnverifiedPhone = false, bool allowAttachmentUploadsByDefault = false)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -208,6 +230,7 @@ public readonly partial record struct WidgetConfig
         AutoOpenDelaySeconds = autoOpenDelaySeconds;
         AutoOpenGreetingText = autoOpenGreetingText;
         AcceptUnverifiedPhone = acceptUnverifiedPhone;
+        AllowAttachmentUploadsByDefault = allowAttachmentUploadsByDefault;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls

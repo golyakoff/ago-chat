@@ -44,6 +44,47 @@ public class ConversationTests
         Assert.Null(conversation.BlockedBy);
     }
 
+    /// <summary>`23-78`: the same "null means absent" default, restated for a different pair -
+    /// `Start`'s own `attachmentUploadGrantedByDefault` parameter defaults to `false`, so a caller that
+    /// never opts in gets exactly today's behaviour (no existing call site is touched).</summary>
+    [Fact]
+    public void Start_WithNoAttachmentUploadDefault_CreatesAConversation_WithNoUploadGrant()
+    {
+        var conversation = StartConversation();
+
+        Assert.False(conversation.HasAttachmentUploadGrant);
+        Assert.Null(conversation.AttachmentUploadGrantedAt);
+        Assert.Null(conversation.AttachmentUploadGrantedBy);
+    }
+
+    /// <summary>The tenant-level default (`WidgetConfig.AllowAttachmentUploadsByDefault`) seeds the
+    /// grant directly at construction - safe to do through the aggregate itself, unlike a grant/revoke
+    /// against an *existing* row, because this is an `INSERT`, not an `UPDATE` racing a concurrent
+    /// message send (`AttachmentUploadGrantedAt`'s own remarks). No operator attribution: a tenant
+    /// default is not an operator's own act.</summary>
+    [Fact]
+    public void Start_WithAttachmentUploadDefaultTrue_CreatesAConversation_WithAGrant_AndNoOperatorAttribution()
+    {
+        var conversation = Conversation.Start(
+            new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, attachmentUploadGrantedByDefault: true);
+
+        Assert.True(conversation.HasAttachmentUploadGrant);
+        Assert.Equal(Now, conversation.AttachmentUploadGrantedAt);
+        Assert.Null(conversation.AttachmentUploadGrantedBy);
+    }
+
+    // `23-78`: the actual grant/revoke transition against an *existing* conversation has no
+    // domain-level unit test of its own, for the identical reason `Start_CreatesAConversation_WithNoBlockState`
+    // states for `IsBlocked` right above - `IConversationAttachmentUploadGrantRepository` writes it
+    // with raw SQL, never through this aggregate, so the write is proven in
+    // `ConversationAttachmentUploadGrantRepositoryTests` (`Ago.Chat.Integration.Tests`) against a real
+    // Postgres row instead. `MarkAttachmentUploadGrantedForTesting`'s own effect is proven the same
+    // place `MarkBlockedForTesting`'s is - the Application-layer handler/fixture tests that actually
+    // call it (`CreateAttachmentHandlerTests`, `GrantAttachmentUploadHandlerTests`,
+    // `RevokeAttachmentUploadHandlerTests`), not a unit test in this project: this aggregate's own
+    // `InternalsVisibleTo` grants only `Ago.Chat.Application.Tests` that seam, deliberately, and
+    // `Ago.Chat.Domain.Tests` (this project) does not get it just to duplicate that coverage.
+
     [Fact]
     public void AssignTo_WhenWaiting_TransitionsToAssigned_AndRaisesConversationAssigned()
     {

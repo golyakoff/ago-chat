@@ -135,14 +135,14 @@ public sealed class VisitorHub(
         {
             var delta = await getHistory.HandleDeltaAsVisitorAsync(
                 new GetConversationDeltaAsVisitor(conversationId, visitorId, afterSequence), Context.ConnectionAborted);
-            return new VisitorJoinResult(conversationId.Value, IsNew: false, ToDtos(delta.Value, conversationId));
+            return new VisitorJoinResult(conversationId.Value, IsNew: false, ToDtos(delta.Value, conversationId), started.Value.HasAttachmentUploadGrant);
         }
 
         var history = await getHistory.HandleAsVisitorAsync(
             new GetConversationHistoryAsVisitor(conversationId, visitorId, BeforeSequence: null, DefaultPageSize),
             Context.ConnectionAborted);
 
-        return new VisitorJoinResult(conversationId.Value, started.Value.IsNew, ToDtos(history.Value.Messages, conversationId));
+        return new VisitorJoinResult(conversationId.Value, started.Value.IsNew, ToDtos(history.Value.Messages, conversationId), started.Value.HasAttachmentUploadGrant);
     }
 
     // `5-07`: clientMessageId appended last, after attachmentId - see OperatorHub.SendMessageAsync's

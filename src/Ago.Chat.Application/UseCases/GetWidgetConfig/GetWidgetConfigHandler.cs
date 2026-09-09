@@ -40,6 +40,7 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             site.WidgetConfig.AutoOpenEnabled,
             site.WidgetConfig.AutoOpenDelaySeconds,
             site.WidgetConfig.AutoOpenGreetingText,
-            site.WidgetConfig.AcceptUnverifiedPhone);
+            site.WidgetConfig.AcceptUnverifiedPhone,
+            site.WidgetConfig.AllowAttachmentUploadsByDefault);
     }
 }

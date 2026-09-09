@@ -2,6 +2,8 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
+using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
+using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
 using Ago.Chat.Application.UseCases.UnblockConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ExportConversation;
@@ -167,6 +169,17 @@ public static class ConversationsEndpoints
         app.MapPost("/api/v1/conversations/{conversationId:guid}/block", HandleBlockAsync)
             .RequireAuthorization("RequireOperatorIdentity");
         app.MapPost("/api/v1/conversations/{conversationId:guid}/unblock", HandleUnblockAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-78`: the same sub-resource shape as `/block`/`/unblock` right above - `conversation:attachment_upload_grant`,
+        // its own permission for the identical granularity reasoning (Permission.ConversationAttachmentUploadGrant's
+        // own remarks). Unlike `/block`, Operator-scoped, not Admin-scoped - see that field's own
+        // remarks - and unlike `/erase`, reversible: `200` with the resulting grant status, not
+        // `202`/`204`, since the write is a single atomic statement, not a background job
+        // (GrantAttachmentUploadHandler's own remarks).
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/grant-attachment-upload", HandleGrantAttachmentUploadAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/revoke-attachment-upload", HandleRevokeAttachmentUploadAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `24-11`: a tenant honouring one visitor's access request exports that conversation and
@@ -518,6 +531,46 @@ public static class ConversationsEndpoints
 
         var status = result.Value;
         return Results.Ok(new ConversationBlockStatusDto(status.ConversationId.Value, status.OccurredAt, status.OperatorId.Value));
+    }
+
+    /// <summary>`23-78`: the wire shape of a successful grant/revoke - both endpoints below return
+    /// this, since both answer the identical question ("what is this conversation's attachment-upload
+    /// grant state now") for opposite directions (<c>GrantAttachmentUploadHandler.AttachmentUploadGrantStatus</c>'s
+    /// own remarks).</summary>
+    public sealed record AttachmentUploadGrantStatusDto(Guid ConversationId, DateTimeOffset OccurredAt, Guid OperatorId);
+
+    private static async Task<IResult> HandleGrantAttachmentUploadAsync(
+        Guid conversationId, GrantAttachmentUploadHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GrantAttachmentUpload(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var status = result.Value;
+        return Results.Ok(new AttachmentUploadGrantStatusDto(status.ConversationId.Value, status.OccurredAt, status.OperatorId.Value));
+    }
+
+    private static async Task<IResult> HandleRevokeAttachmentUploadAsync(
+        Guid conversationId, RevokeAttachmentUploadHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RevokeAttachmentUpload(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var status = result.Value;
+        return Results.Ok(new AttachmentUploadGrantStatusDto(status.ConversationId.Value, status.OccurredAt, status.OperatorId.Value));
     }
 
     /// <summary>`24-11`: builds and returns one conversation's export archive in the same request - no

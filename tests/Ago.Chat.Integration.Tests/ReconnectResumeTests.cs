@@ -99,8 +99,12 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
     private VisitorHub CreateHub(SiteId siteId, VisitorId visitorId, string connectionId)
     {
         var db = fixture.CreateDbContext();
+        // `23-78`: shared with originValidator right below - real SiteRepository/no-op cache, never
+        // exercised for what this test actually checks (StartConversationHandler's own tenant-default
+        // read just answers "not found" for every site this fixture never seeds one for).
+        var siteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache());
         var startConversation = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db), new SystemClock(), new UuidV7Generator());
+            new VisitorRepository(db), new ConversationRepository(db), siteConfig, new SystemClock(), new UuidV7Generator());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(
@@ -108,7 +112,7 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         // FakeHubCallerContext.Features is always empty, so GetHttpContext() (and therefore Origin)
         // is always null here - HubOriginValidator's own check short-circuits before ever calling
         // GetSiteConfigByIdHandler, so a real SiteRepository/no-op cache is fine, never exercised.
-        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
+        var originValidator = new HubOriginValidator(siteConfig);
 
         // sendMessage is never used - only JoinAsync is exercised in this file, and messages are
         // seeded directly through SendVisitorMessageHandler in the test body instead of through

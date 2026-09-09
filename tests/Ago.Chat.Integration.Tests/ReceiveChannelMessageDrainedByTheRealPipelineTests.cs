@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -86,7 +87,11 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
                 identities,
                 visitors,
                 new PendingChannelLinkRequestRepository(db),
-                new StartConversationHandler(visitors, conversations, clock, idGenerator),
+                // `23-78`: real SiteRepository/no-op cache - never exercised for what this test
+                // actually checks.
+                new StartConversationHandler(
+                    visitors, conversations, new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+                    clock, idGenerator),
                 new SendVisitorMessageHandler(
                     conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
                 clock,

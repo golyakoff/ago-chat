@@ -127,7 +127,11 @@ public sealed class AttachmentUploadFlowTests(AttachmentFixture fixture)
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
         db.Visitors.Add(new Visitor(visitorId, siteId, Now));
-        db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+        // `23-78`: granted directly at creation (attachmentUploadGrantedByDefault: true) - this file's
+        // whole point is proving the presign/PUT/confirm chain, not the grant gate itself
+        // (CreateAttachmentHandlerTests' own new gate tests cover that), so every conversation this
+        // helper seeds starts with the grant CreateAttachmentHandler.HandleAsVisitorAsync now requires.
+        db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now, attachmentUploadGrantedByDefault: true));
         await db.SaveChangesAsync();
 
         return (visitorId, conversationId);

@@ -17,9 +17,23 @@
 /// same way - <see langword="null"/> for the queue view (which never joins it in) and for a row that
 /// predates the column. The console falls back to the id, never the other way round.</para>
 /// </summary>
+/// <summary>
+/// `23-78`: <see cref="HasAttachmentUploadGrant"/>/<see cref="AttachmentUploadGrantedAt"/>/
+/// <see cref="AttachmentUploadGrantedByOperatorId"/> join additively, the identical rule
+/// <see cref="OperatorId"/>/<see cref="OperatorName"/> above already establish - <see langword="null"/>
+/// (or <see langword="false"/>) for a row that predates these fields. <c>GetOperatorQueueHandler</c>
+/// loads full <see cref="Domain.Conversation"/> aggregates for this DTO's own two lists (unlike
+/// <c>GetAllConversationsForSiteHandler</c>'s <c>ConversationSummaryItem</c>, a genuinely paginated
+/// read store projection), so the grant fields are free from the same row already in hand - the
+/// identical "no second query" reasoning <see cref="Domain.Conversation.IsBlocked"/>'s own consumer in
+/// that same handler already relies on. This is also what feeds `ago-console`'s <c>ConversationPage</c>
+/// (via <c>useWorkspace().conversation</c>) the "who/when" attribution its own attachment-upload-grant
+/// toggle shows.
+/// </summary>
 public sealed record ConversationSummaryDto(
     Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
-    Guid? OperatorId = null, string? OperatorName = null);
+    Guid? OperatorId = null, string? OperatorName = null, bool HasAttachmentUploadGrant = false,
+    DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

@@ -11,6 +11,12 @@ namespace Ago.Chat.Application.UseCases.CreateAttachment;
 /// RBAC-permission-plus-assigned-operator), everything after that - rate limit, content-type/size
 /// validation, presign, persist - is identical.
 ///
+/// `23-78`: the one exception is <see cref="Domain.Conversation.HasAttachmentUploadGrant"/>, checked
+/// only in <see cref="HandleAsVisitorAsync"/> - "an operator's own uploads are unaffected" is this
+/// item's own Scope, and correctly so: an operator is an authenticated, paid identity already gated by
+/// <see cref="Permission.ConversationSend"/> and the conversation's own assignment, not the anonymous
+/// party this grant exists to slow down.
+///
 /// References <c>Ago.Platform.Abstractions.IFileStorage</c> directly, per `clean-architecture.md`:
 /// generic technical ports live in the platform's dependency-free abstractions package and are safe
 /// for Application to reference inwards; only the *implementation* (`Ago.Platform.Storage.S3`) is an
@@ -41,6 +47,19 @@ public sealed class CreateAttachmentHandler(
         if (conversation.VisitorId != command.RequestedBy)
         {
             return ConversationErrors.Forbidden("This visitor is not a participant of this conversation.");
+        }
+
+        // `23-78`: the control itself. Checked before the rate limiter right below, on the same
+        // "a caller who was never going to pass should not also spend a shared budget finding that
+        // out" ordering this method's own site-limit comment states below - an anonymous flood against
+        // an ungranted conversation must not cost this visitor's own rate-limit bucket anything, since
+        // that bucket exists to bound a *legitimate* visitor's own burst, not to be the thing that
+        // eventually stops an attacker who was refused before it was ever consulted. Hiding the
+        // widget's own upload icon is a consequence of this state, never the control - see
+        // `docs/backlog/23-78-*.md`'s own "The distinction that decides whether this works".
+        if (!conversation.HasAttachmentUploadGrant)
+        {
+            return ConversationErrors.AttachmentUploadNotGranted(conversation.Id.Value);
         }
 
         var visitorLimit = await rateLimiter.CheckAsync(

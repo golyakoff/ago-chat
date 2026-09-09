@@ -56,8 +56,12 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
         // The one real dependency HandleAsVisitorAsync reaches before its own rate-limit check: the
-        // conversation lookup that proves this visitor is a participant.
-        var conversation = Conversation.Start(conversationId, siteId, visitorId, DateTimeOffset.UtcNow);
+        // conversation lookup that proves this visitor is a participant. `23-78`: granted at creation
+        // (attachmentUploadGrantedByDefault: true) - HandleAsVisitorAsync now checks
+        // HasAttachmentUploadGrant between that participant check and the rate limiter, and this test
+        // is proving the rate-limit path specifically, not the grant gate.
+        var conversation = Conversation.Start(
+            conversationId, siteId, visitorId, DateTimeOffset.UtcNow, attachmentUploadGrantedByDefault: true);
 
         var rateLimitOptions = new AttachmentRateLimitOptions
         {
@@ -263,6 +267,56 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
                 rateLimitOptions.PerSiteRefillPerSecond));
     }
 
+    /// <summary>
+    /// `23-78`: not a rate-limit test, but wired through this file's own lightweight
+    /// `AttachmentEndpoints.HandleCreateAsync`-plus-`DefaultHttpContext` harness rather than
+    /// duplicating it - the same reason this file's own class-level remarks give for testing five
+    /// unrelated endpoints together in the first place (no hosting pipeline, no Testcontainers, just
+    /// the one real dependency each handler reaches before the check under test). What this proves:
+    /// `Attachment.UploadNotGranted` actually maps to `403`, not the `500` default every unmapped
+    /// `Error.Code` in `ErrorExtensions.ToProblem` falls through to (found live here, the same way
+    /// `Operator.NotFound`'s own gap was found in `23-72` - a new error code with no entry in that
+    /// switch compiles cleanly and returns the wrong status silently). `NeverCalledRateLimiter` proves
+    /// the ordering claim `CreateAttachmentHandler.HandleAsVisitorAsync`'s own remarks make: the grant
+    /// check runs before the rate limiter is ever consulted.
+    /// </summary>
+    [Fact]
+    public async Task AttachmentCreate_NoAttachmentUploadGrant_Returns403_WithoutEverCheckingTheRateLimiter()
+    {
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        // Default false - this conversation carries no grant.
+        var conversation = Conversation.Start(conversationId, siteId, visitorId, DateTimeOffset.UtcNow);
+
+        var handler = new CreateAttachmentHandler(
+            new SingleConversationRepository(conversation),
+            new NeverCalledAttachmentRepository(),
+            new NeverCalledFileStorage(),
+            new NeverCalledRateLimiter(),
+            new NeverCalledPermissionChecker(),
+            new NeverCalledConversationAttachmentBudget(),
+            new NeverCalledUnitOfWork(),
+            new AttachmentOptions(),
+            new AttachmentRateLimitOptions(),
+            new UuidV7Generator(),
+            new SystemClock());
+
+        var httpContext = NewHttpContext();
+        httpContext.User = VisitorPrincipal(visitorId);
+
+        var result = await AttachmentEndpoints.HandleCreateAsync(
+            conversationId.Value,
+            new AttachmentEndpoints.CreateAttachmentRequest("image/png", 1024),
+            handler,
+            new AttachmentRateLimitOptions(),
+            httpContext,
+            CancellationToken.None);
+        await result.ExecuteAsync(httpContext);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, httpContext.Response.StatusCode);
+    }
+
     private static DefaultHttpContext NewHttpContext()
     {
         // Result.ExecuteAsync (ProblemHttpResult included) resolves services off
@@ -333,6 +387,12 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
 
         public Task SaveAsync(Conversation conversationToSave, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
+    }
+
+    private sealed class NeverCalledRateLimiter : IRateLimiter
+    {
+        public Task<RateLimitDecision> CheckAsync(RateLimitKey key, RateLimitRule rule, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A caller refused for lack of an attachment-upload grant must never reach the rate limiter.");
     }
 
     private sealed class NeverCalledAttachmentRepository : IAttachmentRepository

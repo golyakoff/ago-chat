@@ -37,6 +37,10 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// `25-39`: <see cref="AcceptUnverifiedPhone"/> joins on the identical terms
 /// <see cref="RequireContactConsent"/>/<see cref="AttractAttention"/> already have - already a plain
 /// <see langword="bool"/> with nothing to validate, riding the same `new WidgetConfig(...)` call.
+///
+/// `23-78`: <see cref="AllowAttachmentUploadsByDefault"/> joins on the identical terms - one more
+/// plain <see langword="bool"/> with nothing to validate, riding the same `new WidgetConfig(...)`
+/// call.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -51,4 +55,5 @@ public sealed record UpdateWidgetConfig(
     bool AutoOpenEnabled = false,
     int AutoOpenDelaySeconds = 30,
     string? AutoOpenGreetingText = null,
-    bool AcceptUnverifiedPhone = false);
+    bool AcceptUnverifiedPhone = false,
+    bool AllowAttachmentUploadsByDefault = false);

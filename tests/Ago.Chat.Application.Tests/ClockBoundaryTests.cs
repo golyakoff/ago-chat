@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
 
@@ -28,7 +29,9 @@ public class ClockBoundaryTests
         var visitors = new FakeVisitorRepository();
         var conversations = new FakeConversationRepository();
         var clock = new FakeClock(BeforeBerlinSpringForward);
-        var handler = new StartConversationHandler(visitors, conversations, clock, new FakeIdGenerator());
+        var handler = new StartConversationHandler(
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            new FakeIdGenerator());
 
         await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
         var afterFirstContact = await visitors.GetByIdAsync(visitorId, CancellationToken.None);

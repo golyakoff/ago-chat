@@ -3,6 +3,7 @@ using System.Text;
 using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
 
@@ -53,7 +54,9 @@ public class ReceiveChannelMessageHandlerTests
             identities,
             visitors,
             pendingLinks,
-            new StartConversationHandler(visitors, conversations, clock, idGenerator),
+            new StartConversationHandler(
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            idGenerator),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             clock,
@@ -440,7 +443,9 @@ public class ReceiveChannelMessageHandlerTests
         var pipeline = new FakeApplyingMessagePipeline(conversations, clock, idGenerator);
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
-            new StartConversationHandler(visitors, conversations, clock, idGenerator),
+            new StartConversationHandler(
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            idGenerator),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             clock, idGenerator);
@@ -479,7 +484,9 @@ public class ReceiveChannelMessageHandlerTests
         var idGenerator = new FakeIdGenerator();
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
-            new StartConversationHandler(visitors, conversations, clock, idGenerator),
+            new StartConversationHandler(
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            idGenerator),
             new SendVisitorMessageHandler(
                 conversations,
                 new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5)),

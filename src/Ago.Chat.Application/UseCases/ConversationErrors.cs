@@ -88,6 +88,20 @@ public static class ConversationErrors
             $"Declared size {declaredSizeBytes} bytes would exceed this conversation's attachment budget - " +
             $"{remainingBudgetBytes} byte(s) remaining.");
 
+    /// <summary>`23-78`: the visitor-side gate itself - `CreateAttachmentHandler.HandleAsVisitorAsync`
+    /// refuses a presigned upload slot for any conversation with no attachment-upload grant
+    /// (<see cref="Domain.Conversation.HasAttachmentUploadGrant"/>). The message states the fact and
+    /// nothing else - the backlog item's own Done-when: "the refusal is not explained to the visitor
+    /// in terms they could act on" - it names no mechanism, no permission, no operator action that
+    /// would change the answer, the same restraint <see cref="AttachmentConversationBudgetExceeded"/>'s
+    /// own remarks draw a contrast against (that error *does* name a number to act on, because a full
+    /// budget has a legitimate remedy a caller should hear; a missing grant has none this widget could
+    /// ever act on itself - only an operator can change it, and telling an anonymous caller "wait for a
+    /// human to grant this" would be handing a social-engineering script to exactly the flood this item
+    /// exists to stop).</summary>
+    public static Error AttachmentUploadNotGranted(Guid conversationId) =>
+        new("Attachment.UploadNotGranted", $"Attachments are not enabled for conversation {conversationId}.");
+
     /// <summary>The client's "uploaded" claim did not survive a HEAD-verify against the real object -
     /// no real upload found, or its size/content-type does not match what was declared at presign
     /// time. The attachment itself stays `Pending` (<see cref="Domain.Attachment.ConfirmReady"/>), so
@@ -522,6 +536,17 @@ public static class ConversationErrors
     /// conversation that is not currently blocked. Same `409` group, identical reasoning.</summary>
     public static Error ConversationNotBlocked(Guid conversationId) =>
         new("Conversation.NotBlocked", $"Conversation {conversationId} is not currently blocked.");
+
+    /// <summary>`23-78`: the identical `409` group <see cref="ConversationAlreadyBlocked"/> already
+    /// establishes, restated for a different flag on the same aggregate - a grant request against a
+    /// conversation that already carries one.</summary>
+    public static Error ConversationAttachmentUploadAlreadyGranted(Guid conversationId) =>
+        new("Conversation.AttachmentUploadAlreadyGranted", $"Conversation {conversationId} already has an attachment-upload grant.");
+
+    /// <summary>The reverse of <see cref="ConversationAttachmentUploadAlreadyGranted"/> - a revoke
+    /// request against a conversation that carries no grant. Same `409` group, identical reasoning.</summary>
+    public static Error ConversationAttachmentUploadNotGranted(Guid conversationId) =>
+        new("Conversation.AttachmentUploadNotGranted", $"Conversation {conversationId} has no attachment-upload grant to revoke.");
 
     public static Error TagNotFound(Guid tagId) =>
         new("Tag.NotFound", $"Tag {tagId} was not found for this site.");
