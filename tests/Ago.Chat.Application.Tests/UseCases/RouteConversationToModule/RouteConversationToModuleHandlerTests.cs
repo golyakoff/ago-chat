@@ -510,4 +510,112 @@ public class RouteConversationToModuleHandlerTests
 
         Assert.Equal(RouteConversationToModuleOutcome.NoTriggerMatch, result.Value);
     }
+
+    // ------------------------------------------------------------------------------------------
+    // `25-34`: retry-once-on-conflict, at the level a real Postgres race is expensive to exercise
+    // for every branch - CloseConversationHandler's own established shape, reused here. The real
+    // `xmin`/message-sequence race itself is Ago.Chat.Concurrency.Tests.RouteConversationToModuleConcurrencyTests's
+    // job; this is the fast, deterministic proof that the retry wiring itself - reload, reapply,
+    // one bounded retry, then a clean result - does what CloseConversationHandlerTests's own
+    // MarkConversationReadHandlerTests precedent (ConflictingConversationRepository) already proves
+    // for that handler's identical shape.
+    // ------------------------------------------------------------------------------------------
+
+    private static Conversation FreshConversationWithActiveTaskAndTrigger(Guid conversationId)
+    {
+        var conversation = Conversation.Start(new ConversationId(conversationId), SiteId, VisitorId, Now);
+        ConversationWithActiveTask(conversation, "Which service?", ("Haircut", "svc-1"));
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        conversation.ClearDomainEvents();
+        return conversation;
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheConversationSaveConflictsOnce_RetriesAgainstFreshState_AndSucceeds()
+    {
+        var conversationId = Guid.NewGuid();
+        var repository = new ConflictingConversationRepository(
+            () => FreshConversationWithActiveTaskAndTrigger(conversationId), failNextSaves: 1);
+        var readStore = new FakeEnabledModuleReadStore();
+        readStore.Seed(
+            SiteId, new EnabledModuleSummary(Calendar, ["/booking"], EntryPoint, Credential, GrantedByOwner: false, ExpiresAt: null));
+        var gateway = new FakeModuleGateway { OnSubmitReply = _ => new SubmitModuleReplyResult(null, true) };
+        var handler = new RouteConversationToModuleHandler(
+            repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
+            new FakeClock(Now), new FakeIdGenerator());
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.RouteConversationToModule.RouteConversationToModule(
+                Guid.NewGuid(), SiteId, new ConversationId(conversationId), MessageAuthorKind.Visitor, TriggerSequence: 1),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.IsFailure ? $"{result.Error!.Value.Code}: {result.Error!.Value.Message}" : "success");
+        Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, result.Value);
+        // One failed attempt, one retry that succeeded - proves the retry actually ran, not that the
+        // fake happened not to be exercised.
+        Assert.Equal(2, repository.SaveCount);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheConversationSaveConflictsTwice_ReturnsConcurrencyConflict_NotAnUnhandledException()
+    {
+        var conversationId = Guid.NewGuid();
+        var repository = new ConflictingConversationRepository(
+            () => FreshConversationWithActiveTaskAndTrigger(conversationId), failNextSaves: 2);
+        var readStore = new FakeEnabledModuleReadStore();
+        readStore.Seed(
+            SiteId, new EnabledModuleSummary(Calendar, ["/booking"], EntryPoint, Credential, GrantedByOwner: false, ExpiresAt: null));
+        var gateway = new FakeModuleGateway { OnSubmitReply = _ => new SubmitModuleReplyResult(null, true) };
+        var handler = new RouteConversationToModuleHandler(
+            repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
+            new FakeClock(Now), new FakeIdGenerator());
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.RouteConversationToModule.RouteConversationToModule(
+                Guid.NewGuid(), SiteId, new ConversationId(conversationId), MessageAuthorKind.Visitor, TriggerSequence: 1),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.ConcurrencyConflict", result.Error!.Value.Code);
+        // `6-08`'s own bound, carried in: the retry stops here, it never loops a third time.
+        Assert.Equal(2, repository.SaveCount);
+    }
+
+    /// <summary>Mirrors `MarkConversationReadHandlerTests`' own
+    /// <c>ConflictingConversationRepository</c> - makes the first <c>failNextSaves</c> saves lose an
+    /// optimistic-concurrency race, and hands back a <em>freshly built</em> aggregate on every load, the
+    /// way a real reload after <c>ChangeTracker.Clear()</c> does. Reusing the already-mutated instance
+    /// would let a retry test pass for the wrong reason: the retry would find the state already moved
+    /// and take a no-op path rather than genuinely reapplying its own mutation.</summary>
+    private sealed class ConflictingConversationRepository(Func<Conversation> load, int failNextSaves)
+        : IConversationRepository
+    {
+        private int _failuresRemaining = failNextSaves;
+
+        public int SaveCount { get; private set; }
+
+        public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
+            Task.FromResult<Conversation?>(load());
+
+        public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Conversation>> GetAssignedToOperatorAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Conversation>> GetWaitingForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SaveAsync(Conversation conversation, CancellationToken cancellationToken)
+        {
+            SaveCount++;
+            if (_failuresRemaining > 0)
+            {
+                _failuresRemaining--;
+                throw new ConversationConcurrencyConflictException(conversation.Id);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 }

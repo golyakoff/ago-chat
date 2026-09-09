@@ -94,5 +94,28 @@ public sealed class ConversationRepository(AgoChatDbContext db) : IConversationR
             db.ChangeTracker.Clear();
             throw new ConversationConcurrencyConflictException(conversation.Id);
         }
+        // `25-34`: a third translated shape, found live by RouteConversationToModuleConcurrencyTests -
+        // the identical mechanism `23-04`'s own clause above already documents (an Added entity's
+        // INSERT executing before the Modified conversation's own xmin-checked UPDATE within one
+        // SaveChangesAsync), this time on messages(conversation_id, sequence, site_id)
+        // (MessageConfiguration's own unique index) rather than the assignment interval's partial one:
+        // two writers that both loaded this Conversation before either committed compute the identical
+        // next Sequence for the system message each is adding, and the loser's own message INSERT hits
+        // that unique index before its own conversation UPDATE ever reaches the xmin check above. Real
+        // Postgres 23505, not DbUpdateConcurrencyException, so - exactly like `23-04`'s own finding -
+        // it would otherwise reach a retry loop untranslated. Matched by suffix, not full equality:
+        // `messages` is partitioned (`Stage2PartitionMessages` and its successors), so the physical
+        // index lives on a per-partition child table whose own name prefixes this one
+        // (`messages_35_conversation_id_sequence_site_id_idx` was the exact name this suite's own run
+        // hit) - the suffix EF derives from the indexed columns is the only part every partition shares.
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+        } pg && pg.ConstraintName is { } constraintName
+            && constraintName.EndsWith("_conversation_id_sequence_site_id_idx", StringComparison.Ordinal))
+        {
+            db.ChangeTracker.Clear();
+            throw new ConversationConcurrencyConflictException(conversation.Id);
+        }
     }
 }
