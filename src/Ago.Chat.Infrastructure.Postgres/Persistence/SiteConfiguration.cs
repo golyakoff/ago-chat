@@ -27,6 +27,15 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             // on why rung three ("Never") does not exist anywhere in the C# type, so there is nothing
             // a third value here could ever enforce.
             t.HasCheckConstraint("ck_sites_contact_visibility", "contact_visibility IN ('Visible', 'MaskedWithReveal')");
+            // `23-64`: a fourth check constraint on this table, the same "HasCheckConstraint can be
+            // called any number of times against the same t" shape `11-10`/`23-11` already used for
+            // their own. `AutoOpenDelay`'s six legal values are exactly the closed set the backlog
+            // item's own Scope fixes - a SQL-level backstop for the same set `WidgetConfig`'s
+            // constructor cannot enforce on its own once a value reaches the database directly (a
+            // raw UPDATE, a future migration's own backfill), the identical reasoning
+            // ck_sites_widget_position/ck_sites_widget_locale already state for themselves.
+            t.HasCheckConstraint(
+                "ck_sites_widget_auto_open_delay", "widget_auto_open_delay_seconds IN (15, 30, 45, 60, 90, 120)");
         });
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id).HasColumnName("id").HasConversion(IdConverters.Site).ValueGeneratedNever();
@@ -117,6 +126,20 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property<bool>("_attractAttention")
             .HasColumnName("widget_attract_attention")
             .HasDefaultValue(false);
+        // `23-64`: three more backing fields on the same terms - a plain bool, a small enum stored as
+        // its own `int` (no dedicated converter, unlike `PositionConverter`/`LocaleConverter`: this
+        // enum's wire/storage spelling is already its own value, `AutoOpenDelay`'s own remarks), and a
+        // nullable free-text column with no CHECK constraint for the identical reason
+        // widget_notice_text/widget_notice_url have none - free text is not a closed set SQL can
+        // enumerate, `WidgetConfig`'s own constructor is this value's only validation.
+        builder.Property<bool>("_autoOpenEnabled")
+            .HasColumnName("widget_auto_open_enabled")
+            .HasDefaultValue(false);
+        builder.Property<AutoOpenDelay>("_autoOpenDelaySeconds")
+            .HasColumnName("widget_auto_open_delay_seconds")
+            .HasConversion<int>()
+            .HasDefaultValue(AutoOpenDelay.Seconds30);
+        builder.Property<string?>("_autoOpenGreetingText").HasColumnName("widget_auto_open_greeting_text");
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

@@ -25,6 +25,14 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 ///
 /// `23-63`: <see cref="AttractAttention"/> joins on the identical terms - one more plain
 /// <see langword="bool"/> with nothing to validate, riding the same `new WidgetConfig(...)` call.
+///
+/// `23-64`: <see cref="AutoOpenEnabled"/> joins on the identical terms - one more plain
+/// <see langword="bool"/>. <see cref="AutoOpenDelaySeconds"/> arrives as a raw <see langword="int"/>,
+/// the same "not yet the validated Domain type" shape <see cref="Position"/> already has -
+/// `UpdateWidgetConfigHandler` is what checks it is one of `AutoOpenDelay`'s six legal values, the
+/// same enum-membership check that handler already runs for <see cref="Position"/>/<see cref="Locale"/>.
+/// <see cref="AutoOpenGreetingText"/> joins on the identical terms `NoticeText`/`NoticeUrl` already
+/// have - a raw, unvalidated string `Ago.Chat.Domain.WidgetConfig`'s own constructor validates.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -35,4 +43,7 @@ public sealed record UpdateWidgetConfig(
     string? NoticeText,
     string? NoticeUrl,
     bool RequireContactConsent = false,
-    bool AttractAttention = false);
+    bool AttractAttention = false,
+    bool AutoOpenEnabled = false,
+    int AutoOpenDelaySeconds = 30,
+    string? AutoOpenGreetingText = null);

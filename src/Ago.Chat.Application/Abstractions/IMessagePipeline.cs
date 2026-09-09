@@ -48,7 +48,17 @@ public interface IMessagePipeline
 /// caller's raw strings into a <see cref="MessageContent"/> and returned a <c>Result</c> failure if
 /// they were malformed, exactly as it already does for <see cref="MessageBody"/>. Nothing downstream
 /// of here re-validates it, and nothing anywhere reads inside its payload.
+/// `23-64`/`adr/0148`: <see cref="MaterializeAutoGreeting"/> is the one signal that ever reaches this
+/// record from <c>VisitorHub.SendMessageWithAutoGreetingAsync</c> - never a hint the worker trusts
+/// blindly. <c>MessageBatchWriter</c> re-checks, inside the same transaction as this very message,
+/// that the conversation this flag arrived on is still genuinely empty and that the site's widget
+/// configuration still has auto-open and a greeting configured before it materialises anything - a
+/// stale or mistaken `true` (an old client, a retried call, a tenant who turned auto-open back off in
+/// the interim) materialises nothing on its own, exactly as <see cref="Conversation.AddAutoGreetingMessage"/>'s
+/// own remarks describe. Defaults to <see langword="false"/> - every existing caller of this record
+/// (a plain visitor send, an operator send reusing the same worker code path) has no opinion about a
+/// greeting at all.
 public sealed record PendingMessage(
     ConversationId ConversationId, MessageAuthorKind AuthorKind, Guid AuthorId, MessageBody Body,
     AttachmentId? AttachmentId = null, Guid? ClientMessageId = null, string? TraceParent = null,
-    MessageContent? Content = null);
+    MessageContent? Content = null, bool MaterializeAutoGreeting = false);

@@ -45,6 +45,12 @@ internal static class HubContractManifest
         new("VisitorHub.SendStructuredMessageAsync", 7,
             "nobody yet - `5-19` created it so `14-06`'s envelope has somewhere to live that is not "
             + "SendMessageAsync. `20-06`/`21-01` are the expected first callers."),
+        new("VisitorHub.SendMessageWithAutoGreetingAsync", 4,
+            "ago-widget VisitorConnection.sendMessageWithAutoGreeting (`23-64`) - called instead of "
+            + "SendMessageAsync for exactly one message per conversation: the visitor's own first send "
+            + "after an auto-opened panel the widget never connected the hub for (`adr/0148`). A new "
+            + "method rather than a parameter on SendMessageAsync, the same reasoning this file's own "
+            + "SendMessageAsync entry states."),
         new("VisitorHub.GetHistoryAsync", 3,
             "ago-widget VisitorConnection; dev-harness.html"),
 

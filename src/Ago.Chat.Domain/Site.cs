@@ -105,9 +105,16 @@ public sealed class Site
     // already-established shape" reason `24-05`'s own comment gives for itself.
     private bool _attractAttention;
 
+    // `23-64`: three more flat backing fields, the same shape as the pair above - each gets its own
+    // column (the migration this item adds), a plain scalar/enum/string for the same "one more
+    // caller of an already-established shape" reason `23-63`'s own comment gives for itself.
+    private bool _autoOpenEnabled;
+    private AutoOpenDelay _autoOpenDelaySeconds = AutoOpenDelay.Seconds30;
+    private string? _autoOpenGreetingText;
+
     public WidgetConfig WidgetConfig =>
         new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl, _requireContactConsent,
-            _attractAttention);
+            _attractAttention, _autoOpenEnabled, _autoOpenDelaySeconds, _autoOpenGreetingText);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -255,6 +262,9 @@ public sealed class Site
         _widgetNoticeUrl = WidgetConfig.Default.NoticeUrl;
         _requireContactConsent = WidgetConfig.Default.RequireContactConsent;
         _attractAttention = WidgetConfig.Default.AttractAttention;
+        _autoOpenEnabled = WidgetConfig.Default.AutoOpenEnabled;
+        _autoOpenDelaySeconds = WidgetConfig.Default.AutoOpenDelaySeconds;
+        _autoOpenGreetingText = WidgetConfig.Default.AutoOpenGreetingText;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -281,6 +291,9 @@ public sealed class Site
         _widgetNoticeUrl = config.NoticeUrl;
         _requireContactConsent = config.RequireContactConsent;
         _attractAttention = config.AttractAttention;
+        _autoOpenEnabled = config.AutoOpenEnabled;
+        _autoOpenDelaySeconds = config.AutoOpenDelaySeconds;
+        _autoOpenGreetingText = config.AutoOpenGreetingText;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

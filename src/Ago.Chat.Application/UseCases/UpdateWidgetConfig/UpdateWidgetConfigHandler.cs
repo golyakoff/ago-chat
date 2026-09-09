@@ -63,15 +63,26 @@ public sealed class UpdateWidgetConfigHandler(
                 $"'{command.Locale}' is not a valid widget locale - expected '{nameof(Locale.En)}' or '{nameof(Locale.Ru)}'.");
         }
 
+        // `23-64`: the same "parse the closed set, translate a miss at the Application boundary"
+        // split `Position`/`Locale` already draw above - a raw `int` on the wire, checked against
+        // `AutoOpenDelay`'s six legal values with `Enum.IsDefined` rather than `Enum.TryParse`
+        // (there is no string to parse; the wire value already is the enum's own underlying `int`).
+        var autoOpenDelay = (AutoOpenDelay)command.AutoOpenDelaySeconds;
+        if (!Enum.IsDefined(autoOpenDelay))
+        {
+            return ConversationErrors.WidgetConfigInvalidAutoOpenDelay(
+                $"'{command.AutoOpenDelaySeconds}' is not a valid auto-open delay - expected one of 15, 30, 45, 60, 90, 120.");
+        }
+
         WidgetConfig config;
         try
         {
             config = new WidgetConfig(
                 command.PrimaryColorHex, position, command.NoticeText, command.NoticeUrl, command.RequireContactConsent,
-                command.AttractAttention);
+                command.AttractAttention, command.AutoOpenEnabled, autoOpenDelay, command.AutoOpenGreetingText);
         }
         // `16-04`: `WidgetConfig`'s constructor throws with its own parameter name for each of the
-        // three things it validates - matched here on that name so a caller can tell which field to
+        // things it validates - matched here on that name so a caller can tell which field to
         // fix instead of one catch-all "InvalidColor" for every rejection. Falls through to the
         // pre-existing color code for anything else, unchanged from before this item.
         catch (ArgumentException ex) when (ex.ParamName == "noticeText")
@@ -81,6 +92,14 @@ public sealed class UpdateWidgetConfigHandler(
         catch (ArgumentException ex) when (ex.ParamName == "noticeUrl")
         {
             return ConversationErrors.WidgetConfigInvalidNoticeUrl(ex.Message);
+        }
+        // `23-64`: the same catch-and-translate shape, one more parameter name - whether the greeting
+        // itself was whitespace-only/over-length, or auto-open was turned on with no greeting at all
+        // (`WidgetConfig`'s own constructor makes both the same `ArgumentException` on this parameter
+        // name, and both have the identical remedy: fix the greeting text).
+        catch (ArgumentException ex) when (ex.ParamName == "autoOpenGreetingText")
+        {
+            return ConversationErrors.WidgetConfigInvalidAutoOpenGreetingText(ex.Message);
         }
         catch (ArgumentException ex)
         {
@@ -107,6 +126,7 @@ public sealed class UpdateWidgetConfigHandler(
 
         return new WidgetConfigDto(
             config.PrimaryColorHex, config.Position, locale, config.NoticeText, config.NoticeUrl,
-            config.RequireContactConsent, config.AttractAttention);
+            config.RequireContactConsent, config.AttractAttention, config.AutoOpenEnabled,
+            config.AutoOpenDelaySeconds, config.AutoOpenGreetingText);
     }
 }

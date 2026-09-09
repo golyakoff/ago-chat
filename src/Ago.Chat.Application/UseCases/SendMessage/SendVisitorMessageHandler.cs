@@ -86,7 +86,8 @@ public sealed class SendVisitorMessageHandler(
 
         var pending = new PendingMessage(
             command.ConversationId, MessageAuthorKind.Visitor, command.AuthorId.Value, body,
-            command.AttachmentId, command.ClientMessageId, command.TraceParent, content.Value);
+            command.AttachmentId, command.ClientMessageId, command.TraceParent, content.Value,
+            command.MaterializeAutoGreeting);
         return await pipeline.EnqueueAsync(pending, cancellationToken);
     }
 }

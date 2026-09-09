@@ -91,9 +91,39 @@ public readonly partial record struct WidgetConfig
     /// animating on the next deploy) is not something a schema default may cause on its own.</summary>
     public bool AttractAttention { get; }
 
+    /// <summary>`23-64`/`adr/0148`: a bound, matching <see cref="MaxNoticeTextLength"/>'s own
+    /// reasoning - this rides the same cached, per-handshake `SiteConfigDto`/wire path on every
+    /// visitor bootstrap. Shorter than the notice's 500: a notice is a legal disclosure a tenant may
+    /// need room for, a greeting is one drawn line a visitor reads in the seconds before the panel
+    /// settles - 300 characters is comfortably longer than that ever needs to be.</summary>
+    public const int MaxAutoOpenGreetingTextLength = 300;
+
+    /// <summary>`23-64`: off by default, the identical "a tenant who wants it must ask for it" posture
+    /// <see cref="AttractAttention"/> already states for itself - a schema default must not change a
+    /// visitor-facing behaviour for every existing site the moment this column exists.</summary>
+    public bool AutoOpenEnabled { get; }
+
+    /// <summary>`23-64`: the closed set the backlog item's own Scope fixes - see
+    /// <see cref="Domain.AutoOpenDelay"/>'s own remarks. Defaults to
+    /// <see cref="Domain.AutoOpenDelay.Seconds30"/>, the author's own stated default, for every site
+    /// that has never configured one - including every row that predates this column.</summary>
+    public AutoOpenDelay AutoOpenDelaySeconds { get; }
+
+    /// <summary>`23-64`: the tenant's own greeting line, drawn client-side and never sent until the
+    /// visitor writes (`adr/0148`) - <see langword="null"/> for every site that has not configured
+    /// one, the identical "no default sentence we supply" posture <see cref="NoticeText"/>'s own
+    /// remarks already state for the tenant's processing notice ("a greeting in our words on somebody
+    /// else's shop is the same mistake `16-04` already forbids for consent text" - the backlog item's
+    /// own words). Required, not merely allowed, whenever <see cref="AutoOpenEnabled"/> is
+    /// <see langword="true"/> - this constructor throws rather than letting a tenant turn auto-opening
+    /// on with nothing to say, which the widget could only have rendered as an empty, silently broken
+    /// panel.</summary>
+    public string? AutoOpenGreetingText { get; }
+
     public WidgetConfig(
         string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null,
-        bool requireContactConsent = false, bool attractAttention = false)
+        bool requireContactConsent = false, bool attractAttention = false, bool autoOpenEnabled = false,
+        AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30, string? autoOpenGreetingText = null)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -123,12 +153,43 @@ public readonly partial record struct WidgetConfig
                 $"'{noticeUrl}' is not an absolute https:// URL.", nameof(noticeUrl));
         }
 
+        if (autoOpenGreetingText is not null)
+        {
+            if (string.IsNullOrWhiteSpace(autoOpenGreetingText))
+            {
+                throw new ArgumentException(
+                    "Widget auto-open greeting text cannot be whitespace-only - leave it null for no greeting.",
+                    nameof(autoOpenGreetingText));
+            }
+
+            if (autoOpenGreetingText.Length > MaxAutoOpenGreetingTextLength)
+            {
+                throw new ArgumentException(
+                    $"Widget auto-open greeting text cannot exceed {MaxAutoOpenGreetingTextLength} characters.",
+                    nameof(autoOpenGreetingText));
+            }
+        }
+
+        // `23-64`: "There is no default sentence we supply" (the backlog item's own Scope) - turning
+        // auto-open on with nothing configured to say is not a state this constructor lets exist,
+        // the same "an enabled configuration with nothing to say" guard `OfflineAutoReplySettings`
+        // already enforces for its own fallback text.
+        if (autoOpenEnabled && string.IsNullOrWhiteSpace(autoOpenGreetingText))
+        {
+            throw new ArgumentException(
+                "Widget auto-open cannot be enabled without a greeting - there is no default text.",
+                nameof(autoOpenGreetingText));
+        }
+
         PrimaryColorHex = primaryColorHex;
         Position = position;
         NoticeText = noticeText;
         NoticeUrl = noticeUrl;
         RequireContactConsent = requireContactConsent;
         AttractAttention = attractAttention;
+        AutoOpenEnabled = autoOpenEnabled;
+        AutoOpenDelaySeconds = autoOpenDelaySeconds;
+        AutoOpenGreetingText = autoOpenGreetingText;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls

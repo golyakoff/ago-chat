@@ -168,7 +168,32 @@ public sealed class VisitorHub(
     // proof.
     public Task<int> SendMessageAsync(
         Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null) =>
-        SendAsync(conversationId, body, attachmentId, clientMessageId, null, null, null);
+        SendAsync(conversationId, body, attachmentId, clientMessageId, null, null, null, materializeAutoGreeting: false);
+
+    /// <summary>
+    /// `23-64`/`adr/0148`: the one signal the widget ever sends that its drawn greeting should be
+    /// materialised as this conversation's real first message - never a parameter on
+    /// <see cref="SendMessageAsync"/> itself. The arity rule <see cref="SendStructuredMessageAsync"/>'s
+    /// own doc comment states applies here identically: a hub method's parameter list is a contract
+    /// with clients already embedded on other people's sites, and SignalR refuses an invocation
+    /// supplying fewer arguments than the target declares - growing <see cref="SendMessageAsync"/>'s
+    /// own list would break every deployed pre-`23-64` widget at once, silently.
+    ///
+    /// <para><b>Called instead of <see cref="SendMessageAsync"/> for exactly one message.</b>
+    /// `ui/widget.ts`'s auto-open path never connects the hub while the panel sits open unread
+    /// (`adr/0148`'s "nothing reaches the server until the visitor writes") - so the visitor's own
+    /// first keystroke-to-send is also this connection's first `JoinAsync`. This method is what the
+    /// widget calls for that one send; every message after it, in this or any other conversation,
+    /// goes through the ordinary <see cref="SendMessageAsync"/>.</para>
+    ///
+    /// <para><b>A hint, not a grant.</b> Materialisation is decided, not merely executed, by
+    /// <c>MessageBatchWriter</c> inside the same transaction as this very message - see
+    /// <see cref="Application.Abstractions.PendingMessage"/>'s own remarks on why a stale or mistaken
+    /// flag from an old or misbehaving client materialises nothing on its own.</para>
+    /// </summary>
+    public Task<int> SendMessageWithAutoGreetingAsync(
+        Guid conversationId, string body, Guid? attachmentId = null, Guid? clientMessageId = null) =>
+        SendAsync(conversationId, body, attachmentId, clientMessageId, null, null, null, materializeAutoGreeting: true);
 
     /// <summary>
     /// `5-19`: `14-06`'s structured content, on a method of its own.
@@ -193,16 +218,17 @@ public sealed class VisitorHub(
     public Task<int> SendStructuredMessageAsync(
         Guid conversationId, string body, Guid? attachmentId, Guid? clientMessageId,
         string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions) =>
-        SendAsync(conversationId, body, attachmentId, clientMessageId, contentKind, content, actions);
+        SendAsync(conversationId, body, attachmentId, clientMessageId, contentKind, content, actions, materializeAutoGreeting: false);
 
     /// <summary>
-    /// The one implementation both hub methods above delegate to. Private, so it is not itself a hub
+    /// The one implementation every hub method above delegates to. Private, so it is not itself a hub
     /// method and its parameter list is nobody's contract - which is the point: the arity rule binds
-    /// what SignalR can invoke, and this is free to grow when `21-01` needs it to.
+    /// what SignalR can invoke, and this is free to grow when `21-01`/`23-64` need it to.
     /// </summary>
     private async Task<int> SendAsync(
         Guid conversationId, string body, Guid? attachmentId, Guid? clientMessageId,
-        string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions)
+        string? contentKind, string? content, IReadOnlyList<MessageActionInput>? actions,
+        bool materializeAutoGreeting)
     {
         using var activity = ChatTracing.Source.StartActivity(ChatTracing.SpanNames.HubSendMessage, ActivityKind.Server);
         var stopwatch = Stopwatch.StartNew();
@@ -216,7 +242,7 @@ public sealed class VisitorHub(
             var sent = await sendMessage.HandleAsync(
                 new SendVisitorMessage(
                     id, visitorId, body, attachmentId is { } a ? new AttachmentId(a) : null, clientMessageId,
-                    activity?.Id, contentKind, content, actions),
+                    activity?.Id, contentKind, content, actions, materializeAutoGreeting),
                 Context.ConnectionAborted);
             if (sent.IsFailure)
             {
