@@ -53,7 +53,11 @@ public sealed class CreateCheckoutSessionHandler(
         }
 
         var now = clock.UtcNow;
-        var amount = billingOptions.PricePerSeatRub * command.RequestedSeats;
+        // `25-29`: `ago-business` decision `0012`'s own banded formula - a flat base charge plus a
+        // marginal charge per seat past `SubscriptionTierBands.BaseSeats`, replacing the flat
+        // `seats × one rate` this line used to compute (`0008`'s superseded grid).
+        var amount = SubscriptionTierBands.ComputeSeatPriceRub(
+            command.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
         var idempotenceKey = idGenerator.NewId(now).ToString();
 
         var paymentResult = await yooKassa.CreatePaymentAsync(

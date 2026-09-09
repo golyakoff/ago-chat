@@ -24,6 +24,13 @@ namespace Ago.Chat.Application.UseCases.GetPricingForOwner;
 /// resolves this handler (<c>OwnerPricingEndpoints</c>), a Keycloak realm role Application has no port
 /// to see and should not re-check with a weaker, second copy of the same decision.</para>
 ///
+/// <para><b>`25-29`: <see cref="OwnerSeatPricingDto"/> grew three fields, and the "Growth" tier row
+/// disappeared.</b> `ago-business` decision `0012` prices Business as a base charge plus a marginal
+/// per-seat charge, not `SubscriptionTierBands`' old flat rate, and prices exactly one seat band
+/// (2-5), not two - see that record's own remarks for the full reasoning and for
+/// <see cref="OwnerSeatPricingDto.PricePerSeatRub"/>'s own narrower, no-longer-quite-true meaning kept
+/// only for wire compatibility.</para>
+///
 /// <para><b><see cref="OwnerPricingResponse.BillingOptions"/> is hardcoded empty here, not read from
 /// any configuration section.</b> The honest finding this item's own report states in full: no
 /// `BillingOptionEntitlements:*` key is configured on this deployment (`ago-deploy`'s own manifests
@@ -41,14 +48,23 @@ public sealed class GetPricingForOwnerHandler(BillingOptions billingOptions)
 {
     public Task<OwnerPricingResponse> HandleAsync(CancellationToken cancellationToken)
     {
+        // `25-29`: one row, not two - `ago-business` decision `0012` prices exactly one Business band
+        // (`SubscriptionTierBands.MinSeats`-`SubscriptionTierBands.MaxSeats`, 2-5 seats today), never a
+        // "Growth" band the way `0008`'s superseded grid did. `SubscriptionTierBands.Growth` stays
+        // defined for `RetentionClass`'s own sake (that type's own remarks), but no purchasable seat
+        // count resolves to it any more, so this list does not invent a row for it.
         var tiers = new List<OwnerSeatTierDto>
         {
-            new(SubscriptionTierBands.Starter, SubscriptionTierBands.MinSeats, SubscriptionTierBands.GrowthMinSeats - 1),
-            new(SubscriptionTierBands.Growth, SubscriptionTierBands.GrowthMinSeats, SubscriptionTierBands.MaxSeats),
+            new(SubscriptionTierBands.Starter, SubscriptionTierBands.MinSeats, SubscriptionTierBands.MaxSeats),
         };
 
         var seatPricing = new OwnerSeatPricingDto(
-            billingOptions.PricePerSeatRub,
+            // `25-29`: kept on the wire, but no longer "the" seat price - see this field's own remarks
+            // on `OwnerSeatPricingDto` for why the marginal rate is what is reported here.
+            billingOptions.PricePerExtraSeatRub,
+            SubscriptionTierBands.BaseSeats,
+            billingOptions.BaseSeatPriceRub,
+            billingOptions.PricePerExtraSeatRub,
             BillingSubscription.PeriodLength.TotalDays,
             SubscriptionTierBands.FreeSeatsIncluded,
             tiers);

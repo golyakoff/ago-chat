@@ -45,12 +45,15 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
 {
     private const string Route = "/api/v1/owner/pricing";
 
-    /// <summary>The real, deployed number - not a value this test invents. `590m` mirrors
-    /// `ago-deploy/k8s/base/api.yaml`'s own `Billing__PricePerSeatRub`, reproduced here as this test
-    /// host's own configuration (a test host builds its own DI container, so it cannot read that
-    /// manifest) rather than left as an arbitrary fixture value, so a reviewer can compare this test's
-    /// assertion against the real deployment's own number directly.</summary>
-    private const decimal SeededPricePerSeatRub = 590m;
+    /// <summary>`25-29`: `ago-business` decision `0012`'s own real, decided numbers, not values this
+    /// test invents - `490`/`200` replace `SeededPricePerSeatRub`'s own flat `590`, `0008`'s
+    /// superseded grid. `ago-deploy/k8s/base/api.yaml` needs the matching manifest key rename
+    /// (`Billing__PricePerSeatRub` -&gt; `Billing__BaseSeatPriceRub`/`Billing__PricePerExtraSeatRub`)
+    /// in the same rollout as this change - a repository this item's own worktree cannot reach, so
+    /// that update is this item's own report, not this file.</summary>
+    private const decimal SeededBaseSeatPriceRub = 490m;
+
+    private const decimal SeededPricePerExtraSeatRub = 200m;
 
     [Fact]
     public async Task OwnerToken_GetsThePriceList_WithTheRealSeatPricingNumbers()
@@ -66,24 +69,21 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
         var body = await response.Content.ReadFromJsonAsync<OwnerPricingResponse>();
         Assert.NotNull(body);
 
-        Assert.Equal(SeededPricePerSeatRub, body.SeatPricing.PricePerSeatRub);
+        // `25-29`: the legacy `PricePerSeatRub` field is kept on the wire but now reports the
+        // marginal rate, not a flat per-seat price - see `OwnerSeatPricingDto`'s own remarks.
+        Assert.Equal(SeededPricePerExtraSeatRub, body.SeatPricing.PricePerSeatRub);
+        Assert.Equal(SubscriptionTierBands.BaseSeats, body.SeatPricing.BaseSeats);
+        Assert.Equal(SeededBaseSeatPriceRub, body.SeatPricing.BaseSeatPriceRub);
+        Assert.Equal(SeededPricePerExtraSeatRub, body.SeatPricing.PricePerExtraSeatRub);
         Assert.Equal(BillingSubscription.PeriodLength.TotalDays, body.SeatPricing.BillingPeriodDays);
         Assert.Equal(SubscriptionTierBands.FreeSeatsIncluded, body.SeatPricing.FreeSeatsIncluded);
 
-        Assert.Collection(
-            body.SeatPricing.Tiers,
-            starter =>
-            {
-                Assert.Equal(SubscriptionTierBands.Starter, starter.Key);
-                Assert.Equal(SubscriptionTierBands.MinSeats, starter.MinSeats);
-                Assert.Equal(SubscriptionTierBands.GrowthMinSeats - 1, starter.MaxSeats);
-            },
-            growth =>
-            {
-                Assert.Equal(SubscriptionTierBands.Growth, growth.Key);
-                Assert.Equal(SubscriptionTierBands.GrowthMinSeats, growth.MinSeats);
-                Assert.Equal(SubscriptionTierBands.MaxSeats, growth.MaxSeats);
-            });
+        // `25-29`: one tier, not two - `0012` prices exactly one Business band, replacing the
+        // "Starter"/"Growth" pair this test used to assert against `0008`'s superseded grid.
+        var starter = Assert.Single(body.SeatPricing.Tiers);
+        Assert.Equal(SubscriptionTierBands.Starter, starter.Key);
+        Assert.Equal(SubscriptionTierBands.MinSeats, starter.MinSeats);
+        Assert.Equal(SubscriptionTierBands.MaxSeats, starter.MaxSeats);
 
         // `25-20`'s own honest finding, proven rather than merely documented: no billing option carries
         // a price anywhere in this codebase today, so the list this response carries is empty, not
@@ -148,7 +148,8 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
     /// <see cref="GetPricingForOwnerHandler"/>/<see cref="OwnerPricingEndpoints.MapOwnerPricingEndpoint"/>,
     /// and the <see cref="BillingOptions"/> singleton it takes - constructed directly here (this test
     /// host builds its own DI container from scratch, not from `Billing:*` configuration) with the
-    /// identical value <see cref="SeededPricePerSeatRub"/> documents.</summary>
+    /// identical values <see cref="SeededBaseSeatPriceRub"/>/<see cref="SeededPricePerExtraSeatRub"/>
+    /// document.</summary>
     private async Task<WebApplication> BuildTestHostAsync()
     {
         var builder = WebApplication.CreateBuilder();
@@ -165,10 +166,11 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
         // The production registration for this route: a plain `BillingOptions` instance, exactly the
         // shape `ChatModule` binds from `Billing:*` and hands to every handler that takes it - built
         // directly rather than through `IOptions<T>` binding, since this test host has no
-        // `Billing:PricePerSeatRub` configuration to bind from.
+        // `Billing:BaseSeatPriceRub`/`Billing:PricePerExtraSeatRub` configuration to bind from.
         builder.Services.AddSingleton(new BillingOptions
         {
-            PricePerSeatRub = SeededPricePerSeatRub,
+            BaseSeatPriceRub = SeededBaseSeatPriceRub,
+            PricePerExtraSeatRub = SeededPricePerExtraSeatRub,
             CheckoutReturnUrl = "https://office.test.invalid/settings/billing",
         });
         builder.Services.AddScoped<GetPricingForOwnerHandler>();

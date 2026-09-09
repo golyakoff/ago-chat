@@ -43,7 +43,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 29, 12, 0, 0, TimeSpan.Zero);
 
-    private static readonly BillingOptions Billing = new() { PricePerSeatRub = 500m, CheckoutReturnUrl = "https://console.example/return" };
+    private static readonly BillingOptions Billing = new() { BaseSeatPriceRub = 500m, PricePerExtraSeatRub = 100m, CheckoutReturnUrl = "https://console.example/return" };
 
     [Fact]
     public async Task RunOnceAsync_WhenTheRechargeIsDeclined_EntersPastDue_AndLeavesSiteEntitlementsUnchanged()

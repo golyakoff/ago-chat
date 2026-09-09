@@ -100,7 +100,11 @@ public sealed class ProcessSubscriptionRenewalHandler(
                 + "recurring charge exists yet - see this item's own report.");
         }
 
-        var amount = billingOptions.PricePerSeatRub * subscription.RequestedSeats;
+        // `25-29`: the identical banded formula `CreateCheckoutSessionHandler` charges the first
+        // payment with - `ago-business` decision `0012`'s base-plus-marginal Business price, not the
+        // flat `seats × one rate` this line used to compute.
+        var amount = SubscriptionTierBands.ComputeSeatPriceRub(
+            subscription.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
         var description = $"AGO Chat - {subscription.Tier} tier renewal, {subscription.RequestedSeats} seats";
         // Deterministic, not a fresh id per call - ChargeStoredPaymentMethodRequest's own remarks on why
         // this is what makes a two-replica race over the same due row safe rather than a double charge.
