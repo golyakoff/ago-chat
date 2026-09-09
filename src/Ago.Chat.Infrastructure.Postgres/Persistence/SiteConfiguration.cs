@@ -205,6 +205,15 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property(s => s.Tier).HasColumnName("tier").IsRequired().HasDefaultValue("free");
         builder.Property(s => s.SeatLimit).HasColumnName("seat_limit").HasDefaultValue(2);
 
+        // `25-25`: same "ordinary mapped property, private setter, no backing field" shape as Tier/
+        // SeatLimit just above - AdminLimit's own remarks explain why there is nothing for a
+        // Property<T>("_field") indirection to buy here, and why (unlike SeatLimit) nothing outside
+        // Site itself ever chooses this value. Database default `1` matches the free tier every
+        // pre-existing row was on before this column existed; Stage25AddSiteAdminLimit's own backfill
+        // raises every already-paid-tier row to `2`, the identical two-step shape
+        // Stage13RaiseFreeTierSeatLimit already used for SeatLimit's own default change.
+        builder.Property(s => s.AdminLimit).HasColumnName("admin_limit").HasDefaultValue(1);
+
         // `23-05`: same "ordinary mapped property, private setter, no backing field" shape as
         // Tier/SeatLimit just above - AssignmentPenaltySeconds's own remarks explain why there is
         // nothing for a Property<T>("_field") indirection to buy here. Database default matches the

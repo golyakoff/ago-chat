@@ -289,6 +289,16 @@ public static class ConversationErrors
     public static Error OperatorInviteSeatLimitReached(int seatLimit) =>
         new("OperatorInvite.SeatLimitReached", $"This site has reached its seat limit of {seatLimit}.");
 
+    /// <summary>`25-25`: the Administrator-seat counterpart to <see cref="OperatorInviteSeatLimitReached"/>,
+    /// raised when the invite being redeemed names the seeded `"Admin"` role and the site's live count
+    /// of non-removed Administrators is already at or above <see cref="Domain.Site.AdminLimit"/>. Same
+    /// `402 Payment Required` reasoning: the remedy is "upgrade" (or wait for `0012`'s own priced
+    /// per-administrator add-on, not built by this item), never "retry". The invite itself is never
+    /// consumed by this rejection, the same "left exactly as it was" shape
+    /// <see cref="OperatorInviteSeatLimitReached"/>'s own remarks describe for its sibling.</summary>
+    public static Error OperatorInviteAdminLimitReached(int adminLimit) =>
+        new("OperatorInvite.AdminLimitReached", $"This site has reached its administrator limit of {adminLimit}.");
+
     // `13-02`: same shared vocabulary, same reason - CreateCheckoutSessionHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>The requested seat count falls outside <see cref="Domain.SubscriptionTierBands.MinSeats"/>-
@@ -415,6 +425,18 @@ public static class ConversationErrors
     /// fix.</summary>
     public static Error OperatorRoleNotFound(string reason) =>
         new("Operator.RoleNotFound", reason);
+
+    /// <summary>`25-25`: `ChangeOperatorRoleHandler`'s own refusal - promoting this operator to the
+    /// seeded `"Admin"` role would push the site's live count of non-removed Administrators past
+    /// <see cref="Domain.Site.AdminLimit"/>. `402 Payment Required`, the identical reasoning
+    /// <see cref="OperatorSeatLimitReached"/> already gives for the analogous seat-capacity refusal on
+    /// a different write path - the actual remedy is "upgrade the plan", not "retry". The message
+    /// names the remedy, matching <see cref="OperatorIsLastManager"/>'s own convention: a shop owner
+    /// reads this, not an engineer.</summary>
+    public static Error OperatorAdminLimitReached(int adminLimit) =>
+        new(
+            "Operator.AdminLimitReached",
+            $"This site has reached its administrator limit of {adminLimit}. Upgrade the plan to add another administrator.");
 
     /// <summary>
     /// `23-71`: `AssignConversationHandler`'s own self-claim guard - `decisions/0006` separated "may

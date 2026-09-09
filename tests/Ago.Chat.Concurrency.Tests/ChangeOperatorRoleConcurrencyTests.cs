@@ -84,11 +84,12 @@ public sealed class ChangeOperatorRoleConcurrencyTests(ConcurrencyTestFixture fi
         var roles = new RoleRepository(db, new UuidV7Generator(), new SystemClock());
         var operatorRoles = new OperatorRoleRepository(db);
         var permissions = new PermissionChecker(db);
+        var sites = new SiteRepository(db);
         var unitOfWork = new EfUnitOfWork(db);
         var roleChangeRecords = new RoleChangeRecordRepository(db);
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
         var handler = new ChangeOperatorRoleHandler(
-            operators, roles, operatorRoles, permissions, unitOfWork, roleChangeRecords, outbox,
+            operators, roles, operatorRoles, permissions, sites, unitOfWork, roleChangeRecords, outbox,
             new UuidV7Generator(), new SystemClock());
         return await handler.HandleAsync(new ChangeOperatorRole(requestedBy, siteId, target, "Operator"), CancellationToken.None);
     }

@@ -34,6 +34,8 @@ public sealed class RedeemOperatorInviteHandler(IOperatorInviteRedemptionReposit
             OperatorInviteRedemptionResult.AlreadyOperatorOnSite => ConversationErrors.OperatorInviteAlreadyOperatorOnSite(),
             OperatorInviteRedemptionResult.SeatLimitReached seatLimitReached =>
                 ConversationErrors.OperatorInviteSeatLimitReached(seatLimitReached.SeatLimit),
+            OperatorInviteRedemptionResult.AdminLimitReached adminLimitReached =>
+                ConversationErrors.OperatorInviteAdminLimitReached(adminLimitReached.AdminLimit),
             _ => throw new InvalidOperationException($"Unhandled {nameof(OperatorInviteRedemptionResult)}: {outcome.GetType().Name}."),
         };
     }

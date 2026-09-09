@@ -21,11 +21,18 @@ public class ChangeOperatorRoleHandlerTests
         FakeRoleRepository Roles,
         FakeOperatorRoleRepository OperatorRoles,
         FakePermissionChecker Permissions,
+        FakeSiteRepository Sites,
         FakeUnitOfWork UnitOfWork,
         FakeRoleChangeRecordRepository RoleChangeRecords,
         FakeOutboxWriter Outbox);
 
-    private static Fixture CreateFixture(bool grantCallerPermission = true)
+    /// <summary>`25-25`: <paramref name="site"/> defaults to a paid tier with room for two
+    /// Administrators (`ago-business` decision `0012`'s own "Business" row) - every test in this file
+    /// that predates this item promotes at most a second colleague to Admin, which a real Business-tier
+    /// site (never a free one, which includes only one) can actually hold. A test that needs a
+    /// different ceiling - the free tier's own single administrator, or a site already at its limit -
+    /// passes its own <paramref name="site"/> explicitly rather than relying on this default.</summary>
+    private static Fixture CreateFixture(bool grantCallerPermission = true, Site? site = null)
     {
         var operators = new FakeOperatorRepository();
         var roles = new FakeRoleRepository();
@@ -39,15 +46,17 @@ public class ChangeOperatorRoleHandlerTests
         }
 
         var operatorRoles = new FakeOperatorRoleRepository();
+        var sites = new FakeSiteRepository();
+        sites.Seed(site ?? new Site(SiteId, $"site_{SiteId.Value:N}", [], tier: SubscriptionTierBands.Starter, seatLimit: 5));
         var unitOfWork = new FakeUnitOfWork();
         var roleChangeRecords = new FakeRoleChangeRecordRepository();
         var outbox = new FakeOutboxWriter();
 
         var handler = new Application.UseCases.ChangeOperatorRole.ChangeOperatorRoleHandler(
-            operators, roles, operatorRoles, permissions, unitOfWork, roleChangeRecords, outbox,
+            operators, roles, operatorRoles, permissions, sites, unitOfWork, roleChangeRecords, outbox,
             new FakeIdGenerator(), new FakeClock(Now));
 
-        return new Fixture(handler, operators, roles, operatorRoles, permissions, unitOfWork, roleChangeRecords, outbox);
+        return new Fixture(handler, operators, roles, operatorRoles, permissions, sites, unitOfWork, roleChangeRecords, outbox);
     }
 
     [Fact]
@@ -112,13 +121,16 @@ public class ChangeOperatorRoleHandlerTests
         Assert.Equal("Operator.RoleNotFound", result.Error!.Value.Code);
     }
 
-    /// <summary>Promoting a colleague to administrator is never refused for capacity - an administrator
-    /// is a role, not a purchase (`adr/0151`). This site already has one administrator (the caller);
-    /// promoting a second succeeds unconditionally.</summary>
+    /// <summary>`25-25`: promoting a colleague to administrator succeeds when the site's own
+    /// `AdminLimit` still has room - a paid (Starter) tier includes two (`ago-business` decision
+    /// `0012`), this site already has one administrator (the caller, seeded here as an `"Admin"` role
+    /// holder rather than only a granted permission, so the new role-scoped count actually sees them),
+    /// and promoting a second brings the count to exactly the limit, not past it.</summary>
     [Fact]
-    public async Task HandleAsync_WhenPromotingToAdmin_Succeeds_AndLeavesHoldsSeatUntouched()
+    public async Task HandleAsync_WhenPromotingToAdmin_WithRoomUnderTheLimit_Succeeds_AndLeavesHoldsSeatUntouched()
     {
         var fixture = CreateFixture();
+        fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
         var target = new Operator(
             new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5,
             externalSubjectId: "sub-target", holdsSeat: true);
@@ -144,15 +156,20 @@ public class ChangeOperatorRoleHandlerTests
         Assert.Equal(1, fixture.UnitOfWork.TransactionsCommitted);
     }
 
-    /// <summary>A third, a fourth, ... administrator is never refused either - restated as its own test
-    /// so a future session that reaches for a capacity check here has an explicit, named case to break
+    /// <summary>`25-25`: the case this item exists to change - this site's own paid tier includes
+    /// exactly two administrators (`SubscriptionTierBands.BusinessAdminsIncluded`), both already
+    /// assigned, and a third promotion is refused rather than "never refused either" (the test this one
+    /// replaces, back when `ChangeOperatorRoleHandler`'s own remarks called an administrator ceiling
+    /// here `adr/0151`-forbidden). Restated as its own named test, per that same handler's remarks, so
+    /// a future session that reaches for a capacity check here sees this explicit, already-broken case
     /// rather than a silent gap.</summary>
     [Fact]
-    public async Task HandleAsync_WhenPromotingToAdmin_OnASiteThatAlreadyHasTwoAdministrators_StillSucceeds()
+    public async Task HandleAsync_WhenPromotingToAdmin_OnASiteAlreadyAtItsAdministratorLimit_ReturnsAdminLimitReached()
     {
         var fixture = CreateFixture();
+        fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
         var secondAdmin = new OperatorId(Guid.NewGuid());
-        fixture.Permissions.Grant(secondAdmin, SiteId, Permission.SiteManageOperators);
+        fixture.OperatorRoles.Seed(secondAdmin, AdminRoleName);
         var target = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
         fixture.Operators.Seed(target);
         fixture.OperatorRoles.Seed(target.Id, OperatorRoleName);
@@ -161,8 +178,63 @@ public class ChangeOperatorRoleHandlerTests
             new Application.UseCases.ChangeOperatorRole.ChangeOperatorRole(RequestedBy, SiteId, target.Id, AdminRoleName),
             CancellationToken.None);
 
+        Assert.True(result.IsFailure);
+        Assert.Equal("Operator.AdminLimitReached", result.Error!.Value.Code);
+        Assert.Contains("2", result.Error.Value.Message);
+        // `ReplaceRoleAsync` was never called - the same "disposed without a commit, rolls back"
+        // outcome `HandleAsync_WhenDemotingTheLastAdministrator_ReturnsIsLastManager`'s own `Assert.Null`
+        // already proves for the analogous refusal.
+        Assert.Null(fixture.OperatorRoles.CurrentRoleId(target.Id));
+        Assert.Empty(fixture.RoleChangeRecords.Recorded);
+    }
+
+    /// <summary>`25-25`: the free tier includes exactly one administrator
+    /// (`SubscriptionTierBands.FreeAdminsIncluded`) - the account's own founder, per `ago-business`
+    /// decision `0011`. A second promotion on a site still on that tier is refused the identical way a
+    /// paid tier's third is above, proving the limit itself (not merely the number two) is read from
+    /// the site rather than hard-coded.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenPromotingToAdmin_OnAFreeTierSiteWithAnAdministratorAlready_ReturnsAdminLimitReached()
+    {
+        var freeSite = new Site(SiteId, $"site_{SiteId.Value:N}", []);
+        Assert.Equal(SubscriptionTierBands.FreeAdminsIncluded, freeSite.AdminLimit);
+        var fixture = CreateFixture(site: freeSite);
+        fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
+        var target = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
+        fixture.Operators.Seed(target);
+        fixture.OperatorRoles.Seed(target.Id, OperatorRoleName);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.ChangeOperatorRole.ChangeOperatorRole(RequestedBy, SiteId, target.Id, AdminRoleName),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Operator.AdminLimitReached", result.Error!.Value.Code);
+    }
+
+    /// <summary>`25-25`'s own independence requirement: promoting a colleague to Administrator must
+    /// never move the site's held-*seat* count, the count `ToggleOperatorSeatHandler`/
+    /// `GetSeatAssignmentSummaryHandler` gate <see cref="Site.SeatLimit"/> against - only the
+    /// Administrator-role count this file's own promotion tests already exercise. Proven here by
+    /// promoting a seatless colleague to Admin and confirming <see cref="Operator.HoldsSeat"/> is still
+    /// exactly what it was before the call, never flipped to <see langword="true"/> as a side effect of
+    /// becoming an administrator.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenPromotingToAdmin_NeverGrantsOrRevokesTheTargetsOwnSeat()
+    {
+        var fixture = CreateFixture();
+        fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
+        var target = new Operator(
+            new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5, holdsSeat: false);
+        fixture.Operators.Seed(target);
+        fixture.OperatorRoles.Seed(target.Id, OperatorRoleName);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.ChangeOperatorRole.ChangeOperatorRole(RequestedBy, SiteId, target.Id, AdminRoleName),
+            CancellationToken.None);
+
         Assert.True(result.IsSuccess);
-        Assert.Equal(AdminRoleId, fixture.OperatorRoles.CurrentRoleId(target.Id));
+        Assert.False(target.HoldsSeat);
     }
 
     [Fact]

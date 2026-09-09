@@ -40,6 +40,13 @@ public abstract record OperatorInviteRedemptionResult
     /// succeeds against the identical code.</summary>
     public sealed record SeatLimitReached(int SeatLimit) : OperatorInviteRedemptionResult;
 
+    /// <summary>`25-25`: the Administrator-seat counterpart to <see cref="SeatLimitReached"/> - raised
+    /// instead of it when the invite being redeemed names the seeded `"Admin"` role and the site's live
+    /// count of non-removed Administrators is already at or above <see cref="Site.AdminLimit"/> at the
+    /// moment this redemption's row lock was taken. The invite is left unredeemed for the identical
+    /// reason <see cref="SeatLimitReached"/>'s own remarks give.</summary>
+    public sealed record AdminLimitReached(int AdminLimit) : OperatorInviteRedemptionResult;
+
     public sealed record Success(OperatorId OperatorId, SiteId SiteId) : OperatorInviteRedemptionResult;
 }
 

@@ -319,6 +319,26 @@ public class SiteTests
 
         Assert.Equal("free", site.Tier);
         Assert.Equal(2, site.SeatLimit);
+        // `25-25`: the free tier's own single Administrator (`ago-business` decision `0011`) - a fresh
+        // Site never needs a fifth constructor argument to read this correctly, since it is derived
+        // from the default `tier` alone (`Site.AdminLimit`'s own remarks).
+        Assert.Equal(SubscriptionTierBands.FreeAdminsIncluded, site.AdminLimit);
+    }
+
+    /// <summary>`25-25`: a `Site` constructed directly with an explicit paid `tier` - the shape every
+    /// existing test that seeds a paid-tier `Site` without going through `ActivateSubscription` already
+    /// uses (`ToggleOperatorSeatHandlerTests`, `GetSeatAssignmentSummaryHandlerTests`, and others) - gets
+    /// the correct Administrator ceiling for that tier too, with no fifth constructor argument of its
+    /// own to keep in sync.</summary>
+    [Theory]
+    [InlineData("free", 1)]
+    [InlineData("starter", 2)]
+    [InlineData("growth", 2)]
+    public void Constructor_WithAnExplicitTier_DerivesAdminLimitFromIt(string tier, int expectedAdminLimit)
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", [], tier: tier, seatLimit: 5);
+
+        Assert.Equal(expectedAdminLimit, site.AdminLimit);
     }
 
     [Fact]
@@ -330,6 +350,26 @@ public class SiteTests
 
         Assert.Equal(SubscriptionTierBands.Growth, site.Tier);
         Assert.Equal(25, site.SeatLimit);
+        // `25-25`: every paid tier includes two Administrators, regardless of seat count - the same
+        // number `SubscriptionTierBands.BusinessAdminsIncluded` names for `Starter`.
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded, site.AdminLimit);
+    }
+
+    /// <summary>`25-25`: a downgrade to the free tier lowers `AdminLimit` back to one, the identical
+    /// derivation `ActivateSubscription`'s own remarks describe for every other call - proven
+    /// separately from the "raises to Growth" case above because a downgrade is the direction
+    /// `decisions/0006`'s own "never block a downgrade" precedent is actually about.</summary>
+    [Fact]
+    public void ActivateSubscription_WhenDowngradingToFree_LowersAdminLimitBackToOne()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, DateTimeOffset.UtcNow);
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded, site.AdminLimit);
+
+        site.ActivateSubscription("free", 1, DateTimeOffset.UtcNow);
+
+        Assert.Equal("free", site.Tier);
+        Assert.Equal(SubscriptionTierBands.FreeAdminsIncluded, site.AdminLimit);
     }
 
     [Fact]

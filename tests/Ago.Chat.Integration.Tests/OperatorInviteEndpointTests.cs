@@ -391,6 +391,90 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(2, operatorCount);
     }
 
+    /// <summary>
+    /// `25-25`'s own independence requirement, proven end to end: appointing a second Administrator
+    /// must not touch the site's *seat* count at all - `Site.SeatLimit`, `IOperatorRepository.
+    /// CountHeldSeatsAsync`'s own question - only the separate Administrator count
+    /// `RaiseAdminLimitAsync`/<see cref="Site.AdminLimit"/> gate. The founder's own operator row
+    /// already holds a seat since registration (`RegisterSiteHandler`); the newly redeemed
+    /// Administrator must not add a second one.
+    /// </summary>
+    [Fact]
+    public async Task Invite_ForTheAdminRole_IsRedeemedWithoutConsumingAnOperatorSeat()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        // The free tier includes exactly one administrator (the founder) - room for a second is made
+        // the same way `RaiseSeatLimitAsync` simulates a not-yet-built purchase surface for seats.
+        await RaiseAdminLimitAsync(adminSite, adminLimit: 2);
+
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin");
+        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.OK, redeemResponse.StatusCode);
+
+        await using var db = fixture.CreateDbContext();
+        var siteId = new SiteId(adminSite);
+        var heldSeats = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == siteId && o.RemovedAt == null && o.HoldsSeat);
+        // Only the founder's own seat, from registration - the freshly redeemed Administrator holds
+        // none, `decisions/0006`'s "an administrator does not consume an operator seat" proven against
+        // the real redeemed row rather than only against the domain constructor default.
+        Assert.Equal(1, heldSeats);
+
+        var operatorCount = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == siteId && o.RemovedAt == null);
+        Assert.Equal(2, operatorCount);
+
+        var administratorRoleId = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId && r.Name == "Admin").Select(r => r.Id).SingleAsync();
+        var administratorCount = await db.OperatorRoles.AsNoTracking()
+            .Where(link => link.RoleId == administratorRoleId)
+            .Join(db.Operators.AsNoTracking(), link => link.OperatorId, o => o.Id, (link, o) => o)
+            .CountAsync(o => o.SiteId == siteId && o.RemovedAt == null);
+        Assert.Equal(2, administratorCount);
+    }
+
+    /// <summary>
+    /// `25-25`'s own Done-when: the Administrator-seat counterpart to
+    /// <see cref="Invite_OnAFreshFreeTierSite_AThirdOperatorIsRefused_WithAReadableErrorNotA500"/> -
+    /// the free tier includes exactly one administrator (the founder, `ago-business` decision `0011`),
+    /// so a second is refused with a real, readable RFC 7807 problem body, not a 500.
+    /// </summary>
+    [Fact]
+    public async Task Invite_ForTheAdminRole_OnAFreshFreeTierSite_ASecondAdministratorIsRefused_WithAReadableErrorNotA500()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin");
+
+        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var rejected = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.PaymentRequired, rejected.StatusCode);
+
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.AdminLimitReached", problem.Title);
+        Assert.Contains("administrator limit of 1", problem.Detail);
+
+        // Refused, not merely reported as refused - the second redemption never happened, and the
+        // invite itself is still redeemable once the plan is upgraded (the same "still redeemable"
+        // guarantee the seat-limit rejection above already proves for its own invite).
+        await using var db = fixture.CreateDbContext();
+        var operatorCount = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == new SiteId(adminSite) && o.RemovedAt == null);
+        Assert.Equal(1, operatorCount);
+    }
+
     [Fact]
     public async Task CreateInvite_WhenTheCallerLacksSiteManageOperators_IsRejectedForbidden()
     {
@@ -552,6 +636,18 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var db = fixture.CreateDbContext();
         var site = await db.Sites.SingleAsync(s => s.Id == new SiteId(siteId));
         db.Entry(site).Property(nameof(Site.SeatLimit)).CurrentValue = seatLimit;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>`25-25`'s own counterpart to <see cref="RaiseSeatLimitAsync"/>, for the identical
+    /// reason - no "buy another administrator" surface exists yet (`ago-business` decision `0012`
+    /// calls anything past the included two "custom", not built by this item), so a test that needs
+    /// room writes the column directly.</summary>
+    private async Task RaiseAdminLimitAsync(Guid siteId, int adminLimit)
+    {
+        await using var db = fixture.CreateDbContext();
+        var site = await db.Sites.SingleAsync(s => s.Id == new SiteId(siteId));
+        db.Entry(site).Property(nameof(Site.AdminLimit)).CurrentValue = adminLimit;
         await db.SaveChangesAsync();
     }
 
