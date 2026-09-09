@@ -31,20 +31,23 @@ namespace Ago.Chat.Application.UseCases.RouteConversationToModule;
 /// <c>ReplyParityTests</c> (Ago.Chat.Integration.Tests) proves by asserting the outbound calls are
 /// byte-identical.</para>
 ///
-/// <para><b>Idempotency (`CLAUDE.md` rule 5), and the one honestly-stated gap in it.</b> Every mutation
-/// this handler makes to the tracked <see cref="Conversation"/> - starting a task, recording a step,
-/// closing it, adding the system message, enqueuing the outbox row - is staged and then committed in
-/// the single <see cref="IInboxChecker.TryRecordAndSaveAsync"/> call, the same
-/// "stage everything, one save, one dedup row" shape `SendOfflineAutoReplyHandler`'s own remarks
-/// describe. What that call <em>cannot</em> make idempotent is the call to <see cref="IModuleGateway"/>
-/// itself, which happens <em>before</em> anything is staged (an HTTP call cannot sit inside a database
-/// transaction - `CLAUDE.md`'s own boundary rules). A redelivered <c>MessageAccepted</c> - rare, but
-/// possible under `adr/0017`'s at-least-once delivery - can therefore cause a second, wasted call to the
-/// module (a second external task started, or a reply resubmitted) whose result is simply discarded when
-/// the dedup save reports "already recorded". This is an accepted, at-least-once cost identical in kind
-/// to every other side effect this codebase performs before its own dedup point (`resilience.md`'s own
-/// idempotency-key discipline is what keeps it *safe* on the module's side, not what makes it
-/// *free*) - stated here rather than left implicit, per the backlog item's own instruction.</para>
+/// <para><b>Idempotency (`CLAUDE.md` rule 5), and the one honestly-stated gap in it.</b>
+/// <see cref="IInboxChecker.TryRecordAndSaveAsync"/> is now called first and alone, before any
+/// mutation of the tracked <see cref="Conversation"/> is even attempted - `25-34`'s own fix, after the
+/// original "stage everything, then one combined save" shape (still how `SendOfflineAutoReplyHandler`
+/// works, for a handler that never needs to retry its own aggregate save) turned out to let a genuine
+/// `xmin` conflict on the <see cref="Conversation"/> row surface as a raw, unhandled EF exception with
+/// nothing to catch it (see <see cref="AddSystemMessageAndSaveAsync"/>'s own remarks for the full
+/// shape). What no ordering of these two saves can make idempotent is the call to
+/// <see cref="IModuleGateway"/> itself, which happens <em>before</em> either one, before anything is
+/// staged at all (an HTTP call cannot sit inside a database transaction - `CLAUDE.md`'s own boundary
+/// rules). A redelivered <c>MessageAccepted</c> - rare, but possible under `adr/0017`'s at-least-once
+/// delivery - can therefore still cause a second, wasted call to the module (a second external task
+/// started, or a reply resubmitted) whose result is simply discarded once the dedup check above reports
+/// "already recorded". This is an accepted, at-least-once cost identical in kind to every other side
+/// effect this codebase performs before its own dedup point (`resilience.md`'s own idempotency-key
+/// discipline is what keeps it *safe* on the module's side, not what makes it *free*) - stated here
+/// rather than left implicit, per the backlog item's own instruction.</para>
 /// </summary>
 public sealed class RouteConversationToModuleHandler(
     IConversationRepository conversations,
@@ -141,15 +144,19 @@ public sealed class RouteConversationToModuleHandler(
         catch (ModuleUnreachableException)
         {
             // Nothing was ever started domain-side - there is no task to close, only an apology to add.
+            var messageId = new MessageId(idGenerator.NewId(now));
             return await AddSystemMessageAndSaveAsync(
-                conversation, now, command, new MessageBody(ModuleUnavailableText), content: null,
-                RouteConversationToModuleOutcome.ModuleUnavailableAtTrigger, cancellationToken);
+                conversation, command, RouteConversationToModuleOutcome.ModuleUnavailableAtTrigger,
+                c => c.AddSystemMessage(messageId, new MessageBody(ModuleUnavailableText), now, content: null),
+                cancellationToken);
         }
 
-        conversation.StartModuleTask(
-            new ModuleTaskId(chatTaskId), key, startResult.ExternalTaskId, now,
-            startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions);
-
+        // `25-34`: StartModuleTask no longer runs here - it moves into FinishStepAsync's own
+        // applyStep delegate, so a `ConversationConcurrencyConflictException` on the save below can
+        // reapply it (and the message it produces) together, against a freshly reloaded Conversation,
+        // rather than leaving it half-done against the stale tracked instance. See
+        // AddSystemMessageAndSaveAsync's own remarks for why replaying it is safe.
+        //
         // A first step is always reported as `TaskStarted`, regardless of `startResult.Complete` - the
         // enum's own doc comment ("a new ModuleTask is now the conversation's active one") describes the
         // task's birth, not its length, and a single-round-trip module (`startResult.Complete == true`
@@ -158,7 +165,11 @@ public sealed class RouteConversationToModuleHandler(
         // started and immediately had to be handed off", which is why it still gets its own outcome.
         return await FinishStepAsync(
             conversation, trigger, startResult.Step, startResult.Complete, RouteConversationToModuleOutcome.TaskStarted,
-            now, command, cancellationToken);
+            now, command,
+            c => c.StartModuleTask(
+                new ModuleTaskId(chatTaskId), key, startResult.ExternalTaskId, now,
+                startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions),
+            cancellationToken);
     }
 
     private async Task<Result<RouteConversationToModuleOutcome>> ContinueActiveTaskAsync(
@@ -170,11 +181,19 @@ public sealed class RouteConversationToModuleHandler(
         {
             // The module was disabled while this task was open - indistinguishable, from the
             // conversation's point of view, from the module having gone unreachable: either way, input
-            // has nowhere to go, and the same escalation applies.
-            conversation.CloseModuleTask(now);
+            // has nowhere to go, and the same escalation applies. `25-34`: CloseModuleTask moves into
+            // the applyMutations delegate below rather than running here directly, so a retry against a
+            // freshly reloaded Conversation reapplies it too - see AddSystemMessageAndSaveAsync's own
+            // remarks.
+            var messageId = new MessageId(idGenerator.NewId(now));
             return await AddSystemMessageAndSaveAsync(
-                conversation, now, command, new MessageBody(ModuleBecameUnreachableText), content: null,
-                RouteConversationToModuleOutcome.Escalated, cancellationToken);
+                conversation, command, RouteConversationToModuleOutcome.Escalated,
+                c =>
+                {
+                    c.CloseModuleTask(now);
+                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText), now, content: null);
+                },
+                cancellationToken);
         }
 
         var value = ResolveReplyValue(trigger, active);
@@ -225,9 +244,11 @@ public sealed class RouteConversationToModuleHandler(
                     // can retype the identical number once verification actually completes, through
                     // `14-15`'s own endpoints - there is no widget popup wired to trigger them yet,
                     // `20-09`'s own report names this as the deferred, frontend-side follow-up).
+                    var messageId = new MessageId(idGenerator.NewId(now));
                     return await AddSystemMessageAndSaveAsync(
-                        conversation, now, command, new MessageBody(PhoneVerificationRequiredText), content: null,
-                        RouteConversationToModuleOutcome.PhoneVerificationRequired, cancellationToken);
+                        conversation, command, RouteConversationToModuleOutcome.PhoneVerificationRequired,
+                        c => c.AddSystemMessage(messageId, new MessageBody(PhoneVerificationRequiredText), now, content: null),
+                        cancellationToken);
                 }
 
                 // Verified - and has been since `identity.FirstSeenAt` (`ChannelIdentity.Link`'s own
@@ -250,29 +271,40 @@ public sealed class RouteConversationToModuleHandler(
         }
         catch (ModuleUnreachableException)
         {
-            conversation.CloseModuleTask(now);
+            var messageId = new MessageId(idGenerator.NewId(now));
             return await AddSystemMessageAndSaveAsync(
-                conversation, now, command, new MessageBody(ModuleBecameUnreachableText), content: null,
-                RouteConversationToModuleOutcome.Escalated, cancellationToken);
+                conversation, command, RouteConversationToModuleOutcome.Escalated,
+                c =>
+                {
+                    c.CloseModuleTask(now);
+                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText), now, content: null);
+                },
+                cancellationToken);
         }
 
         if (replyResult.Step is { } step)
         {
-            conversation.RecordModuleStep(step.Kind, step.Payload, step.Actions);
             var nonEscalationOutcome = replyResult.Complete
                 ? RouteConversationToModuleOutcome.TaskCompleted
                 : RouteConversationToModuleOutcome.StepAdvanced;
             return await FinishStepAsync(
-                conversation, trigger, step, replyResult.Complete, nonEscalationOutcome, now, command, cancellationToken);
+                conversation, trigger, step, replyResult.Complete, nonEscalationOutcome, now, command,
+                c => c.RecordModuleStep(step.Kind, step.Payload, step.Actions),
+                cancellationToken);
         }
 
         // No further step: the module's own "done" with nothing to add - unaffected by `19-03`, since
         // an escalate step always carries a step (that is the whole signal); a module that wants to hand
         // off with literally nothing to say still has to say so through a step, not through silence.
-        conversation.CloseModuleTask(now);
+        var doneMessageId = new MessageId(idGenerator.NewId(now));
         return await AddSystemMessageAndSaveAsync(
-            conversation, now, command, new MessageBody("Done - thank you."), content: null,
-            RouteConversationToModuleOutcome.TaskCompleted, cancellationToken);
+            conversation, command, RouteConversationToModuleOutcome.TaskCompleted,
+            c =>
+            {
+                c.CloseModuleTask(now);
+                c.AddSystemMessage(doneMessageId, new MessageBody("Done - thank you."), now, content: null);
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -289,25 +321,44 @@ public sealed class RouteConversationToModuleHandler(
     /// misuse - and ask to keep the task open anyway. Honouring that would let a module suppress its own
     /// escalation, which is exactly what decision 7 forbids; forcing the close here regardless keeps the
     /// guarantee unconditional rather than "unconditional unless the module says otherwise."</para>
+    ///
+    /// <para><b>`25-34`: <paramref name="applyStep"/></b> is the one caller-supplied mutation this
+    /// method does not decide for itself - <see cref="Conversation.StartModuleTask"/> (a task's first
+    /// step) or <see cref="Conversation.RecordModuleStep"/> (every step after it), already bound to its
+    /// own call's data by the caller. It is composed into the same replayable delegate this method
+    /// builds for its own <see cref="Conversation.CloseModuleTask"/>/<see cref="Conversation.AddSystemMessage"/>
+    /// work, so a save that loses the conversation's own optimistic-concurrency check can retry the
+    /// *whole* sequence - task mutation, close, and message - against a freshly reloaded aggregate in
+    /// one replay, never just part of it. See <see cref="AddSystemMessageAndSaveAsync"/>'s own remarks
+    /// for why replaying is safe here (nothing in <paramref name="applyStep"/> or the rest of this
+    /// delegate re-derives anything from the module's own already-received answer - that call already
+    /// happened, once, before this method was ever reached).</para>
     /// </summary>
     private async Task<Result<RouteConversationToModuleOutcome>> FinishStepAsync(
         Conversation conversation, Message trigger, ModuleStep step, bool moduleSaysComplete,
         RouteConversationToModuleOutcome nonEscalationOutcome, DateTimeOffset now, RouteConversationToModule command,
-        CancellationToken cancellationToken)
+        Action<Conversation> applyStep, CancellationToken cancellationToken)
     {
         var isEscalation = step.Kind.Value == PrimitiveKinds.Escalate;
-        if (moduleSaysComplete || isEscalation)
-        {
-            conversation.CloseModuleTask(now);
-        }
-
         var fallback = isEscalation ? ModuleEscalatedFallbackText : trigger.Body.Value;
         var body = PrimitiveTextRenderer.Render(fallback, step.Kind.Value, step.Payload, step.Actions);
         var content = MessageContent.Create(step.Kind, step.Payload, step.Actions);
         var outcome = isEscalation ? RouteConversationToModuleOutcome.Escalated : nonEscalationOutcome;
+        var messageId = new MessageId(idGenerator.NewId(now));
 
         return await AddSystemMessageAndSaveAsync(
-            conversation, now, command, new MessageBody(body), content, outcome, cancellationToken);
+            conversation, command, outcome,
+            c =>
+            {
+                applyStep(c);
+                if (moduleSaysComplete || isEscalation)
+                {
+                    c.CloseModuleTask(now);
+                }
+
+                c.AddSystemMessage(messageId, new MessageBody(body), now, content: content);
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -363,12 +414,122 @@ public sealed class RouteConversationToModuleHandler(
         }
     }
 
+    /// <summary>
+    /// `25-34`/`adr/0065`: every call site that needs to mutate the conversation's own aggregate state
+    /// (a module task's start/step/close, plus the system message that always accompanies it) and
+    /// persist that atomically funnels through here. <paramref name="applyMutations"/> is the whole
+    /// decision, already made against the module's own already-received answer - this method's only
+    /// job is to commit it, safely, under the two things that can go wrong once a caller stops relying
+    /// on <c>EfInboxChecker</c>'s own combined <c>SaveChangesAsync()</c> to flush the conversation and
+    /// its dedup row in lockstep the way it always used to (this handler's `25-34` root-cause writeup):
+    /// a redelivery of the identical trigger, and an ordinary optimistic-concurrency conflict from any
+    /// other concurrent writer of this same <see cref="Conversation"/> row.
+    ///
+    /// <para><b>Dedup first, unconditionally, before <paramref name="applyMutations"/> ever runs.</b>
+    /// <see cref="IInboxChecker.TryRecordAndSaveAsync"/> is called here, standalone, with nothing else
+    /// staged on the context - its own <c>SaveChangesAsync()</c> can only ever collide with itself
+    /// (the dedup row's own unique key), never with the conversation's <c>xmin</c>, because the
+    /// conversation has not been touched yet. That is what makes two genuinely concurrent deliveries
+    /// of the *identical* trigger message resolve deterministically: exactly one of them ever sees
+    /// <see langword="true"/> and proceeds past this point at all - the other returns
+    /// <see cref="RouteConversationToModuleOutcome.AlreadyProcessed"/> immediately, with no reload, no
+    /// retry, and nothing it staged to undo. A design that instead saved the conversation first and
+    /// recorded the dedup row after (closer to the original shape) was tried on paper and rejected: the
+    /// loser of that race would only discover the duplicate *after* successfully reapplying and
+    /// committing its own copy of the same message, by which point the duplicate is already permanent -
+    /// checking first is what makes "one message added" true by construction rather than by luck of the
+    /// exact timing, which is exactly what this item's own test needs to be non-flaky.</para>
+    ///
+    /// <para><b>The trade-off this reordering accepts, stated rather than hidden.</b> Before this item,
+    /// the conversation's own update, its message, its outbox row and the dedup row all committed in
+    /// one <c>SaveChangesAsync()</c> - all-or-nothing. Splitting the dedup record from the conversation
+    /// save (below) into two separate commits opens a narrow window: a process death between the two
+    /// would leave this trigger marked processed with the conversation never actually updated, and
+    /// because the dedup row already says "done", a broker redelivery would never retry the real work -
+    /// a silent stall for that one trigger, requiring the visitor to send a new message (a new,
+    /// unaffected <c>TriggerMessageId</c>) to unstick it, or an operator to notice and intervene. This
+    /// is a genuinely new failure class this fix introduces, not a hidden one: it is narrower than it
+    /// sounds (a crash in one specific gap, not routine concurrency) and sits in the same accepted
+    /// "at-least-once cost, paid before the dedup point" category this handler's own type-level remarks
+    /// already document for the module gateway call itself - but it is a real trade-off, not a free
+    /// improvement, and a future sweep for "recorded but the conversation shows no matching effect"
+    /// would be the honest way to close it if it ever matters in practice.</para>
+    ///
+    /// <para><b>Retry once on a genuine <see cref="Conversation"/> conflict, then a clean result -
+    /// <see cref="Application.UseCases.CloseConversation.CloseConversationHandler"/>'s own established shape.</b> Once the
+    /// dedup check above has passed, any concurrency conflict below is by definition *not* another
+    /// delivery of this same trigger (the check already excluded that) - it is an unrelated writer
+    /// (an operator's own action, another module task's own routing) bumping this row's `xmin` the same
+    /// ordinary way `6-08`'s original finding describes. Reloading and reapplying is safe for the exact
+    /// same reason it is safe there: <paramref name="applyMutations"/> never re-derives anything from
+    /// outside data (the module gateway call, the channel-identity lookup) that could have gone stale -
+    /// it only replays already-decided domain mutations, which is why <see cref="FinishStepAsync"/>'s
+    /// own remarks are careful to fold every prior mutation (task start/step) into this same delegate
+    /// rather than leaving any of it applied only once, before a conflict could ever roll it back.</para>
+    /// </summary>
     private async Task<Result<RouteConversationToModuleOutcome>> AddSystemMessageAndSaveAsync(
-        Conversation conversation, DateTimeOffset now, RouteConversationToModule command, MessageBody body,
-        MessageContent? content, RouteConversationToModuleOutcome outcome, CancellationToken cancellationToken)
+        Conversation conversation, RouteConversationToModule command, RouteConversationToModuleOutcome outcome,
+        Action<Conversation> applyMutations, CancellationToken cancellationToken)
     {
-        var messageId = new MessageId(idGenerator.NewId(now));
-        conversation.AddSystemMessage(messageId, body, now, content: content);
+        var isFirstDelivery = await inbox.TryRecordAndSaveAsync(command.TriggerMessageId, ConsumerName, cancellationToken);
+        if (!isFirstDelivery)
+        {
+            return RouteConversationToModuleOutcome.AlreadyProcessed;
+        }
+
+        try
+        {
+            return await ApplyAndSaveAsync(conversation, outcome, applyMutations, cancellationToken);
+        }
+        catch (ConversationConcurrencyConflictException)
+        {
+            var fresh = await conversations.GetByIdAsync(command.ConversationId, cancellationToken);
+            if (fresh is null)
+            {
+                return ConversationErrors.NotFound(command.ConversationId.Value);
+            }
+
+            try
+            {
+                return await ApplyAndSaveAsync(fresh, outcome, applyMutations, cancellationToken);
+            }
+            catch (ConversationConcurrencyConflictException)
+            {
+                // `6-08`'s own bound, carried in unchanged: a second conflict inside this already-narrow
+                // retry window means a third writer landed here, not that this attempt did anything
+                // wrong. ModuleTaskConsumer turns this Result.Failure into a thrown exception, which its
+                // own retry policy redelivers - and because the dedup row above is already recorded,
+                // that redelivery will find this trigger AlreadyProcessed rather than trying again. That
+                // is the same crash-window trade-off this method's own remarks state above, reached via
+                // contention this time instead of a process death.
+                return ConversationErrors.ConcurrencyConflict(command.ConversationId.Value);
+            }
+        }
+    }
+
+    /// <summary>One save attempt: apply the already-decided mutation, stage its outbox row, and save
+    /// through <see cref="IConversationRepository.SaveAsync"/> - the port that translates a lost
+    /// `xmin` check into <see cref="ConversationConcurrencyConflictException"/> rather than leaking
+    /// `Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException` (`25-34`'s own root cause) up to
+    /// <see cref="AddSystemMessageAndSaveAsync"/>'s retry wrapper. <see cref="InvalidConversationStateException"/>
+    /// is caught here too, not just left to the caller: <paramref name="applyMutations"/> can call
+    /// <see cref="Conversation.StartModuleTask"/>/<see cref="Conversation.RecordModuleStep"/>/
+    /// <see cref="Conversation.CloseModuleTask"/>, and on a retry against freshly reloaded state those
+    /// re-validate their own invariants against whatever is actually on disk now - exactly
+    /// <see cref="Application.UseCases.CloseConversation.CloseConversationHandler"/>'s own reasoning for why its retry never
+    /// bypasses a real business conflict, it only re-asks the same question against fresh data.</summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> ApplyAndSaveAsync(
+        Conversation conversation, RouteConversationToModuleOutcome outcome, Action<Conversation> applyMutations,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            applyMutations(conversation);
+        }
+        catch (InvalidConversationStateException ex)
+        {
+            return ConversationErrors.InvalidState(ex.Message);
+        }
 
         var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
         outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
@@ -378,7 +539,7 @@ public sealed class RouteConversationToModuleHandler(
         // failing during this item's own build - the line was missing entirely, not merely misplaced.
         conversation.ClearDomainEvents();
 
-        var isFirstDelivery = await inbox.TryRecordAndSaveAsync(command.TriggerMessageId, ConsumerName, cancellationToken);
-        return isFirstDelivery ? outcome : RouteConversationToModuleOutcome.AlreadyProcessed;
+        await conversations.SaveAsync(conversation, cancellationToken);
+        return outcome;
     }
 }
