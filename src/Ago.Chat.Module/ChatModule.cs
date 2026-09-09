@@ -140,6 +140,7 @@ using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
 using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
 using Ago.Chat.Application.UseCases.InitiatePhoneVerification;
 using Ago.Chat.Application.UseCases.ConfirmPhoneVerification;
+using Ago.Chat.Application.UseCases.GetPricingForOwner;
 using Ago.Chat.Module.PhoneVerification;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Avito;
@@ -967,6 +968,11 @@ public sealed class ChatModule : IProductModule
         // `23-48`: the platform owner's own write for a tenant's allowed origins - same host, same
         // policy, same registration shape as the two reads just above.
         services.AddScoped<UpdateSiteAllowedOriginsAsOwnerHandler>();
+        // `25-20`: the platform owner's own price-list read - same host, same policy, same
+        // registration shape as the reads above. Resolves the identical `BillingOptions` singleton
+        // `CreateCheckoutSessionHandler` already takes, bound earlier in this method from
+        // `Billing:*` - no new options class, no new binding, just a second reader of the same one.
+        services.AddScoped<GetPricingForOwnerHandler>();
 
         // `6-03`: the registration and delivery-history backend for a future self-service console
         // screen - see each handler's own remarks. Registered for every host (the same shape as

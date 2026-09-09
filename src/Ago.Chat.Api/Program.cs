@@ -530,6 +530,10 @@ app.MapOwnerSiteAllowedOriginsEndpoint();
 // `24-02`: the named owner's own publish route - see OwnerDocumentEndpoints' own remarks for why
 // RequirePlatformOwner is the entire access-control story here too.
 app.MapOwnerDocumentEndpoints();
+// `25-20`: the platform owner's own price-list read - its own Map call, the same "own file, own
+// registration" discipline every owner surface above already follows (OwnerPricingEndpoints' own
+// remarks).
+app.MapOwnerPricingEndpoint();
 // `13-02`: checkout-session creation (operator-authenticated) and the ЮKassa webhook receiver
 // (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
 // why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.

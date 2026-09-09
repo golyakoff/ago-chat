@@ -69,4 +69,20 @@ public class SubscriptionTierBandsTests
         Assert.Equal(SubscriptionTierBands.Starter, nine);
         Assert.Equal(SubscriptionTierBands.Growth, ten);
     }
+
+    // `25-20`: the two constants the owner's own price-list screen reads (GetPricingForOwnerHandler) -
+    // pinned by value so a future edit to either literal above (MinSeats, GrowthMinSeats) is caught
+    // here rather than silently reaching the screen as a wrong band boundary.
+    [Fact]
+    public void FreeSeatsIncluded_IsOneLessThanMinSeats()
+    {
+        Assert.Equal(2, SubscriptionTierBands.FreeSeatsIncluded);
+        Assert.Equal(SubscriptionTierBands.MinSeats - 1, SubscriptionTierBands.FreeSeatsIncluded);
+    }
+
+    [Fact]
+    public void GrowthMinSeats_IsTen()
+    {
+        Assert.Equal(10, SubscriptionTierBands.GrowthMinSeats);
+    }
 }

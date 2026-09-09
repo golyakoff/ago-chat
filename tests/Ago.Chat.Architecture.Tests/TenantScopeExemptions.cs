@@ -350,6 +350,18 @@ internal static class TenantScopeExemptions
             + "own modules (IEnabledModuleReadStore.GetAllForSiteAsync), and - `23-68` - that row's own operator "
             + "roster (IOperatorTeamReadStore.GetForSiteAsync, the identical read GetOperatorTeamHandler already "
             + "serves a tenant's own team screen) - nothing is written.",
+        ["Ago.Chat.Application.UseCases.GetPricingForOwner.GetPricingForOwnerHandler.HandleAsync"] =
+            "`25-20`, the platform owner's own price-list read - the same shape as ListSitesForOwnerHandler above, "
+            + "not GetSiteForOwnerHandler just above it: it carries no SiteId at all, because there is no tenant to "
+            + "scope it to in the first place. The response is this deployment's own configured pricing (per-seat "
+            + "price, seat-tier bands, billing period) - identical for every tenant and every caller who could ever "
+            + "reach the policy below, never a fact about a named site or a named person, so 'which tenant' is not "
+            + "merely unchecked here, it is not a question this read has an answer to. The whole access-control "
+            + "story is RequirePlatformOwner on GET /api/v1/owner/pricing (OwnerPricingEndpoints): the authorizing "
+            + "fact is a Keycloak realm role (adr/0032), and Ago.Chat.Application has no port that sees claims, so "
+            + "re-checking here would be a second, weaker copy of the same rule ListSitesForOwnerHandler's own "
+            + "entry already argues. Read-only; no owner write surface exists for pricing (`23-86`'s own Scope: "
+            + "\"the deployment declares what an option turns on, never what it costs\").",
         ["Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner.UnlinkChannelIdentityAsOwnerHandler.HandleAsync"] =
             "`14-12`, the platform owner's own first write surface - see the handler's own remarks for why it is a "
             + "deliberately separate class from UnlinkChannelIdentityHandler rather than a nullable-OperatorId "
