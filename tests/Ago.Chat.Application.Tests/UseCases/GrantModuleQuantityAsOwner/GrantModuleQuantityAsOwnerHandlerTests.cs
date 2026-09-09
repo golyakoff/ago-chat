@@ -94,4 +94,22 @@ public class GrantModuleQuantityAsOwnerHandlerTests
         Assert.Equal(2, await fixture.Grants.GetQuantityAsync(SiteId, new ModuleKey("calendar"), CancellationToken.None));
         Assert.Single(fixture.Grants.Grants);
     }
+
+    /// <summary>`23-89`: the platform owner's own version of the identical worry - a grant made
+    /// during a support call, repeated because nothing showed the tenant catching up yet
+    /// (<see cref="Application.UseCases.GrantModuleQuantity.GrantModuleQuantityHandlerTests"/>'s own
+    /// sibling test states the full reasoning). This handler never checks permission, but the store
+    /// underneath is the identical snapshot write either caller reaches.</summary>
+    [Fact]
+    public async Task HandleAsync_CalledTwiceWithTheSameQuantity_IsANoOp()
+    {
+        var fixture = CreateFixture();
+        await fixture.Handler.HandleAsync(Command(quantity: 5), CancellationToken.None);
+
+        var second = await fixture.Handler.HandleAsync(Command(quantity: 5), CancellationToken.None);
+
+        Assert.True(second.IsSuccess);
+        Assert.Equal(5, await fixture.Grants.GetQuantityAsync(SiteId, new ModuleKey("calendar"), CancellationToken.None));
+        Assert.Single(fixture.Grants.Grants);
+    }
 }

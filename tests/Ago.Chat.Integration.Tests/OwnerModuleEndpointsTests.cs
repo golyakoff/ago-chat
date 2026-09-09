@@ -405,6 +405,31 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         Assert.Equal(2, stored);
     }
 
+    /// <summary>`23-89`: the support-call retry this item is named for, at the wire - a platform owner
+    /// re-submitting the identical quantity because nothing on screen showed the earlier grant having
+    /// taken effect yet. Two `200`s, one stored row, exactly as `ModuleQuantityGrantedOutboxTests.
+    /// GrantingTheIdenticalQuantityTwice_LeavesOneGrantRow_AndStagesTheIdenticalFactTwice` already
+    /// proves against the store directly - repeated here through the actual route a repeated click
+    /// would hit.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsTheIdenticalQuantityTwice_IsSafe()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var first = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(5));
+        var second = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(5));
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        var stored = await GetStoredQuantityAsync(moduleKey);
+        Assert.Equal(5, stored);
+    }
+
     [Fact]
     public async Task OrdinaryOperatorToken_CannotGrantAQuantity()
     {

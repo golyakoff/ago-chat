@@ -150,8 +150,11 @@ public static class OwnerModuleEndpoints
     /// anything (rule 8: <see cref="GrantModuleQuantityAsOwnerHandler"/>'s own remarks), so this
     /// returns as soon as chat's own row and outbox entry commit. The calendar (or any other module
     /// interpreting its own quantity) applies the change asynchronously, off the outbox this write
-    /// stages - `23-66`'s own report states the bound on that wait; this route makes no promise about
-    /// it.
+    /// stages - `23-89` is where that wait is actually derived from the real dispatch and consumer
+    /// code rather than assumed, and states this route's own honest worst case (a broker outage has
+    /// no dispatch-side attempt cap, so it is unbounded until the broker recovers) alongside the
+    /// happy-path number the owner console repeats. This route itself still makes no promise about
+    /// the wait - it returns the moment chat's own write commits, nothing more.
     /// </summary>
     private static async Task<IResult> HandleGrantQuantityAsync(
         Guid siteId,
