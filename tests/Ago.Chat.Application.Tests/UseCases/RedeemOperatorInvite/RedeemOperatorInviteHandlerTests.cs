@@ -121,4 +121,21 @@ public class RedeemOperatorInviteHandlerTests
         Assert.Equal("OperatorInvite.SeatLimitReached", result.Error!.Value.Code);
         Assert.Contains("2", result.Error.Value.Message);
     }
+
+    /// <summary>`25-25`: the Administrator-seat counterpart to the seat-limit mapping above - proves
+    /// the switch arm exists and names the right limit, the same shape that test already proves for
+    /// its sibling.</summary>
+    [Fact]
+    public async Task HandleAsync_OnAdminLimitReached_ReturnsOperatorInviteAdminLimitReachedWithTheLimit()
+    {
+        var handler = CreateHandler(new OperatorInviteRedemptionResult.AdminLimitReached(1), out _);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.RedeemOperatorInvite.RedeemOperatorInvite("sub-123", "invite_abc123"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.AdminLimitReached", result.Error!.Value.Code);
+        Assert.Contains("1", result.Error.Value.Message);
+    }
 }

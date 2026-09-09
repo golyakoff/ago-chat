@@ -33,4 +33,30 @@ public interface IOperatorRoleRepository
     /// decided whether to allow it (`ChangeOperatorRoleHandler`'s own remarks).
     /// </summary>
     Task ReplaceRoleAsync(OperatorId operatorId, Guid roleId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-25`: how many non-removed operators on this site currently hold the role named
+    /// <paramref name="roleName"/> - the Administrator-seat counterpart to
+    /// <see cref="IOperatorRepository.CountHeldSeatsAsync"/>, which counts by
+    /// <see cref="Domain.Operator.HoldsSeat"/> instead. Keyed by role name, not by
+    /// <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/>'s permission: the entitlement
+    /// `ago-business` decisions `0011`/`0012` price is "how many Administrators", a fact about which
+    /// named role an operator holds, not about which permissions that role happens to carry today -
+    /// <c>ChangeOperatorRoleHandler</c>'s own remarks record why an earlier draft of this exact check,
+    /// built against a permission instead, was rejected. A future custom role granted
+    /// <see cref="Domain.Permission.SiteManageOperators"/> for an unrelated reason must not silently
+    /// inflate or deflate this count.
+    ///
+    /// <para>Locks the site's own row (`FOR UPDATE`) before counting - the identical single-row mutex
+    /// <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/> and
+    /// <c>OperatorInviteRedemptionRepository</c>'s own seat-limit check already use, for the identical
+    /// reason: appointing or promoting an Administrator is rare and low-contention (a handful of calls
+    /// ever per site), so serializing every such write behind one lock is the simplest correct choice,
+    /// not a performance concession that would matter on a hot path.</para>
+    ///
+    /// <para>The caller must already hold an ambient transaction
+    /// (<see cref="IUnitOfWork.BeginTransactionAsync"/>) opened on the same scoped connection - the
+    /// same contract <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/> already states.</para>
+    /// </summary>
+    Task<int> CountNonRemovedHoldersAsync(SiteId siteId, string roleName, CancellationToken cancellationToken);
 }

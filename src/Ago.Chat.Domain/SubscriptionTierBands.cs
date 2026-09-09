@@ -79,4 +79,42 @@ public static class SubscriptionTierBands
         tier = requestedSeats >= GrowthMinSeats ? Growth : Starter;
         return true;
     }
+
+    /// <summary>`25-25`: the free tier's own Administrator-seat ceiling - `ago-business` decision
+    /// `0012`'s "Solo" row, "один администратор." Named the same way <see cref="FreeSeatsIncluded"/>
+    /// already is, rather than a bare literal `1` repeated at every call site.</summary>
+    public const int FreeAdminsIncluded = 1;
+
+    /// <summary>`25-25`: every paid band's own Administrator-seat ceiling - `0012`'s "Business" row,
+    /// "До 2 администраторов включено... Основной и заместитель." One number for both
+    /// <see cref="Starter"/> and <see cref="Growth"/>: `0012` prices Administrators against the tier as
+    /// a whole ("Business"), never against the seat count that happens to split it into two bands here
+    /// - the seat-count split exists only because `13-02` needed one for <em>seats</em>, and nothing in
+    /// `0011`/`0012` gives Administrators a different ceiling on one side of it than the other.</summary>
+    public const int BusinessAdminsIncluded = 2;
+
+    /// <summary>
+    /// `25-25`: the Administrator-seat entitlement for <paramref name="tier"/> - a pure function of the
+    /// tier alone, unlike <see cref="Site.SeatLimit"/>'s own seat count, which the buyer chooses at
+    /// checkout and <see cref="TryResolveTier"/> only ever resolves the other direction (seats -> tier).
+    /// `CreateCheckoutSessionHandler` never asks "how many administrators" - `0012`'s own grid gives
+    /// every paid tier the identical included count regardless of how many seats were bought, so there
+    /// is nothing for a buyer to choose here and nothing for this method to take beyond the tier name
+    /// already in hand.
+    ///
+    /// <para><b>No ceiling above <see cref="BusinessAdminsIncluded"/> exists yet.</b> `0012` calls a
+    /// third administrator on a paid tier "кастом" (custom) with no number attached - the same posture
+    /// `0008`'s seat-price table already takes for seats past five - so this method does not invent an
+    /// upper bound past the included count; a site that already holds more than the included number
+    /// (there is no purchase path for a further one today) is a real, allowed, over-limit state exactly
+    /// like `GetSeatAssignmentSummaryHandler`'s own `OverSeats` condition for seats - read-time-derived,
+    /// never blocked retroactively by a downgrade or a tier recompute.</para>
+    ///
+    /// <para><b>"free" is the one tier name this file does not itself define a constant for.</b>
+    /// <see cref="Site.Tier"/>'s own default and every other free-tier check in this codebase
+    /// (`Stage13RaiseFreeTierSeatLimit`'s own `WHERE tier = 'free'`) already spell it the same bare way,
+    /// so this method matches that existing convention rather than introducing a new named constant
+    /// nothing else would share.</para>
+    /// </summary>
+    public static int ResolveAdminLimit(string tier) => tier == "free" ? FreeAdminsIncluded : BusinessAdminsIncluded;
 }

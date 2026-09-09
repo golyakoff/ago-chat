@@ -188,6 +188,27 @@ public sealed class Site
     /// give.</para></summary>
     public int SeatLimit { get; private set; } = 2;
 
+    /// <summary>`25-25`: how many `operators` rows this site may hold with the seeded `"Admin"` role at
+    /// once - `ago-business` decision `0011`'s own finding, confirmed against the real code while
+    /// building `25-18`'s per-role seat message: <see cref="SeatLimit"/> was the only capacity this
+    /// aggregate ever tracked, and every seat-holding role - Operator or Administrator alike - was
+    /// gated against it identically. This is the second, independent limit `0011` describes.
+    ///
+    /// <para><b>Not a constructor parameter, unlike <see cref="Tier"/>/<see cref="SeatLimit"/>.</b> A
+    /// buyer chooses how many operator seats to purchase, so <see cref="SeatLimit"/> has to arrive from
+    /// outside; nobody chooses how many administrators a tier includes - <c>ago-business</c> decision
+    /// `0012`'s own grid fixes that number per tier ("Solo" one, "Business" two), so
+    /// <see cref="SubscriptionTierBands.ResolveAdminLimit"/> derives it from <see cref="Tier"/> alone,
+    /// here and in <see cref="ActivateSubscription"/>. Threading a fourth constructor parameter that
+    /// must always agree with a third would only invite the two to drift - exactly the coupling this
+    /// item exists to remove for <see cref="SeatLimit"/>'s own sibling, not to reintroduce for this
+    /// one.</para>
+    ///
+    /// <para><c>private set</c>, the same shape <see cref="Tier"/>/<see cref="SeatLimit"/> already
+    /// establish for themselves - there is nothing for a backing field to buy here either.</para>
+    /// </summary>
+    public int AdminLimit { get; private set; } = SubscriptionTierBands.FreeAdminsIncluded;
+
     /// <summary>`23-05`: how long a `Waiting` conversation may sit with nobody having taken it before
     /// the assignment engine assigns it anyway, capacity ignored - `decisions.md` §2's own words, "two
     /// minutes is the default, not the rule." A plain scalar with a private setter, the identical shape
@@ -258,6 +279,11 @@ public sealed class Site
         DemoExpiresAt = demoExpiresAt;
         Tier = tier;
         SeatLimit = seatLimit;
+        // `25-25`: derived from `tier`, never a fifth constructor parameter - see AdminLimit's own
+        // remarks for why. This also means every existing call site that already passes `tier:` (a
+        // test seeding a paid-tier Site directly, never through ActivateSubscription) gets the correct
+        // Administrator ceiling for that tier with no change of its own required.
+        AdminLimit = SubscriptionTierBands.ResolveAdminLimit(tier);
         _allowedOrigins = [.. allowedOrigins];
         // WidgetConfig.Default's own values (null color, BottomRight, no notice) - a freshly created
         // Site never renders broken, and shows no processing notice, just because nobody has configured
@@ -391,6 +417,15 @@ public sealed class Site
     {
         Tier = tier;
         SeatLimit = seatLimit;
+        // `25-25`: re-derived on every activation, the same way the constructor derives it - a seat
+        // count changes what the buyer chose to pay for (SeatChangeApplier), a tier changes what a
+        // subscription includes (BillingWebhookApplier/SubscriptionRenewalApplier), and only the
+        // latter ever moves the Administrator ceiling. A downgrade to `"free"` is never blocked on a
+        // site's current administrator count, the same "never block a downgrade on live operator
+        // count" precedent `decisions/0006` already sets for SeatLimit - a site that already holds
+        // more administrators than its new tier includes is left in a real, allowed, over-limit state
+        // rather than having one silently and destructively demoted here.
+        AdminLimit = SubscriptionTierBands.ResolveAdminLimit(tier);
         _domainEvents.Add(new SiteSubscriptionActivated(Id, PublicKey, tier, seatLimit, now));
     }
 

@@ -212,7 +212,13 @@ public static class ErrorExtensions
             // remedy for a site at its seat limit is "upgrade", not "retry", which `402` signals
             // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own
             // remarks).
-            "OperatorInvite.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
+            // `25-25`: the Administrator-seat counterpart to OperatorInvite.SeatLimitReached, same
+            // group and same reasoning - ConversationErrors.OperatorInviteAdminLimitReached's own
+            // remarks. Operator.AdminLimitReached joins it here for the identical reason
+            // Operator.SeatLimitReached would if it had ever been mapped - see this file's own remarks
+            // a few lines up (`23-72`) on that pre-existing, out-of-scope gap, left exactly as found.
+            "OperatorInvite.SeatLimitReached" or "OperatorInvite.AdminLimitReached" or "Operator.AdminLimitReached"
+                => StatusCodes.Status402PaymentRequired,
             // `ago-root#352`: a deployment that has not turned demo tenants on genuinely lacks this
             // capability - not "there is nothing at this path" (`404`, explicitly rejected by
             // MintDemoTenantHandler's own remarks: "not a 404 dressed as a feature flag") and not "an

@@ -85,4 +85,23 @@ public class SubscriptionTierBandsTests
     {
         Assert.Equal(10, SubscriptionTierBands.GrowthMinSeats);
     }
+
+    // `25-25`: `ago-business` decision `0012`'s own grid - Solo (free) includes one administrator,
+    // Business includes two regardless of which seat band it splits into. Pinned by value, the same
+    // "a future edit to either literal is caught here" reasoning FreeSeatsIncluded's own test states.
+    [Fact]
+    public void ResolveAdminLimit_ForFree_IsOne()
+    {
+        Assert.Equal(1, SubscriptionTierBands.ResolveAdminLimit("free"));
+        Assert.Equal(SubscriptionTierBands.FreeAdminsIncluded, SubscriptionTierBands.ResolveAdminLimit("free"));
+    }
+
+    [Theory]
+    [InlineData(SubscriptionTierBands.Starter)]
+    [InlineData(SubscriptionTierBands.Growth)]
+    public void ResolveAdminLimit_ForEveryPaidTier_IsTwo(string tier)
+    {
+        Assert.Equal(2, SubscriptionTierBands.ResolveAdminLimit(tier));
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded, SubscriptionTierBands.ResolveAdminLimit(tier));
+    }
 }

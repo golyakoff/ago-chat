@@ -21,20 +21,32 @@ namespace Ago.Chat.Application.UseCases.ChangeOperatorRole;
 /// takes - two independent write paths sharing one invariant and one lock, never two invariants that
 /// could drift apart.</para>
 ///
-/// <para><b>Promoting somebody to administrator is never refused for capacity.</b> An administrator is
-/// a role, not a purchase (`adr/0151` keeps entitlement and permission apart; `RegisterSiteHandler`
-/// seeds roles per site with no reference to billing at all) - this handler was drafted once with a
-/// tier-priced administrator ceiling modelled on an unread `ago-business` pricing document and that
-/// draft is exactly the coupling `adr/0151` forbids, so it was removed rather than shipped. See this
-/// item's own report for the finding. If a real per-tier administrator limit is ever wanted, it is a
-/// new, explicitly-scoped item that can read the actual pricing decision, not something this handler
-/// infers.</para>
+/// <para><b>`25-25`: promoting somebody to administrator is now refused for capacity, and the history of
+/// why it once was not is worth keeping.</b> The paragraph this replaces read: "an administrator is a
+/// role, not a purchase... this handler was drafted once with a tier-priced administrator ceiling
+/// modelled on an <em>unread</em> `ago-business` pricing document, and that draft... was removed rather
+/// than shipped... if a real per-tier administrator limit is ever wanted, it is a new, explicitly-scoped
+/// item that can read the actual pricing decision, not something this handler infers." That item is this
+/// one. `ago-business` decisions `0011`/`0012` are now read, not inferred - <see cref="Site.AdminLimit"/>
+/// is set from them (via <see cref="SubscriptionTierBands.ResolveAdminLimit"/>) at the one place a tier
+/// is ever decided (`Site.ActivateSubscription`), and this handler only ever reads that already-resolved
+/// number back. `adr/0151`'s own line still holds and is not being crossed a second time: this handler
+/// still infers nothing about pricing itself, and still never talks to a permission the way the rejected
+/// draft did - it counts by role name (<see cref="IOperatorRoleRepository.CountNonRemovedHoldersAsync(SiteId,string,System.Threading.CancellationToken)"/>),
+/// the same distinction that repository's own remarks draw against <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/>.
+/// Refused with <see cref="ConversationErrors.OperatorAdminLimitReached"/>, the identical `402` shape
+/// <see cref="ConversationErrors.OperatorSeatLimitReached"/> already gives the analogous seat-capacity
+/// refusal on a different write path.</para>
 ///
-/// <para><b>The guard only runs for the one case it protects.</b> A change that revokes
-/// `site:manage_operators` from its current holder takes the site-row lock and counts; every other
-/// change (granting the permission, or moving between two roles that neither hold it) takes no lock at
-/// all - the same "skip the count entirely when the target never held the permission" optimisation
-/// <c>RemoveOperatorHandler</c>'s own remarks already state for its own analogous case.</para>
+/// <para><b>Each guard only runs for the one case it protects.</b> A change that revokes
+/// `site:manage_operators` from its current holder takes the site-row lock and counts against
+/// <see cref="Permission.SiteManageOperators"/>'s own holders; a change that grants the seeded
+/// `"Admin"` role to someone who did not already hold it (`25-25`) takes the identical lock and counts
+/// against <see cref="Site.AdminLimit"/> instead; every other change (moving between two roles that
+/// neither grants nor revokes the role, or a no-op re-selection of the role already held) takes no lock
+/// at all - the same "skip the count entirely when the target's own state cannot move" optimisation
+/// <c>RemoveOperatorHandler</c>'s own remarks already state for its own analogous case, extended to the
+/// second guard on the identical terms.</para>
 ///
 /// <para><b>Deliberately replaces the whole role assignment, not adds to it.</b> A colleague named by
 /// this handler is set to hold <em>exactly</em> <see cref="ChangeOperatorRole.NewRoleName"/> afterward,
@@ -58,12 +70,18 @@ public sealed class ChangeOperatorRoleHandler(
     IRoleRepository roles,
     IOperatorRoleRepository operatorRoles,
     IPermissionChecker permissions,
+    ISiteRepository sites,
     IUnitOfWork unitOfWork,
     IRoleChangeRecordRepository roleChangeRecords,
     IOutboxWriter outbox,
     IIdGenerator idGenerator,
     IClock clock)
 {
+    /// <summary>`25-25`: the same bare literal <c>OperatorInviteRedemptionRepository</c>'s own
+    /// <c>AdminRoleName</c> uses, for the identical reason - no named-role catalogue exists yet for
+    /// this codebase to reach for instead.</summary>
+    private const string AdminRoleName = "Admin";
+
     public async Task<Result> HandleAsync(ChangeOperatorRole command, CancellationToken cancellationToken)
     {
         var allowed = await permissions.HasPermissionAsync(
@@ -100,6 +118,12 @@ public sealed class ChangeOperatorRoleHandler(
             target.Id, command.SiteId, Permission.SiteManageOperators, cancellationToken);
         var newRoleManagesOperators = newRole.Permissions.Contains(Permission.SiteManageOperators.Value);
         var previousRoleNames = await operatorRoles.GetRoleNamesAsync(target.Id, cancellationToken);
+        // `25-25`: the promotion guard's own terminal, pre-lock fact - the identical "checked before
+        // any lock is taken" split the paragraph above already draws for targetManagesOperators/
+        // newRoleManagesOperators. A stale read here can only cause a redundant (never a skipped)
+        // lock/count below, since the promotion branch re-reads the live count from inside its own
+        // transaction and lock.
+        var wasAdmin = previousRoleNames.Contains(AdminRoleName);
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
@@ -112,6 +136,35 @@ public sealed class ChangeOperatorRoleHandler(
                 // The count includes the target itself (its own role has not changed yet) - "1" means
                 // nobody else remains. Disposed without a commit below - rolls back.
                 return ConversationErrors.OperatorIsLastManager();
+            }
+        }
+
+        // `25-25`: the Administrator-seat guard, mirroring the shape right above on the opposite
+        // direction - a change that grants the seeded "Admin" role to someone who did not already hold
+        // it (a no-op re-selection of a role already held never reaches here, `wasAdmin` above is
+        // already true for it). Skipped entirely, no lock taken, for every other change - promoting to
+        // any other role, or a change that touches neither role name.
+        if (!wasAdmin && command.NewRoleName == AdminRoleName)
+        {
+            var adminCount = await operatorRoles.CountNonRemovedHoldersAsync(command.SiteId, AdminRoleName, cancellationToken);
+            var site = await sites.GetByIdAsync(command.SiteId, cancellationToken);
+            if (site is null)
+            {
+                // A foreign key (OperatorConfiguration.HasOne<Site>) should make this unreachable - the
+                // same "should have prevented this" throw this codebase's other site-row locks already
+                // raise for the identical impossible case (OperatorInviteRedemptionRepository.
+                // LockSiteAndReadCapacityAsync's own remarks).
+                throw new InvalidOperationException(
+                    $"Site {command.SiteId.Value} was not found while changing an operator's role - " +
+                    "a foreign key should have prevented this.");
+            }
+
+            if (adminCount >= site.AdminLimit)
+            {
+                // The count does not yet include the target (its own role has not changed yet, and it
+                // was not already an Administrator) - "at or above the limit" already means no room
+                // for one more. Disposed without a commit below - rolls back.
+                return ConversationErrors.OperatorAdminLimitReached(site.AdminLimit);
             }
         }
 
