@@ -117,10 +117,17 @@ public sealed class Site
     // already-established shape" reason `23-63`'s own comment gives for itself.
     private bool _acceptUnverifiedPhone;
 
+    // `23-78`: one more flat backing field, the same shape as the pair above - its own column (this
+    // item's one migration), a plain `bool` for the identical "one more caller of an
+    // already-established shape" reason `25-39`'s own comment gives for itself. Read by
+    // `StartConversationHandler` (through `SiteConfigDto`, never directly from this aggregate on the
+    // hot conversation-start path) to seed a brand-new `Conversation`'s own upload grant.
+    private bool _allowAttachmentUploadsByDefault;
+
     public WidgetConfig WidgetConfig =>
         new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl, _requireContactConsent,
             _attractAttention, _autoOpenEnabled, _autoOpenDelaySeconds, _autoOpenGreetingText,
-            _acceptUnverifiedPhone);
+            _acceptUnverifiedPhone, _allowAttachmentUploadsByDefault);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -298,6 +305,7 @@ public sealed class Site
         _autoOpenDelaySeconds = WidgetConfig.Default.AutoOpenDelaySeconds;
         _autoOpenGreetingText = WidgetConfig.Default.AutoOpenGreetingText;
         _acceptUnverifiedPhone = WidgetConfig.Default.AcceptUnverifiedPhone;
+        _allowAttachmentUploadsByDefault = WidgetConfig.Default.AllowAttachmentUploadsByDefault;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -328,6 +336,7 @@ public sealed class Site
         _autoOpenDelaySeconds = config.AutoOpenDelaySeconds;
         _autoOpenGreetingText = config.AutoOpenGreetingText;
         _acceptUnverifiedPhone = config.AcceptUnverifiedPhone;
+        _allowAttachmentUploadsByDefault = config.AllowAttachmentUploadsByDefault;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

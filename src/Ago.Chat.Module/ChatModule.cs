@@ -6,6 +6,8 @@ using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
+using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
+using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.CategorizeConversation;
@@ -1016,6 +1018,10 @@ public sealed class ChatModule : IProductModule
         // above, for the identical reason (BlockConversationHandler's own remarks).
         services.AddScoped<BlockConversationHandler>();
         services.AddScoped<UnblockConversationHandler>();
+        // `23-78`: the grant/revoke writes - same registration shape as the block/unblock pair right
+        // above, for the identical reason.
+        services.AddScoped<GrantAttachmentUploadHandler>();
+        services.AddScoped<RevokeAttachmentUploadHandler>();
         // `18-10`: found missing here the same way `GetConversionReportForSiteHandler` was - these two
         // outcome handlers (SetConversationOutcomeEndpoints' own actual read/write actions, not the
         // site-wide report) were never registered either, so `/outcome` (GET and POST) both crash-

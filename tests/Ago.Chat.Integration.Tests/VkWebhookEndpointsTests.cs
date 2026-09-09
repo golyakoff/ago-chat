@@ -5,6 +5,7 @@ using Ago.Chat.Api.Channels;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -336,6 +337,14 @@ public sealed class VkWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddScoped<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new MessageSendRateLimitOptions());
         builder.Services.AddSingleton<IMessagePipeline>(_ => new SynchronousMessagePipeline(fixture.DataSource));
+        // `23-78`: StartConversationHandler's own new constructor dependency - the identical
+        // "every hand-rolled test host needs this too" reasoning the comment right above already states
+        // for IPendingChannelLinkRequestRepository, restated for a different new dependency. NoOpCache,
+        // not Redis: this handler's own tenant-default read never needs a real cache hit here, only to
+        // resolve without throwing.
+        builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        builder.Services.AddSingleton<ICache, NoOpCache>();
+        builder.Services.AddScoped<GetSiteConfigByIdHandler>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
         builder.Services.AddScoped<ReceiveChannelMessageHandler>();

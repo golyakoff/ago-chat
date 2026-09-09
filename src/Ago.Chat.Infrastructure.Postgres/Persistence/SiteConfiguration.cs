@@ -151,6 +151,15 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property<bool>("_acceptUnverifiedPhone")
             .HasColumnName("widget_accept_unverified_phone")
             .HasDefaultValue(false);
+        // `23-78`: one more flat backing field on the same terms - a plain bool column, database
+        // default `false` so every existing tenant keeps this item's own closed-by-default abuse
+        // property (a visitor cannot obtain an upload slot until an operator has agreed) rather than
+        // silently opening every site's conversations to uploads the moment this column exists. No
+        // CHECK constraint, the identical "a boolean's own column type already enforces its two legal
+        // values" reasoning that leaves `_attractAttention`/`_acceptUnverifiedPhone` without one too.
+        builder.Property<bool>("_allowAttachmentUploadsByDefault")
+            .HasColumnName("widget_allow_attachment_uploads_by_default")
+            .HasDefaultValue(false);
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

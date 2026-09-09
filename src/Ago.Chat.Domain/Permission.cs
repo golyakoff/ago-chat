@@ -147,6 +147,16 @@ public readonly record struct Permission(string Value)
     // request-erasure and (nonexistent) un-erasure would be.
     public static readonly Permission ConversationBlock = new("conversation:block");
 
+    // `23-78`: dedicated, and Operator-role rather than Admin-role like ConversationBlock right above -
+    // a materially different placement decision, not an oversight. Blocking is a moderation act with a
+    // site-wide blast radius (it hides a conversation from every other operator's reads); granting an
+    // attachment upload is the opposite shape - a routine, per-conversation judgment call the operator
+    // already handling this visitor makes constantly, the identical placement ConversationSend and
+    // ConversationAssign already have. One permission for both directions (grant and its later
+    // revocation), the same "same capability, opposite direction" reasoning ConversationBlock's own
+    // remarks give for itself.
+    public static readonly Permission ConversationAttachmentUploadGrant = new("conversation:attachment_upload_grant");
+
     public static readonly Permission BookingConfirm = new("booking:confirm");
     public static readonly Permission BookingReject = new("booking:reject");
     public static readonly Permission BookingCancel = new("booking:cancel");

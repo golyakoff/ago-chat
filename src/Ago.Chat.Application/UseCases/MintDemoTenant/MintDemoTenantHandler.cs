@@ -63,6 +63,10 @@ public sealed class MintDemoTenantHandler(
         [
             Permission.ConversationRead.Value, Permission.ConversationSend.Value, Permission.ConversationAssign.Value,
             Permission.ConversationNoteWrite.Value, Permission.ConversationTag.Value,
+            // `23-78`: ConversationAttachmentUploadGrant joins the Operator set - the same restatement
+            // RegisterSiteHandler's own array carries (this class's own remarks on why restated, not
+            // shared).
+            Permission.ConversationAttachmentUploadGrant.Value,
             // `22-05`/`adr/0093`: the calendar day-to-day actions join the Operator set here -
             // the same split calendar/Role.cs itself drew (v1 gave one "Operator" role every
             // permission including configuration; this account-side model already splits

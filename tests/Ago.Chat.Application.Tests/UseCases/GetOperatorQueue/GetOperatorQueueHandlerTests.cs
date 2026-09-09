@@ -34,6 +34,48 @@ public class GetOperatorQueueHandlerTests
         Assert.Equal(assignedToMe.Id.Value, assigned.ConversationId);
     }
 
+    // `23-78`: this handler loads full Conversation aggregates for both lists (unlike
+    // GetAllConversationsForSiteHandler's own read-store projection), so the grant fields ride the
+    // same row already in hand - ago-console's ConversationPage reads this same DTO
+    // (useWorkspace().conversation) for its own "who/when" attribution.
+    [Fact]
+    public async Task HandleAsync_AnAssignedConversationWithAGrant_CarriesTheGrantFieldsOnItsSummary()
+    {
+        var operatorWhoGranted = new OperatorId(Guid.NewGuid());
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        assignedToMe.MarkAttachmentUploadGrantedForTesting(operatorWhoGranted, Now);
+
+        var (handler, conversations) = CreateHandler();
+        conversations.Seed(assignedToMe);
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.True(summary.HasAttachmentUploadGrant);
+        Assert.Equal(Now, summary.AttachmentUploadGrantedAt);
+        Assert.Equal(operatorWhoGranted.Value, summary.AttachmentUploadGrantedByOperatorId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AnAssignedConversationWithNoGrant_CarriesNoGrantFieldsOnItsSummary()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+
+        var (handler, conversations) = CreateHandler();
+        conversations.Seed(assignedToMe);
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.False(summary.HasAttachmentUploadGrant);
+        Assert.Null(summary.AttachmentUploadGrantedAt);
+        Assert.Null(summary.AttachmentUploadGrantedByOperatorId);
+    }
+
     [Fact]
     public async Task HandleAsync_WaitingConversationFromAnotherSite_IsExcluded()
     {

@@ -62,5 +62,7 @@ public sealed class GetOperatorQueueHandler(
 
     private static ConversationSummaryDto ToSummary(Conversation conversation) => new(
         conversation.Id.Value, conversation.VisitorId.Value, conversation.State.ToString(),
-        conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.OperatorId?.Value);
+        conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.OperatorId?.Value,
+        OperatorName: null, conversation.HasAttachmentUploadGrant, conversation.AttachmentUploadGrantedAt,
+        conversation.AttachmentUploadGrantedBy?.Value);
 }

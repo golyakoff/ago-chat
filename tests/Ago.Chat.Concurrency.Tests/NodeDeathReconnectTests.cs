@@ -128,15 +128,20 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         SiteId siteId, VisitorId visitorId, string connectionId, IConnectionRegistry registry, LocalConnectionTracker tracker, NodeId node)
     {
         var db = fixture.CreateDbContext();
+        // `23-78`: real SiteRepository/no-op cache, the identical "never exercised for what this test
+        // actually checks" reasoning the pre-existing originValidator right below already states for
+        // itself - StartConversationHandler's own tenant-default read just answers "not found" for
+        // every site this fixture never seeds one for, which is every site here.
+        var siteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache());
         var startConversation = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db), new SystemClock(), new UuidV7Generator());
+            new VisitorRepository(db), new ConversationRepository(db), siteConfig, new SystemClock(), new UuidV7Generator());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(registry, tracker, node);
         // FakeHubCallerContext.Features is always empty, so HubOriginValidator's own Origin check
         // short-circuits before ever calling GetSiteConfigByIdHandler - real SiteRepository/no-op
         // cache is fine, never exercised (same reasoning as ReconnectResumeTests' own CreateHub).
-        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
+        var originValidator = new HubOriginValidator(siteConfig);
 
         return new VisitorHub(
             startConversation, null!, getHistory, registration, originValidator, new DrainState(),

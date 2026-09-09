@@ -80,7 +80,7 @@ public sealed class UpdateWidgetConfigHandler(
             config = new WidgetConfig(
                 command.PrimaryColorHex, position, command.NoticeText, command.NoticeUrl, command.RequireContactConsent,
                 command.AttractAttention, command.AutoOpenEnabled, autoOpenDelay, command.AutoOpenGreetingText,
-                command.AcceptUnverifiedPhone);
+                command.AcceptUnverifiedPhone, command.AllowAttachmentUploadsByDefault);
         }
         // `16-04`: `WidgetConfig`'s constructor throws with its own parameter name for each of the
         // things it validates - matched here on that name so a caller can tell which field to
@@ -128,6 +128,7 @@ public sealed class UpdateWidgetConfigHandler(
         return new WidgetConfigDto(
             config.PrimaryColorHex, config.Position, locale, config.NoticeText, config.NoticeUrl,
             config.RequireContactConsent, config.AttractAttention, config.AutoOpenEnabled,
-            config.AutoOpenDelaySeconds, config.AutoOpenGreetingText, config.AcceptUnverifiedPhone);
+            config.AutoOpenDelaySeconds, config.AutoOpenGreetingText, config.AcceptUnverifiedPhone,
+            config.AllowAttachmentUploadsByDefault);
     }
 }

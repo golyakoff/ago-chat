@@ -40,6 +40,7 @@ public sealed class GetSiteConfigByIdHandler(ISiteRepository sites, ICache cache
             site.WidgetConfig.PrimaryColorHex, site.WidgetConfig.Position, site.Locale, site.OfflineAutoReply,
             site.Tier, site.WidgetConfig.NoticeText, site.WidgetConfig.NoticeUrl, site.ContactVisibility,
             site.WidgetConfig.AttractAttention, site.WidgetConfig.AutoOpenEnabled,
-            site.WidgetConfig.AutoOpenDelaySeconds, site.WidgetConfig.AutoOpenGreetingText));
+            site.WidgetConfig.AutoOpenDelaySeconds, site.WidgetConfig.AutoOpenGreetingText,
+            site.WidgetConfig.AllowAttachmentUploadsByDefault));
     }
 }

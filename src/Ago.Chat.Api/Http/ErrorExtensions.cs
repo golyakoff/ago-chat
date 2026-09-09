@@ -69,7 +69,11 @@ public static class ErrorExtensions
             // holder refused for a second, orthogonal reason (holding no seat), not a malformed
             // request or a conflict with anything concurrent. ConversationErrors.OperatorHasNoSeat's
             // own remarks.
-            "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" => StatusCodes.Status403Forbidden,
+            // `23-78`: the visitor-side gate itself - a real refusal, not a malformed request or a
+            // conflict with anything concurrent, the identical shape `Conversation.Forbidden` already
+            // has for itself (`ConversationErrors.AttachmentUploadNotGranted`'s own remarks on why the
+            // message names no remedy).
+            "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" or "Attachment.UploadNotGranted" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
@@ -196,6 +200,10 @@ public static class ErrorExtensions
                 // malformed request - the same "the remedy is a different action first" shape
                 // Tag.AlreadyExists/ChannelCredential.AlreadyConnected already give their own conflicts.
                 or "Conversation.AlreadyBlocked" or "Conversation.NotBlocked"
+                // `23-78`: the identical shape right above, restated for a different current-state
+                // pair on the same table - a grant/revoke request against a conversation already in
+                // the state being asked for.
+                or "Conversation.AttachmentUploadAlreadyGranted" or "Conversation.AttachmentUploadNotGranted"
                 // `24-05`: a real conflict with this specific request's own preconditions (this site
                 // requires a recorded consent, and this visitor has none yet), resolved by an explicit
                 // second act - recording the consent - rather than by fixing the request body, the

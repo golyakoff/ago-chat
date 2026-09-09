@@ -113,6 +113,53 @@ public sealed class Conversation
         BlockedBy = blockedBy;
     }
 
+    /// <summary>
+    /// `23-78`: when a visitor-side attachment upload was last permitted for this conversation -
+    /// <see langword="null"/> for every conversation that has never carried a grant, or whose grant has
+    /// since been revoked (the identical "one flag, not a history" shape <see cref="BlockedAt"/>'s own
+    /// remarks give - a separate append-only audit trail was considered, on <see cref="BlockedAt"/>'s
+    /// own <c>conversation_block_records</c> precedent, and rejected: `24-10`'s trail exists because
+    /// that item is answering a statutory "was every block/unblock act recorded" question; nothing in
+    /// `23-78`'s own Done-when asks for one, and the current-state pair below is everything
+    /// <see cref="CreateAttachmentHandler"/>'s gate and the console's own toggle need).
+    ///
+    /// <para><b>The same "no business method mutates this pair" shape <see cref="BlockedAt"/> already
+    /// states, with one exception.</b> An *existing* conversation's grant is flipped by
+    /// <see cref="Application.Abstractions.IConversationAttachmentUploadGrantRepository"/> - raw SQL,
+    /// bypassing this aggregate's load-mutate-save, for the identical reason
+    /// <see cref="IConversationBlockRepository"/>'s own remarks give: an operator granting or revoking
+    /// mid-conversation must not race this row's `xmin` against the message send the visitor is
+    /// probably in the middle of. A *brand-new* conversation is the one case that is safe to set
+    /// through this aggregate directly - <see cref="Start"/> below takes the tenant-level default as a
+    /// plain constructor-time value, because seeding a row that does not exist yet is an `INSERT`, not
+    /// an `UPDATE` racing anything.</para>
+    /// </summary>
+    public DateTimeOffset? AttachmentUploadGrantedAt { get; private set; }
+
+    /// <summary>The operator who granted the upload permission currently in effect -
+    /// <see langword="null"/> whenever <see cref="AttachmentUploadGrantedAt"/> is, and also
+    /// (deliberately) when the grant was seeded by the tenant-level default
+    /// (<see cref="WidgetConfig.AllowAttachmentUploadsByDefault"/>) rather than ticked by a named
+    /// operator - there is no operator to attribute a default to, and a caller that needs to tell the
+    /// two apart already has <see cref="AttachmentUploadGrantedAt"/> paired with this being
+    /// <see langword="null"/> as the answer.</summary>
+    public OperatorId? AttachmentUploadGrantedBy { get; private set; }
+
+    /// <summary>Whether a visitor-side attachment upload may currently be presigned for this
+    /// conversation (`23-78`'s own control: `CreateAttachmentHandler.HandleAsVisitorAsync` refuses
+    /// without this). Computed from <see cref="AttachmentUploadGrantedAt"/>, the identical
+    /// "null means absent" shape <see cref="IsBlocked"/> already uses for its own pair.</summary>
+    public bool HasAttachmentUploadGrant => AttachmentUploadGrantedAt is not null;
+
+    /// <summary>Test-only, the identical shape and reason <see cref="MarkBlockedForTesting"/> states in
+    /// full - a fake <c>IConversationRepository</c> seeding a granted conversation for a handler test
+    /// with no real, change-tracked EF context to load one through.</summary>
+    internal void MarkAttachmentUploadGrantedForTesting(OperatorId? grantedBy, DateTimeOffset now)
+    {
+        AttachmentUploadGrantedAt = now;
+        AttachmentUploadGrantedBy = grantedBy;
+    }
+
     /// <summary>`18-12`: the four backing fields <see cref="Source"/> is computed from - the same
     /// "private fields, computed public property, EF mapped to the fields by name" shape
     /// <c>Message._contentKind</c>/<c>_payload</c>/<c>_actions</c> already establish for a nullable
@@ -217,9 +264,17 @@ public sealed class Conversation
     /// family. An all-empty <see cref="TrafficSource"/> (<see cref="TrafficSource.IsEmpty"/>) is stored
     /// as <see langword="null"/>, not as a value object with four <see langword="null"/> fields inside
     /// it - see <see cref="Source"/>'s own remarks.
+    ///
+    /// <para>`23-78`: <paramref name="attachmentUploadGrantedByDefault"/> joins on the identical
+    /// "optional, defaulting to the honest off value" terms - every existing call site keeps starting a
+    /// conversation with no upload grant. A caller passes <see langword="true"/> only after reading the
+    /// site's own <c>WidgetConfig.AllowAttachmentUploadsByDefault</c> (`StartConversationHandler`'s own
+    /// remarks); this factory has no site config to read on its own (Domain references nothing), so the
+    /// decision is made by the caller and handed in as a plain <see langword="bool"/>.</para>
     /// </summary>
     public static Conversation Start(
-        ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now, TrafficSource? source = null)
+        ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now, TrafficSource? source = null,
+        bool attachmentUploadGrantedByDefault = false)
     {
         var conversation = new Conversation(id, siteId, visitorId, now);
         if (source is { IsEmpty: false })
@@ -228,6 +283,15 @@ public sealed class Conversation
             conversation._trafficUtmSource = source.UtmSource;
             conversation._trafficUtmMedium = source.UtmMedium;
             conversation._trafficUtmCampaign = source.UtmCampaign;
+        }
+
+        // `23-78`: seeded directly, never through IConversationAttachmentUploadGrantRepository - this
+        // row does not exist yet, so there is no xmin to race against a concurrent message send
+        // (AttachmentUploadGrantedAt's own remarks). AttachmentUploadGrantedBy stays null: a tenant
+        // default is not an operator's own act.
+        if (attachmentUploadGrantedByDefault)
+        {
+            conversation.AttachmentUploadGrantedAt = now;
         }
 
         conversation._domainEvents.Add(new ConversationStarted(id, siteId, visitorId, now));

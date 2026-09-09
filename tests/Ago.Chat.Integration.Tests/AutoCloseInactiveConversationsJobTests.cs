@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -154,7 +155,13 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             new ChannelIdentityRepository(db),
             new VisitorRepository(db),
             new PendingChannelLinkRequestRepository(db),
-            new StartConversationHandler(new VisitorRepository(db), new ConversationRepository(db), new SystemClock(), new UuidV7Generator()),
+            // `23-78`: real SiteRepository/no-op cache - never exercised for what this test actually
+            // checks (StartConversationHandler's own tenant-default read just answers "not found" for
+            // every site this fixture never seeds one for).
+            new StartConversationHandler(
+                new VisitorRepository(db), new ConversationRepository(db),
+                new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()), new SystemClock(),
+                new UuidV7Generator()),
             new SendVisitorMessageHandler(
                 new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
                 new SynchronousMessagePipeline(fixture.DataSource)),

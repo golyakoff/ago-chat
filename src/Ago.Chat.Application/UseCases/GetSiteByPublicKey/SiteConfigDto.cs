@@ -71,10 +71,23 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// on, only what optional content accompanies an already-accepted write, so a cache entry up to five
 /// minutes stale costs nothing a fresh read would not itself already risk (`adr/0148`'s own "the
 /// tenant's configuration as it stands today" - today, at whichever moment this read actually runs).
+/// `23-78`: <see cref="WidgetAllowAttachmentUploadsByDefault"/> joins on the identical terms
+/// <see cref="Tier"/>/<see cref="ContactVisibility"/> already established - an additive field on the
+/// existing cached DTO, populated identically by both loaders, and <b>never put on the wire by the
+/// widget handshake</b> (the opposite of <see cref="WidgetAttractAttention"/>'s own "the widget's own
+/// bootstrap needs to render correctly" reasoning): whether uploads start granted by default is not a
+/// fact the widget renders, it is a fact <c>StartConversationHandler</c> reads once, server-side, to
+/// seed a brand-new <see cref="Domain.Conversation"/>'s own grant at creation - the widget only ever
+/// learns the *result* of that seeding, per conversation, through <c>VisitorJoinResult.HasAttachmentUploadGrant</c>
+/// (`Ago.Chat.Contracts`), never this raw tenant-level setting. Exposing it to the public key an
+/// anonymous visitor already holds would hand exactly the reconnaissance this backlog item's own
+/// "says nothing an attacker could use" Done-when line forbids for the narrower per-conversation
+/// refusal - a tenant's upload posture is no more the public key's business than
+/// <see cref="ContactVisibility"/>'s own masking choice is.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
     OfflineAutoReplySettings OfflineAutoReply, string Tier,
     string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility,
     bool WidgetAttractAttention, bool WidgetAutoOpenEnabled, AutoOpenDelay WidgetAutoOpenDelaySeconds,
-    string? WidgetAutoOpenGreetingText);
+    string? WidgetAutoOpenGreetingText, bool WidgetAllowAttachmentUploadsByDefault = false);

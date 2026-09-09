@@ -252,13 +252,16 @@ public sealed class VisitorReopenHistoryTests(PostgresFixture fixture)
     private VisitorHub CreateHub(SiteId siteId, VisitorId visitorId, string connectionId)
     {
         var db = fixture.CreateDbContext();
+        // `23-78`: shared with originValidator right below - real SiteRepository/no-op cache, never
+        // exercised for what this test actually checks.
+        var siteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache());
         var startConversation = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db), new SystemClock(), new UuidV7Generator());
+            new VisitorRepository(db), new ConversationRepository(db), siteConfig, new SystemClock(), new UuidV7Generator());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(
             new NoOpConnectionRegistry(), new LocalConnectionTracker(), new NodeId("test-node"));
-        var originValidator = new HubOriginValidator(new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()));
+        var originValidator = new HubOriginValidator(siteConfig);
 
         var hub = new VisitorHub(
             startConversation, null!, getHistory, registration, originValidator, new DrainState(),

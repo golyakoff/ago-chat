@@ -146,6 +146,23 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property(c => c.BlockedAt).HasColumnName("blocked_at");
         builder.Property(c => c.BlockedBy).HasColumnName("blocked_by").HasConversion(IdConverters.NullableOperator);
 
+        // `23-78`: the identical shape right above - ordinary mapped properties, not EF shadow
+        // properties, so `CreateAttachmentHandler.HandleAsVisitorAsync` (which already loads this
+        // aggregate by primary key for its own participant check) gets
+        // `Conversation.HasAttachmentUploadGrant` for free, from the same row, rather than a second
+        // query. The *write* to an existing row still bypasses this aggregate entirely -
+        // `IConversationAttachmentUploadGrantRepository`, raw SQL, the identical xmin-racing reasoning
+        // `BlockedAt`'s own remarks give; only `Conversation.Start` (a brand-new row, an `INSERT`, no
+        // xmin to race) ever sets these two columns through the aggregate itself. No index on either -
+        // both are read only as part of an aggregate already located by primary key, the same "no
+        // index" reasoning `blocked_at`/`blocked_by` themselves need none for (this table's own
+        // `ix_conversations_waiting`/`ix_conversations_site_all` cover the columns that are actually
+        // filtered or ordered on, and neither of these ever is).
+        builder.Property(c => c.AttachmentUploadGrantedAt).HasColumnName("attachment_upload_granted_at");
+        builder.Property(c => c.AttachmentUploadGrantedBy)
+            .HasColumnName("attachment_upload_granted_by")
+            .HasConversion(IdConverters.NullableOperator);
+
         // `23-75`: a shadow property, the identical `active_chats` split right below this file's own
         // `HasIndex(c => c.SiteId)` block a screen up - this column has a raw-SQL atomic
         // compare-and-set writer (IConversationAttachmentBudget) an EF load-mutate-save could race,

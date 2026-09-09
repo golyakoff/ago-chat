@@ -23,13 +23,22 @@ public class CreateAttachmentHandlerTests
 
     private static Fixture CreateFixture(
         IRateLimiter? rateLimiter = null, bool grantOperatorPermission = true, bool assignOperator = true,
-        AttachmentOptions? options = null)
+        AttachmentOptions? options = null, bool grantAttachmentUpload = true)
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         if (assignOperator)
         {
             conversation.AssignTo(OperatorId, Now);
+        }
+
+        // `23-78`: granted by default here, the same "existing tests keep proving what they always
+        // proved" posture every additive fixture flag in this codebase takes - the gate itself gets
+        // its own tests below with `grantAttachmentUpload: false`, rather than every pre-existing
+        // "the checks pass" test having to learn about a control unrelated to what it is asserting.
+        if (grantAttachmentUpload)
+        {
+            conversation.MarkAttachmentUploadGrantedForTesting(OperatorId, Now);
         }
 
         conversations.Seed(conversation);
@@ -96,6 +105,52 @@ public class CreateAttachmentHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Equal(0, fixture.FileStorage.CreateUploadCalls);
+    }
+
+    // `23-78`: the control itself - a conversation with no attachment-upload grant refuses the
+    // visitor-side presigned slot, `Attachment.UploadNotGranted`, distinct from every other Forbidden
+    // this handler can return.
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenNoAttachmentUploadGrant_ReturnsUploadNotGranted_WithoutPresigning()
+    {
+        var fixture = CreateFixture(grantAttachmentUpload: false);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new CreateAttachmentAsVisitor(fixture.Conversation.Id, VisitorId, "image/png", 1024), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.UploadNotGranted", result.Error!.Value.Code);
+        Assert.Equal(0, fixture.FileStorage.CreateUploadCalls);
+    }
+
+    // `23-78`: checked before the rate limiter, not after - an anonymous flood against an ungranted
+    // conversation must not cost this visitor's own rate-limit bucket anything (the handler's own
+    // remarks). Proven here with a rate limiter that would deny anyway: if the grant check ran after
+    // it, this would surface as `Message.RateLimited`, not `Attachment.UploadNotGranted`.
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenNoAttachmentUploadGrant_ReturnsUploadNotGranted_EvenIfTheRateLimiterWouldAlsoDeny()
+    {
+        var fixture = CreateFixture(grantAttachmentUpload: false, rateLimiter: new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5)));
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new CreateAttachmentAsVisitor(fixture.Conversation.Id, VisitorId, "image/png", 1024), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.UploadNotGranted", result.Error!.Value.Code);
+    }
+
+    // `23-78`'s own Scope: "an operator's own uploads are unaffected" - the identical conversation,
+    // with no attachment-upload grant, still lets the assigned operator presign.
+    [Fact]
+    public async Task HandleAsOperatorAsync_WhenNoAttachmentUploadGrant_StillPresigns()
+    {
+        var fixture = CreateFixture(grantAttachmentUpload: false);
+
+        var result = await fixture.Handler.HandleAsOperatorAsync(
+            new CreateAttachmentAsOperator(fixture.Conversation.Id, OperatorId, SiteId, "image/png", 1024), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, fixture.FileStorage.CreateUploadCalls);
     }
 
     [Fact]

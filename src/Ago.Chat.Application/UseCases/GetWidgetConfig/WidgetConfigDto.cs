@@ -31,7 +31,9 @@ namespace Ago.Chat.Application.UseCases.GetWidgetConfig;
 /// wire value, not Application.
 /// `25-39`: <see cref="AcceptUnverifiedPhone"/> joins on the identical terms - straight off
 /// `Ago.Chat.Domain.WidgetConfig`, nothing to validate, no second domain method to read from.
+/// `23-78`: <see cref="AllowAttachmentUploadsByDefault"/> joins on the identical terms - straight off
+/// `Ago.Chat.Domain.WidgetConfig`, nothing to validate, no second domain method to read from.
 public sealed record WidgetConfigDto(
     string? PrimaryColorHex, Position Position, Locale Locale, string? NoticeText, string? NoticeUrl,
     bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, AutoOpenDelay AutoOpenDelaySeconds,
-    string? AutoOpenGreetingText, bool AcceptUnverifiedPhone);
+    string? AutoOpenGreetingText, bool AcceptUnverifiedPhone, bool AllowAttachmentUploadsByDefault = false);
