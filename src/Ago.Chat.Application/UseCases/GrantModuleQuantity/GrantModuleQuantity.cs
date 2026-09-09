@@ -19,4 +19,7 @@ namespace Ago.Chat.Application.UseCases.GrantModuleQuantity;
 /// Granting a module's quantity is a site-configuration write, gated on
 /// <see cref="Permission.SiteConfigure"/> - the same permission <c>EnableModuleForSite</c> already
 /// gates the sibling "which module is enabled" write with.</param>
-public sealed record GrantModuleQuantity(OperatorId RequestedBy, SiteId SiteId, string ModuleKey, int Quantity);
+/// <param name="ExpectedAffectedCount">`23-88`: the write-time guard against a stale preview -
+/// see <c>GrantModuleQuantityAsOwnerHandler</c>'s own remarks (the owner-facing sibling
+/// handler) for the full reasoning, identical here.</param>
+public sealed record GrantModuleQuantity(OperatorId RequestedBy, SiteId SiteId, string ModuleKey, int Quantity, int? ExpectedAffectedCount = null);

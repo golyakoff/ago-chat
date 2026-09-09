@@ -7,7 +7,9 @@ using Ago.Chat.Api.Modules;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
+using Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
+using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
@@ -428,6 +430,162 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
 
         var stored = await GetStoredQuantityAsync(moduleKey);
         Assert.Equal(5, stored);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // `23-88`: the async "how many would this exceed" preview, end to end over the real route pair.
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task OwnerToken_RequestsAnImpactPreview_TheStoredRowRecordsTheQuestion_UnansweredUntilAModuleReplies()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity/impact", new OwnerModuleEndpoints.RequestModuleQuantityImpactRequest(2));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var stored = await GetStoredPreviewAsync(moduleKey);
+        Assert.NotNull(stored);
+        Assert.Equal(2, stored.RequestedQuantity);
+        Assert.Null(stored.AnsweredAt);
+    }
+
+    /// <summary>The console's own poll, before anything has answered - `Requested: true`,
+    /// `Answered: false`, never collapsed into an error the way an actual fault would be.</summary>
+    [Fact]
+    public async Task OwnerToken_ReadsTheImpactPreview_BeforeAnyAnswer_ReportsRequestedButNotAnswered()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        await ownerClient.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity/impact", new OwnerModuleEndpoints.RequestModuleQuantityImpactRequest(2));
+
+        var response = await ownerClient.GetAsync($"{OwnerRoute}/{moduleKey}/quantity/impact");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.ModuleQuantityImpactPreviewResponse>();
+        Assert.NotNull(body);
+        Assert.True(body.Requested);
+        Assert.Equal(2, body.RequestedQuantity);
+        Assert.False(body.Answered);
+        Assert.Null(body.AffectedCount);
+    }
+
+    /// <summary>Nothing has ever been asked about this module for this site - the third, honest
+    /// "never requested" state, distinct from "requested but not yet answered".</summary>
+    [Fact]
+    public async Task OwnerToken_ReadsTheImpactPreview_WhenNothingWasEverRequested_ReportsNotRequested()
+    {
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.GetAsync($"{OwnerRoute}/{UniqueModuleKey()}/quantity/impact");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.ModuleQuantityImpactPreviewResponse>();
+        Assert.NotNull(body);
+        Assert.False(body.Requested);
+        Assert.Null(body.RequestedQuantity);
+        Assert.False(body.Answered);
+    }
+
+    [Fact]
+    public async Task OrdinaryOperatorToken_CannotRequestOrReadAnImpactPreview()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, await fixture.GetDemoOperatorAccessTokenAsync());
+
+        var requestResponse = await client.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity/impact", new OwnerModuleEndpoints.RequestModuleQuantityImpactRequest(2));
+        var readResponse = await client.GetAsync($"{OwnerRoute}/{moduleKey}/quantity/impact");
+
+        Assert.Equal(HttpStatusCode.Forbidden, requestResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, readResponse.StatusCode);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // `23-88`: the write-time guard - a grant carrying ExpectedAffectedCount is checked against the
+    // stored preview row, over the real route pair, real Postgres.
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task OwnerToken_GrantsWithNoExpectedAffectedCount_AppliesUnconditionally_TheOriginalRouteBehaviourUnchanged()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity", new OwnerModuleEndpoints.GrantModuleQuantityRequest(2));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, await GetStoredQuantityAsync(moduleKey));
+    }
+
+    /// <summary>`23-88`'s own real proof, end to end: preview candidate 2, the module answers 3
+    /// (simulated here by writing the answer straight onto the stored row - this file has no module
+    /// product to answer for real, `ModuleQuantityImpactComputedConsumer`'s own remarks), confirm
+    /// against exactly 3 - the grant applies.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsWithExpectedAffectedCountMatchingTheAnsweredPreview_Applies()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        await ownerClient.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity/impact", new OwnerModuleEndpoints.RequestModuleQuantityImpactRequest(2));
+        await AnswerStoredPreviewAsync(moduleKey, requestedQuantity: 2, affectedCount: 3);
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity",
+            new OwnerModuleEndpoints.GrantModuleQuantityRequest(2, ExpectedAffectedCount: 3));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, await GetStoredQuantityAsync(moduleKey));
+    }
+
+    /// <summary>`23-88`'s own fails-before, over real HTTP: the answered preview says 3, the owner
+    /// confirms against 2 - refused with a `409` (a real conflict, resolved by re-previewing rather
+    /// than by fixing this request's own body - `ErrorExtensions`' own remarks), and chat's own
+    /// granted-quantity row is left completely untouched (still whatever it was before this call,
+    /// here: never granted at all).</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsWithExpectedAffectedCountDisagreeingWithTheAnsweredPreview_IsRefused_AndGrantsNothing()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        await ownerClient.PostAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity/impact", new OwnerModuleEndpoints.RequestModuleQuantityImpactRequest(2));
+        await AnswerStoredPreviewAsync(moduleKey, requestedQuantity: 2, affectedCount: 3);
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity",
+            new OwnerModuleEndpoints.GrantModuleQuantityRequest(2, ExpectedAffectedCount: 2));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(0, await GetStoredQuantityAsync(moduleKey));
+    }
+
+    [Fact]
+    public async Task OwnerToken_GrantsWithExpectedAffectedCountButNoPreviewEverRequested_IsRefused()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/quantity",
+            new OwnerModuleEndpoints.GrantModuleQuantityRequest(2, ExpectedAffectedCount: 0));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(0, await GetStoredQuantityAsync(moduleKey));
     }
 
     [Fact]
@@ -906,6 +1064,30 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
             .GetQuantityAsync(fixture.SeededSiteId, new ModuleKey(moduleKey), CancellationToken.None);
     }
 
+    /// <summary>`23-88`: the identical direct-Postgres read shape <see cref="GetStoredQuantityAsync"/>
+    /// establishes for its own sibling, over <see cref="ModuleQuantityImpactPreviewStore"/> instead.</summary>
+    private async Task<ModuleQuantityImpactPreview?> GetStoredPreviewAsync(string moduleKey)
+    {
+        await using var db = fixture.CreateDbContext();
+        return await new ModuleQuantityImpactPreviewStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator())
+            .TryGetAsync(fixture.SeededSiteId, new ModuleKey(moduleKey), CancellationToken.None);
+    }
+
+    /// <summary>`23-88`: stands in for `ModuleQuantityImpactComputedConsumer` receiving a real
+    /// module's own answer - this file has no module product to answer for real
+    /// (<c>ModuleQuantityImpactComputedWireContract</c>'s own remarks: nothing publishes to that
+    /// topic yet), so this writes the answer directly through the same store the consumer would call,
+    /// proving the write-time guard against a real answered row rather than skipping the scenario
+    /// entirely.</summary>
+    private async Task AnswerStoredPreviewAsync(string moduleKey, int requestedQuantity, int affectedCount)
+    {
+        await using var db = fixture.CreateDbContext();
+        await new ModuleQuantityImpactPreviewStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator())
+            .AnswerAsync(
+                fixture.SeededSiteId, new ModuleKey(moduleKey), requestedQuantity, affectedCount, [],
+                DateTimeOffset.UtcNow, CancellationToken.None);
+    }
+
     private static string UniqueModuleKey() => $"owner-grant-{Guid.NewGuid():N}"[..24];
 
     private static HttpClient CreateClient(WebApplication host, string? token)
@@ -1025,6 +1207,13 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // ModuleQuantityGrantedOutboxTests already established for this exact store.
         builder.Services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
+        // `23-88`: the async impact-preview round trip's own two handlers, real Postgres store - the
+        // identical posture the grant store above already takes. GrantModuleQuantityAsOwnerHandler's
+        // own constructor now needs this port too (the write-time guard), so it must be registered
+        // before that handler resolves, not merely added alongside it.
+        builder.Services.AddScoped<IModuleQuantityImpactPreviewStore, ModuleQuantityImpactPreviewStore>();
+        builder.Services.AddScoped<RequestModuleQuantityImpactAsOwnerHandler>();
+        builder.Services.AddScoped<GetModuleQuantityImpactPreviewAsOwnerHandler>();
         builder.Services.AddScoped<GrantModuleQuantityAsOwnerHandler>();
         // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves this
         // straight from DI, the same way the production host does. IClock/IIdGenerator are already

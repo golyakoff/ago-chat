@@ -18,5 +18,15 @@ namespace Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 /// policy on the route that resolves this handler) does not live in a table
 /// <see cref="Application.Abstractions.IPermissionChecker"/> could check, so a permission check here
 /// would be a second, weaker copy of a decision the policy already made.</para>
+///
+/// <para><b>`23-88`: <see cref="ExpectedAffectedCount"/> is the write-time guard, added
+/// beside the quantity itself rather than as a second call.</b> <see langword="null"/>
+/// preserves this command's own original, unconditional behaviour exactly - a caller that
+/// never asked for a preview (an older console build, or the tenant-facing sibling this
+/// command mirrors) still applies the grant the way it always has, no regression. A real
+/// value means the caller went through `23-88`'s own async preview round trip and is
+/// confirming against a specific answer - see
+/// <see cref="GrantModuleQuantityAsOwnerHandler"/>'s own remarks for what this handler does
+/// with it.</para>
 /// </summary>
-public sealed record GrantModuleQuantityAsOwner(SiteId SiteId, string ModuleKey, int Quantity);
+public sealed record GrantModuleQuantityAsOwner(SiteId SiteId, string ModuleKey, int Quantity, int? ExpectedAffectedCount = null);

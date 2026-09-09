@@ -252,6 +252,12 @@ builder.Services
 builder.Services.AddHostedService<OperatorRemovedConsumer>();
 
 builder.Services
+    .AddOptions<ModuleQuantityImpactComputedConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(ModuleQuantityImpactComputedConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<ModuleQuantityImpactComputedConsumer>();
+
+builder.Services
     .AddOptions<AttachmentOrphanSweepJobOptions>()
     .Bind(builder.Configuration.GetSection(AttachmentOrphanSweepJobOptions.SectionName))
     .ValidateOnStart();

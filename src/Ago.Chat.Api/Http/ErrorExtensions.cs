@@ -210,7 +210,14 @@ public static class ErrorExtensions
                 // identical shape ChannelCredential.AlreadyConnected/Module.RevokePurchaseRequiresForce
                 // already give their own conflicts (ConversationErrors.VisitorContactDetailConsentRequired's
                 // own remarks).
-                or "VisitorContactDetail.ConsentRequired" => StatusCodes.Status409Conflict,
+                or "VisitorContactDetail.ConsentRequired"
+                // `23-88`: the identical "a real conflict, resolved by an explicit second act - not by
+                // fixing this request's own body" shape the whole block above already establishes. The
+                // owner confirmed a quantity grant against an impact-preview answer that has since
+                // changed, gone stale, or never existed - GrantModuleQuantityAsOwnerHandler's own
+                // remarks for exactly which. The remedy is always the same second act: ask again, look
+                // at the fresh answer, confirm again - never a different request body.
+                or "Module.QuantityImpactStale" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
