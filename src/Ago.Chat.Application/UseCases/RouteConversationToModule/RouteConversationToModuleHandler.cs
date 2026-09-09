@@ -57,7 +57,9 @@ public sealed class RouteConversationToModuleHandler(
     IOutboxWriter outbox,
     IInboxChecker inbox,
     IClock clock,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    ISiteRepository sites,
+    IVisitorContactDetailRepository contactDetails)
 {
     public const string ConsumerName = "module-task-routing";
 
@@ -133,12 +135,16 @@ public sealed class RouteConversationToModuleHandler(
         // the module is handed exactly the id this aggregate will use to identify the task once
         // StartModuleTask below succeeds, so no second id has to be invented or reconciled.
         var chatTaskId = idGenerator.NewId(now);
+        // `25-37`: the site's own configured widget language, resolved once here and handed to the
+        // module for its very first step - see ResolveLocaleAsync's own remarks for why a missing site
+        // reads as the safe default rather than a hard failure.
+        var locale = await ResolveLocaleAsync(command.SiteId, cancellationToken);
         StartModuleTaskResult startResult;
         try
         {
             startResult = await gateway.StartTaskAsync(
                 new EnabledModuleEndpoint(key, command.SiteId, enabledModule.EntryPoint, enabledModule.Credential),
-                new StartModuleTaskRequest(chatTaskId, command.SiteId, command.ConversationId, trigger.Body.Value),
+                new StartModuleTaskRequest(chatTaskId, command.SiteId, command.ConversationId, trigger.Body.Value, locale),
                 cancellationToken);
         }
         catch (ModuleUnreachableException)
@@ -260,13 +266,26 @@ public sealed class RouteConversationToModuleHandler(
             }
         }
 
+        // `25-37`/`25-38`/`25-39`: three more facts a module may need to answer this reply, resolved
+        // fresh on every call rather than remembered anywhere - see SubmitModuleReplyRequest.Locale's
+        // own remarks for why this item spends no migration on persisting them. Read unconditionally
+        // (not gated to a particular step kind): none of the three reads is expensive - a single-row
+        // Site lookup and a visitor's own small, bounded contact-detail list
+        // (VisitorContactDetail's own remarks) - and gating on step kind would make this handler's own
+        // behaviour depend on knowledge of which primitive kind a booking module happens to use its
+        // phone step for, which is exactly the "no special-casing per primitive kind" constraint this
+        // handler's own type remarks already hold ResolveReplyValue to.
+        var (locale, acceptUnverifiedPhone) = await ResolveModuleContextAsync(conversation.SiteId, cancellationToken);
+        var knownPhone = await ResolveKnownPhoneAsync(conversation.VisitorId, cancellationToken);
+
         SubmitModuleReplyResult replyResult;
         try
         {
             replyResult = await gateway.SubmitReplyAsync(
                 new EnabledModuleEndpoint(active.ModuleKey, conversation.SiteId, enabledModule.EntryPoint, enabledModule.Credential),
                 new SubmitModuleReplyRequest(
-                    active.ExternalTaskId, active.Id.Value, active.LastStepKind!.Value, value, phoneVerifiedAt),
+                    active.ExternalTaskId, active.Id.Value, active.LastStepKind!.Value, value, phoneVerifiedAt,
+                    locale, knownPhone, acceptUnverifiedPhone),
                 cancellationToken);
         }
         catch (ModuleUnreachableException)
@@ -412,6 +431,45 @@ public sealed class RouteConversationToModuleHandler(
         {
             return null;
         }
+    }
+
+    /// <summary>`25-37`: the site's own configured widget language, as the Domain enum's PascalCase
+    /// member name - the wire convention <see cref="StartModuleTaskRequest.Locale"/>'s own remarks
+    /// name. A site that no longer resolves (deleted between the trigger's own dedup check and this
+    /// read - a genuinely narrow window, not the ordinary case) reads as <see cref="Locale.En"/>, the
+    /// same safe-default posture <see cref="Site.Locale"/>'s own remarks already take for a row that
+    /// predates the column entirely, rather than failing a reply this handler can otherwise still
+    /// serve.</summary>
+    private async Task<string> ResolveLocaleAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        var site = await sites.GetByIdAsync(siteId, cancellationToken);
+        return (site?.Locale ?? Locale.En).ToString();
+    }
+
+    /// <summary>`25-37`/`25-39`: the one Site read <see cref="ContinueActiveTaskAsync"/> needs for both
+    /// <see cref="SubmitModuleReplyRequest.Locale"/> and <see cref="SubmitModuleReplyRequest.AcceptUnverifiedPhone"/>
+    /// together, rather than two separate lookups of the identical row - see <see cref="ResolveLocaleAsync"/>'s
+    /// own remarks for the missing-site default this shares.</summary>
+    private async Task<(string Locale, bool AcceptUnverifiedPhone)> ResolveModuleContextAsync(
+        SiteId siteId, CancellationToken cancellationToken)
+    {
+        var site = await sites.GetByIdAsync(siteId, cancellationToken);
+        return ((site?.Locale ?? Locale.En).ToString(), site?.WidgetConfig.AcceptUnverifiedPhone ?? false);
+    }
+
+    /// <summary>`25-38`/`25-39`: the most recent phone number this visitor gave earlier in the
+    /// conversation (`25-28`'s own contact capture, or an operator's own note - either source, the
+    /// most recent one wins), self-reported and never proven reachable - see
+    /// <see cref="SubmitModuleReplyRequest.KnownPhone"/>'s own remarks for what a module does with it.
+    /// Null when nothing was ever recorded, the ordinary case for a visitor who never gave one.</summary>
+    private async Task<string?> ResolveKnownPhoneAsync(VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var details = await contactDetails.GetForVisitorAsync(visitorId, cancellationToken);
+        return details
+            .Where(d => d.Kind == VisitorContactDetailKind.Phone)
+            .OrderByDescending(d => d.RecordedAt)
+            .FirstOrDefault()
+            ?.Value;
     }
 
     /// <summary>

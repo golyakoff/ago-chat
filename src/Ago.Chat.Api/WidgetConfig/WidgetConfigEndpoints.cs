@@ -72,7 +72,8 @@ public static class WidgetConfigEndpoints
                 request.AttractAttention,
                 request.AutoOpenEnabled,
                 request.AutoOpenDelaySeconds,
-                request.AutoOpenGreetingText),
+                request.AutoOpenGreetingText,
+                request.AcceptUnverifiedPhone),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
@@ -81,7 +82,7 @@ public static class WidgetConfigEndpoints
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
         new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
             dto.RequireContactConsent, dto.AttractAttention, dto.AutoOpenEnabled, (int)dto.AutoOpenDelaySeconds,
-            dto.AutoOpenGreetingText);
+            dto.AutoOpenGreetingText, dto.AcceptUnverifiedPhone);
 
     /// <summary>
     /// <para>
@@ -109,7 +110,13 @@ public static class WidgetConfigEndpoints
     public sealed record UpdateWidgetConfigRequest(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
         [property: JsonRequired] bool RequireContactConsent, bool AttractAttention,
-        bool AutoOpenEnabled = false, int AutoOpenDelaySeconds = 30, string? AutoOpenGreetingText = null);
+        bool AutoOpenEnabled = false, int AutoOpenDelaySeconds = 30, string? AutoOpenGreetingText = null,
+        // `25-39`: a plain bool, the same "missing binds to false" posture every field but
+        // RequireContactConsent already takes above - and false ("keep requiring a genuinely verified
+        // phone") is the safe reading of an omission here too, the identical default
+        // Ago.Chat.Domain.WidgetConfig's own constructor and Stage25AddSiteWidgetAcceptUnverifiedPhone's
+        // column both already commit to.
+        bool AcceptUnverifiedPhone = false);
 
     /// <summary>`23-64`: <c>AutoOpenDelaySeconds</c> crosses the wire as its plain `int` value
     /// (`AutoOpenDelay`'s own remarks on why it needs no PascalCase-string convention the way
@@ -118,5 +125,5 @@ public static class WidgetConfigEndpoints
     public sealed record WidgetConfigResponse(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
         bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, int AutoOpenDelaySeconds,
-        string? AutoOpenGreetingText);
+        string? AutoOpenGreetingText, bool AcceptUnverifiedPhone);
 }

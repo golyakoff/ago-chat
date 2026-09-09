@@ -7,11 +7,14 @@ namespace Ago.Chat.Infrastructure.Modules;
 /// with `ago-calendar`'s own side - plain HTTP+JSON, camelCase, System.Text.Json (ASP.NET Core Minimal
 /// API's own default), never re-derived or approximated at this end.
 /// </summary>
+/// <param name="Locale">`25-37`: additive - see <c>Ago.Chat.Application.Abstractions.StartModuleTaskRequest.Locale</c>'s
+/// own remarks.</param>
 internal sealed record StartTaskWireRequest(
     [property: JsonPropertyName("chatTaskId")] Guid ChatTaskId,
     [property: JsonPropertyName("siteId")] Guid SiteId,
     [property: JsonPropertyName("conversationId")] Guid ConversationId,
-    [property: JsonPropertyName("triggerText")] string TriggerText);
+    [property: JsonPropertyName("triggerText")] string TriggerText,
+    [property: JsonPropertyName("locale")] string Locale);
 
 internal sealed record StartTaskWireResponse(
     [property: JsonPropertyName("externalTaskId")] string ExternalTaskId,
@@ -22,11 +25,21 @@ internal sealed record StartTaskWireResponse(
 /// within a version. Absent (or <see langword="null"/>) on every reply this contract predates and on
 /// every reply for a step that is not <c>verified_phone_form</c>; a module built before this item never
 /// has to change to keep working.</param>
+/// <param name="Locale">`25-37`: additive, resent on every reply - see
+/// <c>Ago.Chat.Application.Abstractions.SubmitModuleReplyRequest.Locale</c>'s own remarks.</param>
+/// <param name="KnownPhone">`25-38`/`25-39`: additive - see
+/// <c>Ago.Chat.Application.Abstractions.SubmitModuleReplyRequest.KnownPhone</c>'s own remarks.</param>
+/// <param name="AcceptUnverifiedPhone">`25-39`: additive - see
+/// <c>Ago.Chat.Application.Abstractions.SubmitModuleReplyRequest.AcceptUnverifiedPhone</c>'s
+/// own remarks.</param>
 internal sealed record SubmitReplyWireRequest(
     [property: JsonPropertyName("chatTaskId")] Guid ChatTaskId,
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("value")] string Value,
-    [property: JsonPropertyName("phoneVerifiedAt")] DateTimeOffset? PhoneVerifiedAt = null);
+    [property: JsonPropertyName("phoneVerifiedAt")] DateTimeOffset? PhoneVerifiedAt,
+    [property: JsonPropertyName("locale")] string Locale,
+    [property: JsonPropertyName("knownPhone")] string? KnownPhone,
+    [property: JsonPropertyName("acceptUnverifiedPhone")] bool AcceptUnverifiedPhone);
 
 internal sealed record SubmitReplyWireResponse(
     [property: JsonPropertyName("step")] StepWireDto? Step,

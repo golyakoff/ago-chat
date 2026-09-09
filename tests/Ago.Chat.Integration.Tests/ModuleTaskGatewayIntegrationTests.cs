@@ -275,7 +275,8 @@ public class ModuleTaskGatewayIntegrationTests
 
         var handler = new RouteConversationToModuleHandler(
             conversations, readStore, gateway, channelIdentities ?? new FixedChannelIdentityRepository(),
-            outbox, inbox, new FixedClock(Now), new FixedIdGenerator());
+            outbox, inbox, new FixedClock(Now), new FixedIdGenerator(), new FixedSiteRepository(),
+            new FixedVisitorContactDetailRepository());
 
         var command = new RouteConversationToModule(
             Guid.NewGuid(), conversation.SiteId, conversation.Id, MessageAuthorKind.Visitor, conversation.LastSequence);
@@ -370,6 +371,43 @@ public class ModuleTaskGatewayIntegrationTests
 
         public Task<bool> TryRecordAndSaveAsync(Guid messageId, string consumer, CancellationToken cancellationToken) =>
             Task.FromResult(_recorded.Add((messageId, consumer)));
+    }
+
+    /// <summary>`25-37`/`25-39`: a fixed, no-op-write stand-in for <see cref="ISiteRepository"/> - this
+    /// suite proves the wire's own reply-parity claim, not this handler's locale/setting resolution
+    /// (already proven at the Application level, `RouteConversationToModuleHandlerTests`), so a null
+    /// seed (the "no site resolves" default) is enough unless a specific test needs otherwise.</summary>
+    private sealed class FixedSiteRepository(Site? seeded = null) : ISiteRepository
+    {
+        public Task<Site?> GetByPublicKeyAsync(string publicKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Site?> GetByIdAsync(SiteId id, CancellationToken cancellationToken) =>
+            Task.FromResult(seeded is { } site && site.Id == id ? site : null);
+
+        public Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SaveAsync(Site site, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    /// <summary>`25-38`/`25-39`: the identical "fixed, empty by default" shape
+    /// <see cref="FixedSiteRepository"/> takes just above.</summary>
+    private sealed class FixedVisitorContactDetailRepository(IReadOnlyList<VisitorContactDetail>? seeded = null)
+        : IVisitorContactDetailRepository
+    {
+        public Task SaveAsync(VisitorContactDetail detail, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<VisitorContactDetail>> GetForVisitorAsync(
+            VisitorId visitorId, CancellationToken cancellationToken) =>
+            Task.FromResult(seeded ?? (IReadOnlyList<VisitorContactDetail>)[]);
+
+        public Task<VisitorContactDetail?> GetByIdAsync(VisitorContactDetailId id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAsync(VisitorContactDetail detail, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FixedClock(DateTimeOffset now) : IClock

@@ -9,6 +9,12 @@ public sealed class FakeVisitorContactDetailRepository : IVisitorContactDetailRe
 
     public IReadOnlyCollection<VisitorContactDetail> All => _byId.Values;
 
+    /// <summary>`25-38`/`25-39`: the same synchronous seed shape <see cref="FakeSiteRepository.Seed"/>
+    /// already uses - a test arranging fixture state has no async context of its own to await
+    /// <see cref="SaveAsync"/> from, and this fake's own write is synchronous in every way that
+    /// matters (an in-memory dictionary, never a real I/O call).</summary>
+    public void Seed(VisitorContactDetail detail) => _byId[detail.Id] = detail;
+
     public Task SaveAsync(VisitorContactDetail detail, CancellationToken cancellationToken)
     {
         _byId[detail.Id] = detail;

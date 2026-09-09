@@ -247,7 +247,9 @@ public sealed class RouteConversationToModuleConcurrencyTests(ConcurrencyTestFix
             new EfOutboxWriter<AgoChatDbContext>(db),
             new EfInboxChecker<AgoChatDbContext>(db, new SystemClock()),
             new SystemClock(),
-            new UuidV7Generator());
+            new UuidV7Generator(),
+            new SiteRepository(db),
+            new VisitorContactDetailRepository(db));
 
         return await handler.HandleAsync(
             new RouteConversationToModule(triggerMessageId, siteId, conversationId, MessageAuthorKind.Visitor, triggerSequence),
