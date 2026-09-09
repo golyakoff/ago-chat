@@ -94,6 +94,27 @@ public class GrantModuleQuantityHandlerTests
         Assert.Equal(2, await fixture.Grants.GetQuantityAsync(SiteId, new ModuleKey("calendar"), CancellationToken.None));
         Assert.Single(fixture.Grants.Grants);
     }
+
+    /// <summary>
+    /// `23-89`: the failure a support call makes cheap to imagine - an owner grants, sees no
+    /// immediate change (the module applies asynchronously off the outbox), and grants the identical
+    /// quantity again rather than waiting. Nothing about a second identical call may double anything:
+    /// two calls land on the same stored quantity, not two grants layered on top of each other - the
+    /// same snapshot reasoning <see cref="ModuleQuantityGrant"/>'s own remarks give for why a
+    /// redelivered event is safe on the receiving end, proven here on the sending side instead.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_CalledTwiceWithTheSameQuantity_IsANoOp()
+    {
+        var fixture = CreateFixture();
+        await fixture.Handler.HandleAsync(Command(quantity: 5), CancellationToken.None);
+
+        var second = await fixture.Handler.HandleAsync(Command(quantity: 5), CancellationToken.None);
+
+        Assert.True(second.IsSuccess);
+        Assert.Equal(5, await fixture.Grants.GetQuantityAsync(SiteId, new ModuleKey("calendar"), CancellationToken.None));
+        Assert.Single(fixture.Grants.Grants);
+    }
 }
 
 /// <summary>Records every call, so a test can assert exactly what was (or was not) granted - the same
