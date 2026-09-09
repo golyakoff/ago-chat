@@ -526,6 +526,40 @@ public sealed class Conversation
     }
 
     /// <summary>
+    /// `23-64`/`adr/0148`: materialises the widget's drawn greeting as this conversation's real first
+    /// message - never a message a caller may add at will, only ever this conversation's *own* first
+    /// one. Returns <see langword="null"/>, not a thrown exception, whenever that no longer holds:
+    /// <c>MessageBatchWriter</c> calls this speculatively, in the same transaction as the visitor's
+    /// own first send, and "there is nothing to materialise" (a retried Join/Send pair after a
+    /// dropped connection, or simply a conversation that already has a message by the time this runs)
+    /// is an ordinary, expected outcome for a caller that cannot know in advance which case it is in -
+    /// the same "check, don't throw, for an outcome the caller already has to branch on" shape
+    /// <see cref="AddMessage"/>'s own <paramref name="clientMessageId"/> dedup already uses for a
+    /// retried send.
+    ///
+    /// <para><see cref="MessageAuthorKind.AutoGreeting"/>, carrying <see cref="SystemAuthorId"/> as
+    /// its author - see that member's own remarks for why neither <see cref="MessageAuthorKind.Operator"/>
+    /// (no operator is assigned yet) nor <see cref="MessageAuthorKind.System"/> (reserved for `23-56`'s
+    /// future machine name, which the author explicitly did not want here) fits.</para>
+    ///
+    /// <para>Refuses once <see cref="_messages"/> is non-empty - the guard that makes "only ever the
+    /// conversation's first message" true regardless of how many times a retried call reaches here,
+    /// without this method needing its own idempotency key the way <paramref name="clientMessageId"/>
+    /// gives an ordinary message: there is exactly one greeting per conversation by construction, so
+    /// "already has any message" is the only check a second attempt needs.</para>
+    /// </summary>
+    public Message? AddAutoGreetingMessage(MessageId messageId, MessageBody body, DateTimeOffset now, RetentionClass? retentionClass = null)
+    {
+        if (_messages.Count > 0 || State == ConversationState.Closed)
+        {
+            return null;
+        }
+
+        return AddMessage(
+            MessageAuthorKind.AutoGreeting, SystemAuthorId, messageId, body, null, null, null, now, retentionClass);
+    }
+
+    /// <summary>
     /// `20-07`/`adr/0065` decision 7: opens the conversation's one allowed active module task. Rejects a
     /// second start while one is already open - the invariant the whole "at most one active task"
     /// principle rests on, enforced here rather than trusted to a caller that checked

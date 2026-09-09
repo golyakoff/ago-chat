@@ -184,6 +184,20 @@ public static class ConversationErrors
     public static Error WidgetConfigInvalidNoticeUrl(string reason) =>
         new("WidgetConfig.InvalidNoticeUrl", reason);
 
+    /// <summary>`23-64`: the closed `AutoOpenDelay` set `UpdateWidgetConfigHandler`'s own
+    /// `Enum.IsDefined` check rejected - the same "validate the enum, translate the miss at the
+    /// Application boundary" split `WidgetConfigInvalidPosition`/`WidgetConfigInvalidLocale` already
+    /// draw for their own closed sets.</summary>
+    public static Error WidgetConfigInvalidAutoOpenDelay(string reason) =>
+        new("WidgetConfig.InvalidAutoOpenDelay", reason);
+
+    /// <summary>`23-64`: either a whitespace-only/over-length greeting, or auto-open turned on with no
+    /// greeting at all - `WidgetConfig`'s own constructor rejected both under the identical parameter
+    /// name, and both have the identical remedy (write a greeting), so one code covers both the same
+    /// way `WidgetConfigInvalidNoticeText` already covers two related rejections on its own field.</summary>
+    public static Error WidgetConfigInvalidAutoOpenGreetingText(string reason) =>
+        new("WidgetConfig.InvalidAutoOpenGreetingText", reason);
+
     /// <summary>`14-04`: an offline auto-reply configuration `OfflineAutoReplyRule`/
     /// `OfflineAutoReplySettings` refused - an empty or oversized keyword or reply, too many rules, or
     /// an enabled configuration with no fallback text. One code rather than five, because every one of

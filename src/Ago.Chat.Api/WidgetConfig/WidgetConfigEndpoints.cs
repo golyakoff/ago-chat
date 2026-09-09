@@ -69,7 +69,10 @@ public static class WidgetConfigEndpoints
                 request.NoticeText,
                 request.NoticeUrl,
                 request.RequireContactConsent,
-                request.AttractAttention),
+                request.AttractAttention,
+                request.AutoOpenEnabled,
+                request.AutoOpenDelaySeconds,
+                request.AutoOpenGreetingText),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
@@ -77,7 +80,8 @@ public static class WidgetConfigEndpoints
 
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
         new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
-            dto.RequireContactConsent, dto.AttractAttention);
+            dto.RequireContactConsent, dto.AttractAttention, dto.AutoOpenEnabled, (int)dto.AutoOpenDelaySeconds,
+            dto.AutoOpenGreetingText);
 
     /// <summary>
     /// <para>
@@ -104,9 +108,15 @@ public static class WidgetConfigEndpoints
     /// </summary>
     public sealed record UpdateWidgetConfigRequest(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
-        [property: JsonRequired] bool RequireContactConsent, bool AttractAttention);
+        [property: JsonRequired] bool RequireContactConsent, bool AttractAttention,
+        bool AutoOpenEnabled = false, int AutoOpenDelaySeconds = 30, string? AutoOpenGreetingText = null);
 
+    /// <summary>`23-64`: <c>AutoOpenDelaySeconds</c> crosses the wire as its plain `int` value
+    /// (`AutoOpenDelay`'s own remarks on why it needs no PascalCase-string convention the way
+    /// `Position`/`Locale` do) - `(int)dto.AutoOpenDelaySeconds` at the one call site that builds this
+    /// response, not a `.ToString()` the way those two enums use.</summary>
     public sealed record WidgetConfigResponse(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
-        bool RequireContactConsent, bool AttractAttention);
+        bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, int AutoOpenDelaySeconds,
+        string? AutoOpenGreetingText);
 }

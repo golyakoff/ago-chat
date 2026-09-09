@@ -36,6 +36,9 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             site.WidgetConfig.NoticeText,
             site.WidgetConfig.NoticeUrl,
             site.WidgetConfig.RequireContactConsent,
-            site.WidgetConfig.AttractAttention);
+            site.WidgetConfig.AttractAttention,
+            site.WidgetConfig.AutoOpenEnabled,
+            site.WidgetConfig.AutoOpenDelaySeconds,
+            site.WidgetConfig.AutoOpenGreetingText);
     }
 }

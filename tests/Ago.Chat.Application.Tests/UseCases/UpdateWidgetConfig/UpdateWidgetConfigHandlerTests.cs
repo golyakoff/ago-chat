@@ -37,8 +37,14 @@ public class UpdateWidgetConfigHandlerTests
         string locale = nameof(Locale.En),
         string? noticeText = null,
         string? noticeUrl = null,
-        bool attractAttention = false) =>
-        new(SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl, AttractAttention: attractAttention);
+        bool attractAttention = false,
+        bool autoOpenEnabled = false,
+        int autoOpenDelaySeconds = 30,
+        string? autoOpenGreetingText = null) =>
+        new(
+            SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl,
+            AttractAttention: attractAttention, AutoOpenEnabled: autoOpenEnabled,
+            AutoOpenDelaySeconds: autoOpenDelaySeconds, AutoOpenGreetingText: autoOpenGreetingText);
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_UpdatesTheSitesWidgetConfig()
@@ -283,5 +289,95 @@ public class UpdateWidgetConfigHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("WidgetConfig.InvalidNoticeText", result.Error!.Value.Code);
+    }
+
+    // `23-64`: the seventh, eighth and ninth fields this same call writes - straight onto
+    // Ago.Chat.Domain.WidgetConfig itself, the identical "no third Site method needed" shape
+    // NoticeText/NoticeUrl/AttractAttention already established.
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_UpdatesTheSitesAutoOpenFields()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(autoOpenEnabled: true, autoOpenDelaySeconds: 60, autoOpenGreetingText: "Hi, need any help?"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.AutoOpenEnabled);
+        Assert.Equal(AutoOpenDelay.Seconds60, result.Value.AutoOpenDelaySeconds);
+        Assert.Equal("Hi, need any help?", result.Value.AutoOpenGreetingText);
+
+        var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
+        Assert.True(saved!.WidgetConfig.AutoOpenEnabled);
+        Assert.Equal(AutoOpenDelay.Seconds60, saved.WidgetConfig.AutoOpenDelaySeconds);
+        Assert.Equal("Hi, need any help?", saved.WidgetConfig.AutoOpenGreetingText);
+    }
+
+    // `23-64`'s own Decision: "off by default" - the same default `AttractAttention`'s own equivalent
+    // test already guards, restated for this item's own field.
+    [Fact]
+    public async Task HandleAsync_WhenAutoOpenIsNotSupplied_LeavesItDisabled_WithTheDefaultDelay()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.AutoOpenEnabled);
+        Assert.Equal(AutoOpenDelay.Seconds30, result.Value.AutoOpenDelaySeconds);
+        Assert.Null(result.Value.AutoOpenGreetingText);
+    }
+
+    // `23-64`'s own Scope: "15, 30, 45, 60, 90, 120 seconds" - a closed set, not a free number.
+    [Fact]
+    public async Task HandleAsync_WhenTheAutoOpenDelayIsNotOneOfTheSixValues_ReturnsInvalidAutoOpenDelay()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(autoOpenDelaySeconds: 20), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidAutoOpenDelay", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheAutoOpenDelayIsInvalid_EnqueuesNothing()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(Command(autoOpenDelaySeconds: 20), CancellationToken.None);
+
+        Assert.Empty(fixture.Outbox.Enqueued);
+    }
+
+    // `23-64`'s own Scope: "There is no default sentence we supply" - turning auto-open on with
+    // nothing to say is a rejection, not a silently-broken panel.
+    [Fact]
+    public async Task HandleAsync_WhenAutoOpenIsEnabledWithNoGreetingText_ReturnsInvalidAutoOpenGreetingText()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(autoOpenEnabled: true, autoOpenGreetingText: null), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidAutoOpenGreetingText", result.Error!.Value.Code);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task HandleAsync_WhenTheAutoOpenGreetingTextIsWhitespaceOnly_ReturnsInvalidAutoOpenGreetingText(
+        string malformedText)
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(autoOpenEnabled: true, autoOpenGreetingText: malformedText), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidAutoOpenGreetingText", result.Error!.Value.Code);
     }
 }

@@ -116,7 +116,8 @@ public static class AuthEndpoints
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
                 site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
-                site.WidgetAttractAttention));
+                site.WidgetAttractAttention, site.WidgetAutoOpenEnabled, (int)site.WidgetAutoOpenDelaySeconds,
+                site.WidgetAutoOpenGreetingText));
     }
 
     /// <summary>
@@ -236,7 +237,8 @@ public static class AuthEndpoints
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
             site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
-            site.WidgetAttractAttention));
+            site.WidgetAttractAttention, site.WidgetAutoOpenEnabled, (int)site.WidgetAutoOpenDelaySeconds,
+            site.WidgetAutoOpenGreetingText));
     }
 
     /// <summary>
@@ -315,5 +317,14 @@ public static class AuthEndpoints
         string? WidgetNoticeText,
         string? WidgetNoticeUrl,
         IReadOnlyList<string> EnabledModules,
-        bool WidgetAttractAttention);
+        bool WidgetAttractAttention,
+        // `23-64`: three more additive fields, off/default/absent for every site that has not turned
+        // «Раскрывать виджет автоматически» on. `WidgetAutoOpenDelaySeconds` crosses the wire as its
+        // plain `int` (`AutoOpenDelay`'s own remarks - it needs no PascalCase-string convention the
+        // way `WidgetPosition`/`WidgetLocale` do). `ago-widget`'s `ui/appearance.ts` re-validates all
+        // three on receipt, the identical "courtesy re-check, never trust the wire value blindly"
+        // posture every other field here already gets.
+        bool WidgetAutoOpenEnabled,
+        int WidgetAutoOpenDelaySeconds,
+        string? WidgetAutoOpenGreetingText);
 }

@@ -105,10 +105,18 @@ public sealed class MessageBatchWriter(
             // group: an impossible-in-practice edge case getting the safest (shortest-lived) class is
             // preferable to an already-validated batch of sends failing on a lookup that has nothing
             // to do with whether they are valid messages.
+            //
+            // `23-64`: the DTO itself is kept, not just its `Tier`, for the identical cache-aside read
+            // - `SiteConfigDto`'s own remarks state the same `adr/0031` carve-out for
+            // `WidgetAutoOpenEnabled`/`WidgetAutoOpenGreetingText` below: whether *this* message
+            // materialises a greeting beside it is a stamp, not a gate, so reusing this one already-
+            // loaded read (rather than a second lookup) costs nothing rule 8 protects against.
+            var siteConfig = conversation is null
+                ? null
+                : await getSiteConfig.HandleAsync(new GetSiteConfigById(conversation.SiteId), cancellationToken);
             var retentionClass = conversation is null
                 ? (RetentionClass?)null
-                : RetentionClass.FromTier((await getSiteConfig.HandleAsync(
-                    new GetSiteConfigById(conversation.SiteId), cancellationToken))?.Tier ?? RetentionClass.Free.Value);
+                : RetentionClass.FromTier(siteConfig?.Tier ?? RetentionClass.Free.Value);
 
             foreach (var item in group)
             {
@@ -153,6 +161,39 @@ public sealed class MessageBatchWriter(
                 var messageId = new MessageId(idGenerator.NewId(now));
                 try
                 {
+                    // `23-64`/`adr/0148`: materialised, if it applies at all, immediately before the
+                    // visitor's own message that requested it - inside the same transaction, so the
+                    // greeting can never exist without the real message that follows it committing
+                    // alongside it (or vice versa: the whole `SaveChangesAsync` below either lands
+                    // both rows or neither). `Conversation.AddAutoGreetingMessage`'s own `_messages.Count
+                    // > 0` guard is what actually decides "genuinely the first message" - re-checked
+                    // fresh here, against this flush's own freshly-loaded aggregate, never trusted from
+                    // whatever the widget believed when it drew the greeting seconds or minutes earlier.
+                    // `siteConfig` is re-checked too (`WidgetAutoOpenEnabled`/`WidgetAutoOpenGreetingText`
+                    // as they stand *now*, `adr/0148`'s own "the tenant's configuration as it stands
+                    // today" consequence) - a tenant who disabled auto-open or cleared the greeting in
+                    // the interval between the widget drawing it and this write gets no greeting
+                    // materialised, silently, which is the correct outcome per that ADR, not a bug to
+                    // guard against.
+                    if (item.Message.AuthorKind == MessageAuthorKind.Visitor
+                        && item.Message.MaterializeAutoGreeting
+                        && siteConfig is { WidgetAutoOpenEnabled: true, WidgetAutoOpenGreetingText: { } greetingText })
+                    {
+                        var greetingMessageId = new MessageId(idGenerator.NewId(now));
+                        var greeting = conversation.AddAutoGreetingMessage(
+                            greetingMessageId, new MessageBody(greetingText), now, retentionClass);
+                        if (greeting is not null)
+                        {
+                            var greetingEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
+                            // No caller is waiting on this row's own ack - nothing in `batch` represents
+                            // it, and nothing should: the greeting was never a request anyone made, only
+                            // a consequence of the one that follows. Its outbox row still carries the
+                            // same `TraceParent` as the real message beside it, so both land in the one
+                            // trace a reviewer would look at to understand this send.
+                            outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(greetingEvent, idGenerator), item.Message.TraceParent);
+                        }
+                    }
+
                     // `14-06`: Content is forwarded verbatim and never inspected - it was validated
                     // for shape by the send handler and is meaningless to everything from here down.
                     var message = item.Message.AuthorKind == MessageAuthorKind.Visitor

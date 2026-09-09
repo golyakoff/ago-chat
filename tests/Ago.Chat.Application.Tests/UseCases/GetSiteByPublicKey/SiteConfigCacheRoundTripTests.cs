@@ -24,10 +24,14 @@ public class SiteConfigCacheRoundTripTests
         OfflineAutoReplySettings autoReply,
         Locale locale = Locale.En,
         string? noticeText = "We read what you send us.",
-        string? noticeUrl = "https://tenant.example/privacy") =>
+        string? noticeUrl = "https://tenant.example/privacy",
+        bool autoOpenEnabled = false,
+        AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30,
+        string? autoOpenGreetingText = null) =>
         new(
             Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply,
-            "free", noticeText, noticeUrl, ContactVisibility.Visible, false);
+            "free", noticeText, noticeUrl, ContactVisibility.Visible, false, autoOpenEnabled, autoOpenDelaySeconds,
+            autoOpenGreetingText);
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;
@@ -116,5 +120,46 @@ public class SiteConfigCacheRoundTripTests
         var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, locale));
 
         Assert.Equal(locale, read.WidgetLocale);
+    }
+
+    // `23-64`: `AutoOpenDelay` is a plain CLR enum on this DTO, the same "cannot reproduce 14-04's own
+    // struct/class bug directly" shape `Locale` above already has - asserted through a real round trip
+    // anyway, for the same reason every other field in this file is: only the actual (de)serializer the
+    // cache uses is evidence.
+    [Theory]
+    [InlineData(AutoOpenDelay.Seconds15)]
+    [InlineData(AutoOpenDelay.Seconds120)]
+    public void TheWidgetAutoOpenDelay_SurvivesTheCache(AutoOpenDelay delay)
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, autoOpenEnabled: true, autoOpenDelaySeconds: delay, autoOpenGreetingText: "Hi there!"));
+
+        Assert.Equal(delay, read.WidgetAutoOpenDelaySeconds);
+    }
+
+    // `23-64`: `WidgetAutoOpenEnabled`/`WidgetAutoOpenGreetingText` join `TheWidgetNoticeFields_SurviveTheCache`'s
+    // own reasoning - plain scalars with no validating constructor at this DTO layer, still asserted
+    // through the real (de)serializer rather than trusted because the test compiles. This is also the
+    // one cached field `MessageBatchWriter` (`23-64`'s own materialisation hook) reads directly, so a
+    // cache hit silently losing this value would silently stop every auto-greeting from materialising -
+    // exactly the invisible failure mode this file's own class-level remarks describe.
+    [Fact]
+    public void TheWidgetAutoOpenFields_SurviveTheCache()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, autoOpenEnabled: true, autoOpenGreetingText: "We'll be right with you!"));
+
+        Assert.True(read.WidgetAutoOpenEnabled);
+        Assert.Equal("We'll be right with you!", read.WidgetAutoOpenGreetingText);
+    }
+
+    // `23-64`'s own default - a site with auto-open never configured must round-trip as `null`, not as
+    // an empty string a naive (de)serializer default could substitute - the identical guard
+    // `ANullWidgetNotice_SurvivesTheCacheAsNull` already states for the sibling notice field.
+    [Fact]
+    public void ANullAutoOpenGreeting_SurvivesTheCacheAsNull()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled));
+
+        Assert.False(read.WidgetAutoOpenEnabled);
+        Assert.Null(read.WidgetAutoOpenGreetingText);
     }
 }

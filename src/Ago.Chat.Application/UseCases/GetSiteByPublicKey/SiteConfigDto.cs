@@ -57,9 +57,24 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// <b>put on the wire</b> by the handshake: whether the launcher animates is a fact the widget's own
 /// bootstrap needs to render correctly, the opposite of <see cref="OfflineAutoReply"/>/<see cref="Tier"/>'s
 /// "never expose to the public key" reasoning.
+/// `23-64`: <see cref="WidgetAutoOpenEnabled"/>/<see cref="WidgetAutoOpenDelaySeconds"/>/
+/// <see cref="WidgetAutoOpenGreetingText"/> join on the identical terms <see cref="WidgetAttractAttention"/>
+/// did - additive fields, populated identically by both loaders, <b>put on the wire</b> by the
+/// handshake (the widget draws the greeting from exactly what this DTO carries, `adr/0148`).
+/// <b>Also this DTO's one other real reader</b>: <c>MessageBatchWriter</c> reads
+/// <see cref="WidgetAutoOpenEnabled"/>/<see cref="WidgetAutoOpenGreetingText"/> through this same
+/// cache-aside DTO (via <c>GetSiteConfigByIdHandler</c>, already loaded once per batch group for
+/// <see cref="Tier"/>'s own `RetentionClass.FromTier` stamp) to decide whether the visitor's first
+/// real message should materialise the drawn greeting alongside it - the identical `adr/0031` "a
+/// stamp, not a gate" carve-out from `CLAUDE.md` rule 8 that read already relies on: whether this
+/// *particular* message gets an extra row beside it is not a decision anything's correctness depends
+/// on, only what optional content accompanies an already-accepted write, so a cache entry up to five
+/// minutes stale costs nothing a fresh read would not itself already risk (`adr/0148`'s own "the
+/// tenant's configuration as it stands today" - today, at whichever moment this read actually runs).
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
     OfflineAutoReplySettings OfflineAutoReply, string Tier,
     string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility,
-    bool WidgetAttractAttention);
+    bool WidgetAttractAttention, bool WidgetAutoOpenEnabled, AutoOpenDelay WidgetAutoOpenDelaySeconds,
+    string? WidgetAutoOpenGreetingText);
