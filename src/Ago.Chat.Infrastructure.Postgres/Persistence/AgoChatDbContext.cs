@@ -51,6 +51,8 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `22-07`/`adr/0093`: "site X's module K has quantity Q" - the calendar add-on's own granted
     // masters count is the first real instance.
     public DbSet<ModuleQuantityGrant> ModuleQuantityGrants => Set<ModuleQuantityGrant>();
+
+    public DbSet<ModuleQuantityImpactPreview> ModuleQuantityImpactPreviews => Set<ModuleQuantityImpactPreview>();
     internal DbSet<ModuleTask> ModuleTasks => Set<ModuleTask>();
     // `14-14`: VisitorContactDetail's own table - see its own remarks for why it is not folded into
     // ChannelIdentities.

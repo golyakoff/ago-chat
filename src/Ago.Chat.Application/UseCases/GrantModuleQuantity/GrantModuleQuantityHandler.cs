@@ -10,9 +10,13 @@ namespace Ago.Chat.Application.UseCases.GrantModuleQuantity;
 /// job is making the granted number durable on this side and telling the module it changed - never
 /// calling the module directly. See <see cref="IModuleQuantityGrantStore.GrantAsync"/> for why the
 /// state change and the outbox row are one write rather than two.
+///
+/// <para>`23-88`: the identical <see cref="ExpectedAffectedCount"/> write-time guard
+/// <c>GrantModuleQuantityAsOwnerHandler</c> gained - see that handler's own remarks for the full
+/// reasoning, unchanged for this tenant-facing sibling.</para>
 /// </summary>
 public sealed class GrantModuleQuantityHandler(
-    IModuleQuantityGrantStore grants, IPermissionChecker permissions, IClock clock)
+    IModuleQuantityGrantStore grants, IModuleQuantityImpactPreviewStore previews, IPermissionChecker permissions, IClock clock)
 {
     public async Task<Result> HandleAsync(GrantModuleQuantity command, CancellationToken cancellationToken)
     {
@@ -36,6 +40,19 @@ public sealed class GrantModuleQuantityHandler(
         if (command.Quantity < 0)
         {
             return ConversationErrors.ModuleInvalid("A granted quantity cannot be negative.");
+        }
+
+        if (command.ExpectedAffectedCount is { } expectedAffectedCount)
+        {
+            var preview = await previews.TryGetAsync(command.SiteId, moduleKey, cancellationToken);
+            if (preview is null
+                || preview.RequestedQuantity != command.Quantity
+                || preview.AnsweredAt is null
+                || preview.AffectedCount != expectedAffectedCount)
+            {
+                return ConversationErrors.ModuleQuantityImpactStale(
+                    "The impact shown for this quantity has changed or was never answered - preview it again before confirming.");
+            }
         }
 
         await grants.GrantAsync(command.SiteId, moduleKey, command.Quantity, clock.UtcNow, cancellationToken);

@@ -425,6 +425,16 @@ internal static class TenantScopeExemptions
             + "IPermissionChecker against Permission.SiteConfigure) rather than a nullable-OperatorId branch on it - "
             + "the identical 'one flag flips off every check' hazard EnableModuleForSiteAsOwnerHandler's own entry "
             + "above already names for its own tenant-facing sibling.",
+        ["Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner.RequestModuleQuantityImpactAsOwnerHandler.HandleAsync"] =
+            "`23-88`, the platform owner's own half of the async impact-preview round trip - the identical category "
+            + "as GrantModuleQuantityAsOwnerHandler right above: SiteId names the tenant the question is about, "
+            + "chosen by the owner, and RequirePlatformOwner on OwnerModuleEndpoints is the entire access-control "
+            + "story. No tenant-facing sibling exists yet for this one (the grant itself has one; this preview "
+            + "does not), the same accepted gap the grant once had before an owner-facing route existed for it.",
+        ["Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner.GetModuleQuantityImpactPreviewAsOwnerHandler.HandleAsync"] =
+            "`23-88`, the console's own poll for whether the module has answered yet - the identical category as "
+            + "VerifyModuleRegistrationAsOwnerHandler above: read-only, RequirePlatformOwner is the entire "
+            + "access-control story, and SiteId is used only to load one row.",
         ["Ago.Chat.Application.UseCases.RestoreOperatorSeatAsOwner.RestoreOperatorSeatAsOwnerHandler.HandleAsync"] =
             "`23-68`, the platform owner's own recovery write - restores a named operator's seat on a named site, "
             + "the console-reachable remedy for a tenant locked out with no other way back in. The identical "

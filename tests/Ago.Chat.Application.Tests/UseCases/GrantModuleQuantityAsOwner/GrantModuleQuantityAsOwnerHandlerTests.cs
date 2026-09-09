@@ -13,22 +13,26 @@ public class GrantModuleQuantityAsOwnerHandlerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
     private static readonly SiteId SiteId = new(Guid.NewGuid());
+    private static readonly ModuleKey CalendarModuleKey = new("calendar");
 
     private sealed record Fixture(
         Application.UseCases.GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwnerHandler Handler,
-        FakeModuleQuantityGrantStore Grants);
+        FakeModuleQuantityGrantStore Grants,
+        FakeModuleQuantityImpactPreviewStore Previews);
 
     private static Fixture CreateFixture()
     {
         var grants = new FakeModuleQuantityGrantStore();
+        var previews = new FakeModuleQuantityImpactPreviewStore();
         return new Fixture(
-            new Application.UseCases.GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwnerHandler(grants, new FakeClock(Now)),
-            grants);
+            new Application.UseCases.GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwnerHandler(grants, previews, new FakeClock(Now)),
+            grants,
+            previews);
     }
 
     private static Application.UseCases.GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwner Command(
-        string moduleKey = "calendar", int quantity = 5) =>
-        new(SiteId, moduleKey, quantity);
+        string moduleKey = "calendar", int quantity = 5, int? expectedAffectedCount = null) =>
+        new(SiteId, moduleKey, quantity, expectedAffectedCount);
 
     [Fact]
     public async Task HandleAsync_WithNoRequesterAtAll_StillGrants()
@@ -111,5 +115,59 @@ public class GrantModuleQuantityAsOwnerHandlerTests
         Assert.True(second.IsSuccess);
         Assert.Equal(5, await fixture.Grants.GetQuantityAsync(SiteId, new ModuleKey("calendar"), CancellationToken.None));
         Assert.Single(fixture.Grants.Grants);
+    }
+
+    /// <summary>`23-88`: no <c>ExpectedAffectedCount</c> preserves this command's own original,
+    /// unconditional behaviour - identical reasoning to the tenant-facing sibling's own test.</summary>
+    [Fact]
+    public async Task HandleAsync_WithNoExpectedAffectedCount_GrantsUnconditionally()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(quantity: 2, expectedAffectedCount: null), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, await fixture.Grants.GetQuantityAsync(SiteId, CalendarModuleKey, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithExpectedAffectedCountMatchingTheAnsweredPreview_Grants()
+    {
+        var fixture = CreateFixture();
+        await fixture.Previews.RequestAsync(SiteId, CalendarModuleKey, 2, Now, CancellationToken.None);
+        await fixture.Previews.AnswerAsync(SiteId, CalendarModuleKey, 2, 3, new[] { "Anna", "Boris", "Vera" }, Now, CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(Command(quantity: 2, expectedAffectedCount: 3), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, await fixture.Grants.GetQuantityAsync(SiteId, CalendarModuleKey, CancellationToken.None));
+    }
+
+    /// <summary>`23-88`'s own fails-before, on the owner-facing route: the answer said 3, the owner
+    /// confirms against 2 - refused, nothing granted.</summary>
+    [Fact]
+    public async Task HandleAsync_WithExpectedAffectedCountDisagreeingWithTheAnsweredPreview_Refuses_AndGrantsNothing()
+    {
+        var fixture = CreateFixture();
+        await fixture.Previews.RequestAsync(SiteId, CalendarModuleKey, 2, Now, CancellationToken.None);
+        await fixture.Previews.AnswerAsync(SiteId, CalendarModuleKey, 2, 3, new[] { "Anna", "Boris", "Vera" }, Now, CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(Command(quantity: 2, expectedAffectedCount: 2), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.QuantityImpactStale", result.Error!.Value.Code);
+        Assert.Empty(fixture.Grants.Grants);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithExpectedAffectedCountButNoPreviewEverRequested_Refuses()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(quantity: 2, expectedAffectedCount: 0), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Module.QuantityImpactStale", result.Error!.Value.Code);
+        Assert.Empty(fixture.Grants.Grants);
     }
 }

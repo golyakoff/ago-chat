@@ -613,6 +613,17 @@ public static class ConversationErrors
         new("Module.TriggerWordAlreadyRegistered",
             $"Trigger word '{word}' is already registered to module '{existingModuleKey}' on this site.");
 
+    /// <summary>`23-88`: the owner confirmed a quantity grant against a count they were shown by
+    /// the async impact-preview round trip, and the module has since answered a different
+    /// question, or has not answered the one this confirm names at all - see
+    /// <see cref="GrantModuleQuantityAsOwner.GrantModuleQuantityAsOwnerHandler"/>'s own remarks for
+    /// exactly which of those two this collapses (deliberately, the same "nothing more specific to
+    /// do about either" reasoning `Module.Invalid`'s own siblings already apply on this boundary).
+    /// The remedy is always the same: ask again and look at the fresh answer before confirming
+    /// again.</summary>
+    public static Error ModuleQuantityImpactStale(string reason) =>
+        new("Module.QuantityImpactStale", reason);
+
     /// <summary>`14-12`/`docs/conventions/text-commands.md`: a trigger word collides with Chat's own
     /// closed, product-level command vocabulary (<see cref="Domain.ReservedChatCommands"/>) - refused
     /// regardless of what any other module on this site has registered, since this word will never mean
