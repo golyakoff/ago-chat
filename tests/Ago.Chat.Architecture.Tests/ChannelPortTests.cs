@@ -134,6 +134,38 @@ public class ChannelPortTests
     /// implementation pay for that choice, which is the opposite of what
     /// <see cref="Ago.Chat.Application.Abstractions.IWebhookDeliveryClient"/> established.
     /// </summary>
+    /// <summary>
+    /// `25-09`/`adr/0069`'s "the console never shows it back", made a structural guarantee rather than a
+    /// reviewed convention: both response types <c>Ago.Chat.Api.Channels.MaxChannelEndpoints</c> sends
+    /// back to the console after a connect or a status read are checked for any property whose name
+    /// could plausibly carry the shop's own bot token or MAX's webhook secret. A regression that added
+    /// one - "just echo the token back so the console can show a masked version", the exact shortcut
+    /// `adr/0069` forbids - fails this test the moment the property is added, not when someone happens
+    /// to notice it in a code review. <c>ChannelCredentialId</c> is deliberately not treated as a
+    /// false positive: it is an opaque server-assigned id, never the credential's own secret value.
+    /// </summary>
+    [Fact]
+    public void MaxChannelResponses_CarryNoTokenOrSecretProperty()
+    {
+        string[] typeNames = ["ConnectMaxChannelResponse", "MaxChannelStatusResponse"];
+        string[] forbiddenFragments = ["Token", "Secret"];
+
+        foreach (var typeName in typeNames)
+        {
+            var type = TestAssemblies.Api.Reflection.GetTypes().SingleOrDefault(t => t.Name == typeName);
+            Assert.True(type is not null, $"{typeName} must exist in Ago.Chat.Api.Channels.MaxChannelEndpoints");
+
+            var offendingProperties = type!.GetProperties()
+                .Where(p => forbiddenFragments.Any(fragment => p.Name.Contains(fragment, StringComparison.Ordinal)))
+                .Select(p => p.Name)
+                .ToList();
+
+            Assert.True(offendingProperties.Count == 0,
+                $"{typeName} carries {string.Join(", ", offendingProperties)} - a MAX response the console reads must "
+                + "never be able to hold a token or secret value (adr/0069).");
+        }
+    }
+
     [Fact]
     public void ChannelPort_DoesNotKnowHowItIsProtected() =>
         Types.InAssembly(TestAssemblies.Application.Reflection)
