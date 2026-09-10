@@ -133,6 +133,11 @@ public static class ErrorExtensions
                 // it is a one-line addition to an existing switch, not a second promise (rule 15), and
                 // it is what this item's own new route needs to answer a negative quantity correctly.
                 or "Module.Invalid"
+                // `25-43`: the platform owner tried to publish a price for a key code has not
+                // registered (Domain.PricedResourceKeys.IsKnown), or a negative amount - both
+                // the caller's own mistake to fix, the identical shape Module.Invalid's own
+                // remarks state for the analogous case one line up.
+                or "Billing.PriceKeyUnknown" or "Billing.PriceInvalid"
                 // `23-13`: the caller's own mistake to fix - Force was set with no non-blank reason, or
                 // one longer than RevokeModuleForSiteAsOwnerHandler.MaxReasonLength allows. The same
                 // "decide, don't default" shape Module.GrantExpiryInvalid already gives its own guard.
@@ -217,7 +222,13 @@ public static class ErrorExtensions
                 // changed, gone stale, or never existed - GrantModuleQuantityAsOwnerHandler's own
                 // remarks for exactly which. The remedy is always the same second act: ask again, look
                 // at the fresh answer, confirm again - never a different request body.
-                or "Module.QuantityImpactStale" => StatusCodes.Status409Conflict,
+                or "Module.QuantityImpactStale"
+                // `25-43`: two platform-owner publishes for the same price key raced
+                // repeatedly - genuinely conflict-shaped, not the caller's mistake to fix and
+                // not a transient dependency failure, the identical "retry the exact same
+                // request" reasoning Document.PublishConflict's own remarks give for the
+                // identical shape.
+                or "Billing.PricePublishConflict" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
@@ -318,7 +329,15 @@ public static class ErrorExtensions
                 // Site.AgreementUnavailable right above - a site turned on RequireContactConsent (or a
                 // visitor is trying to accept) before its own consent document was ever published under
                 // this purpose's key (PublishedDocumentErrors.ConsentDocumentUnavailable's own remarks).
-                or "Document.ConsentDocumentUnavailable" => StatusCodes.Status503ServiceUnavailable,
+                or "Document.ConsentDocumentUnavailable"
+                // `25-43`: a real charge site (checkout, renewal, a prorated seat-count
+                // upgrade) tried to read the currently-effective price for a key nothing has
+                // ever published a version under - `25-43`'s own second decision states this
+                // is the ordinary "built, not yet for sale" state, and every charge site must
+                // refuse cleanly rather than crash or charge zero (PriceCatalogErrors.PriceNotConfigured's
+                // own remarks) - the identical "a dependency of this request is missing, not
+                // anything the caller supplied being wrong" shape this whole block already uses.
+                or "Billing.PriceNotConfigured" => StatusCodes.Status503ServiceUnavailable,
             // `ago-root#352`: demo.unavailable is deliberately left here rather than given its own status.
             // MintDemoTenantHandler returns it only after ISiteRegistrationRepository.TryRegisterAsync's
             // five-row insert hits its own unique-index violation - a race that port's own remarks call

@@ -43,7 +43,11 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 29, 12, 0, 0, TimeSpan.Zero);
 
-    private static readonly BillingOptions Billing = new() { BaseSeatPriceRub = 500m, PricePerExtraSeatRub = 100m, CheckoutReturnUrl = "https://console.example/return" };
+    // `25-43`: the seat-pricing figures this whole file's own assertions are computed against - no
+    // longer a BillingOptions instance, but the same two Rouble numbers, now published into the real
+    // Postgres price catalog by SeedCurrentSeatPricesAsync at the top of every seeding helper below.
+    private const decimal BaseSeatPriceRub = 500m;
+    private const decimal PricePerExtraSeatRub = 100m;
 
     [Fact]
     public async Task RunOnceAsync_WhenTheRechargeIsDeclined_EntersPastDue_AndLeavesSiteEntitlementsUnchanged()
@@ -205,7 +209,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var applier = BuildApplier(db, new Dictionary<string, string?> { ["channel-telegram"] = "channel" });
 
-        await applier.ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None);
+        await applier.ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
 
         await using var verify = fixture.CreateDbContext();
         var option = await verify.BillingSubscriptions.SingleAsync(s => s.Id == optionId);
@@ -239,7 +243,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         {
             // First renewal grants it - a lapse must find something real to take away, not merely
             // exercise the revoke path against a row that was never granted.
-            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None);
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
         }
 
         await MarkPastDueAsync(optionId, Now);
@@ -275,7 +279,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
 
         await using (var db = fixture.CreateDbContext())
         {
-            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None);
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
         }
 
         await using var db2 = fixture.CreateDbContext();
@@ -301,7 +305,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         var applier = BuildApplier(db, new Dictionary<string, string?>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => applier.ApplyRenewalSuccessAsync(optionId, Now, CancellationToken.None));
+            () => applier.ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None));
     }
 
     [Fact]
@@ -390,6 +394,34 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         Options.Create(new SubscriptionRenewalJobOptions()),
         NullLogger<SubscriptionRenewalJob>.Instance);
 
+    /// <summary>`25-43`: publishes a fresh version of both seat-pricing keys, at
+    /// <see cref="BaseSeatPriceRub"/>/<see cref="PricePerExtraSeatRub"/>, against the real Postgres
+    /// container this test class shares - not the migration's own seed data (which this class never
+    /// relies on, deliberately, so this file's own numbers stay whatever this file says they are,
+    /// independent of what a future change to the seed migration's own amounts might be). Called once
+    /// per seeded subscription, so <see cref="ProcessSubscriptionRenewalHandler"/>'s own
+    /// <c>FindCurrentAsync</c> reads exactly this value at charge time - every test in this file seeds
+    /// a subscription before triggering a renewal, and never republishes a *different* amount
+    /// mid-test, so "the freshest published version" and "what this subscription was actually last
+    /// charged" agree throughout.</summary>
+    private static async Task<(int BaseSeatPriceVersion, int ExtraSeatPriceVersion)> SeedCurrentSeatPricesAsync(
+        AgoChatDbContext db, DateTimeOffset publishedAt)
+    {
+        var prices = new PriceCatalogRepository(db);
+
+        var baseResource = await prices.GetByKeyAsync(SubscriptionTierBands.BaseSeatPriceKey, CancellationToken.None)
+            ?? PricedResource.Create(new PricedResourceId(Guid.NewGuid()), SubscriptionTierBands.BaseSeatPriceKey);
+        var baseVersion = baseResource.Publish(new PublishedPriceVersionId(Guid.NewGuid()), BaseSeatPriceRub, publishedAt);
+        await prices.SaveAsync(baseResource, CancellationToken.None);
+
+        var extraResource = await prices.GetByKeyAsync(SubscriptionTierBands.ExtraSeatPriceKey, CancellationToken.None)
+            ?? PricedResource.Create(new PricedResourceId(Guid.NewGuid()), SubscriptionTierBands.ExtraSeatPriceKey);
+        var extraVersion = extraResource.Publish(new PublishedPriceVersionId(Guid.NewGuid()), PricePerExtraSeatRub, publishedAt);
+        await prices.SaveAsync(extraResource, CancellationToken.None);
+
+        return (baseVersion.Sequence, extraVersion.Sequence);
+    }
+
     private async Task<(SiteId SiteId, BillingSubscriptionId SubscriptionId)> SeedSucceededSubscriptionAsync(
         int seats, string tier, DateTimeOffset periodEnd)
     {
@@ -399,8 +431,10 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], tier: tier, seatLimit: seats));
 
+        var (baseSeatPriceVersion, extraSeatPriceVersion) = await SeedCurrentSeatPricesAsync(db, Now - BillingSubscription.PeriodLength);
         var subscription = BillingSubscription.Create(
-            subscriptionId, siteId, $"pmt_{subscriptionId.Value:N}", seats, tier, Now - BillingSubscription.PeriodLength);
+            subscriptionId, siteId, $"pmt_{subscriptionId.Value:N}", seats, tier, baseSeatPriceVersion, extraSeatPriceVersion,
+            Now - BillingSubscription.PeriodLength);
         subscription.MarkSucceeded("card_on_file", Now - BillingSubscription.PeriodLength);
         db.BillingSubscriptions.Add(subscription);
         await db.SaveChangesAsync();
@@ -508,7 +542,8 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
             var httpClient = new HttpClient { BaseAddress = new Uri(yooKassaBaseUrl) };
             var yooKassa = new YooKassaPaymentsApiClient(httpClient);
 
-            var handler = new ProcessSubscriptionRenewalHandler(subscriptions, yooKassa, Billing, applier, clock);
+            var prices = new PriceCatalogRepository(db);
+            var handler = new ProcessSubscriptionRenewalHandler(subscriptions, yooKassa, prices, applier, clock);
 
             var services = new Dictionary<Type, object>
             {

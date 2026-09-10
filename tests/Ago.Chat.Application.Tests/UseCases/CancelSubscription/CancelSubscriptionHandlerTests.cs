@@ -28,7 +28,7 @@ public class CancelSubscriptionHandlerTests
 
     private static BillingSubscription SeedSucceeded(FakeBillingSubscriptionRepository subscriptions, BillingSubscriptionId id)
     {
-        var subscription = BillingSubscription.Create(id, SiteId, "pmt_123", 5, SubscriptionTierBands.Starter, Now - BillingSubscription.PeriodLength);
+        var subscription = BillingSubscription.Create(id, SiteId, "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now - BillingSubscription.PeriodLength);
         subscription.MarkSucceeded("card_abc", Now - BillingSubscription.PeriodLength);
         subscriptions.Seed(subscription);
         return subscription;

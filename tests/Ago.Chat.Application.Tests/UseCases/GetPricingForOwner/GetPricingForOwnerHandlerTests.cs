@@ -1,4 +1,4 @@
-﻿using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.GetPricingForOwner;
 using Ago.Chat.Domain;
 
@@ -7,28 +7,32 @@ namespace Ago.Chat.Application.Tests.UseCases.GetPricingForOwner;
 /// <summary>
 /// `25-20`: unlike its sibling owner reads (`ListSitesForOwnerHandler`, `GetSiteForOwnerHandler`,
 /// neither of which has an Application-level unit test - both need a real database to say anything),
-/// <see cref="GetPricingForOwnerHandler"/> touches no I/O at all: every number it returns comes from
-/// an in-process <see cref="BillingOptions"/> instance and a handful of `Ago.Chat.Domain` constants.
-/// That is exactly `testing.md`'s own boundary for a plain unit test - no fake, no database, no HTTP
-/// host - so this class exists where its two siblings' equivalent behaviour instead lives only in
+/// <see cref="GetPricingForOwnerHandler"/> touches no real I/O - `25-43`'s own
+/// <see cref="FakePriceCatalogRepository"/> stands in for <c>IPriceCatalogRepository</c>, the same
+/// in-memory-fake boundary `testing.md` draws for a plain unit test. That is exactly `testing.md`'s
+/// own boundary for a plain unit test - no fake backed by a real database, no HTTP host - so this
+/// class exists where its two siblings' equivalent behaviour instead lives only in
 /// `Ago.Chat.Integration.Tests.OwnerPricingEndpointTests`.
 /// </summary>
 public sealed class GetPricingForOwnerHandlerTests
 {
+    private static readonly DateTimeOffset Now = new(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
+
     // `25-29`: `ago-business` decision `0012`'s own base-plus-marginal formula, not `0008`'s
     // superseded flat rate - this test now checks the three fields that state that formula
     // completely, plus the legacy `PricePerSeatRub` field kept only for wire compatibility (see that
     // field's own remarks on `OwnerSeatPricingDto` for why it reports the marginal rate).
+    //
+    // `25-43`: the two numbers now come from a fake IPriceCatalogRepository, not a BillingOptions
+    // instance - GetPricingForOwnerHandler's own remarks explain why the wire shape this test asserts
+    // against is unchanged even though the source moved.
     [Fact]
-    public async Task HandleAsync_ReturnsTheRealSeatPricingFromBillingOptionsAndDomainConstants()
+    public async Task HandleAsync_ReturnsTheRealSeatPricingFromThePriceCatalogAndDomainConstants()
     {
-        var billingOptions = new BillingOptions
-        {
-            BaseSeatPriceRub = 490m,
-            PricePerExtraSeatRub = 200m,
-            CheckoutReturnUrl = "https://office.test.invalid/settings/billing",
-        };
-        var handler = new GetPricingForOwnerHandler(billingOptions);
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 490m, Now);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 200m, Now);
+        var handler = new GetPricingForOwnerHandler(prices);
 
         var response = await handler.HandleAsync(CancellationToken.None);
 
@@ -46,7 +50,10 @@ public sealed class GetPricingForOwnerHandlerTests
     [Fact]
     public async Task HandleAsync_ListsExactlyOneTier_MatchingSubscriptionTierBands()
     {
-        var handler = new GetPricingForOwnerHandler(new BillingOptions { BaseSeatPriceRub = 1m, PricePerExtraSeatRub = 1m });
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 1m, Now);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 1m, Now);
+        var handler = new GetPricingForOwnerHandler(prices);
 
         var response = await handler.HandleAsync(CancellationToken.None);
 
@@ -72,10 +79,35 @@ public sealed class GetPricingForOwnerHandlerTests
     [Fact]
     public async Task HandleAsync_ReturnsNoBillingOptions_NoMechanismExistsToPriceThemYet()
     {
-        var handler = new GetPricingForOwnerHandler(new BillingOptions { BaseSeatPriceRub = 1m, PricePerExtraSeatRub = 1m });
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 1m, Now);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 1m, Now);
+        var handler = new GetPricingForOwnerHandler(prices);
 
         var response = await handler.HandleAsync(CancellationToken.None);
 
         Assert.Empty(response.BillingOptions);
+    }
+
+    // `25-43`: the second decision made visible on this exact screen - a registered key with nothing
+    // published yet appears in PricedResources with a null amount, honestly, rather than being hidden
+    // or fabricated. Both seat keys are seeded here (GetPricingForOwnerHandler throws otherwise - see
+    // its own remarks) - PricedResourceKeys.All has exactly two entries today, both seeded, so this
+    // test is written to remain correct the day a third key is registered with nothing published for
+    // it, rather than asserting an exact list length that would break on that unrelated change.
+    [Fact]
+    public async Task HandleAsync_ListsEveryRegisteredKey_WithItsCurrentPriceOrNullIfUnpublished()
+    {
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 490m, Now);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 200m, Now);
+        var handler = new GetPricingForOwnerHandler(prices);
+
+        var response = await handler.HandleAsync(CancellationToken.None);
+
+        Assert.Equal(PricedResourceKeys.All.Count, response.PricedResources.Count);
+        var basePricedResource = Assert.Single(response.PricedResources, r => r.Key == SubscriptionTierBands.BaseSeatPriceKey.Value);
+        Assert.Equal("v1", basePricedResource.CurrentVersion);
+        Assert.Equal(490m, basePricedResource.CurrentAmountRub);
     }
 }

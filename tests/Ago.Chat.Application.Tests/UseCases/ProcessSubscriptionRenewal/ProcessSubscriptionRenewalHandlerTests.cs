@@ -20,7 +20,6 @@ public class ProcessSubscriptionRenewalHandlerTests
 {
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 9, 8, 12, 0, 0, TimeSpan.Zero);
-    private static readonly BillingOptions Billing = new() { BaseSeatPriceRub = 500m, PricePerExtraSeatRub = 100m, CheckoutReturnUrl = "https://console.example/return" };
 
     [Fact]
     public async Task HandleAsync_WhenTheDueSubscriptionIsAnOption_ThrowsRatherThanChargingAWrongOrZeroAmount()
@@ -32,8 +31,11 @@ public class ProcessSubscriptionRenewalHandlerTests
         var subscriptions = new FakeBillingSubscriptionRepository();
         subscriptions.Seed(option);
         var yooKassa = new FakeYooKassaPaymentsClient();
+        // `25-43`: never seeded - the IsOption guard this test proves fires before either seat-pricing
+        // key is ever read, so an empty catalog is the honest fixture, not an oversight.
+        var prices = new FakePriceCatalogRepository();
         var applier = new FakeSubscriptionRenewalApplier();
-        var handler = new ProcessSubscriptionRenewalHandler(subscriptions, yooKassa, Billing, applier, new FakeClock(Now));
+        var handler = new ProcessSubscriptionRenewalHandler(subscriptions, yooKassa, prices, applier, new FakeClock(Now));
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => handler.HandleAsync(new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(optionId), CancellationToken.None));

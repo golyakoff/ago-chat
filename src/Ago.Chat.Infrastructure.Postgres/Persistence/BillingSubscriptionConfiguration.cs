@@ -19,6 +19,11 @@ internal sealed class BillingSubscriptionConfiguration : IEntityTypeConfiguratio
         builder.HasIndex(s => s.YooKassaPaymentId).IsUnique().HasDatabaseName("ux_billing_subscriptions_yookassa_payment_id");
         builder.Property(s => s.RequestedSeats).HasColumnName("requested_seats");
         builder.Property(s => s.Tier).HasColumnName("tier").IsRequired();
+        // `25-43`: the price version this subscription was actually last charged under for each of
+        // the two seat-pricing keys - 0 for an option row (BillingSubscription's own remarks on the
+        // "meaningless for an option row" convention shared with RequestedSeats/Tier above).
+        builder.Property(s => s.BaseSeatPriceVersion).HasColumnName("base_seat_price_version");
+        builder.Property(s => s.ExtraSeatPriceVersion).HasColumnName("extra_seat_price_version");
         builder.Property(s => s.Status).HasColumnName("status").HasConversion<string>();
         builder.Property(s => s.PaymentMethodId).HasColumnName("payment_method_id");
         builder.Property(s => s.CreatedAt).HasColumnName("created_at");

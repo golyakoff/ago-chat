@@ -97,4 +97,18 @@ internal static class IdConverters
     public static readonly ValueConverter<BillingOptionKey?, string?> NullableBillingOptionKey = new(
         key => key.HasValue ? key.Value.Value : null,
         value => value != null ? new BillingOptionKey(value) : (BillingOptionKey?)null);
+
+    /// <summary>`25-43`: <see cref="PricedResource"/>'s own strongly-typed id - the identical
+    /// <see cref="Document"/> converter above, restated for the new aggregate.</summary>
+    public static readonly ValueConverter<PricedResourceId, Guid> PricedResource = new(
+        id => id.Value, value => new PricedResourceId(value));
+
+    /// <summary>`25-43`: <see cref="PublishedPriceVersion"/>'s own strongly-typed id - the identical
+    /// <see cref="PublishedDocumentVersion"/> converter above, restated for the new child row.</summary>
+    public static readonly ValueConverter<PublishedPriceVersionId, Guid> PublishedPriceVersion = new(
+        id => id.Value, value => new PublishedPriceVersionId(value));
+
+    /// <summary>`25-43`: <see cref="PriceKey"/> is a plain string wrapper, the identical
+    /// non-nullable-<see cref="ModuleKey"/> shape above - listed here for the same reason.</summary>
+    public static readonly ValueConverter<PriceKey, string> PriceKey = new(key => key.Value, value => new PriceKey(value));
 }

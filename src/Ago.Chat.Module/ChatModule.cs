@@ -145,6 +145,7 @@ using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
 using Ago.Chat.Application.UseCases.InitiatePhoneVerification;
 using Ago.Chat.Application.UseCases.ConfirmPhoneVerification;
 using Ago.Chat.Application.UseCases.GetPricingForOwner;
+using Ago.Chat.Application.UseCases.PublishPriceVersion;
 using Ago.Chat.Module.PhoneVerification;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Avito;
@@ -684,17 +685,13 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AnalyticsOptions>>().Value);
 
         // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
-        // above - `25-29`: BaseSeatPriceRub/PricePerExtraSeatRub (replacing the old flat
-        // PricePerSeatRub) deliberately ship no code default (BillingOptions' own remarks: "measure or
-        // stay silent" applies with more force to a figure that charges a real card), so
-        // .ValidateOnStart() alone (no .Validate() predicate) is what turns "left at 0" into a startup
-        // failure - a positive check is added explicitly below since the CLR default for `decimal` (0)
-        // would otherwise satisfy a binder with nothing to complain about.
+        // above. `25-43`: BaseSeatPriceRub/PricePerExtraSeatRub moved off this options type entirely -
+        // they are owner-published data now (IPriceCatalogRepository, registered below), not
+        // configuration, so the positive-value .Validate() predicates this section used to carry for
+        // them are gone with the fields, not merely relaxed. Only CheckoutReturnUrl is left to bind.
         services
             .AddOptions<BillingOptions>()
             .Bind(configuration.GetSection(BillingOptions.SectionName))
-            .Validate(o => o.BaseSeatPriceRub > 0, "Billing:BaseSeatPriceRub must be set to a positive value.")
-            .Validate(o => o.PricePerExtraSeatRub > 0, "Billing:PricePerExtraSeatRub must be set to a positive value.")
             .Validate(o => Uri.IsWellFormedUriString(o.CheckoutReturnUrl, UriKind.Absolute), "Billing:CheckoutReturnUrl must be an absolute URL.")
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<BillingOptions>>().Value);
@@ -980,10 +977,16 @@ public sealed class ChatModule : IProductModule
         // policy, same registration shape as the two reads just above.
         services.AddScoped<UpdateSiteAllowedOriginsAsOwnerHandler>();
         // `25-20`: the platform owner's own price-list read - same host, same policy, same
-        // registration shape as the reads above. Resolves the identical `BillingOptions` singleton
-        // `CreateCheckoutSessionHandler` already takes, bound earlier in this method from
-        // `Billing:*` - no new options class, no new binding, just a second reader of the same one.
+        // registration shape as the reads above. `25-43`: now resolves `IPriceCatalogRepository`
+        // (registered in Ago.Chat.Infrastructure.Postgres's own ServiceCollectionExtensions) instead
+        // of the `BillingOptions` singleton it used to read - the wire shape this handler returns is
+        // unchanged, only the source moved.
         services.AddScoped<GetPricingForOwnerHandler>();
+        // `25-43`: the platform owner's own write for an already-registered price key -
+        // PublishPriceVersionHandler backs OwnerPricingEndpoints's own RequirePlatformOwner-gated
+        // route, the identical registration shape `24-02`'s PublishDocumentVersionHandler already uses
+        // above for the equivalent document-publish write.
+        services.AddScoped<PublishPriceVersionHandler>();
 
         // `6-03`: the registration and delivery-history backend for a future self-service console
         // screen - see each handler's own remarks. Registered for every host (the same shape as

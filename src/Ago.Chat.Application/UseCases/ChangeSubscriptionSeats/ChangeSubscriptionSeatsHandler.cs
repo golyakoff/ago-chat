@@ -1,5 +1,4 @@
 ﻿using Ago.Chat.Application.Abstractions;
-using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -21,22 +20,25 @@ namespace Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 /// digits (<c>YooKassaAmount</c>'s own `"F2"` formatting), so a rounding rule has to exist somewhere,
 /// and "round the customer's own favour on a tie" is the deliberate direction chosen.
 ///
-/// <para><b>`25-29`: both prices are no longer a flat rate times a seat count.</b> This paragraph used
-/// to read "both prices computed from the flat `BillingOptions.PricePerSeatRub`... seats are the only
-/// variable" - true of `0008`'s superseded grid, false of `ago-business` decision `0012`'s real one.
-/// <c>oldPrice</c>/<c>newPrice</c> below both go through <see cref="SubscriptionTierBands.ComputeSeatPriceRub"/>,
-/// the identical banded formula <c>CreateCheckoutSessionHandler</c>/<c>ProcessSubscriptionRenewalHandler</c>
-/// charge with - an upgrade from 3 to 5 seats, for instance, prorates the difference between 890 ₽ and
-/// 490 ₽, never <c>(5-3) × one flat rate</c>. The rounding rule above still needs to exist for the
-/// identical reason it did before this item: a banded price can produce a genuinely fractional
-/// prorated amount just as easily as a flat one could.</para>
+/// <para><b>`25-43`: <c>oldPrice</c> is read from the subscription's own stored price version, never
+/// from the catalog's currently-effective one.</b> This is the correctness reason
+/// <see cref="Domain.BillingSubscription.BaseSeatPriceVersion"/>/<see cref="Domain.BillingSubscription.ExtraSeatPriceVersion"/>
+/// exist at all, found while wiring this handler to the new mechanism: if this recomputed "what the
+/// tenant is already paying" from whatever <see cref="Abstractions.IPriceCatalogRepository.FindCurrentAsync"/>
+/// answers <em>today</em>, a price change between the tenant's last charge and this upgrade would
+/// silently reprice the period they already paid for - retroactively, through the proration math, not
+/// through anything that looks like an edit to history. <c>oldPrice</c> reads
+/// <see cref="Abstractions.IPriceCatalogRepository.FindVersionAsync"/> against the subscription's own
+/// stored version numbers instead; only <c>newPrice</c> (what the upgraded seat count costs going
+/// forward) reads the currently-effective one, the same "read fresh, at the moment of the decision"
+/// discipline every other charge site uses for the price it is actually about to charge.</para>
 /// </summary>
 public sealed class ChangeSubscriptionSeatsHandler(
     IBillingSubscriptionRepository subscriptions,
     IPermissionChecker permissions,
     IYooKassaPaymentsClient yooKassa,
+    IPriceCatalogRepository prices,
     ISeatChangeApplier applier,
-    BillingOptions billingOptions,
     IIdGenerator idGenerator,
     IClock clock)
 {
@@ -92,14 +94,42 @@ public sealed class ChangeSubscriptionSeatsHandler(
                 $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no payment method or period end.");
         }
 
+        // `25-43`: the price this subscription was actually last charged under - see this handler's
+        // own remarks for why this must be a historical lookup, never the catalog's current answer.
+        var oldBasePrice = await prices.FindVersionAsync(SubscriptionTierBands.BaseSeatPriceKey, subscription.BaseSeatPriceVersion, cancellationToken);
+        var oldExtraPrice = await prices.FindVersionAsync(SubscriptionTierBands.ExtraSeatPriceKey, subscription.ExtraSeatPriceVersion, cancellationToken);
+        if (oldBasePrice is null || oldExtraPrice is null)
+        {
+            // Unreachable in a correctly configured deployment - a Succeeded subscription's own stored
+            // version numbers name versions this same mechanism minted and never deletes
+            // (Domain.PublishedPriceVersion's own "insert-only, never removed" remarks). Thrown, not
+            // translated, the same posture the PaymentMethodId/CurrentPeriodEnd guard just above uses.
+            throw new InvalidOperationException(
+                $"Billing subscription {command.SubscriptionId.Value}'s own stored price version "
+                + $"({subscription.BaseSeatPriceVersion}/{subscription.ExtraSeatPriceVersion}) no longer exists - a published "
+                + "price version must never be deleted.");
+        }
+
+        // The currently-effective price - what the upgraded seat count costs going forward, read
+        // fresh, never cached, the identical discipline every other real charge site uses.
+        var newBasePrice = await prices.FindCurrentAsync(SubscriptionTierBands.BaseSeatPriceKey, cancellationToken);
+        if (newBasePrice is null)
+        {
+            return PriceCatalogErrors.PriceNotConfigured(SubscriptionTierBands.BaseSeatPriceKey.Value);
+        }
+
+        var newExtraPrice = await prices.FindCurrentAsync(SubscriptionTierBands.ExtraSeatPriceKey, cancellationToken);
+        if (newExtraPrice is null)
+        {
+            return PriceCatalogErrors.PriceNotConfigured(SubscriptionTierBands.ExtraSeatPriceKey.Value);
+        }
+
         var now = clock.UtcNow;
         var periodLengthDays = (decimal)BillingSubscription.PeriodLength.TotalDays;
         var remainingDays = Math.Clamp((decimal)(periodEnd - now).TotalDays, 0m, periodLengthDays);
 
-        var oldPrice = SubscriptionTierBands.ComputeSeatPriceRub(
-            subscription.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
-        var newPrice = SubscriptionTierBands.ComputeSeatPriceRub(
-            command.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
+        var oldPrice = SubscriptionTierBands.ComputeSeatPriceRub(subscription.RequestedSeats, oldBasePrice.AmountRub, oldExtraPrice.AmountRub);
+        var newPrice = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, newBasePrice.AmountRub, newExtraPrice.AmountRub);
         var proratedAmount = Math.Round((newPrice - oldPrice) * remainingDays / periodLengthDays, 2, MidpointRounding.AwayFromZero);
 
         var idempotenceKey = idGenerator.NewId(now).ToString();
@@ -113,7 +143,9 @@ public sealed class ChangeSubscriptionSeatsHandler(
         }
 
         await applier.ApplyImmediateIncreaseAsync(
-            new SeatChangeApplyRequest(command.SubscriptionId, command.SiteId, command.RequestedSeats, newTier, now), cancellationToken);
+            new SeatChangeApplyRequest(
+                command.SubscriptionId, command.SiteId, command.RequestedSeats, newTier, newBasePrice.Sequence, newExtraPrice.Sequence, now),
+            cancellationToken);
 
         return new ChangeSubscriptionSeatsResult.Upgraded(proratedAmount, newTier, command.RequestedSeats);
     }

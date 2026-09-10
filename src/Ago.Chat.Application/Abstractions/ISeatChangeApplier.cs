@@ -16,4 +16,5 @@ public interface ISeatChangeApplier
 }
 
 public sealed record SeatChangeApplyRequest(
-    BillingSubscriptionId SubscriptionId, SiteId SiteId, int NewSeatCount, string NewTier, DateTimeOffset Now);
+    BillingSubscriptionId SubscriptionId, SiteId SiteId, int NewSeatCount, string NewTier, int BaseSeatPriceVersion,
+    int ExtraSeatPriceVersion, DateTimeOffset Now);

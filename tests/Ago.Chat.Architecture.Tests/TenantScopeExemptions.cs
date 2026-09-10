@@ -360,8 +360,27 @@ internal static class TenantScopeExemptions
             + "story is RequirePlatformOwner on GET /api/v1/owner/pricing (OwnerPricingEndpoints): the authorizing "
             + "fact is a Keycloak realm role (adr/0032), and Ago.Chat.Application has no port that sees claims, so "
             + "re-checking here would be a second, weaker copy of the same rule ListSitesForOwnerHandler's own "
-            + "entry already argues. Read-only; no owner write surface exists for pricing (`23-86`'s own Scope: "
-            + "\"the deployment declares what an option turns on, never what it costs\").",
+            + "entry already argues. `25-43`: this read now also lists every registered price key through "
+            + "IPriceCatalogRepository, and a real write surface exists for it - see "
+            + "PublishPriceVersionHandler.HandleAsync's own entry immediately below for that one's identical "
+            + "reasoning.",
+
+        // ---------------------------------------------------------------------------------------
+        // `25-43`: the platform owner's own price-publish write - the identical reasoning
+        // GetPricingForOwnerHandler right above already gives for itself, restated for the write side of
+        // the same mechanism.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.PublishPriceVersion.PublishPriceVersionHandler.HandleAsync"] =
+            "`25-43`, the platform owner's own price-publish write - no SiteId, because a published price version "
+            + "is not a tenant's resource any more than a Document (PublishDocumentVersionHandler's own entry "
+            + "above) is: it is keyed by an opaque, globally-registered PriceKey, identical for every tenant. The "
+            + "whole access-control story is RequirePlatformOwner on POST /api/v1/owner/prices/{key}/versions "
+            + "(OwnerPricingEndpoints): the authorizing fact is a Keycloak realm role, and Ago.Chat.Application has "
+            + "no port that sees claims, so a permission check here would be a second, weaker copy of a decision "
+            + "the policy already made - the identical reasoning PublishDocumentVersionHandler's own entry gives. "
+            + "The one real guard this handler does own (PricedResourceKeys.IsKnown, refusing an unregistered key) "
+            + "is a catalogue rule, not a tenant-permission one, so it stays outside IPermissionChecker's remit "
+            + "entirely.",
         ["Ago.Chat.Application.UseCases.UnlinkChannelIdentityAsOwner.UnlinkChannelIdentityAsOwnerHandler.HandleAsync"] =
             "`14-12`, the platform owner's own first write surface - see the handler's own remarks for why it is a "
             + "deliberately separate class from UnlinkChannelIdentityHandler rather than a nullable-OperatorId "
