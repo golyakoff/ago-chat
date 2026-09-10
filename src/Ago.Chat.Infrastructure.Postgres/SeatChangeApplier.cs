@@ -38,7 +38,13 @@ public sealed class SeatChangeApplier(AgoChatDbContext db, IOutboxWriter outbox,
                 $"Site {request.SiteId.Value} was not found while applying an immediate seat increase - a foreign key should have prevented this.");
         }
 
-        site.ActivateSubscription(request.NewTier, request.NewSeatCount, request.Now);
+        // `25-41`: subscription.ExtraAdministratorsPurchased passed through unchanged - a seat purchase
+        // never touches the Administrator count, and AdminLimit's own tier-derived component cannot
+        // change here either (every paid tier resolves to the identical BusinessAdminsIncluded), so
+        // AdminLimit can only ever go up or stay put at this call site - the same reasoning
+        // AdministratorSlotChangeApplier's own remarks give for skipping the demotion-enforcer check
+        // entirely rather than calling it to confirm it is always a no-op.
+        site.ActivateSubscription(request.NewTier, request.NewSeatCount, subscription.ExtraAdministratorsPurchased, request.Now);
         var activated = site.DomainEvents.OfType<SiteSubscriptionActivated>().Single();
         outbox.Enqueue(SiteSubscriptionActivatedMapper.ToEnvelope(activated, idGenerator));
         site.ClearDomainEvents();

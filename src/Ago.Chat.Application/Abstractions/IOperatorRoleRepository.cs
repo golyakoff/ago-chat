@@ -59,4 +59,15 @@ public interface IOperatorRoleRepository
     /// same contract <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/> already states.</para>
     /// </summary>
     Task<int> CountNonRemovedHoldersAsync(SiteId siteId, string roleName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-41`: every non-removed operator on <paramref name="siteId"/> who currently holds the role
+    /// named <paramref name="roleName"/> - <see cref="CountNonRemovedHoldersAsync"/>'s own predicate,
+    /// returning the ids themselves rather than only their count, for <c>AdministratorLimitEnforcer</c>'s
+    /// own need to actually demote the excess ones, not merely learn how many there are. Takes no lock
+    /// of its own - the caller (<c>AdministratorLimitEnforcer</c>) already runs inside the ambient
+    /// transaction <see cref="Site.ActivateSubscription"/>'s own caller opened, on the same site row a
+    /// prior write in that same transaction has already locked or is about to.
+    /// </summary>
+    Task<IReadOnlyList<OperatorId>> GetNonRemovedHolderIdsAsync(SiteId siteId, string roleName, CancellationToken cancellationToken);
 }

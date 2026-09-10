@@ -138,6 +138,18 @@ public static class ErrorExtensions
                 // the caller's own mistake to fix, the identical shape Module.Invalid's own
                 // remarks state for the analogous case one line up.
                 or "Billing.PriceKeyUnknown" or "Billing.PriceInvalid"
+                // `25-41`: the caller's own mistake to fix - a requested extra-Administrator count at
+                // or below the subscription's own current one, the identical "caller's own mistake"
+                // shape Module.Invalid's own remarks state a few lines up. Deliberately mapped here,
+                // unlike its sibling Billing.SeatCountUnchanged (and Billing.InvalidSeatCount/
+                // Billing.SubscriptionNotFound/Billing.SubscriptionNotActive/Billing.PaymentProviderRefused,
+                // all still genuinely unmapped, falling through to the `500` default below) - those are
+                // a pre-existing, out-of-scope gap this item found but did not introduce, the same
+                // "leave a pre-existing gap exactly as found" precedent this file's own Operator.AdminLimitReached
+                // entry already states a few lines down for the analogous seat-limit code; a brand-new
+                // code this item is introducing is a different case; leaving it deliberately broken
+                // would not be "as found", it would be new.
+                or "Billing.AdministratorCountNotAnIncrease"
                 // `23-13`: the caller's own mistake to fix - Force was set with no non-blank reason, or
                 // one longer than RevokeModuleForSiteAsOwnerHandler.MaxReasonLength allows. The same
                 // "decide, don't default" shape Module.GrantExpiryInvalid already gives its own guard.

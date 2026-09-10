@@ -45,7 +45,7 @@ public sealed class RetentionClassImmutabilityTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var site = new Site(siteId, $"site_{siteId.Value:N}", []);
-            site.ActivateSubscription(SubscriptionTierBands.Starter, seatLimit: 3, WrittenAt);
+            site.ActivateSubscription(SubscriptionTierBands.Starter, seatLimit: 3, extraAdministrators: 0, WrittenAt);
             db.Sites.Add(site);
             db.Visitors.Add(new Visitor(visitorId, siteId, WrittenAt));
             db.SaveChanges();
@@ -63,7 +63,7 @@ public sealed class RetentionClassImmutabilityTests(PostgresFixture fixture)
             await using (var db = fixture.CreateDbContext())
             {
                 var site = await db.Sites.FirstOrDefaultAsync(s => s.Id == siteId);
-                site!.ActivateSubscription("free", seatLimit: 2, DowngradedAt);
+                site!.ActivateSubscription("free", seatLimit: 2, extraAdministrators: 0, DowngradedAt);
                 await db.SaveChangesAsync();
             }
 

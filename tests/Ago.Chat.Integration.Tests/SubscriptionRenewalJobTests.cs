@@ -353,7 +353,13 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         var config = new ConfigurationBuilder().AddInMemoryCollection(
             entitlementMappings.ToDictionary(kv => $"{ConfiguredBillingOptionEntitlementProvider.SectionName}:{kv.Key}", kv => kv.Value)).Build();
         var optionEntitlements = new ConfiguredBillingOptionEntitlementProvider(config);
-        return new SubscriptionRenewalApplier(db, outbox, idGenerator, entitlementGrants, optionEntitlements);
+        // `25-41`: the real AdministratorLimitEnforcer, not a fake - this class exists precisely to
+        // prove the automatic-demotion behaviour against a real Postgres, the same "never mock the
+        // database for a guarantee the schema itself provides" discipline testing.md states.
+        var administratorLimitEnforcer = new AdministratorLimitEnforcer(
+            db, new OperatorRoleRepository(db), new RoleRepository(db, idGenerator, new SystemClock()),
+            new RoleChangeRecordRepository(db), outbox, idGenerator);
+        return new SubscriptionRenewalApplier(db, outbox, idGenerator, entitlementGrants, optionEntitlements, administratorLimitEnforcer);
     }
 
     /// <summary>Seeds an option subscription, already `Succeeded` (mirroring `SeedSucceededSubscriptionAsync`'s
@@ -537,7 +543,12 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
                 .AddInMemoryCollection(entitlementMappings ?? new Dictionary<string, string?>())
                 .Build();
             var optionEntitlements = new ConfiguredBillingOptionEntitlementProvider(entitlementConfig);
-            var applier = new SubscriptionRenewalApplier(db, outbox, idGenerator, entitlementGrants, optionEntitlements);
+            // `25-41`: the real AdministratorLimitEnforcer - see BuildApplier's own remarks above for
+            // why this is never faked.
+            var administratorLimitEnforcer = new AdministratorLimitEnforcer(
+                db, new OperatorRoleRepository(db), new RoleRepository(db, idGenerator, clock),
+                new RoleChangeRecordRepository(db), outbox, idGenerator);
+            var applier = new SubscriptionRenewalApplier(db, outbox, idGenerator, entitlementGrants, optionEntitlements, administratorLimitEnforcer);
 
             var httpClient = new HttpClient { BaseAddress = new Uri(yooKassaBaseUrl) };
             var yooKassa = new YooKassaPaymentsApiClient(httpClient);

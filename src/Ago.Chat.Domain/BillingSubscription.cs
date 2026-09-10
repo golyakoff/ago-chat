@@ -110,6 +110,26 @@ public sealed class BillingSubscription
     /// point a real charge is made (<see cref="Create"/>, <see cref="RecordRenewalSuccess"/>,
     /// <see cref="ApplySeatIncreaseImmediately"/>) - never elsewhere, since those are the only
     /// moments a real charge happens.</summary>
+    /// <summary>`25-41`: how many Administrator seats beyond the tier-included two this subscription
+    /// has bought, at `ago-business` decision `0012`'s flat +500₽/mo each - the identical "purchasable
+    /// count, mirroring <see cref="RequestedSeats"/>" shape that field's own remarks already establish,
+    /// restated for a flat add-on instead of a banded one. Zero for every row until
+    /// <see cref="ApplyAdministratorPurchase"/> is first called, and zero forever for an option row
+    /// (<see cref="OptionKey"/>'s own "meaningless for an option row" convention <see cref="RequestedSeats"/>
+    /// already uses) - an extra Administrator is priced against the account's own base subscription,
+    /// never against a channel/AI option.</summary>
+    public int ExtraAdministratorsPurchased { get; private set; }
+
+    /// <summary>`25-41`: the identical "which published version this subscription was actually charged
+    /// under" shape <see cref="BaseSeatPriceVersion"/>/<see cref="ExtraSeatPriceVersion"/> already
+    /// establish, restated for <see cref="SubscriptionTierBands.AdminExtraPriceKey"/> - so a later
+    /// purchase's own proration can read this subscription's own historical figure, never the
+    /// catalog's currently-effective one, for the "old" side of the calculation
+    /// (`PurchaseAdministratorSlotHandler`'s own remarks give the full reasoning, identical to
+    /// `ChangeSubscriptionSeatsHandler`'s). Zero until the first purchase, the same sentinel
+    /// <see cref="BaseSeatPriceVersion"/> uses before any seat has ever been charged.</summary>
+    public int AdminExtraPriceVersion { get; private set; }
+
     public int BaseSeatPriceVersion { get; private set; }
 
     /// <summary>The identical role <see cref="BaseSeatPriceVersion"/> plays, for
@@ -470,6 +490,36 @@ public sealed class BillingSubscription
         Tier = newTier;
         BaseSeatPriceVersion = baseSeatPriceVersion;
         ExtraSeatPriceVersion = extraSeatPriceVersion;
+    }
+
+    /// <summary>`25-41`: the identical "applies immediately, already-charged" shape
+    /// <see cref="ApplySeatIncreaseImmediately"/> establishes for seats, restated for a flat
+    /// Administrator-slot purchase - there is no deferred-decrease counterpart
+    /// (<see cref="ScheduleSeatDecrease"/>'s own sibling) because this item's own Scope never asks for
+    /// a self-service way to buy fewer: the only way this count ever goes down is the automatic
+    /// demotion a lapse/downgrade triggers (`IAdministratorLimitEnforcer`'s own remarks), which acts on
+    /// <see cref="Site.AdminLimit"/> directly and never calls back into this method to record a lower
+    /// count here - the same "the subscription row itself is never mutated by a lapse it did not
+    /// choose to record a decrease for" posture <see cref="MarkLapsed"/>'s own remarks already
+    /// establish for <see cref="RequestedSeats"/>/<see cref="Tier"/> (neither is reset there
+    /// either).</summary>
+    public void ApplyAdministratorPurchase(int newExtraAdministratorCount, int adminExtraPriceVersion)
+    {
+        if (Status != BillingSubscriptionStatus.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Billing subscription {Id.Value} is {Status}, not Succeeded, and cannot purchase an extra Administrator seat.");
+        }
+
+        if (newExtraAdministratorCount <= ExtraAdministratorsPurchased)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(newExtraAdministratorCount), newExtraAdministratorCount,
+                "Purchasing an extra Administrator seat must increase the count - this codebase has no way to buy fewer on its own.");
+        }
+
+        ExtraAdministratorsPurchased = newExtraAdministratorCount;
+        AdminExtraPriceVersion = adminExtraPriceVersion;
     }
 
     /// <summary>`13-03`/`decisions/0006`: "downgrades apply at the next renewal, with no credit for

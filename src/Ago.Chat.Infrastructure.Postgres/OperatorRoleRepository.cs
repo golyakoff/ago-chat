@@ -63,6 +63,24 @@ public sealed class OperatorRoleRepository(AgoChatDbContext db) : IOperatorRoleR
             .CountAsync(cancellationToken);
     }
 
+    /// <summary>`25-41`: the identical predicate <see cref="CountNonRemovedHoldersAsync"/> uses,
+    /// returning the ids instead of only a count - no lock, unlike that method's own row-locked
+    /// count, because `AdministratorLimitEnforcer`'s own caller (`Site.ActivateSubscription`'s own
+    /// caller) already holds the relevant lock on this same site row by the time this runs.</summary>
+    public async Task<IReadOnlyList<OperatorId>> GetNonRemovedHolderIdsAsync(
+        SiteId siteId, string roleName, CancellationToken cancellationToken)
+    {
+        var roleIds = db.Roles
+            .Where(r => r.SiteId == siteId && r.Name == roleName)
+            .Select(r => r.Id);
+
+        return await db.Operators
+            .Where(o => o.SiteId == siteId && o.RemovedAt == null)
+            .Where(o => db.OperatorRoles.Any(or => or.OperatorId == o.Id && roleIds.Contains(or.RoleId)))
+            .Select(o => o.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     private async Task LockSiteAsync(SiteId siteId, string roleName, CancellationToken cancellationToken)
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();

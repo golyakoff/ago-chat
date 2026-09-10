@@ -24,6 +24,11 @@ internal sealed class BillingSubscriptionConfiguration : IEntityTypeConfiguratio
         // "meaningless for an option row" convention shared with RequestedSeats/Tier above).
         builder.Property(s => s.BaseSeatPriceVersion).HasColumnName("base_seat_price_version");
         builder.Property(s => s.ExtraSeatPriceVersion).HasColumnName("extra_seat_price_version");
+        // `25-41`: the identical shape - a purchasable count and the price version it was last
+        // charged under, meaningless (left at `0`) for an option row, the same convention
+        // RequestedSeats/BaseSeatPriceVersion above already establish.
+        builder.Property(s => s.ExtraAdministratorsPurchased).HasColumnName("extra_administrators_purchased");
+        builder.Property(s => s.AdminExtraPriceVersion).HasColumnName("admin_extra_price_version");
         builder.Property(s => s.Status).HasColumnName("status").HasConversion<string>();
         builder.Property(s => s.PaymentMethodId).HasColumnName("payment_method_id");
         builder.Property(s => s.CreatedAt).HasColumnName("created_at");

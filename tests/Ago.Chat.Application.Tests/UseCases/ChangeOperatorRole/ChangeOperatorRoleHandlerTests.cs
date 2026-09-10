@@ -188,6 +188,40 @@ public class ChangeOperatorRoleHandlerTests
         Assert.Empty(fixture.RoleChangeRecords.Recorded);
     }
 
+    /// <summary>`25-41`'s own Done-when, in its own words: "proven by a test that shows both the
+    /// refusal (unpaid) and the success (paid) against the identical guard." This is the paid half -
+    /// the exact same site, the exact same two Administrators already assigned, the exact same
+    /// unmodified guard in <c>ChangeOperatorRoleHandler</c> that just refused the test right above -
+    /// the only difference is <see cref="Site.AdminLimit"/> itself, raised from `2` to `3` by a real
+    /// <see cref="Site.ActivateSubscription"/> call carrying <c>extraAdministrators: 1</c>, the
+    /// identical write <c>AdministratorSlotChangeApplier</c> makes after a real purchase. Confirms the
+    /// item's own reading of the codebase: no change to <c>ChangeOperatorRoleHandler</c> itself was
+    /// needed, because it already read <see cref="Site.AdminLimit"/>, never a fixed constant.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenPromotingToAdmin_OnASiteThatHasPurchasedAnExtraAdministratorSlot_Succeeds()
+    {
+        var paidSite = new Site(SiteId, $"site_{SiteId.Value:N}", [], tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        paidSite.ActivateSubscription(SubscriptionTierBands.Starter, 5, extraAdministrators: 1, Now);
+        paidSite.ClearDomainEvents();
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded + 1, paidSite.AdminLimit);
+
+        var fixture = CreateFixture(site: paidSite);
+        fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
+        var secondAdmin = new OperatorId(Guid.NewGuid());
+        fixture.OperatorRoles.Seed(secondAdmin, AdminRoleName);
+        var target = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
+        fixture.Operators.Seed(target);
+        fixture.OperatorRoles.Seed(target.Id, OperatorRoleName);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.ChangeOperatorRole.ChangeOperatorRole(RequestedBy, SiteId, target.Id, AdminRoleName),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(AdminRoleId, fixture.OperatorRoles.CurrentRoleId(target.Id));
+        Assert.Single(fixture.RoleChangeRecords.Recorded);
+    }
+
     /// <summary>`25-25`: the free tier includes exactly one administrator
     /// (`SubscriptionTierBands.FreeAdminsIncluded`) - the account's own founder, per `ago-business`
     /// decision `0011`. A second promotion on a site still on that tier is refused the identical way a

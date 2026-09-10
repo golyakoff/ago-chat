@@ -30,4 +30,12 @@ public sealed class FakeOperatorRoleRepository : IOperatorRoleRepository
     /// `CountNonRemovedHoldersAsync`-shaped fake in this project already draws).</summary>
     public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, string roleName, CancellationToken cancellationToken) =>
         Task.FromResult(_roleNames.Count(kv => kv.Value.Contains(roleName)));
+
+    /// <summary>`25-41`: the identical `_roleNames` seed <see cref="CountNonRemovedHoldersAsync"/>
+    /// already reads, returning the ids instead of only a count - the same "no separate lock/site-row
+    /// simulation" shortcut that method's own remarks describe.</summary>
+    public Task<IReadOnlyList<OperatorId>> GetNonRemovedHolderIdsAsync(
+        SiteId siteId, string roleName, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OperatorId>>(
+            _roleNames.Where(kv => kv.Value.Contains(roleName)).Select(kv => kv.Key).ToList());
 }

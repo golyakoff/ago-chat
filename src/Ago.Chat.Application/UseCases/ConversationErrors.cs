@@ -383,6 +383,17 @@ public static class ConversationErrors
     public static Error BillingSeatCountUnchanged() =>
         new("Billing.SeatCountUnchanged", "The requested seat count matches the subscription's current seat count.");
 
+    /// <summary>`25-41`: `PurchaseAdministratorSlotHandler`'s own guard - a requested extra-Administrator
+    /// count that does not exceed the subscription's own current one. Unlike seats
+    /// (<see cref="BillingSeatCountUnchanged"/>), there is no scheduled-decrease counterpart this
+    /// endpoint could otherwise mean - this codebase has no self-service way to buy fewer Administrator
+    /// slots at all (<see cref="Domain.BillingSubscription.ApplyAdministratorPurchase"/>'s own remarks),
+    /// so a requested count at or below the current one is refused outright, never scheduled.</summary>
+    public static Error BillingAdministratorCountNotAnIncrease() =>
+        new(
+            "Billing.AdministratorCountNotAnIncrease",
+            "The requested extra-Administrator count must exceed the subscription's current one - this endpoint only ever increases it.");
+
     /// <summary>`13-03`: a site's `Permission.SiteManageOperators` holder tried to assign a seat beyond
     /// the site's own current `seat_limit` - `402 Payment Required`, the identical reasoning
     /// <see cref="OperatorInviteSeatLimitReached"/> already gives for the same underlying constraint on

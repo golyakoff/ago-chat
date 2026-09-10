@@ -90,6 +90,15 @@ public static class SubscriptionTierBands
     /// parameter.</summary>
     public static readonly PriceKey ExtraSeatPriceKey = new("seat-extra");
 
+    /// <summary>`25-41`: the extra-Administrator charge's own key - flat, not banded, unlike
+    /// <see cref="BaseSeatPriceKey"/>/<see cref="ExtraSeatPriceKey"/> above. `ago-business` decision
+    /// `0012`'s own "+500₽/мес per Administrator beyond two" prices this identically regardless of
+    /// how many are bought, so there is no second, marginal key the way seats need one - one key,
+    /// one <see cref="Application.Abstractions.IPriceCatalogRepository.FindCurrentAsync"/> read, the
+    /// amount simply multiplied by the count purchased (<c>PurchaseAdministratorSlotHandler</c>'s own
+    /// remarks).</summary>
+    public static readonly PriceKey AdminExtraPriceKey = new("admin-extra");
+
     /// <summary>`25-20`: made `public` (was `private`) so a reader of the band boundaries could list
     /// them without a second, hand-typed literal drifting from this one. `25-29`: no longer reachable
     /// through <see cref="TryResolveTier"/> at all (see this type's own remarks) - kept only for
@@ -205,6 +214,14 @@ public static class SubscriptionTierBands
     /// persisted somewhere (mirroring `BillingSubscription.RequestedSeats`) and a matching change to
     /// that handler's own guard - new persisted state, and therefore a migration, which `25-29`'s own
     /// report defers to the next available migration slot rather than building here.</para>
+    ///
+    /// <para><b>`25-41` closed this gap.</b> <see cref="BillingSubscription.ExtraAdministratorsPurchased"/>
+    /// is that purchasable count; <see cref="Site.AdminLimit"/> now adds it to this method's own
+    /// tier-baseline answer (<see cref="Site.ActivateSubscription"/>'s own remarks), and
+    /// <c>ChangeOperatorRoleHandler</c>'s existing guard - already reading <see cref="Site.AdminLimit"/>,
+    /// never <see cref="BusinessAdminsIncluded"/> directly - needed no code change of its own to start
+    /// allowing a paid third Administrator, since it always read the resolved ceiling, not the
+    /// tier-only constant this paragraph used to say was the whole story.</para>
     ///
     /// <para><b>"free" is the one tier name this file does not itself define a constant for.</b>
     /// <see cref="Site.Tier"/>'s own default and every other free-tier check in this codebase

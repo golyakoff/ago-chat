@@ -421,20 +421,40 @@ public sealed class Site
     /// the kind of "this site's settings changed, drop its cache entries" fact
     /// <see cref="SiteOfflineAutoReplyUpdated"/>'s own remarks describe, and nothing about `13-02`'s own
     /// scope needs a fourth distinct cache-invalidation shape.</para>
+    ///
+    /// <para><b>`25-41`: <paramref name="extraAdministrators"/> - the caller's own currently-correct
+    /// figure, never recomputed here.</b> This aggregate has no way to know what a caller's own
+    /// <see cref="BillingSubscription.ExtraAdministratorsPurchased"/> currently holds (a different
+    /// aggregate, `clean-architecture.md`'s dependency rule), so every call site must pass its own
+    /// subscription's current value through unchanged when nothing about the Administrator purchase
+    /// itself is what triggered this call (`SeatChangeApplier`, `BillingWebhookApplier`, a renewal
+    /// re-applying the same tier) - and pass a real, already-decided new value when it is (this item's
+    /// own `AdministratorSlotChangeApplier`, and the full-lapse path's own `0`, `SubscriptionRenewalApplier`'s
+    /// own remarks). <b>No longer "never blocked or demoted here"</b> - the paragraph this replaces said
+    /// a site left over its Administrator ceiling was allowed to sit there indefinitely, matching
+    /// `decisions/0006`'s own seat-count precedent. The author's own decision, 2026-09-10, deliberately
+    /// diverges from that precedent for this one ceiling: unlike a worker's own booking history
+    /// (`23-88`'s "downgrade destroys nothing"), a role grant has no meaningful frozen state to sit in,
+    /// so a site whose <see cref="AdminLimit"/> just dropped below its live Administrator count is
+    /// brought back into compliance automatically, not left over-limit. This aggregate still cannot do
+    /// that demotion itself (the same cross-aggregate reason it cannot read
+    /// <see cref="ExtraAdministratorsPurchased"/>) - every caller of this method compares
+    /// <see cref="AdminLimit"/> before and after and, when it dropped, calls
+    /// <c>IAdministratorLimitEnforcer.DemoteExcessAdministratorsAsync</c> in the same transaction, the
+    /// identical "the aggregate exposes the fact, the caller enforces the cross-aggregate consequence"
+    /// split <see cref="Operator.ToggleSeat"/>'s own remarks already draw for seat capacity.</para>
     /// </summary>
-    public void ActivateSubscription(string tier, int seatLimit, DateTimeOffset now)
+    public void ActivateSubscription(string tier, int seatLimit, int extraAdministrators, DateTimeOffset now)
     {
         Tier = tier;
         SeatLimit = seatLimit;
         // `25-25`: re-derived on every activation, the same way the constructor derives it - a seat
         // count changes what the buyer chose to pay for (SeatChangeApplier), a tier changes what a
-        // subscription includes (BillingWebhookApplier/SubscriptionRenewalApplier), and only the
-        // latter ever moves the Administrator ceiling. A downgrade to `"free"` is never blocked on a
-        // site's current administrator count, the same "never block a downgrade on live operator
-        // count" precedent `decisions/0006` already sets for SeatLimit - a site that already holds
-        // more administrators than its new tier includes is left in a real, allowed, over-limit state
-        // rather than having one silently and destructively demoted here.
-        AdminLimit = SubscriptionTierBands.ResolveAdminLimit(tier);
+        // subscription includes (BillingWebhookApplier/SubscriptionRenewalApplier). `25-41`: now also
+        // the purchased extra-Administrator count, added rather than replacing the tier-derived
+        // baseline - see this method's own remarks above for the automatic-demotion consequence a
+        // caller must apply when this sum comes out lower than it went in.
+        AdminLimit = SubscriptionTierBands.ResolveAdminLimit(tier) + extraAdministrators;
         _domainEvents.Add(new SiteSubscriptionActivated(Id, PublicKey, tier, seatLimit, now));
     }
 
