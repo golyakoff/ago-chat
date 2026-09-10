@@ -12,8 +12,13 @@ public class CreateCheckoutSessionHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
     private sealed record Fixture(
-        CreateCheckoutSessionHandler Handler, FakeBillingSubscriptionRepository Subscriptions, FakeYooKassaPaymentsClient YooKassa);
+        CreateCheckoutSessionHandler Handler, FakeBillingSubscriptionRepository Subscriptions, FakeYooKassaPaymentsClient YooKassa,
+        FakePriceCatalogRepository Prices);
 
+    // `25-43`: the two seat-pricing keys are seeded straight into the fake catalog, the same "publish
+    // once, straight from the aggregate" shortcut FakePriceCatalogRepository.SeedVersion's own remarks
+    // describe - a null base/extra price (the "no price configured" branch) is exercised by its own
+    // dedicated test below, which builds the handler with an empty, unseeded fake instead.
     private static Fixture CreateFixture(
         bool grantPermission = true, decimal baseSeatPriceRub = 500m, decimal pricePerExtraSeatRub = 50m)
     {
@@ -27,17 +32,15 @@ public class CreateCheckoutSessionHandlerTests
 
         var subscriptions = new FakeBillingSubscriptionRepository();
         var yooKassa = new FakeYooKassaPaymentsClient();
-        var billingOptions = new BillingOptions
-        {
-            BaseSeatPriceRub = baseSeatPriceRub,
-            PricePerExtraSeatRub = pricePerExtraSeatRub,
-            CheckoutReturnUrl = "https://console.example/billing/return",
-        };
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, baseSeatPriceRub, Now);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, pricePerExtraSeatRub, Now);
+        var billingOptions = new BillingOptions { CheckoutReturnUrl = "https://console.example/billing/return" };
 
         var handler = new CreateCheckoutSessionHandler(
-            sites, permissions, subscriptions, yooKassa, billingOptions, new FakeIdGenerator(), new FakeClock(Now));
+            sites, permissions, subscriptions, yooKassa, prices, billingOptions, new FakeIdGenerator(), new FakeClock(Now));
 
-        return new Fixture(handler, subscriptions, yooKassa);
+        return new Fixture(handler, subscriptions, yooKassa, prices);
     }
 
     [Fact]
@@ -133,6 +136,51 @@ public class CreateCheckoutSessionHandlerTests
         Assert.Null(fixture.YooKassa.LastRequest);
     }
 
+    // `25-43`'s own Done-when, proven here at the first real charge site: "a key with no published
+    // version refuses any charge attempt cleanly and namedly ... never a crash, never a zero-amount
+    // charge." An unseeded FakePriceCatalogRepository is the honest fixture for "built, not yet for
+    // sale" - the ordinary state this item's own second decision names, not a fault this test needs
+    // to force through some other mechanism.
+    [Theory]
+    [InlineData(true, false)] // only the extra-seat key is missing
+    [InlineData(false, true)] // only the base-seat key is missing
+    [InlineData(false, false)] // neither key has ever been published
+    public async Task HandleAsync_WhenEitherSeatPricingKeyHasNoPublishedVersion_ReturnsPriceNotConfigured_AndNeverCallsYooKassaOrSaves(
+        bool seedBase, bool seedExtra)
+    {
+        var sites = new FakeSiteRepository();
+        sites.Seed(new Site(SiteId, "shop_7f3a", []));
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        var subscriptions = new FakeBillingSubscriptionRepository();
+        var yooKassa = new FakeYooKassaPaymentsClient();
+        var prices = new FakePriceCatalogRepository();
+        if (seedBase)
+        {
+            prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 500m, Now);
+        }
+
+        if (seedExtra)
+        {
+            prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 50m, Now);
+        }
+
+        var handler = new CreateCheckoutSessionHandler(
+            sites, permissions, subscriptions, yooKassa, prices, new BillingOptions { CheckoutReturnUrl = "https://console.example/billing/return" },
+            new FakeIdGenerator(), new FakeClock(Now));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Billing.PriceNotConfigured", result.Error!.Value.Code);
+        // Never a crash (a Result, not a thrown exception) and never a zero-amount charge - YooKassa
+        // is never even called, let alone charged Rub 0, and no subscription row is saved as if a
+        // charge had actually gone through.
+        Assert.Null(yooKassa.LastRequest);
+        Assert.Empty(subscriptions.Saved);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenYooKassaRefuses_ReturnsPaymentProviderRefused_AndSavesNoSubscription()
     {
@@ -157,9 +205,12 @@ public class CreateCheckoutSessionHandlerTests
         var missingSiteId = new SiteId(Guid.NewGuid());
         var extraPermissions = new FakePermissionChecker();
         extraPermissions.Grant(OperatorId, missingSiteId, Permission.SiteConfigure);
+        var missingSitePrices = new FakePriceCatalogRepository();
+        missingSitePrices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 500m, Now);
+        missingSitePrices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 50m, Now);
         var handler = new CreateCheckoutSessionHandler(
             new FakeSiteRepository(), extraPermissions, new FakeBillingSubscriptionRepository(), new FakeYooKassaPaymentsClient(),
-            new BillingOptions { BaseSeatPriceRub = 500m, PricePerExtraSeatRub = 50m, CheckoutReturnUrl = "https://console.example/billing/return" },
+            missingSitePrices, new BillingOptions { CheckoutReturnUrl = "https://console.example/billing/return" },
             new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(

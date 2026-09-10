@@ -6,6 +6,7 @@ using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.GetPricingForOwner;
+using Ago.Chat.Application.UseCases.PublishPriceVersion;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -58,6 +59,7 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
     [Fact]
     public async Task OwnerToken_GetsThePriceList_WithTheRealSeatPricingNumbers()
     {
+        await SeedSeatPricesAsync();
         var token = await fixture.GetPlatformOwnerAccessTokenAsync();
 
         await using var host = await BuildTestHostAsync();
@@ -130,6 +132,90 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(Route)).StatusCode);
     }
 
+    /// <summary>`25-43`'s own write side, proven end to end over real HTTP: the platform owner can
+    /// publish a new version for an already-registered key, and the very next read of
+    /// <see cref="Route"/> reflects it - the wire proof that <see cref="GetPricingForOwnerHandler"/>
+    /// and <see cref="PublishPriceVersionHandler"/> actually agree about what "currently effective"
+    /// means, not just that each compiles against the same port in isolation.</summary>
+    [Fact]
+    public async Task OwnerToken_CanPublishANewPriceVersion_AndTheNextReadReflectsIt()
+    {
+        await SeedSeatPricesAsync();
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var publishResponse = await client.PostAsJsonAsync(
+            $"/api/v1/owner/prices/{SubscriptionTierBands.BaseSeatPriceKey.Value}/versions",
+            new OwnerPricingEndpoints.PublishPriceVersionRequest(555m));
+        Assert.Equal(HttpStatusCode.OK, publishResponse.StatusCode);
+        var published = await publishResponse.Content.ReadFromJsonAsync<OwnerPricingEndpoints.PublishedPriceVersionResponse>();
+        Assert.NotNull(published);
+        Assert.Equal(555m, published!.AmountRub);
+
+        var body = await (await client.GetAsync(Route)).Content.ReadFromJsonAsync<OwnerPricingResponse>();
+        Assert.Equal(555m, body!.SeatPricing.BaseSeatPriceRub);
+    }
+
+    /// <summary>The first decision this whole item turns on, proven at the wire: the owner may only
+    /// ever move the Rouble figure for a key code has already registered - never invent one from this
+    /// surface. <see cref="PublishPriceVersionHandler"/>'s own <c>PricedResourceKeys.IsKnown</c> guard
+    /// is what actually refuses this; this test proves it is reachable through the real route, not
+    /// only through a direct handler call.</summary>
+    [Fact]
+    public async Task OwnerToken_CannotPublishAPriceForAnUnregisteredKey()
+    {
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/owner/prices/not-a-real-key/versions", new OwnerPricingEndpoints.PublishPriceVersionRequest(100m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>The Done-when's own words, restated for the write route: unreachable by anyone other
+    /// than the platform owner.</summary>
+    [Fact]
+    public async Task OrdinaryOperatorToken_CannotPublishAPriceVersion()
+    {
+        var token = await fixture.GetDemoOperatorAccessTokenAsync();
+
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/owner/prices/{SubscriptionTierBands.BaseSeatPriceKey.Value}/versions",
+            new OwnerPricingEndpoints.PublishPriceVersionRequest(100m));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>`25-43`: publishes fresh versions of both seat-pricing keys into the real Postgres this
+    /// fixture shares across every test in this collection - the identical "publish once per test,
+    /// same amounts this file's own constants document" discipline
+    /// <c>SubscriptionRenewalJobTests.SeedCurrentSeatPricesAsync</c> already establishes, restated here
+    /// since this file builds its own DI container from scratch rather than sharing that one.</summary>
+    private async Task SeedSeatPricesAsync()
+    {
+        var options = new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(fixture.DataSource).Options;
+        await using var db = new AgoChatDbContext(options);
+        var prices = new PriceCatalogRepository(db);
+
+        var baseResource = await prices.GetByKeyAsync(SubscriptionTierBands.BaseSeatPriceKey, CancellationToken.None)
+            ?? PricedResource.Create(new PricedResourceId(Guid.NewGuid()), SubscriptionTierBands.BaseSeatPriceKey);
+        baseResource.Publish(new PublishedPriceVersionId(Guid.NewGuid()), SeededBaseSeatPriceRub, DateTimeOffset.UtcNow);
+        await prices.SaveAsync(baseResource, CancellationToken.None);
+
+        var extraResource = await prices.GetByKeyAsync(SubscriptionTierBands.ExtraSeatPriceKey, CancellationToken.None)
+            ?? PricedResource.Create(new PricedResourceId(Guid.NewGuid()), SubscriptionTierBands.ExtraSeatPriceKey);
+        extraResource.Publish(new PublishedPriceVersionId(Guid.NewGuid()), SeededPricePerExtraSeatRub, DateTimeOffset.UtcNow);
+        await prices.SaveAsync(extraResource, CancellationToken.None);
+    }
+
     private static HttpClient CreateClient(WebApplication host, string? token)
     {
         var client = host.GetTestClient();
@@ -163,17 +249,17 @@ public sealed class OwnerPricingEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
 
-        // The production registration for this route: a plain `BillingOptions` instance, exactly the
-        // shape `ChatModule` binds from `Billing:*` and hands to every handler that takes it - built
-        // directly rather than through `IOptions<T>` binding, since this test host has no
-        // `Billing:BaseSeatPriceRub`/`Billing:PricePerExtraSeatRub` configuration to bind from.
-        builder.Services.AddSingleton(new BillingOptions
-        {
-            BaseSeatPriceRub = SeededBaseSeatPriceRub,
-            PricePerExtraSeatRub = SeededPricePerExtraSeatRub,
-            CheckoutReturnUrl = "https://office.test.invalid/settings/billing",
-        });
+        // `25-43`: the production registration for this route is now `IPriceCatalogRepository`, not a
+        // plain `BillingOptions` instance - `SeedSeatPricesAsync` below publishes
+        // `SeededBaseSeatPriceRub`/`SeededPricePerExtraSeatRub` into the real Postgres this fixture
+        // already runs, the same "real container, no in-memory fake" bar every other file in this
+        // project holds.
+        builder.Services.AddScoped<IPriceCatalogRepository, PriceCatalogRepository>();
         builder.Services.AddScoped<GetPricingForOwnerHandler>();
+        // `25-43`: the write side this file's own new test exercises - PublishPriceVersionHandler's
+        // own registration, mirroring GetPricingForOwnerHandler's immediately above (IIdGenerator is
+        // already registered below, alongside IClock).
+        builder.Services.AddScoped<PublishPriceVersionHandler>();
 
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
         builder.Services.AddScoped<IAccessRecordRepository, AccessRecordRepository>();

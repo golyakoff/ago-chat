@@ -33,7 +33,7 @@ public sealed class SeatChangeApplierTests(PostgresFixture fixture)
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], tier: SubscriptionTierBands.Starter, seatLimit: 5));
             var seeded = BillingSubscription.Create(
-                subscriptionId, siteId, $"pmt_{subscriptionId.Value:N}", 5, SubscriptionTierBands.Starter, Now - BillingSubscription.PeriodLength);
+                subscriptionId, siteId, $"pmt_{subscriptionId.Value:N}", 5, SubscriptionTierBands.Starter, 1, 1, Now - BillingSubscription.PeriodLength);
             seeded.MarkSucceeded("card_on_file", Now - BillingSubscription.PeriodLength);
             db.BillingSubscriptions.Add(seeded);
             await db.SaveChangesAsync();
@@ -43,7 +43,7 @@ public sealed class SeatChangeApplierTests(PostgresFixture fixture)
         {
             ISeatChangeApplier applier = new SeatChangeApplier(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
             await applier.ApplyImmediateIncreaseAsync(
-                new SeatChangeApplyRequest(subscriptionId, siteId, 15, SubscriptionTierBands.Growth, Now), CancellationToken.None);
+                new SeatChangeApplyRequest(subscriptionId, siteId, 15, SubscriptionTierBands.Growth, 2, 2, Now), CancellationToken.None);
         }
 
         await using var verify = fixture.CreateDbContext();

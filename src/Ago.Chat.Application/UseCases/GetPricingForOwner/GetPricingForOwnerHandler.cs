@@ -1,4 +1,4 @@
-﻿using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
@@ -7,7 +7,7 @@ namespace Ago.Chat.Application.UseCases.GetPricingForOwner;
 /// <summary>
 /// `25-20`: the platform owner's own price-list read - every currently-paid capability's price, read
 /// from the identical configuration the billing code itself charges from
-/// (<see cref="BillingOptions"/>, <see cref="SubscriptionTierBands"/>,
+/// (<see cref="Abstractions.IPriceCatalogRepository"/>, <see cref="SubscriptionTierBands"/>,
 /// <see cref="BillingSubscription.PeriodLength"/>), never retyped by hand from the private
 /// `ago-business` repository's own decision documents.
 ///
@@ -24,12 +24,18 @@ namespace Ago.Chat.Application.UseCases.GetPricingForOwner;
 /// resolves this handler (<c>OwnerPricingEndpoints</c>), a Keycloak realm role Application has no port
 /// to see and should not re-check with a weaker, second copy of the same decision.</para>
 ///
-/// <para><b>`25-29`: <see cref="OwnerSeatPricingDto"/> grew three fields, and the "Growth" tier row
-/// disappeared.</b> `ago-business` decision `0012` prices Business as a base charge plus a marginal
-/// per-seat charge, not `SubscriptionTierBands`' old flat rate, and prices exactly one seat band
-/// (2-5), not two - see that record's own remarks for the full reasoning and for
-/// <see cref="OwnerSeatPricingDto.PricePerSeatRub"/>'s own narrower, no-longer-quite-true meaning kept
-/// only for wire compatibility.</para>
+/// <para><b>`25-43`: reads the two seat-pricing keys' own currently-effective versions through
+/// <see cref="Abstractions.IPriceCatalogRepository"/> instead of a compile-time
+/// `BillingOptions`.</b> The wire shape is unchanged - `api-design.md`'s "never remove a field" rule,
+/// and `25-42`'s own unstarted item is expected to read these exact fields - only the source moved.
+/// Neither key having no published version at all is treated as unreachable here: this screen exists
+/// to show the owner what a real charge would actually use, and if it can be reached with either
+/// unpublished, `25-29`/`25-43`'s own migration seed (which publishes both the day this mechanism
+/// ships) never ran, or was rolled back - a deployment state genuinely worth a loud failure rather than
+/// a screen quietly showing a fabricated zero. `PricedResourceKeys.All`, not just these two, drives the
+/// row list below - `25-43`'s own second decision ("a key with no price at all is the ordinary
+/// 'built, not yet for sale' state") is why a third key with nothing published yet still appears here,
+/// honestly, rather than being hidden until it has a real number.</para>
 ///
 /// <para><b><see cref="OwnerPricingResponse.BillingOptions"/> is hardcoded empty here, not read from
 /// any configuration section.</b> The honest finding this item's own report states in full: no
@@ -44,9 +50,9 @@ namespace Ago.Chat.Application.UseCases.GetPricingForOwner;
 /// all. The field stays on the wire (typed, never omitted) so a real mechanism can start filling it
 /// without a breaking contract change later.</para>
 /// </summary>
-public sealed class GetPricingForOwnerHandler(BillingOptions billingOptions)
+public sealed class GetPricingForOwnerHandler(IPriceCatalogRepository prices)
 {
-    public Task<OwnerPricingResponse> HandleAsync(CancellationToken cancellationToken)
+    public async Task<OwnerPricingResponse> HandleAsync(CancellationToken cancellationToken)
     {
         // `25-29`: one row, not two - `ago-business` decision `0012` prices exactly one Business band
         // (`SubscriptionTierBands.MinSeats`-`SubscriptionTierBands.MaxSeats`, 2-5 seats today), never a
@@ -58,21 +64,44 @@ public sealed class GetPricingForOwnerHandler(BillingOptions billingOptions)
             new(SubscriptionTierBands.Starter, SubscriptionTierBands.MinSeats, SubscriptionTierBands.MaxSeats),
         };
 
+        var basePrice = await prices.FindCurrentAsync(SubscriptionTierBands.BaseSeatPriceKey, cancellationToken);
+        var extraPrice = await prices.FindCurrentAsync(SubscriptionTierBands.ExtraSeatPriceKey, cancellationToken);
+        if (basePrice is null || extraPrice is null)
+        {
+            // `25-43`: unreachable on a deployment whose migration seed ran - see this handler's own
+            // remarks. Thrown, not translated into an empty/zeroed response: a platform owner reading
+            // this screen must never be shown a fabricated number for a key this codebase already
+            // charges real money against.
+            throw new InvalidOperationException(
+                "The owner price list was read but the seat-pricing keys have no published version - "
+                + "the migration seed that publishes them on this mechanism's first deploy did not run.");
+        }
+
         var seatPricing = new OwnerSeatPricingDto(
-            // `25-29`: kept on the wire, but no longer "the" seat price - see this field's own remarks
-            // on `OwnerSeatPricingDto` for why the marginal rate is what is reported here.
-            billingOptions.PricePerExtraSeatRub,
+            // `25-29`/`25-43`: kept on the wire, but no longer "the" seat price - see this field's own
+            // remarks on `OwnerSeatPricingDto` for why the marginal rate is what is reported here.
+            extraPrice.AmountRub,
             SubscriptionTierBands.BaseSeats,
-            billingOptions.BaseSeatPriceRub,
-            billingOptions.PricePerExtraSeatRub,
+            basePrice.AmountRub,
+            extraPrice.AmountRub,
             BillingSubscription.PeriodLength.TotalDays,
             SubscriptionTierBands.FreeSeatsIncluded,
             tiers);
+
+        // `25-43`: every registered key, not only the two seat-pricing ones - the second decision's
+        // own "built, not yet for sale is the ordinary state" made visible: a third key with nothing
+        // published yet still appears here, with a null amount, rather than being hidden until priced.
+        var pricedResources = new List<OwnerPricedResourceDto>();
+        foreach (var descriptor in PricedResourceKeys.All)
+        {
+            var current = await prices.FindCurrentAsync(descriptor.Key, cancellationToken);
+            pricedResources.Add(new OwnerPricedResourceDto(descriptor.Key.Value, descriptor.Label, current?.Version, current?.AmountRub));
+        }
 
         // See this handler's own remarks above for why this is always `[]` today, on every
         // deployment, rather than read from a configuration section.
         var declaredBillingOptions = Array.Empty<OwnerBillingOptionDto>();
 
-        return Task.FromResult(new OwnerPricingResponse(seatPricing, declaredBillingOptions));
+        return new OwnerPricingResponse(seatPricing, declaredBillingOptions, pricedResources);
     }
 }

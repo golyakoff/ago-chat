@@ -99,6 +99,23 @@ public sealed class BillingSubscription
     /// writers as <see cref="RequestedSeats"/>, always updated alongside it.</summary>
     public string Tier { get; private set; } = string.Empty;
 
+    /// <summary>`25-43`: <see cref="Domain.PublishedPriceVersion.Sequence"/> of the
+    /// <see cref="SubscriptionTierBands.BaseSeatPriceKey"/> version this row was actually
+    /// charged under, most recently - `0` for an option row (meaningless there, the identical
+    /// zero/empty convention <see cref="RequestedSeats"/>/<see cref="Tier"/> already use).
+    /// Recorded, never re-derived: a later price change must not be observable through this
+    /// row, which is the whole reason this field exists rather than recomputing "the price"
+    /// from whatever <see cref="Application.Abstractions.IPriceCatalogRepository"/> says
+    /// today. Written alongside <see cref="RequestedSeats"/>/<see cref="Tier"/>, at every
+    /// point a real charge is made (<see cref="Create"/>, <see cref="RecordRenewalSuccess"/>,
+    /// <see cref="ApplySeatIncreaseImmediately"/>) - never elsewhere, since those are the only
+    /// moments a real charge happens.</summary>
+    public int BaseSeatPriceVersion { get; private set; }
+
+    /// <summary>The identical role <see cref="BaseSeatPriceVersion"/> plays, for
+    /// <see cref="SubscriptionTierBands.ExtraSeatPriceKey"/>.</summary>
+    public int ExtraSeatPriceVersion { get; private set; }
+
     public BillingSubscriptionStatus Status { get; private set; } = BillingSubscriptionStatus.Pending;
 
     /// <summary>ЮKassa's own reusable-charge handle, populated only by <see cref="MarkSucceeded"/> -
@@ -149,6 +166,8 @@ public sealed class BillingSubscription
         string yooKassaPaymentId,
         int requestedSeats,
         string tier,
+        int baseSeatPriceVersion,
+        int extraSeatPriceVersion,
         BillingSubscriptionStatus status,
         string? paymentMethodId,
         DateTimeOffset createdAt,
@@ -159,6 +178,8 @@ public sealed class BillingSubscription
         YooKassaPaymentId = yooKassaPaymentId;
         RequestedSeats = requestedSeats;
         Tier = tier;
+        BaseSeatPriceVersion = baseSeatPriceVersion;
+        ExtraSeatPriceVersion = extraSeatPriceVersion;
         Status = status;
         PaymentMethodId = paymentMethodId;
         CreatedAt = createdAt;
@@ -170,8 +191,14 @@ public sealed class BillingSubscription
     {
     }
 
+    /// <summary>`25-43`: <paramref name="baseSeatPriceVersion"/>/<paramref name="extraSeatPriceVersion"/>
+    /// are the <see cref="Domain.PublishedPriceVersion.Sequence"/> values the caller (`CreateCheckoutSessionHandler`)
+    /// actually charged - required, not defaulted, the same "decide, don't default" discipline this
+    /// codebase already applies to a real financial fact (`ExpiresAt`'s own remarks on
+    /// `EnableModuleForSiteAsOwner` give the identical reasoning for a different field).</summary>
     public static BillingSubscription Create(
-        BillingSubscriptionId id, SiteId siteId, string yooKassaPaymentId, int requestedSeats, string tier, DateTimeOffset createdAt)
+        BillingSubscriptionId id, SiteId siteId, string yooKassaPaymentId, int requestedSeats, string tier,
+        int baseSeatPriceVersion, int extraSeatPriceVersion, DateTimeOffset createdAt)
     {
         if (string.IsNullOrWhiteSpace(yooKassaPaymentId))
         {
@@ -179,8 +206,8 @@ public sealed class BillingSubscription
         }
 
         return new BillingSubscription(
-            id, siteId, yooKassaPaymentId, requestedSeats, tier, BillingSubscriptionStatus.Pending, paymentMethodId: null, createdAt,
-            optionKey: null);
+            id, siteId, yooKassaPaymentId, requestedSeats, tier, baseSeatPriceVersion, extraSeatPriceVersion,
+            BillingSubscriptionStatus.Pending, paymentMethodId: null, createdAt, optionKey: null);
     }
 
     /// <summary>`23-86`/`adr/0159`: the account's base subscription mints through <see cref="Create"/>
@@ -188,6 +215,9 @@ public sealed class BillingSubscription
     /// has neither, so this factory takes only what an option row actually carries -
     /// <paramref name="optionKey"/> in place of both, <see cref="RequestedSeats"/>/<see cref="Tier"/>
     /// fixed at zero/empty (never written again - see this type's own <see cref="OptionKey"/> remarks).
+    /// `25-43`: <see cref="BaseSeatPriceVersion"/>/<see cref="ExtraSeatPriceVersion"/> are meaningless
+    /// for an option row for the identical reason - an option is priced flat, not by seats, so there is
+    /// no seat-pricing key for either to name - fixed at `0` here, the same convention.
     /// A separate factory rather than an optional trailing parameter on <see cref="Create"/> - the same
     /// "a materially different construction gets its own named entry point, not a flag" judgement this
     /// codebase already applies elsewhere (`EnableModuleForSiteAsOwner` alongside `EnableModuleForSite`,
@@ -202,8 +232,8 @@ public sealed class BillingSubscription
         }
 
         return new BillingSubscription(
-            id, siteId, yooKassaPaymentId, requestedSeats: 0, tier: string.Empty, BillingSubscriptionStatus.Pending,
-            paymentMethodId: null, createdAt, optionKey);
+            id, siteId, yooKassaPaymentId, requestedSeats: 0, tier: string.Empty, baseSeatPriceVersion: 0,
+            extraSeatPriceVersion: 0, BillingSubscriptionStatus.Pending, paymentMethodId: null, createdAt, optionKey);
     }
 
     /// <summary>Applied by <see cref="BillingWebhookApplier"/> on a verified, first-seen
@@ -329,6 +359,7 @@ public sealed class BillingSubscription
     }
 
     /// <summary>`13-03`: a renewal or retry charge succeeded - from either
+    /// <summary>`13-03`: a renewal or retry charge succeeded - from either
     /// <see cref="BillingSubscriptionStatus.Succeeded"/> (an on-time renewal) or
     /// <see cref="BillingSubscriptionStatus.PastDue"/> (a retry inside the window) back to
     /// <see cref="BillingSubscriptionStatus.Succeeded"/>, <see cref="CurrentPeriodEnd"/> advanced by one
@@ -340,8 +371,17 @@ public sealed class BillingSubscription
     /// actually takes effect, per `decisions/0006`'s "downgrades apply at the next renewal" - applied
     /// and cleared here, in the one place a renewal is known to have genuinely happened, rather than at
     /// the period boundary alone (a boundary a failed/retried charge may cross more than once before a
-    /// renewal actually succeeds).</para></summary>
-    public void RecordRenewalSuccess(DateTimeOffset now, string? paymentMethodId)
+    /// renewal actually succeeds).</para>
+    ///
+    /// <para>`25-43`: <see cref="BaseSeatPriceVersion"/>/<see cref="ExtraSeatPriceVersion"/> are
+    /// overwritten unconditionally on every successful renewal, whether or not a seat count actually
+    /// changed - the item's own "a tenant mid-renewal when the price changes is not a special case":
+    /// the renewal always recomputes and charges the currently-effective price, so this row's own
+    /// record of "what it was last charged under" must always move with it, not only when
+    /// <see cref="PendingSeatCount"/> also happened to apply. The caller (`ProcessSubscriptionRenewalHandler`)
+    /// resolved these from <see cref="Application.Abstractions.IPriceCatalogRepository"/> immediately
+    /// before making the actual charge this call is recording the success of.</para></summary>
+    public void RecordRenewalSuccess(DateTimeOffset now, string? paymentMethodId, int baseSeatPriceVersion, int extraSeatPriceVersion)
     {
         if (Status is not (BillingSubscriptionStatus.Succeeded or BillingSubscriptionStatus.PastDue))
         {
@@ -358,6 +398,8 @@ public sealed class BillingSubscription
         CurrentPeriodEnd = (CurrentPeriodEnd ?? now) + PeriodLength;
         PastDueSince = null;
         LastRenewalAttemptAt = now;
+        BaseSeatPriceVersion = baseSeatPriceVersion;
+        ExtraSeatPriceVersion = extraSeatPriceVersion;
 
         if (PendingSeatCount is { } pendingSeats && PendingTier is { } pendingTier)
         {
@@ -402,11 +444,15 @@ public sealed class BillingSubscription
     }
 
     /// <summary>`13-03`/`decisions/0006`: "upgrades apply immediately and the difference for the
+    /// <summary>`13-03`/`decisions/0006`: "upgrades apply immediately and the difference for the
     /// remainder of the period is charged at once" - called only after that prorated charge has already
     /// succeeded (the caller's own job, mirroring `13-02`'s "verified success, not the redirect alone"
     /// discipline). <see cref="RequestedSeats"/>/<see cref="Tier"/> move immediately; there is nothing
-    /// to defer.</summary>
-    public void ApplySeatIncreaseImmediately(int newSeatCount, string newTier)
+    /// to defer. `25-43`: <see cref="BaseSeatPriceVersion"/>/<see cref="ExtraSeatPriceVersion"/> move
+    /// with them - the caller already resolved the new price from
+    /// <see cref="Application.Abstractions.IPriceCatalogRepository"/> to compute the very proration
+    /// this call is applying the outcome of.</summary>
+    public void ApplySeatIncreaseImmediately(int newSeatCount, string newTier, int baseSeatPriceVersion, int extraSeatPriceVersion)
     {
         if (Status != BillingSubscriptionStatus.Succeeded)
         {
@@ -422,6 +468,8 @@ public sealed class BillingSubscription
 
         RequestedSeats = newSeatCount;
         Tier = newTier;
+        BaseSeatPriceVersion = baseSeatPriceVersion;
+        ExtraSeatPriceVersion = extraSeatPriceVersion;
     }
 
     /// <summary>`13-03`/`decisions/0006`: "downgrades apply at the next renewal, with no credit for

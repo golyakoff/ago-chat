@@ -86,7 +86,7 @@ public sealed class BillingRepositoryDependencyInjectionTests(PostgresFixture fi
             var repository = scope.ServiceProvider.GetRequiredService<IBillingSubscriptionRepository>();
             var subscription = BillingSubscription.Create(
                 new BillingSubscriptionId(Guid.NewGuid()), siteId, "pmt_di_smoke", requestedSeats: 2,
-                tier: SubscriptionTierBands.Starter, DateTimeOffset.UtcNow);
+                tier: SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: DateTimeOffset.UtcNow);
             await repository.SaveAsync(subscription, CancellationToken.None);
             await scope.ServiceProvider.GetRequiredService<AgoChatDbContext>().SaveChangesAsync(CancellationToken.None);
         }

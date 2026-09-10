@@ -27,6 +27,21 @@ namespace Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 /// </list>
 /// </para>
 ///
+/// <para><b>`25-43`: the identical currently-effective-price read `CreateCheckoutSessionHandler` makes
+/// at checkout, made again here at renewal.</b> This is `25-43`'s own "a tenant mid-renewal when the
+/// price changes is not a special case" point, made concrete: this handler does not know or care
+/// whether the price changed since the last renewal - it reads whatever
+/// <see cref="Abstractions.IPriceCatalogRepository"/> says is effective right now, the ordinary
+/// "read fresh, at the moment of the decision" discipline that already produces the correct, honest
+/// answer with no grace period or reconciliation rule to invent. A missing price refuses the renewal
+/// the identical way it refuses a first checkout - <see cref="PriceCatalogErrors.PriceNotConfigured"/>,
+/// thrown here rather than returned as a `Result`, matching the "unreachable in a correctly configured
+/// deployment" posture this handler's own `PaymentMethodId` guard already uses just above: a
+/// subscription that reached `Succeeded` at least once already proved both keys were priced at that
+/// moment, so either becoming unpublished before the next renewal is a deployment regression, not an
+/// ordinary outcome this handler's own caller (the Worker job) has anything more specific to do about
+/// than log and retry next tick.</para>
+///
 /// <para>No resilience wrapping written here - `Ago.Chat.Module`'s own composition root decorates
 /// <see cref="IYooKassaPaymentsClient"/> for this specific call (`ResilientYooKassaPaymentsClient`), the
 /// same "Application calls the port, the decorator supplies the pipeline" shape
@@ -38,7 +53,7 @@ namespace Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 public sealed class ProcessSubscriptionRenewalHandler(
     IBillingSubscriptionRepository subscriptions,
     IYooKassaPaymentsClient yooKassa,
-    BillingOptions billingOptions,
+    IPriceCatalogRepository prices,
     ISubscriptionRenewalApplier applier,
     IClock clock)
 {
@@ -85,26 +100,30 @@ public sealed class ProcessSubscriptionRenewalHandler(
         if (subscription.IsOption)
         {
             // `23-86` deliberately does not invent a price for an option's own recurring charge - "no
-            // price, anywhere" (this item's own Scope); the per-seat formula below is the base
-            // subscription's own pricing and is meaningless for an option row (RequestedSeats is
-            // always zero there - BillingSubscription.OptionKey's own remarks). Charging Rub 0 or
-            // reusing the seat formula would both be silently wrong, so this refuses loudly instead -
-            // the same "unreachable, thrown rather than translated" shape the PaymentMethodId guard just
-            // above already uses. No production code path creates a due-for-renewal option row today
-            // (that is `23-115`'s own scope, "a tenant can buy an option themselves") - reaching this is
-            // itself the signal that a price source for an option's recurring charge still needs to be
-            // supplied before that item ships.
+            // price, anywhere" (this item's own Scope); the seat-pricing formula below is meaningless
+            // for an option row (RequestedSeats is always zero there - BillingSubscription.OptionKey's
+            // own remarks). Charging Rub 0 or reusing the seat formula would both be silently wrong, so
+            // this refuses loudly instead - the same "unreachable, thrown rather than translated" shape
+            // the PaymentMethodId guard just above already uses. No production code path creates a
+            // due-for-renewal option row today (that is `23-115`'s own scope, "a tenant can buy an
+            // option themselves") - reaching this is itself the signal that a price source for an
+            // option's recurring charge still needs to be supplied before that item ships.
             throw new InvalidOperationException(
                 $"Billing subscription {command.SubscriptionId.Value} is an option subscription (key "
                 + $"'{subscription.OptionKey!.Value.Value}') due for renewal, but no price source for an option's "
                 + "recurring charge exists yet - see this item's own report.");
         }
 
-        // `25-29`: the identical banded formula `CreateCheckoutSessionHandler` charges the first
-        // payment with - `ago-business` decision `0012`'s base-plus-marginal Business price, not the
-        // flat `seats × one rate` this line used to compute.
-        var amount = SubscriptionTierBands.ComputeSeatPriceRub(
-            subscription.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
+        var basePrice = await prices.FindCurrentAsync(SubscriptionTierBands.BaseSeatPriceKey, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Billing subscription {command.SubscriptionId.Value} is due for renewal but "
+                + $"'{SubscriptionTierBands.BaseSeatPriceKey.Value}' has no published price - see this handler's own remarks.");
+        var extraPrice = await prices.FindCurrentAsync(SubscriptionTierBands.ExtraSeatPriceKey, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Billing subscription {command.SubscriptionId.Value} is due for renewal but "
+                + $"'{SubscriptionTierBands.ExtraSeatPriceKey.Value}' has no published price - see this handler's own remarks.");
+
+        var amount = SubscriptionTierBands.ComputeSeatPriceRub(subscription.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
         var description = $"AGO Chat - {subscription.Tier} tier renewal, {subscription.RequestedSeats} seats";
         // Deterministic, not a fresh id per call - ChargeStoredPaymentMethodRequest's own remarks on why
         // this is what makes a two-replica race over the same due row safe rather than a double charge.
@@ -116,7 +135,8 @@ public sealed class ProcessSubscriptionRenewalHandler(
         switch (chargeResult)
         {
             case ChargeStoredPaymentMethodResult.Success:
-                await applier.ApplyRenewalSuccessAsync(command.SubscriptionId, now, cancellationToken);
+                await applier.ApplyRenewalSuccessAsync(
+                    command.SubscriptionId, now, basePrice.Sequence, extraPrice.Sequence, cancellationToken);
                 return new SubscriptionRenewalOutcome.Renewed();
 
             case ChargeStoredPaymentMethodResult.Refused refused:

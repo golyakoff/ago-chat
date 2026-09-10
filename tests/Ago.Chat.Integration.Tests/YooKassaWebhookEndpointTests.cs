@@ -200,7 +200,7 @@ public class YooKassaWebhookEndpointTests(PostgresFixture fixture)
         await using var seed = fixture.CreateDbContext();
         seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
         seed.BillingSubscriptions.Add(BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), siteId, paymentId, requestedSeats, tier, Now));
+            new BillingSubscriptionId(Guid.NewGuid()), siteId, paymentId, requestedSeats, tier, 1, 1, Now));
         await seed.SaveChangesAsync(CancellationToken.None);
 
         return (siteId, paymentId);

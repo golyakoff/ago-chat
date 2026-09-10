@@ -36,12 +36,12 @@ public class BillingSubscriptionRepositoryTests(PostgresFixture fixture)
         {
             seed.BillingSubscriptions.Add(BillingSubscription.Create(
                 new BillingSubscriptionId(Guid.NewGuid()), siteId, "pmt_old", requestedSeats: 3, tier: SubscriptionTierBands.Starter,
-                Now - TimeSpan.FromDays(90)));
+                baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - TimeSpan.FromDays(90)));
             seed.BillingSubscriptions.Add(BillingSubscription.Create(
-                new BillingSubscriptionId(Guid.NewGuid()), siteId, "pmt_newest", requestedSeats: 12, tier: SubscriptionTierBands.Growth, Now));
+                new BillingSubscriptionId(Guid.NewGuid()), siteId, "pmt_newest", requestedSeats: 12, tier: SubscriptionTierBands.Growth, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now));
             seed.BillingSubscriptions.Add(BillingSubscription.Create(
                 new BillingSubscriptionId(Guid.NewGuid()), siteId, "pmt_middle", requestedSeats: 5, tier: SubscriptionTierBands.Starter,
-                Now - TimeSpan.FromDays(30)));
+                baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - TimeSpan.FromDays(30)));
             await seed.SaveChangesAsync(CancellationToken.None);
         }
 
@@ -65,7 +65,7 @@ public class BillingSubscriptionRepositoryTests(PostgresFixture fixture)
         {
             seed.BillingSubscriptions.Add(BillingSubscription.Create(
                 new BillingSubscriptionId(Guid.NewGuid()), otherSiteId, "pmt_other_site", requestedSeats: 20, tier: SubscriptionTierBands.Growth,
-                Now));
+                baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now));
             await seed.SaveChangesAsync(CancellationToken.None);
         }
 

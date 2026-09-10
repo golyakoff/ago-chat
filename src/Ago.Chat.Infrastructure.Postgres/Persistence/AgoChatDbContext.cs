@@ -86,6 +86,12 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // rather than always loading the parent aggregate - IDocumentRepository's own remarks.
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<PublishedDocumentVersion> PublishedDocumentVersions => Set<PublishedDocumentVersion>();
+    // `25-43`: PricedResource/PublishedPriceVersion - the identical Document/PublishedDocumentVersion
+    // shape immediately above, restated for the new mechanism (PriceCatalogRepository's own write
+    // path loads the aggregate; IPriceCatalogRepository.FindCurrentAsync/FindVersionAsync query the
+    // child table directly).
+    public DbSet<PricedResource> PricedResources => Set<PricedResource>();
+    public DbSet<PublishedPriceVersion> PublishedPriceVersions => Set<PublishedPriceVersion>();
     // `23-19`: ChannelDelivery's own table - see ChannelDeliveryConfiguration's own remarks for the
     // address-versus-reference decision and why this one, unlike AcceptanceRecord/ErasureRecord/
     // AccessRecord above, does carry real foreign keys.

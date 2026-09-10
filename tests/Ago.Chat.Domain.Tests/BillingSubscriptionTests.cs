@@ -8,7 +8,7 @@ public class BillingSubscriptionTests
     public void Create_WhenValid_StartsPending()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         Assert.Equal(BillingSubscriptionStatus.Pending, subscription.Status);
         Assert.Null(subscription.PaymentMethodId);
@@ -20,14 +20,14 @@ public class BillingSubscriptionTests
     public void Create_WhenPaymentIdIsEmptyOrWhitespace_Throws(string paymentId)
     {
         Assert.Throws<ArgumentException>(() => BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), paymentId, 5, SubscriptionTierBands.Starter, Now));
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), paymentId, 5, SubscriptionTierBands.Starter, 1, 1, Now));
     }
 
     [Fact]
     public void MarkSucceeded_WhenPending_TransitionsAndStoresThePaymentMethodIdAndPeriodEnd()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         subscription.MarkSucceeded("card_abc", Now);
 
@@ -40,7 +40,7 @@ public class BillingSubscriptionTests
     public void MarkSucceeded_WhenAlreadyTerminal_Throws()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
         subscription.MarkSucceeded("card_abc", Now);
 
         Assert.Throws<InvalidOperationException>(() => subscription.MarkSucceeded("card_def", Now));
@@ -50,7 +50,7 @@ public class BillingSubscriptionTests
     public void MarkFailed_WhenPending_Transitions()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         subscription.MarkFailed();
 
@@ -62,7 +62,7 @@ public class BillingSubscriptionTests
     public void MarkFailed_WhenAlreadyTerminal_Throws()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
         subscription.MarkFailed();
 
         Assert.Throws<InvalidOperationException>(() => subscription.MarkFailed());
@@ -71,7 +71,7 @@ public class BillingSubscriptionTests
     private static BillingSubscription CreateSucceeded(int seats = 5, string tier = SubscriptionTierBands.Starter)
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", seats, tier, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", seats, tier, 1, 1, Now);
         subscription.MarkSucceeded("card_abc", Now);
         return subscription;
     }
@@ -93,7 +93,7 @@ public class BillingSubscriptionTests
     public void RecordRenewalFailure_WhenNotSucceeded_Throws()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         Assert.Throws<InvalidOperationException>(() => subscription.RecordRenewalFailure(Now));
     }
@@ -125,7 +125,7 @@ public class BillingSubscriptionTests
         // the original period end, not from "now", or the retry would shorten the customer's own
         // next period just for having paid late.
         var retrySucceededAt = failedAt + TimeSpan.FromDays(3);
-        subscription.RecordRenewalSuccess(retrySucceededAt, paymentMethodId: null);
+        subscription.RecordRenewalSuccess(retrySucceededAt, paymentMethodId: null, 1, 1);
 
         Assert.Equal(BillingSubscriptionStatus.Succeeded, subscription.Status);
         Assert.Null(subscription.PastDueSince);
@@ -139,7 +139,7 @@ public class BillingSubscriptionTests
         subscription.ScheduleSeatDecrease(5, SubscriptionTierBands.Starter);
 
         var renewalAt = subscription.CurrentPeriodEnd!.Value;
-        subscription.RecordRenewalSuccess(renewalAt, paymentMethodId: null);
+        subscription.RecordRenewalSuccess(renewalAt, paymentMethodId: null, 1, 1);
 
         Assert.Equal(5, subscription.RequestedSeats);
         Assert.Equal(SubscriptionTierBands.Starter, subscription.Tier);
@@ -184,7 +184,7 @@ public class BillingSubscriptionTests
     public void MarkLapsed_FromPending_Throws()
     {
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         Assert.Throws<InvalidOperationException>(() => subscription.MarkLapsed());
     }
@@ -207,7 +207,7 @@ public class BillingSubscriptionTests
     {
         var subscription = CreateSucceeded(seats: 5, tier: SubscriptionTierBands.Starter);
 
-        subscription.ApplySeatIncreaseImmediately(15, SubscriptionTierBands.Growth);
+        subscription.ApplySeatIncreaseImmediately(15, SubscriptionTierBands.Growth, 1, 1);
 
         Assert.Equal(15, subscription.RequestedSeats);
         Assert.Equal(SubscriptionTierBands.Growth, subscription.Tier);
@@ -218,8 +218,8 @@ public class BillingSubscriptionTests
     {
         var subscription = CreateSucceeded(seats: 5);
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplySeatIncreaseImmediately(5, SubscriptionTierBands.Starter));
-        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplySeatIncreaseImmediately(3, SubscriptionTierBands.Starter));
+        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplySeatIncreaseImmediately(5, SubscriptionTierBands.Starter, 1, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplySeatIncreaseImmediately(3, SubscriptionTierBands.Starter, 1, 1));
     }
 
     [Fact]
@@ -274,7 +274,7 @@ public class BillingSubscriptionTests
     public void Create_ForTheBase_HasNoOptionKey_AndIsBase()
     {
         var baseSubscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         Assert.Null(baseSubscription.OptionKey);
         Assert.True(baseSubscription.IsBase);
@@ -308,7 +308,7 @@ public class BillingSubscriptionTests
     public void MarkSucceeded_ForTheBase_WithAnExplicitAlignedPeriodEnd_Throws()
     {
         var baseSubscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         Assert.Throws<ArgumentException>(() => baseSubscription.MarkSucceeded("card_abc", Now, alignedPeriodEnd: Now + TimeSpan.FromDays(1)));
     }
@@ -319,7 +319,7 @@ public class BillingSubscriptionTests
         // Unchanged behaviour from before this item - MarkSucceeded's own optional trailing parameter
         // must not alter the base's own default when the caller omits it.
         var baseSubscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_base", 5, SubscriptionTierBands.Starter, 1, 1, Now);
 
         baseSubscription.MarkSucceeded("card_abc", Now);
 
@@ -334,7 +334,7 @@ public class BillingSubscriptionTests
         var baseCurrentPeriodEnd = Now + TimeSpan.FromDays(237);
         option.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseCurrentPeriodEnd);
 
-        option.RecordRenewalSuccess(baseCurrentPeriodEnd, paymentMethodId: null);
+        option.RecordRenewalSuccess(baseCurrentPeriodEnd, paymentMethodId: null, 1, 1);
 
         // Both the option's and (by the identical, unchanged renewal-job code path) the base's own
         // CurrentPeriodEnd advance by the same PeriodLength from their own prior value - this is what

@@ -24,8 +24,16 @@ public interface ISubscriptionRenewalApplier
     /// and, only if that call actually applied a pending deferred downgrade, the matching same-transaction
     /// `Site.Tier`/`Site.SeatLimit` write. No new <c>payment_method_id</c> to record - a charge-on-file
     /// call reuses the one already stored and ЮKassa's own response carries no replacement, unlike
-    /// `13-02`'s first-payment webhook.</summary>
-    Task ApplyRenewalSuccessAsync(BillingSubscriptionId id, DateTimeOffset now, CancellationToken cancellationToken);
+    /// `13-02`'s first-payment webhook.
+    /// <para>`25-43`: <paramref name="baseSeatPriceVersion"/>/<paramref name="extraSeatPriceVersion"/>
+    /// are the price-catalog sequence numbers the caller (`ProcessSubscriptionRenewalHandler`)
+    /// actually charged this renewal against, passed straight to
+    /// <see cref="BillingSubscription.RecordRenewalSuccess"/> - meaningless for an option row,
+    /// which passes `0`/`0` (the identical zero convention its own `RequestedSeats`/`Tier`
+    /// already use).</para></summary>
+    Task ApplyRenewalSuccessAsync(
+        BillingSubscriptionId id, DateTimeOffset now, int baseSeatPriceVersion, int extraSeatPriceVersion,
+        CancellationToken cancellationToken);
 
     /// <summary>A renewal or retry charge was refused - <see cref="BillingSubscription.RecordRenewalFailure"/>
     /// (first failure, from <c>Succeeded</c>) or <see cref="BillingSubscription.RecordRenewalRetryFailure"/>

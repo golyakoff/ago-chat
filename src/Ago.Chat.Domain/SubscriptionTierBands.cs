@@ -66,13 +66,29 @@ public static class SubscriptionTierBands
     /// numbers stop, which is now 5, not 100.</summary>
     public const int MaxSeats = 5;
 
-    /// <summary>`25-29`: how many seats <see cref="Application.UseCases.CreateCheckoutSession.BillingOptions.BaseSeatPriceRub"/>
-    /// alone covers - `0012`'s own price table charges the identical 490 ₽ at both 2 and 3 seats, then
-    /// a strictly higher price at 4 and 5. <see cref="ComputeSeatPriceRub"/> is the one place this
-    /// constant is read; a seat count at or below it contributes nothing past the base charge, and
-    /// every seat past it contributes <see cref="Application.UseCases.CreateCheckoutSession.BillingOptions.PricePerExtraSeatRub"/>
-    /// once each.</summary>
+    /// <summary>`25-29`: how many seats the base seat charge alone covers - `0012`'s own price
+    /// table charges the identical 490 ₽ at both 2 and 3 seats, then a strictly higher price at 4
+    /// and 5. <see cref="ComputeSeatPriceRub"/> is the one place this constant is read; a seat
+    /// count at or below it contributes nothing past the base charge, and every seat past it
+    /// contributes the marginal charge once each. `25-43`: both the base and the marginal charge
+    /// are now owner data (<see cref="BaseSeatPriceKey"/>/<see cref="ExtraSeatPriceKey"/>, resolved
+    /// through <see cref="Application.Abstractions.IPriceCatalogRepository"/>) - only which seats
+    /// this constant itself names stays fixed in code.</summary>
     public const int BaseSeats = 3;
+
+    /// <summary>`25-43`: the base seat charge's own opaque key in
+    /// <see cref="Application.Abstractions.IPriceCatalogRepository"/> - part of the seat-pricing
+    /// formula's own shape (this type's own domain), which is why it lives here beside
+    /// <see cref="BaseSeats"/> rather than in <see cref="PricedResourceKeys"/> alone. Only the
+    /// Rouble amount this key resolves to is owner data now (`25-43`'s own third decision) - which
+    /// key feeds <see cref="ComputeSeatPriceRub"/>'s own first parameter stays exactly as fixed in
+    /// code as <see cref="BaseSeats"/> itself.</summary>
+    public static readonly PriceKey BaseSeatPriceKey = new("seat-base");
+
+    /// <summary>`25-43`: the marginal per-seat charge's own key - the identical role
+    /// <see cref="BaseSeatPriceKey"/> plays for <see cref="ComputeSeatPriceRub"/>'s second
+    /// parameter.</summary>
+    public static readonly PriceKey ExtraSeatPriceKey = new("seat-extra");
 
     /// <summary>`25-20`: made `public` (was `private`) so a reader of the band boundaries could list
     /// them without a second, hand-typed literal drifting from this one. `25-29`: no longer reachable
@@ -125,17 +141,20 @@ public static class SubscriptionTierBands
     /// once. Checked against `0012`'s own four rows: 2 and 3 seats -&gt; 490 + 0 = 490; 4 seats -&gt;
     /// 490 + 1×200 = 690; 5 seats -&gt; 490 + 2×200 = 890.
     ///
-    /// <para><b>Pure Domain logic, not a `BillingOptions` method.</b> The band <em>shape</em> - which
-    /// seat counts share the base price, and that every seat past it costs the same fixed amount - is
-    /// a business rule `ago-business` owns and this type already exists to express (`TryResolveTier`'s
-    /// own identical role for the tier boundary). The Rouble <em>amounts</em> are configuration
-    /// (`BillingOptions`'s own "measure or stay silent" rule - `CLAUDE.md`), which is why they arrive
-    /// as parameters rather than living here as a second pair of constants: this method would be
-    /// exactly as correct, and exactly as untestable without a live deployment, if it hardcoded 490
-    /// and 200 the way <see cref="BaseSeats"/> hardcodes 3 - the difference is that a wrong seat-band
-    /// boundary is a logic bug this project can catch in a unit test, while a wrong Rouble figure is a
-    /// number nobody here is positioned to invent (the identical distinction
-    /// `BillingOptions.BaseSeatPriceRub`'s own remarks draw for itself).</para>
+    /// <para><b>Pure Domain logic, not an Application/Infrastructure method.</b> The band
+    /// <em>shape</em> - which seat counts share the base price, and that every seat past it costs
+    /// the same fixed amount - is a business rule `ago-business` owns and this type already exists
+    /// to express (`TryResolveTier`'s own identical role for the tier boundary). The Rouble
+    /// <em>amounts</em> are owner-published data now (`25-43`: <see cref="BaseSeatPriceKey"/>/
+    /// <see cref="ExtraSeatPriceKey"/>'s own currently-effective
+    /// <see cref="Application.Abstractions.IPriceCatalogRepository"/> versions - a compile-time
+    /// constant `BillingOptions` bound from `appsettings` before this item), which is why they
+    /// arrive as parameters rather than living here as a second pair of constants: this method
+    /// would be exactly as correct, and exactly as untestable without a live deployment, if it
+    /// hardcoded 490 and 200 the way <see cref="BaseSeats"/> hardcodes 3 - the difference is that
+    /// a wrong seat-band boundary is a logic bug this project can catch in a unit test, while a
+    /// wrong Rouble figure is a number nobody here is positioned to invent (the identical
+    /// distinction `Domain.PublishedPriceVersion`'s own remarks draw for itself).</para>
     ///
     /// <para>Not range-checked against <see cref="MinSeats"/>/<see cref="MaxSeats"/> here - every
     /// caller already resolves a tier through <see cref="TryResolveTier"/> first and only reaches this

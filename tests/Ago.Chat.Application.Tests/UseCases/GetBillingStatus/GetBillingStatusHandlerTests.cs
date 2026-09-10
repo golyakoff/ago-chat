@@ -64,7 +64,7 @@ public class GetBillingStatusHandlerTests
     {
         var fixture = CreateFixture(tier: "free", seatLimit: 1);
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_1", requestedSeats: 5, tier: SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_1", requestedSeats: 5, tier: SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now);
         fixture.Subscriptions.Seed(subscription);
 
         var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
@@ -84,7 +84,7 @@ public class GetBillingStatusHandlerTests
     {
         var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
         var subscription = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_1", requestedSeats: 5, tier: SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_1", requestedSeats: 5, tier: SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now);
         subscription.MarkSucceeded("card_abc", Now);
         fixture.Subscriptions.Seed(subscription);
 
@@ -103,10 +103,10 @@ public class GetBillingStatusHandlerTests
     {
         var fixture = CreateFixture(tier: "free", seatLimit: 1);
         var older = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_old", requestedSeats: 3, tier: SubscriptionTierBands.Starter, Now - TimeSpan.FromDays(60));
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_old", requestedSeats: 3, tier: SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - TimeSpan.FromDays(60));
         older.MarkFailed();
         var newer = BillingSubscription.Create(
-            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_new", requestedSeats: 5, tier: SubscriptionTierBands.Starter, Now);
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_new", requestedSeats: 5, tier: SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now);
         fixture.Subscriptions.Seed(older);
         fixture.Subscriptions.Seed(newer);
 
@@ -126,7 +126,7 @@ public class GetBillingStatusHandlerTests
         var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
         var baseSubscription = BillingSubscription.Create(
             new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_base", requestedSeats: 5, tier: SubscriptionTierBands.Starter,
-            Now - TimeSpan.FromDays(10));
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - TimeSpan.FromDays(10));
         baseSubscription.MarkSucceeded("card_abc", Now - TimeSpan.FromDays(10));
         fixture.Subscriptions.Seed(baseSubscription);
 

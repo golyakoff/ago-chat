@@ -89,7 +89,9 @@ public sealed class SubscriptionRenewalApplier(
         await transaction.CommitAsync(cancellationToken);
     }
 
-    public async Task ApplyRenewalSuccessAsync(BillingSubscriptionId id, DateTimeOffset now, CancellationToken cancellationToken)
+    public async Task ApplyRenewalSuccessAsync(
+        BillingSubscriptionId id, DateTimeOffset now, int baseSeatPriceVersion, int extraSeatPriceVersion,
+        CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
@@ -97,7 +99,9 @@ public sealed class SubscriptionRenewalApplier(
 
         if (subscription.OptionKey is { } optionKey)
         {
-            subscription.RecordRenewalSuccess(now, paymentMethodId: null);
+            // `25-43`: meaningless for an option row - priced flat, not by seats, so there is no
+            // seat-pricing key for either to name (BillingSubscription.CreateOption's own convention).
+            subscription.RecordRenewalSuccess(now, paymentMethodId: null, baseSeatPriceVersion: 0, extraSeatPriceVersion: 0);
             await GrantEntitlementAsync(subscription.SiteId, optionKey, now, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -107,7 +111,7 @@ public sealed class SubscriptionRenewalApplier(
         var seatsBefore = subscription.RequestedSeats;
         var tierBefore = subscription.Tier;
 
-        subscription.RecordRenewalSuccess(now, paymentMethodId: null);
+        subscription.RecordRenewalSuccess(now, paymentMethodId: null, baseSeatPriceVersion, extraSeatPriceVersion);
 
         // A pending deferred downgrade only ever changes RequestedSeats/Tier inside RecordRenewalSuccess
         // itself - comparing before/after is this applier's own way of learning "did that happen" without

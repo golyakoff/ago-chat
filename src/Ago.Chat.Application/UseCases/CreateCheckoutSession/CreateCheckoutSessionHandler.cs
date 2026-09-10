@@ -6,12 +6,20 @@ namespace Ago.Chat.Application.UseCases.CreateCheckoutSession;
 
 /// <summary>
 /// `13-02`: the first-payment path's own entry point - validates the requested seat count against
-/// <see cref="SubscriptionTierBands"/>, computes the flat per-seat charge, calls out to ЮKassa
+/// <see cref="SubscriptionTierBands"/>, computes the banded per-seat charge, calls out to ЮKassa
 /// (`IYooKassaPaymentsClient`, a provider-neutral Application port - `adr/0025`), and records a
 /// <see cref="BillingSubscription"/> row in <see cref="BillingSubscriptionStatus.Pending"/> before
 /// returning the confirmation URL the caller redirects the operator's browser to. Never touches
 /// `Site.Tier`/`Site.SeatLimit` itself - only a verified webhook does that
 /// (`ProcessYooKassaWebhookHandler`), per this item's own Goal ("never the redirect alone").
+///
+/// <para><b>`25-43`: reads both seat-pricing keys' own currently-effective versions from
+/// <see cref="IPriceCatalogRepository"/> at the moment it charges - never a compile-time constant, and
+/// never a cached read (`CLAUDE.md` rule 8).</b> Either key answering <see langword="null"/> (nobody
+/// has published a version yet - `25-43`'s own second decision: the ordinary "not yet for sale" state)
+/// refuses the whole checkout cleanly, before any outbound ЮKassa call, with
+/// <see cref="PriceCatalogErrors.PriceNotConfigured"/> - never a crash, and never a charge for an
+/// amount computed from a missing price as if it were zero.</para>
 ///
 /// <para>Deliberately no retry/circuit-breaker wrapping around <see cref="IYooKassaPaymentsClient"/> -
 /// unlike `14-01`'s inbound channel adapters (wrapped by `ResilientInboundChannelAdapter` because a
@@ -26,6 +34,7 @@ public sealed class CreateCheckoutSessionHandler(
     IPermissionChecker permissions,
     IBillingSubscriptionRepository subscriptions,
     IYooKassaPaymentsClient yooKassa,
+    IPriceCatalogRepository prices,
     BillingOptions billingOptions,
     IIdGenerator idGenerator,
     IClock clock)
@@ -52,12 +61,23 @@ public sealed class CreateCheckoutSessionHandler(
                 + $"{SubscriptionTierBands.MinSeats}-{SubscriptionTierBands.MaxSeats}.");
         }
 
+        // `25-43`: the currently-effective price for both seat-pricing keys, read fresh at the moment
+        // of this charge - see this handler's own remarks for why either being unpublished refuses the
+        // whole checkout rather than charging an amount computed from a missing figure.
+        var basePrice = await prices.FindCurrentAsync(SubscriptionTierBands.BaseSeatPriceKey, cancellationToken);
+        if (basePrice is null)
+        {
+            return PriceCatalogErrors.PriceNotConfigured(SubscriptionTierBands.BaseSeatPriceKey.Value);
+        }
+
+        var extraPrice = await prices.FindCurrentAsync(SubscriptionTierBands.ExtraSeatPriceKey, cancellationToken);
+        if (extraPrice is null)
+        {
+            return PriceCatalogErrors.PriceNotConfigured(SubscriptionTierBands.ExtraSeatPriceKey.Value);
+        }
+
         var now = clock.UtcNow;
-        // `25-29`: `ago-business` decision `0012`'s own banded formula - a flat base charge plus a
-        // marginal charge per seat past `SubscriptionTierBands.BaseSeats`, replacing the flat
-        // `seats × one rate` this line used to compute (`0008`'s superseded grid).
-        var amount = SubscriptionTierBands.ComputeSeatPriceRub(
-            command.RequestedSeats, billingOptions.BaseSeatPriceRub, billingOptions.PricePerExtraSeatRub);
+        var amount = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
         var idempotenceKey = idGenerator.NewId(now).ToString();
 
         var paymentResult = await yooKassa.CreatePaymentAsync(
@@ -76,7 +96,8 @@ public sealed class CreateCheckoutSessionHandler(
         var success = (CreatePaymentResult.Success)paymentResult;
         var subscriptionId = new BillingSubscriptionId(idGenerator.NewId(now));
         var subscription = BillingSubscription.Create(
-            subscriptionId, command.SiteId, success.PaymentId, command.RequestedSeats, tier, now);
+            subscriptionId, command.SiteId, success.PaymentId, command.RequestedSeats, tier,
+            basePrice.Sequence, extraPrice.Sequence, now);
         await subscriptions.SaveAsync(subscription, cancellationToken);
 
         return new CheckoutSessionDto(success.ConfirmationUrl);

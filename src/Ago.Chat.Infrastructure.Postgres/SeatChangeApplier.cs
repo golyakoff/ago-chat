@@ -28,7 +28,8 @@ public sealed class SeatChangeApplier(AgoChatDbContext db, IOutboxWriter outbox,
                 $"Billing subscription {request.SubscriptionId.Value} was not found while applying an immediate seat increase.");
         }
 
-        subscription.ApplySeatIncreaseImmediately(request.NewSeatCount, request.NewTier);
+        subscription.ApplySeatIncreaseImmediately(
+            request.NewSeatCount, request.NewTier, request.BaseSeatPriceVersion, request.ExtraSeatPriceVersion);
 
         var site = await db.Sites.FirstOrDefaultAsync(s => s.Id == request.SiteId, cancellationToken);
         if (site is null)

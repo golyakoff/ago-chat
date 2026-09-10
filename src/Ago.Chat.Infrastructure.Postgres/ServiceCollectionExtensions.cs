@@ -205,6 +205,10 @@ public static class ServiceCollectionExtensions
         // why the write-side aggregate load/save pair and the public read path's direct queries share
         // one implementation.
         services.AddScoped<IDocumentRepository, DocumentRepository>();
+        // `25-43`: PricedResource/PublishedPriceVersion's own port - PriceCatalogRepository's own
+        // remarks on why the write-side aggregate load/save pair and the hot-read direct queries share
+        // one implementation, the identical DocumentRepository shape immediately above.
+        services.AddScoped<IPriceCatalogRepository, PriceCatalogRepository>();
         // `24-03`: "which documents a subject must accept" is data - RegisterSiteHandler's own port,
         // IRequiredDocumentRepository's own remarks on why.
         services.AddScoped<IRequiredDocumentRepository, RequiredDocumentRepository>();

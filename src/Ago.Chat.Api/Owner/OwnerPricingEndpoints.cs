@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Application.UseCases.GetPricingForOwner;
+﻿using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.GetPricingForOwner;
+using Ago.Chat.Application.UseCases.PublishPriceVersion;
 
 namespace Ago.Chat.Api.Owner;
 
@@ -37,6 +39,14 @@ public static class OwnerPricingEndpoints
     {
         app.MapGet("/api/v1/owner/pricing", HandleGetPricingAsync)
             .RequireAuthorization("RequirePlatformOwner");
+
+        // `25-43`: the write side this screen has never had - a new version for an already-registered
+        // key, never a new key (PublishPriceVersionHandler's own PricedResourceKeys.IsKnown guard is
+        // what actually enforces that; this route adds no second check of its own, the identical
+        // "the handler is the one place that decides, the route only gates who may call it" shape
+        // OwnerDocumentEndpoints' own remarks state for the equivalent document-publish write).
+        app.MapPost("/api/v1/owner/prices/{key}/versions", HandlePublishPriceVersionAsync)
+            .RequireAuthorization("RequirePlatformOwner");
     }
 
     private static async Task<IResult> HandleGetPricingAsync(
@@ -49,4 +59,23 @@ public static class OwnerPricingEndpoints
 
         return Results.Ok(response);
     }
+
+    private static async Task<IResult> HandlePublishPriceVersionAsync(
+        string key, PublishPriceVersionRequest request, PublishPriceVersionHandler handler, HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(new PublishPriceVersion(key, request.AmountRub), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var dto = result.Value;
+        return Results.Ok(new PublishedPriceVersionResponse(dto.Key, dto.Version, dto.Sequence, dto.AmountRub, dto.PublishedAt));
+    }
+
+    public sealed record PublishPriceVersionRequest(decimal AmountRub);
+
+    public sealed record PublishedPriceVersionResponse(string Key, string Version, int Sequence, decimal AmountRub, DateTimeOffset PublishedAt);
 }
