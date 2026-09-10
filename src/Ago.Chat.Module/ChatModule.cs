@@ -13,6 +13,7 @@ using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.CategorizeConversation;
 using Ago.Chat.Application.UseCases.ChangeOperatorRole;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
+using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
@@ -746,6 +747,10 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ISeatChangeApplier, SeatChangeApplier>();
         services.AddScoped<CancelSubscriptionHandler>();
         services.AddScoped<ChangeSubscriptionSeatsHandler>();
+        // `25-41`: the identical seat-purchase shape, restated for a flat Administrator-slot add-on -
+        // see IAdministratorSlotChangeApplier's own remarks.
+        services.AddScoped<IAdministratorSlotChangeApplier, AdministratorSlotChangeApplier>();
+        services.AddScoped<PurchaseAdministratorSlotHandler>();
         // `13-04`: the console billing screen's own bootstrap read - GetBillingStatus's own remarks.
         services.AddScoped<GetBillingStatusHandler>();
 

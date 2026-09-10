@@ -24,12 +24,17 @@ public sealed class RoleChangeRecordRepository(AgoChatDbContext db) : IRoleChang
         // column there. Every real caller today assigns at least one role before this handler can ever
         // run, but the cast costs nothing and removes the failure mode entirely rather than relying on
         // that always remaining true.
+        //
+        // `25-41`: changed_by_operator_id's own parameter is now `Guid?` (record.ChangedByOperatorId?.Value)
+        // - see IRoleChangeRecordRepository's own remarks for why an automatic demotion has no operator
+        // to name honestly here, and Stage25WidenRoleChangeRecordActor's own migration for the column
+        // this widens.
         db.Database.ExecuteSqlInterpolatedAsync(
             $"""
             insert into role_change_records
                 (id, site_id, changed_by_operator_id, changed_operator_id, previous_role_names, new_role_name, changed_at)
             values
-                ({record.Id}, {record.SiteId.Value}, {record.ChangedByOperatorId.Value}, {record.ChangedOperatorId.Value},
+                ({record.Id}, {record.SiteId.Value}, {record.ChangedByOperatorId?.Value}, {record.ChangedOperatorId.Value},
                  {record.PreviousRoleNames.ToArray()}::text[], {record.NewRoleName}, {record.ChangedAt})
             """,
             cancellationToken);

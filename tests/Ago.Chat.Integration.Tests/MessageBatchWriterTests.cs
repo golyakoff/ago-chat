@@ -112,7 +112,7 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var site = await db.Sites.SingleAsync(s => s.Id == siteId);
-            site.ActivateSubscription(SubscriptionTierBands.Starter, seatLimit: 10, Now);
+            site.ActivateSubscription(SubscriptionTierBands.Starter, seatLimit: 10, extraAdministrators: 0, Now);
             await db.SaveChangesAsync();
         }
 

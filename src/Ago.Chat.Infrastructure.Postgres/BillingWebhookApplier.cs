@@ -92,7 +92,13 @@ public sealed class BillingWebhookApplier(AgoChatDbContext db, IOutboxWriter out
                         + "a foreign key should have prevented this.");
                 }
 
-                site.ActivateSubscription(subscription.Tier, subscription.RequestedSeats, request.Now);
+                // `25-41`: subscription.ExtraAdministratorsPurchased passed through - always `0` at a
+                // first activation (nobody can have bought an extra Administrator slot before their
+                // base subscription has ever reached Succeeded once), so this call site can only ever
+                // raise AdminLimit from its free-tier baseline, never lower it - the identical
+                // "provably never decreases, so no demotion-enforcer call here" reasoning
+                // AdministratorSlotChangeApplier's own remarks give.
+                site.ActivateSubscription(subscription.Tier, subscription.RequestedSeats, subscription.ExtraAdministratorsPurchased, request.Now);
                 var activated = site.DomainEvents.OfType<SiteSubscriptionActivated>().Single();
                 outbox.Enqueue(SiteSubscriptionActivatedMapper.ToEnvelope(activated, idGenerator));
                 site.ClearDomainEvents();

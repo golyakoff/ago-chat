@@ -12,7 +12,10 @@ internal sealed class RoleChangeRecordConfiguration : IEntityTypeConfiguration<R
         builder.HasKey(e => e.Id);
         builder.Property(e => e.Id).HasColumnName("id").ValueGeneratedNever();
         builder.Property(e => e.SiteId).HasColumnName("site_id").HasConversion(IdConverters.Site).IsRequired();
-        builder.Property(e => e.ChangedByOperatorId).HasColumnName("changed_by_operator_id").HasConversion(IdConverters.Operator).IsRequired();
+        // `25-41`: nullable - IdConverters.NullableOperator, not the non-nullable IdConverters.Operator
+        // every other column here still uses. RoleChangeRecordEntity's own remarks state why: an
+        // automatic demotion (AdministratorLimitEnforcer) has no operator to name here honestly.
+        builder.Property(e => e.ChangedByOperatorId).HasColumnName("changed_by_operator_id").HasConversion(IdConverters.NullableOperator);
         builder.Property(e => e.ChangedOperatorId).HasColumnName("changed_operator_id").HasConversion(IdConverters.Operator).IsRequired();
         // Postgres text[], the identical native List<string> mapping RoleRecord.Permissions already
         // uses (RoleRecordConfiguration's own remarks) - the operator's whole previous role set, which

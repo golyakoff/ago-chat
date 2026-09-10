@@ -222,6 +222,53 @@ public class BillingSubscriptionTests
         Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplySeatIncreaseImmediately(3, SubscriptionTierBands.Starter, 1, 1));
     }
 
+    // `25-41`: the identical "applies immediately, already charged" shape the two tests above already
+    // prove for seats, restated for a flat Administrator-slot purchase.
+    [Fact]
+    public void ApplyAdministratorPurchase_MovesTheCountAndPriceVersionRightAway()
+    {
+        var subscription = CreateSucceeded(seats: 5, tier: SubscriptionTierBands.Starter);
+        Assert.Equal(0, subscription.ExtraAdministratorsPurchased);
+        Assert.Equal(0, subscription.AdminExtraPriceVersion);
+
+        subscription.ApplyAdministratorPurchase(1, adminExtraPriceVersion: 3);
+
+        Assert.Equal(1, subscription.ExtraAdministratorsPurchased);
+        Assert.Equal(3, subscription.AdminExtraPriceVersion);
+    }
+
+    [Fact]
+    public void ApplyAdministratorPurchase_ASecondTime_MovesFromWhereverTheFirstLeftIt()
+    {
+        var subscription = CreateSucceeded(seats: 5);
+        subscription.ApplyAdministratorPurchase(1, adminExtraPriceVersion: 3);
+
+        subscription.ApplyAdministratorPurchase(2, adminExtraPriceVersion: 7);
+
+        Assert.Equal(2, subscription.ExtraAdministratorsPurchased);
+        Assert.Equal(7, subscription.AdminExtraPriceVersion);
+    }
+
+    [Fact]
+    public void ApplyAdministratorPurchase_WithACountAtOrBelowTheCurrentOne_Throws()
+    {
+        var subscription = CreateSucceeded(seats: 5);
+        subscription.ApplyAdministratorPurchase(2, adminExtraPriceVersion: 3);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplyAdministratorPurchase(2, adminExtraPriceVersion: 9));
+        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ApplyAdministratorPurchase(1, adminExtraPriceVersion: 9));
+    }
+
+    [Fact]
+    public void ApplyAdministratorPurchase_WhenNotSucceeded_Throws()
+    {
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5,
+            SubscriptionTierBands.Starter, 1, 1, Now);
+
+        Assert.Throws<InvalidOperationException>(() => subscription.ApplyAdministratorPurchase(1, adminExtraPriceVersion: 3));
+    }
+
     [Fact]
     public void ScheduleSeatDecrease_RecordsAPendingChangeWithoutTouchingRequestedSeats()
     {

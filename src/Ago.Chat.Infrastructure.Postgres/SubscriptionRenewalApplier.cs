@@ -49,7 +49,8 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// </summary>
 public sealed class SubscriptionRenewalApplier(
     AgoChatDbContext db, IOutboxWriter outbox, IIdGenerator idGenerator,
-    IModuleQuantityGrantStore entitlementGrants, IBillingOptionEntitlementProvider optionEntitlements)
+    IModuleQuantityGrantStore entitlementGrants, IBillingOptionEntitlementProvider optionEntitlements,
+    IAdministratorLimitEnforcer administratorLimitEnforcer)
     : ISubscriptionRenewalApplier
 {
     /// <summary><see cref="ModuleQuantityGrant.Quantity"/> used to mean "this option's entitlement is
@@ -81,8 +82,16 @@ public sealed class SubscriptionRenewalApplier(
         else
         {
             var site = await LoadSiteOrThrowAsync(subscription.SiteId, cancellationToken);
-            site.ActivateSubscription("free", 1, now);
+            // `25-41`: `0`, not `subscription.ExtraAdministratorsPurchased` - a full lapse is the
+            // author's own "the charge itself lapsing" trigger, and the whole point of a lapse is that
+            // nothing this subscription paid for is paid for any more, extra Administrator slots
+            // included. AdminLimit drops from whatever it was to FreeAdminsIncluded (1) - the one call
+            // site in this applier where it provably always drops (every non-removed Admin holder past
+            // `1` is now over the new ceiling), so the enforcer call below is never a no-op here in
+            // practice, unlike its sibling call further down.
+            site.ActivateSubscription("free", 1, 0, now);
             StageSiteSettingsChanged(site);
+            await administratorLimitEnforcer.DemoteExcessAdministratorsAsync(subscription.SiteId, site.AdminLimit, now, cancellationToken);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -119,8 +128,22 @@ public sealed class SubscriptionRenewalApplier(
         if (subscription.RequestedSeats != seatsBefore || subscription.Tier != tierBefore)
         {
             var site = await LoadSiteOrThrowAsync(subscription.SiteId, cancellationToken);
-            site.ActivateSubscription(subscription.Tier, subscription.RequestedSeats, now);
+            var adminLimitBefore = site.AdminLimit;
+            // `25-41`: subscription.ExtraAdministratorsPurchased passed through unchanged - a deferred
+            // seat/tier downgrade taking effect here never itself changes what was purchased for
+            // Administrators, and every paid tier band resolves to the identical AdminLimit baseline
+            // (SubscriptionTierBands.ResolveAdminLimit's own remarks), so this sum cannot actually drop
+            // today. The before/after compare below is kept anyway, not skipped the way
+            // SeatChangeApplier/AdministratorSlotChangeApplier's own siblings are - a deferred downgrade
+            // is exactly the author's own "downgrade" trigger named in this item's own Done-when, and a
+            // future tier band with a lower Administrator allowance must not silently skip the check
+            // this applier is the one already-designated place to make it.
+            site.ActivateSubscription(subscription.Tier, subscription.RequestedSeats, subscription.ExtraAdministratorsPurchased, now);
             StageSiteSettingsChanged(site);
+            if (site.AdminLimit < adminLimitBefore)
+            {
+                await administratorLimitEnforcer.DemoteExcessAdministratorsAsync(subscription.SiteId, site.AdminLimit, now, cancellationToken);
+            }
         }
 
         await db.SaveChangesAsync(cancellationToken);

@@ -46,11 +46,23 @@ public interface IRoleChangeRecordRepository
 /// is singular: <c>ChangeOperatorRoleHandler</c> replaces a colleague's whole assignment with exactly
 /// one named role, the same single-role-per-invite shape invite redemption already establishes for a
 /// freshly created operator - see that handler's own remarks for why this item does not build a way to
-/// hold two roles at once for anybody but the account's own founder.</summary>
+/// hold two roles at once for anybody but the account's own founder.
+///
+/// <para><b>`25-41`: <paramref name="ChangedByOperatorId"/> is nullable, widened from this record's
+/// own original required shape</b> - every change until this item was a human's own act
+/// (<c>ChangeOperatorRoleHandler</c>'s own caller, always a real, permission-checked operator). An
+/// automatic demotion (<c>AdministratorLimitEnforcer</c>, triggered by a lapse or a downgrade, never by
+/// a request) has no operator behind it to name honestly - attributing it to whoever happened to
+/// trigger the billing event that caused it (a renewal job with no human caller at all, in the
+/// <see cref="Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewalHandler"/>
+/// case) would misreport who acted, the same care <see cref="Ago.Chat.Domain.Operator.ExternalSubjectId"/>'s
+/// own optionality already takes for "nothing to attribute this to" rather than inventing a
+/// placeholder. <see langword="null"/> reads, honestly, as "the system, not a person, made this
+/// change."</para></summary>
 public sealed record RoleChangeRecordToWrite(
     Guid Id,
     SiteId SiteId,
-    OperatorId ChangedByOperatorId,
+    OperatorId? ChangedByOperatorId,
     OperatorId ChangedOperatorId,
     IReadOnlyList<string> PreviousRoleNames,
     string NewRoleName,

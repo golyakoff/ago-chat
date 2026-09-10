@@ -3,6 +3,7 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
+using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
@@ -38,6 +39,7 @@ public static class BillingEndpoints
         app.MapYooKassaWebhookEndpoint();
         app.MapCancelSubscriptionEndpoint();
         app.MapChangeSubscriptionSeatsEndpoint();
+        app.MapPurchaseAdministratorSlotEndpoint();
         app.MapGetBillingStatusEndpoint();
     }
 
@@ -62,6 +64,15 @@ public static class BillingEndpoints
     public static void MapChangeSubscriptionSeatsEndpoint(this WebApplication app) =>
         app.MapPost(
             "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/seats", HandleChangeSubscriptionSeatsAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+    /// <summary>`25-41`: the identical seat-purchase shape immediately above, restated for a flat
+    /// Administrator-slot add-on - always an immediate, charged increase, never a downgrade branch
+    /// (<see cref="PurchaseAdministratorSlot"/>'s own remarks on why there is no self-service
+    /// decrease).</summary>
+    public static void MapPurchaseAdministratorSlotEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/administrators", HandlePurchaseAdministratorSlotAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
     /// <summary>Split out from <see cref="MapBillingEndpoints"/> as its own public extension method -
@@ -172,6 +183,23 @@ public static class BillingEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
+    private static async Task<IResult> HandlePurchaseAdministratorSlotAsync(
+        Guid siteId,
+        Guid subscriptionId,
+        PurchaseAdministratorSlotRequest request,
+        PurchaseAdministratorSlotHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new PurchaseAdministratorSlot(
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId), request.RequestedExtraAdministrators),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
     private static async Task<IResult> HandleGetBillingStatusAsync(
         Guid siteId, GetBillingStatusHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
@@ -184,4 +212,6 @@ public static class BillingEndpoints
     public sealed record CreateCheckoutSessionRequest(int RequestedSeats);
 
     public sealed record ChangeSubscriptionSeatsRequest(int RequestedSeats);
+
+    public sealed record PurchaseAdministratorSlotRequest(int RequestedExtraAdministrators);
 }

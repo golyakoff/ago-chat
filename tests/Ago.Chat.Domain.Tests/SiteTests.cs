@@ -346,7 +346,7 @@ public class SiteTests
     {
         var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
 
-        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, DateTimeOffset.UtcNow);
+        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, 0, DateTimeOffset.UtcNow);
 
         Assert.Equal(SubscriptionTierBands.Growth, site.Tier);
         Assert.Equal(25, site.SeatLimit);
@@ -363,12 +363,41 @@ public class SiteTests
     public void ActivateSubscription_WhenDowngradingToFree_LowersAdminLimitBackToOne()
     {
         var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
-        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, DateTimeOffset.UtcNow);
+        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, 0, DateTimeOffset.UtcNow);
         Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded, site.AdminLimit);
 
-        site.ActivateSubscription("free", 1, DateTimeOffset.UtcNow);
+        site.ActivateSubscription("free", 1, 0, DateTimeOffset.UtcNow);
 
         Assert.Equal("free", site.Tier);
+        Assert.Equal(SubscriptionTierBands.FreeAdminsIncluded, site.AdminLimit);
+    }
+
+    /// <summary>`25-41`: `AdminLimit` is the tier's own baseline *plus* whatever was purchased, not
+    /// one or the other - proven by raising `extraAdministrators` on top of a tier that already
+    /// includes two, and confirming the sum, not a value that ignores either side.</summary>
+    [Fact]
+    public void ActivateSubscription_WithPurchasedExtraAdministrators_AddsThemToTheTierBaseline()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, extraAdministrators: 2, DateTimeOffset.UtcNow);
+
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded + 2, site.AdminLimit);
+    }
+
+    /// <summary>`25-41`'s own Done-when trigger, restated at the Domain level: a full lapse to free
+    /// (`extraAdministrators: 0`) drops `AdminLimit` all the way back to the free-tier floor, even
+    /// though a moment before it included purchased extras on top of a paid-tier baseline - the exact
+    /// drop `IAdministratorLimitEnforcer`'s own caller reacts to.</summary>
+    [Fact]
+    public void ActivateSubscription_WhenLapsingWithPurchasedExtras_DropsAdminLimitToTheFreeFloor()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, extraAdministrators: 2, DateTimeOffset.UtcNow);
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded + 2, site.AdminLimit);
+
+        site.ActivateSubscription("free", 1, extraAdministrators: 0, DateTimeOffset.UtcNow);
+
         Assert.Equal(SubscriptionTierBands.FreeAdminsIncluded, site.AdminLimit);
     }
 
@@ -379,7 +408,7 @@ public class SiteTests
         var site = new Site(id, "shop_7f3a", []);
         var now = DateTimeOffset.UtcNow;
 
-        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, now);
+        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, 0, now);
 
         var domainEvent = Assert.Single(site.DomainEvents);
         var raised = Assert.IsType<SiteSubscriptionActivated>(domainEvent);
@@ -396,9 +425,9 @@ public class SiteTests
         var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
         var now = DateTimeOffset.UtcNow;
 
-        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, now);
+        site.ActivateSubscription(SubscriptionTierBands.Starter, 5, 0, now);
         site.ClearDomainEvents();
-        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, now);
+        site.ActivateSubscription(SubscriptionTierBands.Growth, 25, 0, now);
 
         Assert.Single(site.DomainEvents);
         Assert.Equal(SubscriptionTierBands.Growth, site.Tier);
