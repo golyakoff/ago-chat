@@ -1,11 +1,13 @@
 ﻿using System.Diagnostics;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -164,7 +166,7 @@ public sealed class MessageBatchWriterAutoGreetingTests(PostgresFixture fixture)
     }
 
     private MessageBatchWriter CreateWriter() =>
-        new(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
+        new(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), Options.Create(new SiteActivityWatchdogOptions()), NullLogger<MessageBatchWriter>.Instance);
 
     private async Task<Result<int>> FlushOneAsync(
         ConversationId conversationId, Guid visitorId, string body, bool materializeAutoGreeting)

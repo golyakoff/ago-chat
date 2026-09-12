@@ -146,6 +146,11 @@ public static class ServiceCollectionExtensions
         // `16-02`: the erase-request write - see IErasureRequestRepository's own remarks on why it is
         // its own port rather than a method on ISiteRepository/IConversationRepository.
         services.AddScoped<IErasureRequestRepository, ErasureRequestRepository>();
+        // `23-73`: the inactivity watchdog's own reset - see ISiteActivityWatchdog's own remarks for
+        // why this is its own port. Scoped, the same lifetime as every other single-statement
+        // Npgsql-backed repository right above; SiteActivityWatchdogOptions itself is bound in
+        // ChatModule, where every other options group in this product is bound.
+        services.AddScoped<ISiteActivityWatchdog, SiteActivityWatchdogRepository>();
         // `24-10`: the block/unblock write - see IConversationBlockRepository's own remarks for why it
         // is raw SQL like the port right above rather than a method on IConversationRepository.
         services.AddScoped<IConversationBlockRepository, ConversationBlockRepository>();

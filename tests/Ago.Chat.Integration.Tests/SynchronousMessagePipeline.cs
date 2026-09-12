@@ -1,9 +1,11 @@
 ﻿using System.Diagnostics;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Ago.Chat.Integration.Tests;
@@ -23,7 +25,7 @@ namespace Ago.Chat.Integration.Tests;
 public sealed class SynchronousMessagePipeline(NpgsqlDataSource dataSource) : IMessagePipeline
 {
     private readonly MessageBatchWriter _writer = new(
-        dataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
+        dataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), Options.Create(new SiteActivityWatchdogOptions()), NullLogger<MessageBatchWriter>.Instance);
 
     public async Task<Result<int>> EnqueueAsync(PendingMessage message, CancellationToken cancellationToken)
     {

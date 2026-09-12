@@ -2,6 +2,7 @@
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Hosting;
@@ -248,7 +249,7 @@ public sealed class MessagePipelineTests(ConcurrencyTestFixture fixture)
         // Drain so the pending EnqueueAsync calls complete and the test exits cleanly.
         var sequencer = new ConversationSequencer();
         var accumulator = new BatchAccumulator();
-        var writer = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
+        var writer = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), Options.Create(new SiteActivityWatchdogOptions()), NullLogger<MessageBatchWriter>.Instance);
         var workerHost = new MessagePipelineWorkerHost(pipeline, sequencer, accumulator, Options.Create(options), NullLogger<MessagePipelineWorkerHost>.Instance);
         var flusher = new BatchFlusherService(accumulator, writer, new SystemClock(), Options.Create(options));
         await workerHost.StartAsync(CancellationToken.None);
@@ -360,7 +361,7 @@ public sealed class MessagePipelineTests(ConcurrencyTestFixture fixture)
         var pipeline = new ChannelMessagePipeline(Options.Create(options), lifetime);
         var sequencer = new ConversationSequencer();
         var accumulator = new BatchAccumulator();
-        var writer = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), NullLogger<MessageBatchWriter>.Instance);
+        var writer = new MessageBatchWriter(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), Options.Create(new SiteActivityWatchdogOptions()), NullLogger<MessageBatchWriter>.Instance);
         var workerHost = new MessagePipelineWorkerHost(
             pipeline, sequencer, accumulator, Options.Create(options), NullLogger<MessagePipelineWorkerHost>.Instance);
         var flusher = new BatchFlusherService(accumulator, writer, new SystemClock(), Options.Create(options));

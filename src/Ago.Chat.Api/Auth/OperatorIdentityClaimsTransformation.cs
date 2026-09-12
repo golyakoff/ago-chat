@@ -1,7 +1,9 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 
@@ -56,7 +58,8 @@ namespace Ago.Chat.Api.Auth;
 /// so failing to read it can only fail to narrow, never widen, access.</para>
 /// </summary>
 public sealed class OperatorIdentityClaimsTransformation(
-    IServiceScopeFactory scopeFactory, IHttpContextAccessor httpContextAccessor) : IClaimsTransformation
+    IServiceScopeFactory scopeFactory, IHttpContextAccessor httpContextAccessor, IClock clock)
+    : IClaimsTransformation
 {
     /// <summary>`13-07`/`adr/0068`: the header name the ADR itself names as an example and this item
     /// finalises. Used consistently by every REST caller in `ago-console` (`operatorsApi.ts` and
@@ -92,6 +95,22 @@ public sealed class OperatorIdentityClaimsTransformation(
         {
             return principal;
         }
+
+        // `23-73`: the inactivity watchdog's own login/authenticated-request reset hook. This method
+        // runs on every request for an ordinary REST call and once per hub connection handshake (this
+        // class's own remarks above) - deliberately not gated any further here on "is this actually a
+        // sign-in" versus "just another request riding an already-issued token": `ISiteActivityWatchdog.
+        // TouchAsync`'s own throttle (SiteActivityWatchdogOptions.MinTouchInterval) is what keeps this
+        // from becoming a write per request, so this call site does not need to reason about request
+        // frequency at all - the port already does. A Redis-backed debounce in front of this call was
+        // considered (skip the round trip to Postgres entirely when a cached "recently touched" marker
+        // is still fresh) and deliberately not built yet: it would trade one always-cheap, always-
+        // correct indexed UPDATE (a no-op write when within the throttle window) for a second cache
+        // dependency and a second place this fact can go stale, to save a round trip whose cost has
+        // never been measured (`CLAUDE.md`: no invented numbers) - worth revisiting if this path is ever
+        // shown to need it.
+        var watchdog = scope.ServiceProvider.GetRequiredService<ISiteActivityWatchdog>();
+        await watchdog.TouchAsync(identity.SiteId, clock.UtcNow, CancellationToken.None);
 
         var claimsIdentity = new ClaimsIdentity();
         claimsIdentity.AddClaim(new Claim(AgoClaimTypes.OperatorId, identity.OperatorId.Value.ToString()));

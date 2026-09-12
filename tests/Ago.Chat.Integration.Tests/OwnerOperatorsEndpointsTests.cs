@@ -329,6 +329,10 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
 
         builder.Services.AddHttpContextAccessor();
+        // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog
+        // reset hook and (where this host did not already have one) IClock.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.ISiteActivityWatchdog, Ago.Chat.Infrastructure.Postgres.SiteActivityWatchdogRepository>();
+        builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ago.Chat.Infrastructure.Postgres.SiteActivityWatchdogOptions()));
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 
         builder.Services.AddAuthentication()

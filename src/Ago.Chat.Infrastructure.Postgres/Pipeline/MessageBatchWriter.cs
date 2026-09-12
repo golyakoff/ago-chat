@@ -11,6 +11,7 @@ using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Ago.Chat.Infrastructure.Postgres.Pipeline;
@@ -40,7 +41,8 @@ namespace Ago.Chat.Infrastructure.Postgres.Pipeline;
 /// of them actually landed.
 /// </summary>
 public sealed class MessageBatchWriter(
-    NpgsqlDataSource dataSource, IClock clock, IIdGenerator idGenerator, ICache cache, ILogger<MessageBatchWriter> logger)
+    NpgsqlDataSource dataSource, IClock clock, IIdGenerator idGenerator, ICache cache,
+    IOptions<SiteActivityWatchdogOptions> watchdogOptions, ILogger<MessageBatchWriter> logger)
 {
     internal async Task FlushAsync(IReadOnlyList<InboundMessage> batch, CancellationToken cancellationToken)
     {
@@ -92,6 +94,11 @@ public sealed class MessageBatchWriter(
         // actually registered with.
         var getSiteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), cache);
         var pendingSuccesses = new List<(InboundMessage Item, int Sequence)>();
+        // `23-73`: every distinct site that had at least one operator-authored message actually accepted
+        // into its conversation this flush - "accepted", not "attempted", so a message a participant-
+        // mismatch/invalid-state catch below rejects never counts as operator activity. Touched once,
+        // batched, right before this transaction commits - see this method's own closing remarks.
+        var touchedSiteIds = new HashSet<Guid>();
 
         foreach (var group in batch.GroupBy(i => i.Message.ConversationId))
         {
@@ -204,6 +211,19 @@ public sealed class MessageBatchWriter(
                             new OperatorId(item.Message.AuthorId), messageId, item.Message.Body, now,
                             item.Message.AttachmentId, item.Message.ClientMessageId, item.Message.Content, retentionClass);
 
+                    if (item.Message.AuthorKind == MessageAuthorKind.Operator)
+                    {
+                        // `23-73`: the inactivity watchdog's own reset hook. Counted here, once the
+                        // domain call above has actually accepted the message (no
+                        // ConversationParticipantMismatchException/InvalidConversationStateException
+                        // thrown) - a message this conversation refused is not evidence an operator
+                        // reached a real customer. Deliberately counted for the retry-duplicate branch
+                        // just below too, not only a genuinely new message: a retried send still proves
+                        // this operator's client is live and answering, which is what the watchdog
+                        // exists to detect.
+                        touchedSiteIds.Add(conversation.SiteId.Value);
+                    }
+
                     // `5-07`: a returned Message.Id that does not match the id just generated above
                     // means Conversation.AddMessage found an existing message with the same
                     // ClientMessageId and handed that back instead of appending - a retry, not a new
@@ -249,6 +269,21 @@ public sealed class MessageBatchWriter(
             }
 
             conversation?.ClearDomainEvents();
+        }
+
+        if (touchedSiteIds.Count > 0)
+        {
+            // `23-73`: raw SQL against this flush's own already-open connection/transaction, not
+            // through ISiteActivityWatchdog - that port opens its own connection for the one caller
+            // that has none open yet (OperatorIdentityClaimsTransformation); this flush already has
+            // one, and reusing it is what makes this write commit or roll back atomically with every
+            // message it was touched by, for free, rather than as a second, independent write that
+            // could land even if the message batch itself then fails to commit. One statement for
+            // every touched site in this flush (TouchManyAsync), not one round trip per site - a
+            // single flush can carry operator messages for several different sites at once.
+            await SiteActivityWatchdogQuery.TouchManyAsync(
+                connection, transaction, touchedSiteIds, clock.UtcNow, watchdogOptions.Value.MinTouchInterval,
+                cancellationToken);
         }
 
         try

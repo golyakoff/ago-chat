@@ -452,6 +452,10 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
         // `13-07`: OperatorIdentityClaimsTransformation now reads the active-site signal off the
         // current request - see Program.cs's own remarks on this exact registration.
         builder.Services.AddHttpContextAccessor();
+        // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog
+        // reset hook and (where this host did not already have one) IClock.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.ISiteActivityWatchdog, Ago.Chat.Infrastructure.Postgres.SiteActivityWatchdogRepository>();
+        builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ago.Chat.Infrastructure.Postgres.SiteActivityWatchdogOptions()));
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new RegisterSiteRateLimitOptions());
