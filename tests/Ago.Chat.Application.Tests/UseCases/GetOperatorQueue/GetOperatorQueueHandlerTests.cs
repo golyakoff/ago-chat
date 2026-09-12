@@ -153,7 +153,7 @@ public class GetOperatorQueueHandlerTests
         tags.Seed(Tag.Create(vipTagId, SiteId, "VIP", Now));
         tags.Seed(Tag.Create(billingTagId, SiteId, "Billing", Now));
 
-        var handler = new GetOperatorQueueHandler(conversations, tags, permissions);
+        var handler = new GetOperatorQueueHandler(conversations, new FakeVisitorRepository(), tags, permissions);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [vipTagId, billingTagId]),
