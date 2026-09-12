@@ -461,6 +461,48 @@ public class RouteConversationToModuleHandlerTests
         Assert.Contains("verify", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>`25-64`: found live 2026-09-12 - a Russian-locale tenant's own booking conversation hit
+    /// this one refusal in English mid-flow, the only Chat-owned system message in this handler that
+    /// was not rendered in the site's own configured language.</summary>
+    [Fact]
+    public async Task HandleAsync_AVerifiedPhoneFormReply_WithNoVerifiedIdentity_OnARussianSite_TellsTheVisitorToVerify_InRussian()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(site: site, arrange: c => ConversationAwaitingVerifiedPhone(c));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.PhoneVerificationRequired, result.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("verify", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("подтвердить", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>`25-64`: `adr/0163`'s own decision, proven where it was missing - with the site's own
+    /// `AcceptUnverifiedPhone` on and no verified identity, the reply reaches the module after all,
+    /// unlike the immediately preceding test (identical setup, default site, off). Calendar's own
+    /// `RequiresVerifiedPhone = !acceptUnverifiedPhone` is what actually decides the booking from here;
+    /// this only proves Chat stopped refusing to ask it the question.</summary>
+    [Fact]
+    public async Task HandleAsync_AVerifiedPhoneFormReply_WithNoVerifiedIdentity_ButTheSiteAcceptsUnverifiedPhones_ForwardsTheReply_CarryingNoPhoneVerifiedAt()
+    {
+        var site = new Site(SiteId, $"pk-{SiteId.Value:N}", []);
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, acceptUnverifiedPhone: true), Now);
+        var fixture = CreateFixture(site: site, arrange: c => ConversationAwaitingVerifiedPhone(c));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+79990000001"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, result.Value);
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal("+79990000001", call.Request.Value);
+        Assert.Null(call.Request.PhoneVerifiedAt);
+        Assert.True(call.Request.AcceptUnverifiedPhone);
+    }
+
     /// <summary>An identity verified for a phone that reads the same but belongs to a *different*
     /// visitor must not satisfy this gate - the same "reuse, never merge" boundary `ChannelIdentity`'s
     /// own remarks establish for `14-12`'s own linking.</summary>

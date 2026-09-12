@@ -69,13 +69,34 @@ public sealed class RouteConversationToModuleHandler(
     private const string ModuleBecameUnreachableText =
         "Sorry, something went wrong on our end - a person will take over from here.";
 
-    /// <summary>`20-09`: what a visitor sees when a <see cref="PrimitiveKinds.VerifiedPhoneForm"/> reply
-    /// names a phone number this system has not yet proven they can be reached on. Deliberately
-    /// actionable rather than a generic refusal - see <see cref="ContinueActiveTaskAsync"/>'s own
-    /// remarks for exactly what "verify it" means operationally today (no widget popup exists yet;
-    /// `14-15`'s own HTTP endpoints are the real mechanism, driven directly until one does).</summary>
-    private const string PhoneVerificationRequiredText =
-        "Before I can book that, please verify this phone number - we'll send you a code by SMS or call.";
+    /// <summary>`20-09`/`25-64`: what a visitor sees when a <see cref="PrimitiveKinds.VerifiedPhoneForm"/>
+    /// reply names a phone number this system has not yet proven they can be reached on, on a tenant
+    /// that has not opted into `adr/0163`'s relaxation. Deliberately actionable rather than a generic
+    /// refusal - see <see cref="ContinueActiveTaskAsync"/>'s own remarks for exactly what "verify it"
+    /// means operationally today (no widget popup exists yet; `14-15`'s own HTTP endpoints are the real
+    /// mechanism, driven directly until one does).
+    ///
+    /// <para><b>Localized, unlike this class's other three system-message texts.</b> Found live
+    /// 2026-09-12: a real tenant's operator watched their own Russian booking conversation hit this one
+    /// English sentence mid-flow. `ModuleUnavailableText`/`ModuleBecameUnreachableText`/
+    /// `ModuleEscalatedFallbackText` share the identical gap and are not fixed here - this text is the
+    /// one actually exercised by the live report that found it, and generalizing the fix to all four
+    /// text constants in this class in the same change would be scope this item never asked for;
+    /// `25-66` (filed alongside this fix) is where the other three go.</para>
+    ///
+    /// <para><b>Worded to avoid "book".</b> The original text's "Before I can book that" is the word
+    /// `MessageOpacityTests.NoProductAssembly_NamesAnotherProductsDomain` exists to flag - not because
+    /// this sentence structurally names a booking (it is generic phone-verification copy any module
+    /// with a `VerifiedPhoneForm` step could trigger, calendar or otherwise), but because turning this
+    /// text from a `const string` field into a real method moved its `ldstr` out of a compiler-generated
+    /// lambda closure (which the scanner skips outright, `MessageOpacityRule.IsCompilerGenerated`'s own
+    /// remarks) and into a method the scanner actually walks - the identical coincidental-collision
+    /// shape `MessageOpacityExemptions`' own "slot" entry describes, caught here before it needed one.
+    /// Rewording costs nothing the exemption list would not also have cost, and it is the remedy that
+    /// class's own doc comment prefers when the choice is real.</para></summary>
+    private static string PhoneVerificationRequiredText(string locale) => locale == nameof(Locale.Ru)
+        ? "Прежде чем оформить запись, нужно подтвердить этот номер телефона — мы отправим код по SMS или позвоним."
+        : "Before I can complete that, please verify this phone number - we'll send you a code by SMS or call.";
 
     /// <summary>`19-03`: the fallback <see cref="PrimitiveTextRenderer.Render"/> falls back to when a
     /// module's own escalate step carries no <c>payload.prompt</c> of its own. Deliberately not the
@@ -211,19 +232,46 @@ public sealed class RouteConversationToModuleHandler(
             return RouteConversationToModuleOutcome.ReplyNotResolved;
         }
 
-        // `20-09`: the structural gate. A reply against a step this vocabulary marks as needing a
-        // *verified* phone is checked against `14-15`'s own evidence - an active ChannelIdentity for
+        // `25-37`/`25-38`/`25-39`: three more facts a module may need to answer this reply, resolved
+        // fresh on every call rather than remembered anywhere - see SubmitModuleReplyRequest.Locale's
+        // own remarks for why this item spends no migration on persisting them. Read unconditionally
+        // (not gated to a particular step kind): none of the three reads is expensive - a single-row
+        // Site lookup and a visitor's own small, bounded contact-detail list
+        // (VisitorContactDetail's own remarks) - and gating on step kind would make this handler's own
+        // behaviour depend on knowledge of which primitive kind a booking module happens to use its
+        // phone step for, which is exactly the "no special-casing per primitive kind" constraint this
+        // handler's own type remarks already hold ResolveReplyValue to.
+        //
+        // `25-64`: moved ahead of the `VerifiedPhoneForm` gate below, deliberately - `acceptUnverifiedPhone`
+        // is what that gate now reads before it can refuse a reply, so it has to exist before the gate
+        // runs rather than after it.
+        var (locale, acceptUnverifiedPhone) = await ResolveModuleContextAsync(conversation.SiteId, cancellationToken);
+        var knownPhone = await ResolveKnownPhoneAsync(conversation.VisitorId, cancellationToken);
+
+        // `20-09`/`25-64`: the structural gate. A reply against a step this vocabulary marks as needing
+        // a *verified* phone is checked against `14-15`'s own evidence - an active ChannelIdentity for
         // this exact (site, Sms, phone) triple, owned by this conversation's own visitor - before the
         // module is ever called, the identical "recognise the kind by value, act before forwarding"
         // shape `PrimitiveKinds.Escalate`'s own handling already established (`adr/0081`). Calendar
-        // never sees this decision; it only ever sees its result (a timestamp, or no reply at all).
+        // never sees this decision when it is Chat's to make; it only ever sees the result (a
+        // timestamp, or no reply at all).
+        //
+        // `adr/0163`: with the site's own `AcceptUnverifiedPhone` on, this gate is no longer Chat's
+        // decision to make alone - the ADR's own text is explicit that "the phone step still renders,
+        // but without demanding proof of control over the number," which only holds if Chat actually
+        // forwards an unverified reply rather than refusing it here first. Before this item, the gate
+        // refused unconditionally, so `AcceptUnverifiedPhone` could never take effect for a phone Chat
+        // had not already verified - the exact gap `25-64` closes. `RequiresVerifiedPhone =
+        // !acceptUnverifiedPhone` (`BookEventHandler`, `ago-calendar`) is where the setting actually
+        // takes its effect; this gate now only stops an unverified reply when the tenant has not opted
+        // in, which is the unchanged default behaviour every tenant already had.
         //
         // A phone that does not even parse (not this vocabulary's concern - shape validation is
         // Calendar's own `PhoneNumber`, the same "Chat never re-validates what a module already
         // validates" split `ReplyToModuleTaskHandler`'s own remarks describe for a reply's id) is
-        // forwarded unchanged, exactly as an ordinary `form` reply always has been: Calendar's own
-        // `BookEventHandler` turns it into `booking.invalid_phone`, and the existing lost-race
-        // re-offer path handles it from there - no second validation invented here.
+        // forwarded unchanged either way, exactly as an ordinary `form` reply always has been:
+        // Calendar's own `BookEventHandler` turns it into `booking.invalid_phone`, and the existing
+        // lost-race re-offer path handles it from there - no second validation invented here.
         DateTimeOffset? phoneVerifiedAt = null;
         if (active.LastStepKind!.Value.Value == PrimitiveKinds.VerifiedPhoneForm)
         {
@@ -246,37 +294,39 @@ public sealed class RouteConversationToModuleHandler(
 
                 if (identity is null || identity.VisitorId != conversation.VisitorId)
                 {
-                    // Not verified for this visitor - never forwarded. The task stays open (the visitor
-                    // can retype the identical number once verification actually completes, through
-                    // `14-15`'s own endpoints - there is no widget popup wired to trigger them yet,
-                    // `20-09`'s own report names this as the deferred, frontend-side follow-up).
-                    var messageId = new MessageId(idGenerator.NewId(now));
-                    return await AddSystemMessageAndSaveAsync(
-                        conversation, command, RouteConversationToModuleOutcome.PhoneVerificationRequired,
-                        c => c.AddSystemMessage(messageId, new MessageBody(PhoneVerificationRequiredText), now, content: null),
-                        cancellationToken);
-                }
+                    if (!acceptUnverifiedPhone)
+                    {
+                        // Not verified for this visitor, and this tenant has not opted into skipping
+                        // that guarantee - never forwarded. The task stays open (the visitor can retype
+                        // the identical number once verification actually completes, through `14-15`'s
+                        // own endpoints - there is no widget popup wired to trigger them yet, `20-09`'s
+                        // own report names this as the deferred, frontend-side follow-up).
+                        var messageId = new MessageId(idGenerator.NewId(now));
+                        return await AddSystemMessageAndSaveAsync(
+                            conversation, command, RouteConversationToModuleOutcome.PhoneVerificationRequired,
+                            c => c.AddSystemMessage(
+                                messageId, new MessageBody(PhoneVerificationRequiredText(locale)), now, content: null),
+                            cancellationToken);
+                    }
 
-                // Verified - and has been since `identity.FirstSeenAt` (`ChannelIdentity.Link`'s own
-                // instant, never touched again by `Touch`), which is the honest answer to "since when"
-                // rather than "now": Calendar snapshots this value verbatim (`20-09`'s own "cross-product
-                // data question" - Chat asserts, Calendar trusts, the identical `adr/0077` boundary
-                // `20-07`'s module-task endpoints already accept).
-                phoneVerifiedAt = identity.FirstSeenAt;
+                    // `25-64`/`adr/0163`: opted in, and still not verified - falls through with
+                    // `phoneVerifiedAt` left null, exactly as the malformed-phone case above already
+                    // does, so this reply reaches `gateway.SubmitReplyAsync` below unchanged. Calendar's
+                    // own `RequiresVerifiedPhone = !acceptUnverifiedPhone` is what actually decides
+                    // whether the booking completes from here - Chat's job for this tenant is only to
+                    // stop pretending a self-reported number is proven, never to block it outright.
+                }
+                else
+                {
+                    // Verified - and has been since `identity.FirstSeenAt` (`ChannelIdentity.Link`'s own
+                    // instant, never touched again by `Touch`), which is the honest answer to "since
+                    // when" rather than "now": Calendar snapshots this value verbatim (`20-09`'s own
+                    // "cross-product data question" - Chat asserts, Calendar trusts, the identical
+                    // `adr/0077` boundary `20-07`'s module-task endpoints already accept).
+                    phoneVerifiedAt = identity.FirstSeenAt;
+                }
             }
         }
-
-        // `25-37`/`25-38`/`25-39`: three more facts a module may need to answer this reply, resolved
-        // fresh on every call rather than remembered anywhere - see SubmitModuleReplyRequest.Locale's
-        // own remarks for why this item spends no migration on persisting them. Read unconditionally
-        // (not gated to a particular step kind): none of the three reads is expensive - a single-row
-        // Site lookup and a visitor's own small, bounded contact-detail list
-        // (VisitorContactDetail's own remarks) - and gating on step kind would make this handler's own
-        // behaviour depend on knowledge of which primitive kind a booking module happens to use its
-        // phone step for, which is exactly the "no special-casing per primitive kind" constraint this
-        // handler's own type remarks already hold ResolveReplyValue to.
-        var (locale, acceptUnverifiedPhone) = await ResolveModuleContextAsync(conversation.SiteId, cancellationToken);
-        var knownPhone = await ResolveKnownPhoneAsync(conversation.VisitorId, cancellationToken);
 
         SubmitModuleReplyResult replyResult;
         try
