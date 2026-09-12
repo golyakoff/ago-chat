@@ -119,11 +119,48 @@ public class GetOperatorQueueHandlerTests
         var handler = new GetOperatorQueueHandler(conversations, tags, permissions);
 
         var result = await handler.HandleAsync(
-            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, tagId), CancellationToken.None);
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [tagId]), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(taggedWaiting.Id.Value, Assert.Single(result.Value.Waiting).ConversationId);
         Assert.Equal(taggedAssignedToMe.Id.Value, Assert.Single(result.Value.AssignedToMe).ConversationId);
+    }
+
+    // `25-59`: the widened case - two tags selected must AND, not OR, matching the console's own
+    // "carries every selected tag" contract. `bothTagsWaiting` is the only conversation carrying both;
+    // `oneTagWaiting` carries only the first, which is exactly the case a wrongly-OR'd filter would let
+    // through.
+    [Fact]
+    public async Task HandleAsync_WithTwoTagFilters_ReturnsOnlyConversationsCarryingBoth()
+    {
+        var bothTagsWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        var oneTagWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        var neitherTagWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(bothTagsWaiting);
+        conversations.Seed(oneTagWaiting);
+        conversations.Seed(neitherTagWaiting);
+
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var tags = new FakeTagRepository();
+        var vipTagId = new TagId(Guid.NewGuid());
+        var billingTagId = new TagId(Guid.NewGuid());
+        tags.SeedAssociation(bothTagsWaiting.Id, vipTagId);
+        tags.SeedAssociation(bothTagsWaiting.Id, billingTagId);
+        tags.SeedAssociation(oneTagWaiting.Id, vipTagId);
+        tags.Seed(Tag.Create(vipTagId, SiteId, "VIP", Now));
+        tags.Seed(Tag.Create(billingTagId, SiteId, "Billing", Now));
+
+        var handler = new GetOperatorQueueHandler(conversations, tags, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [vipTagId, billingTagId]),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(bothTagsWaiting.Id.Value, Assert.Single(result.Value.Waiting).ConversationId);
     }
 
     // `24-10`: a blocked conversation must not appear in either half of the queue - the operator-facing

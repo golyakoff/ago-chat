@@ -25,6 +25,16 @@ namespace Ago.Chat.Application.UseCases.GetOperatorQueue;
 /// <see cref="IConversationRepository.GetAssignedToOperatorAsync"/> would also change
 /// <c>OperatorConversationReleaser</c>'s unrelated call to it for no reason. `GetAllConversationsForSiteHandler`
 /// makes the opposite call for its own genuinely paginated read - see that handler's own remarks.</para>
+///
+/// <para><b>`25-59`: one tag widened to several, AND rather than OR.</b> <see cref="ITagRepository"/>
+/// still answers only "which conversation ids carry *this one* tag" - there is no multi-tag overload
+/// to add, because AND-ing several single-tag sets is exactly set intersection, computed here for the
+/// same reason the single-tag case was computed here: this handler already holds the two small lists
+/// in memory, and <see cref="ITagRepository"/> has no reason to grow a second query shape for a
+/// filter its own caller can already assemble from the one it has. One repository round trip per
+/// selected tag, intersected as it goes - acceptable because the tag vocabulary a filter realistically
+/// selects from is small (`Tag.MaxNameLength`'s own "browsable, not evaluated per message" remarks) and
+/// this is a query, not a hot per-message path.</para>
 /// </summary>
 public sealed class GetOperatorQueueHandler(
     IConversationRepository conversations, ITagRepository tags, IPermissionChecker permissions)
@@ -50,11 +60,19 @@ public sealed class GetOperatorQueueHandler(
         waiting = waiting.Where(c => !c.IsBlocked).ToList();
         assigned = assigned.Where(c => !c.IsBlocked).ToList();
 
-        if (query.Tag is { } tagId)
+        if (query.Tags is { Count: > 0 } tagIds)
         {
-            var taggedIds = await tags.GetConversationIdsForTagAsync(tagId, query.SiteId, cancellationToken);
-            waiting = waiting.Where(c => taggedIds.Contains(c.Id)).ToList();
-            assigned = assigned.Where(c => taggedIds.Contains(c.Id)).ToList();
+            IReadOnlySet<ConversationId>? matchingEveryTagSoFar = null;
+            foreach (var tagId in tagIds)
+            {
+                var taggedIds = await tags.GetConversationIdsForTagAsync(tagId, query.SiteId, cancellationToken);
+                matchingEveryTagSoFar = matchingEveryTagSoFar is null
+                    ? taggedIds
+                    : matchingEveryTagSoFar.Intersect(taggedIds).ToHashSet();
+            }
+
+            waiting = waiting.Where(c => matchingEveryTagSoFar!.Contains(c.Id)).ToList();
+            assigned = assigned.Where(c => matchingEveryTagSoFar!.Contains(c.Id)).ToList();
         }
 
         return new OperatorQueueResponse(waiting.Select(ToSummary).ToList(), assigned.Select(ToSummary).ToList());

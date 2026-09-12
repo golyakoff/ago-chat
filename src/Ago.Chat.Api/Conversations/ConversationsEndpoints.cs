@@ -225,12 +225,18 @@ public static class ConversationsEndpoints
     /// (api-design.md).</summary>
     public sealed record MarkConversationReadRequest(int UpToSequence);
 
+    // `25-59`: `Guid[]?` rather than `Guid?` - ASP.NET Core's own minimal-API binder already turns a
+    // repeated query key (`?tag=a&tag=b`) into an array for a parsable-element-type parameter with no
+    // attribute needed, the same binding this project trusted unverified for the single-`Guid?` case
+    // `18-04` shipped (searched: no endpoint test in this repository asserts minimal-API query binding
+    // itself, single- or multi-valued - every one of them proves the *handler*'s own filtering logic
+    // instead, which is what `GetOperatorQueueHandlerTests` still does here).
     private static async Task<IResult> HandleGetQueueAsync(
-        Guid? tag, GetOperatorQueueHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+        Guid[]? tag, GetOperatorQueueHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new GetOperatorQueue(user.GetOperatorId(), user.GetSiteId(), tag is { } t ? new TagId(t) : null),
+            new GetOperatorQueue(user.GetOperatorId(), user.GetSiteId(), tag?.Select(t => new TagId(t)).ToList()),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
