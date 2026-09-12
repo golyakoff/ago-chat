@@ -63,7 +63,7 @@ public sealed class ErasureFixture : IAsyncLifetime
         // deployment-matching version matters whenever a test asserts something about Keycloak's own
         // behaviour (here: that a user this fixture creates is genuinely deletable by subject id).
         _keycloak = new KeycloakBuilder("quay.io/keycloak/keycloak:26.0").Build();
-        _minio = new MinioBuilder("minio/minio:RELEASE.2025-09-07T16-13-09Z")
+        _minio = new MinioBuilder("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
             .WithUsername(MinioUsername).WithPassword(MinioPassword).Build();
         await Task.WhenAll(_postgres.StartAsync(), _keycloak.StartAsync(), _minio.StartAsync());
 

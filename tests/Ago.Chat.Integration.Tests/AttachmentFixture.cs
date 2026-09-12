@@ -40,7 +40,7 @@ public sealed class AttachmentFixture : IAsyncLifetime
         // Pinned image tag, matching Ago.Platform.Integration.Tests' own MinioFixture (`5-02`) -
         // MinioBuilder's parameterless constructor is obsolete in the pinned Testcontainers.Minio
         // version and this project treats warnings as errors.
-        _minio = new MinioBuilder("minio/minio:RELEASE.2025-09-07T16-13-09Z").WithUsername(MinioUsername).WithPassword(MinioPassword).Build();
+        _minio = new MinioBuilder("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z").WithUsername(MinioUsername).WithPassword(MinioPassword).Build();
         await Task.WhenAll(_postgres.StartAsync(), _minio.StartAsync());
 
         DataSource = new NpgsqlDataSourceBuilder(_postgres.GetConnectionString()).Build();

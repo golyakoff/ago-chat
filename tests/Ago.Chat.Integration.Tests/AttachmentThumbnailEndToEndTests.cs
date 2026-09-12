@@ -62,7 +62,7 @@ public sealed class AttachmentThumbnailEndToEndTests
             .WithUsername(RabbitUsername).WithPassword(RabbitPassword)
             .WithPortBinding(RabbitMqManagementPort, true)
             .Build();
-        var minio = new MinioBuilder("minio/minio:RELEASE.2025-09-07T16-13-09Z").WithUsername(MinioUsername).WithPassword(MinioPassword).Build();
+        var minio = new MinioBuilder("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z").WithUsername(MinioUsername).WithPassword(MinioPassword).Build();
         await Task.WhenAll(postgres.StartAsync(), rabbitMq.StartAsync(), minio.StartAsync());
 
         try
