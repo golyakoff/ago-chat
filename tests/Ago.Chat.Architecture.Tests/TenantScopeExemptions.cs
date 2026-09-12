@@ -527,6 +527,19 @@ internal static class TenantScopeExemptions
             + "ask it from either. Query carries an AcceptanceSubjectKind, never a SiteId - the requirement this "
             + "reads is a property of a subject kind (tenant/operator/visitor), not of any one tenant, the same "
             + "reason RecordAcceptanceHandler/GetAcceptancesForSubjectHandler above carry no SiteId either.",
+        ["Ago.Chat.Application.UseCases.AddRequiredDocument.AddRequiredDocumentHandler.HandleAsync"] =
+            "`24-16`. The platform owner's own write over the identical port GetRequiredDocumentsForSubjectKindHandler "
+            + "right above reads - no SiteId for the identical reason: a required-document row is a property of a "
+            + "subject kind, not of any one tenant, so there is no SiteId to scope this to even in principle. The "
+            + "entire access-control story is OwnerDocumentEndpoints's own RequirePlatformOwner gate, the same "
+            + "single-gate shape PublishDocumentVersionHandler's own entry above already uses and gives the same "
+            + "reasoning for: Ago.Chat.Application still has no port onto a Keycloak realm-role claim.",
+        ["Ago.Chat.Application.UseCases.RemoveRequiredDocument.RemoveRequiredDocumentHandler.HandleAsync"] =
+            "`24-16`. AddRequiredDocumentHandler's own entry immediately above applies unchanged - same port, same "
+            + "RequirePlatformOwner gate, same absence of any tenant this row could belong to. Also the mechanism "
+            + "behind adr/0111's own guarantee made structural at this handler: with no SiteId parameter here at "
+            + "all, there is nothing this handler could even attempt to pass down toward acceptance_records, which "
+            + "carries no SiteId of its own either (AcceptanceRecord's own remarks).",
 
         // ---------------------------------------------------------------------------------------
         // `24-05`: the visitor's own consent read/write pair. Both are conversation-scoped, visitor-only

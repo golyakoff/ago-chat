@@ -53,7 +53,7 @@ public sealed class RegisterSiteRateLimitingConcurrencyTests(SiteCachingConcurre
                 // `24-03`: real, empty-by-default ports - no `required_documents` row exists in this
                 // fixture's database, so this resolves to zero required keys, the identical no-op
                 // behaviour every other caller of RegisterSiteHandler gets today.
-                new RequiredDocumentRepository(db),
+                new RequiredDocumentRepository(db, new UuidV7Generator(), new SystemClock()),
                 new DocumentRepository(db),
                 limiter,
                 options,

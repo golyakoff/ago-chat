@@ -168,7 +168,14 @@ public static class ErrorExtensions
                 // already gives its own override, restated for the seat-restore override - Force was
                 // set with no non-blank reason, or one longer than
                 // RestoreOperatorSeatAsOwnerHandler.MaxReasonLength allows.
-                or "Operator.SeatRestoreReasonRequired" => StatusCodes.Status400BadRequest,
+                or "Operator.SeatRestoreReasonRequired"
+                // `24-16`: the caller's own mistake to fix - an empty or over-length document key sent
+                // to AddRequiredDocumentHandler/RemoveRequiredDocumentHandler, the identical "brand-new
+                // code this item is introducing, so it is mapped here rather than left to fall through
+                // to the 500 default below" reasoning Module.Invalid's own remarks give a few lines up
+                // for the identical situation (a pre-existing unmapped code is a different, deliberately
+                // untouched case; a code this item's own new routes can actually now produce is not).
+                or "RequiredDocument.Invalid" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
