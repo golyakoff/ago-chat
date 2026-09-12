@@ -91,6 +91,24 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // a legitimate reason to hold.
         builder.Property<Guid?>("ErasureRecordId").HasColumnName("erasure_record_id");
 
+        // `23-73`: two more shadow properties, the identical "reaches a row without going through its
+        // aggregate" shape as the three just above - see ISiteActivityWatchdog's own remarks for why
+        // this pair has exactly two writers (MessageBatchWriter's operator-outbound-message hook,
+        // OperatorIdentityClaimsTransformation's login hook) and one reader
+        // (InactivityWatchdogJob's own sweep query), never Site's own load-mutate-SaveChangesAsync
+        // path. Both nullable, backfilled for every pre-existing row by this column's own migration
+        // (Stage23AddSiteActivityWatchdog) rather than left null - an existing site must not read as
+        // "never had any activity" the instant this feature ships; see that migration's own remarks.
+        builder.Property<DateTimeOffset?>("LastOperatorActivityAt").HasColumnName("last_operator_activity_at");
+        builder.HasIndex("LastOperatorActivityAt")
+            .HasDatabaseName("ix_sites_inactivity_watchdog")
+            .HasFilter("erasure_requested_at is null");
+        // InactivityWarningSentAt is cleared back to null by every watchdog reset
+        // (SiteActivityWatchdogQuery.TouchAsync's own remarks) - a fresh reset starts a fresh
+        // three-month cycle, and a stale warning from the cycle just reset must not suppress a real
+        // future one.
+        builder.Property<DateTimeOffset?>("InactivityWarningSentAt").HasColumnName("inactivity_warning_sent_at");
+
         // AllowedOrigins is a computed property (IReadOnlyList<string>) over a private List<string>
         // field - Site never exposes a settable collection, so EF is pointed at the field directly.
         builder.Property<List<string>>("_allowedOrigins").HasColumnName("allowed_origins");

@@ -149,6 +149,11 @@ public sealed class PlatformOwnerPolicyTests(OperatorOidcFixture fixture)
                     services.AddScoped<IPermissionChecker, PermissionChecker>();
                     services.AddScoped<ResolveOperatorIdentityHandler>();
                     services.AddHttpContextAccessor();
+                    // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog
+                    // reset hook and (where this host did not already have one) IClock.
+                    services.AddScoped<Ago.Chat.Application.Abstractions.ISiteActivityWatchdog, Ago.Chat.Infrastructure.Postgres.SiteActivityWatchdogRepository>();
+                    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ago.Chat.Infrastructure.Postgres.SiteActivityWatchdogOptions()));
+                    services.AddSingleton<Ago.Platform.Kernel.IClock, Ago.Platform.Hosting.SystemClock>();
                     services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
 
                     services.AddAuthentication()

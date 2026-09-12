@@ -366,6 +366,16 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<SiteErasureJob>();
 
+// `23-73`: the account-inactivity watchdog - warns, then requests 22-30's own real erasure mechanism
+// for a site whose watchdog has gone fully silent. Registered here, not ChatModule, the same
+// "internal Worker-only plumbing" shape SiteErasureJobOptions/SiteErasureJob just above already take -
+// nothing outside this host ever resolves either type.
+builder.Services
+    .AddOptions<InactivityWatchdogJobOptions>()
+    .Bind(builder.Configuration.GetSection(InactivityWatchdogJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<InactivityWatchdogJob>();
+
 // `23-59`/`adr/0147`: the automatic retroactive contact carry-over - see ContactCarryoverJob's own
 // remarks for why this is a recurring sweep rather than a manually-run tool.
 builder.Services

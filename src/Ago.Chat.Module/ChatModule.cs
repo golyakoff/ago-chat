@@ -305,6 +305,15 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageArchiveOptions>>().Value);
 
+        // `23-73`: the inactivity watchdog's own throttle - bound here, with every other options group
+        // in this product, for the identical reason PersonExportOptions/MessageArchiveOptions are:
+        // its two real readers (SiteActivityWatchdogRepository, MessageBatchWriter) are both
+        // registered for every host below, not one host's own concern.
+        services
+            .AddOptions<SiteActivityWatchdogOptions>()
+            .Bind(configuration.GetSection(SiteActivityWatchdogOptions.SectionName))
+            .ValidateOnStart();
+
         // `6-03`: bound here, not a host's own Program.cs - RegisterWebhookEndpointHandler is
         // registered for every host below, the same MessageSendRateLimitOptions/AttachmentOptions
         // shape. Deliberately no random-per-process fallback (WebhookSecretCipherOptions' own remarks)
@@ -582,6 +591,12 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<EmailChannelAdapter>();
         services.AddSingleton<IInboundChannelAdapter>(sp => new ResilientInboundChannelAdapter(
             sp.GetRequiredService<EmailChannelAdapter>(), sp.GetRequiredService<ChannelResiliencePipelines>()));
+        // `23-73`: the one-off transactional half of this same channel - see INotificationMailSender's
+        // own remarks for why this is a second, narrower port rather than a second call shape on
+        // EmailChannelAdapter. Singleton, the same lifetime as EmailSmtpClient/EmailChannelAdapter
+        // above, for the identical reason: it holds nothing but a reference to that already-Singleton
+        // client and a deployment-wide options snapshot.
+        services.AddSingleton<INotificationMailSender, NotificationMailSender>();
 
         // `20-07`/`adr/0065`: the module HTTP boundary - the same "registered everywhere, resolved
         // where it matters" shape as the channel adapters above. Unlike MAX/Telegram, HttpModuleGateway's

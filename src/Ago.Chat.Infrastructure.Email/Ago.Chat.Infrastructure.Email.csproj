@@ -12,6 +12,20 @@
     <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
   </ItemGroup>
 
+  <!-- `23-73`: NotificationMailSender takes IClock directly (Ago.Platform.Abstractions) - explicit,
+       not left to flow transitively through the Application project reference above, the same
+       "explicit PackageReference, not just transitive" shape Ago.Chat.Infrastructure.Postgres's own
+       top-of-file remarks give for Microsoft.EntityFrameworkCore. -->
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' != 'true'">
+    <PackageReference Include="Ago.Platform.Kernel" />
+    <PackageReference Include="Ago.Platform.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AgoPlatformDevOverride)' == 'true'">
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Kernel\Ago.Platform.Kernel.csproj" />
+    <ProjectReference Include="..\..\..\ago-platform\src\Ago.Platform.Abstractions\Ago.Platform.Abstractions.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Options" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />

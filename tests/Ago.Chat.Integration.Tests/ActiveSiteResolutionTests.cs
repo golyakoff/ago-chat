@@ -27,6 +27,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Ago.Chat.Integration.Tests;
@@ -134,6 +135,50 @@ public sealed class ActiveSiteResolutionTests(OperatorOidcFixture fixture)
         Assert.Equal(fixture.SeededOperatorId.Value, resolved.Body.OperatorId);
     }
 
+    /// <summary>
+    /// `23-73`: hook (c) of the inactivity watchdog - a real authenticated request, resolved through
+    /// the real <see cref="OperatorIdentityClaimsTransformation"/>, is what resets
+    /// <c>sites.last_operator_activity_at</c>. A freshly registered site has never had this column
+    /// touched (nothing sets it at creation - <see cref="InactivityWatchdogQuery"/>'s own remarks on
+    /// why a fresh site instead falls back to its own <c>created_at</c> until something does), so it
+    /// starts null; the very next authenticated request for that operator/site pair - <c>/me/site</c>,
+    /// the same route every other test in this file already uses to prove resolution - is what this
+    /// test asserts flips it to a real, non-null, recent timestamp.
+    /// </summary>
+    [Fact]
+    public async Task ARealAuthenticatedRequest_TouchesTheInactivityWatchdog()
+    {
+        var (token, _) = await fixture.CreateFreshUserAccessTokenAsync();
+
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var site = await RegisterSiteAsync(client, "Watchdog Test Shop");
+
+        var siteId = new SiteId(site.SiteId);
+
+        await using (var beforeDb = fixture.CreateDbContext())
+        {
+            var before = await beforeDb.Sites
+                .Where(s => s.Id == siteId)
+                .Select(s => EF.Property<DateTimeOffset?>(s, "LastOperatorActivityAt"))
+                .SingleAsync();
+            Assert.Null(before);
+        }
+
+        var resolved = await GetMySiteAsync(client, site.SiteId);
+        Assert.Equal(HttpStatusCode.OK, resolved.Status);
+
+        await using var afterDb = fixture.CreateDbContext();
+        var after = await afterDb.Sites
+            .Where(s => s.Id == siteId)
+            .Select(s => EF.Property<DateTimeOffset?>(s, "LastOperatorActivityAt"))
+            .SingleAsync();
+        Assert.NotNull(after);
+        Assert.True(after.Value > DateTimeOffset.UtcNow - TimeSpan.FromMinutes(1));
+    }
+
     private static async Task<(Guid SiteId, Guid OperatorId)> RegisterSiteAsync(HttpClient client, string siteName)
     {
         var response = await client.PostAsJsonAsync(
@@ -198,6 +243,10 @@ public sealed class ActiveSiteResolutionTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ListMessageArchivesHandler>();
         builder.Services.AddScoped<GetMessageArchiveDownloadUrlHandler>();
         builder.Services.AddHttpContextAccessor();
+        // `23-73`: OperatorIdentityClaimsTransformation's own login/authenticated-request watchdog
+        // reset hook - see ARealAuthenticatedRequest_TouchesTheInactivityWatchdog's own remarks.
+        builder.Services.AddScoped<ISiteActivityWatchdog, SiteActivityWatchdogRepository>();
+        builder.Services.AddSingleton(Options.Create(new SiteActivityWatchdogOptions()));
         builder.Services.AddSingleton<IClaimsTransformation, OperatorIdentityClaimsTransformation>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new RegisterSiteRateLimitOptions());
