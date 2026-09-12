@@ -168,7 +168,7 @@ public class VisitorContactDetailTests
     }
 
     // ------------------------------------------------------------------------------------------
-    // `25-58`: SetAssessment - Phone/Email only, never Other.
+    // `25-58`: SetAssessment - Phone/Email only, never Name.
     // ------------------------------------------------------------------------------------------
 
     [Theory]
@@ -198,9 +198,9 @@ public class VisitorContactDetailTests
     /// number or an email address does - the backlog item's own decision, enforced here as defence in
     /// depth behind the Application layer's own, earlier check.</summary>
     [Fact]
-    public void SetAssessment_OnOther_Throws()
+    public void SetAssessment_OnName_Throws()
     {
-        var detail = VisitorContactDetail.Record(Id, VisitorId, VisitorContactDetailKind.Other, "prefers to be called Alex", OperatorId, Now);
+        var detail = VisitorContactDetail.Record(Id, VisitorId, VisitorContactDetailKind.Name, "prefers to be called Alex", OperatorId, Now);
 
         Assert.Throws<InvalidVisitorContactDetailStateException>(
             () => detail.SetAssessment(VisitorContactDetailAssessment.Confirmed));

@@ -46,7 +46,7 @@ public static class ContactDetailEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `25-58`: the confirm/mark-invalid action - Phone and Email only
-        // (`SetVisitorContactDetailAssessmentHandler`'s own remarks on why an `Other` row is rejected
+        // (`SetVisitorContactDetailAssessmentHandler`'s own remarks on why a `Name` row is rejected
         // here, not silently accepted and ignored). Its own route, not folded into the edit `PATCH`
         // above - editing a value and asserting a judgment about it are two different writes with two
         // different failure shapes (an edit can fail on the value's own validity; an assessment can

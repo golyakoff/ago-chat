@@ -12,9 +12,9 @@ namespace Ago.Chat.Application.UseCases.SetVisitorContactDetailAssessment;
 /// (<see cref="Permission.ConversationSend"/>, resolved through the conversation, wrong-visitor reads
 /// like no such row).
 ///
-/// <para><b>Rejects <see cref="VisitorContactDetailKind.Other"/> here, before ever calling
-/// <see cref="VisitorContactDetail.SetAssessment"/>.</b> The console never offers this action for an
-/// `Other` row, so reaching this handler with one at all means a different, malformed request - this is
+/// <para><b>Rejects <see cref="VisitorContactDetailKind.Name"/> here, before ever calling
+/// <see cref="VisitorContactDetail.SetAssessment"/>.</b> The console never offers this action for a
+/// `Name` row, so reaching this handler with one at all means a different, malformed request - this is
 /// the ordinary, expected case the Application layer resolves with a normal
 /// <see cref="ConversationErrors.ContactDetailAssessmentNotApplicable"/>, not the domain method's own
 /// defence-in-depth <see cref="InvalidVisitorContactDetailStateException"/>
@@ -59,7 +59,7 @@ public sealed class SetVisitorContactDetailAssessmentHandler(
             return ConversationErrors.ContactDetailNotFound(command.ContactDetailId.Value);
         }
 
-        if (detail.Kind == VisitorContactDetailKind.Other)
+        if (detail.Kind == VisitorContactDetailKind.Name)
         {
             return ConversationErrors.ContactDetailAssessmentNotApplicable(detail.Kind.ToString());
         }

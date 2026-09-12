@@ -18,10 +18,10 @@ public enum VisitorContactDetailKind
     Phone,
     Email,
 
-    /// <summary>Anything else an operator wants on record - a second phone number labelled "work", a
-    /// physical address, a preferred name. The backlog item's own scope: this is a note-taking
-    /// surface, not a schema for every contact fact anyone could ever want, so one catch-all member
-    /// covers everything <see cref="Phone"/>/<see cref="Email"/> do not, rather than a member per
-    /// future idea.</summary>
-    Other,
+    /// <summary>The visitor's own name, as typed into the widget's own contact-capture form's
+    /// dedicated name field (`25-62`) - the one real writer this member has ever had. No confirm/invalid
+    /// channel the way <see cref="Phone"/>/<see cref="Email"/> have (<see cref="VisitorContactDetail.SetAssessment"/>'s
+    /// own guard) - a name has nothing to dial or deliver to that could come back confirmed or
+    /// bounced.</summary>
+    Name,
 }

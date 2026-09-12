@@ -73,13 +73,13 @@ public class SetVisitorContactDetailAssessmentHandlerTests
         Assert.Equal("Confirmed", result.Value.Assessment);
     }
 
-    /// <summary>The backlog item's own decision: a name has no verifiable channel, so `Other` never
+    /// <summary>The backlog item's own decision: a name has no verifiable channel, so `Name` never
     /// gets this action - rejected as a normal, expected validation error, never reaching the domain's
     /// own defence-in-depth throw.</summary>
     [Fact]
-    public async Task HandleAsync_OnOther_ReturnsAssessmentNotApplicable_AndLeavesItUnset()
+    public async Task HandleAsync_OnName_ReturnsAssessmentNotApplicable_AndLeavesItUnset()
     {
-        var fixture = await CreateFixtureAsync(kind: VisitorContactDetailKind.Other);
+        var fixture = await CreateFixtureAsync(kind: VisitorContactDetailKind.Name);
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.SetVisitorContactDetailAssessment.SetVisitorContactDetailAssessment(

@@ -22,7 +22,7 @@
 ///
 /// <para>`25-58`: <paramref name="Assessment"/> is the wire name of the row's own
 /// <see cref="Domain.VisitorContactDetailAssessment"/> - `"Unset"` for every
-/// <see cref="Domain.VisitorContactDetailKind.Other"/> row (that type never moves off it) and for a
+/// <see cref="Domain.VisitorContactDetailKind.Name"/> row (that type never moves off it) and for a
 /// Phone/Email row nobody has confirmed or flagged yet, `"Confirmed"`/`"Invalid"` for one an operator
 /// has. Never to be confused with <paramref name="Verified"/> - see
 /// <see cref="Domain.VisitorContactDetailAssessment"/>'s own remarks for the distinction this DTO must
