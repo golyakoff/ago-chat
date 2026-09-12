@@ -134,10 +134,13 @@ public sealed class ConversationSearchStoreTests(PostgresFixture fixture)
     public async Task SearchAsync_PagesBackwardsById_WithNoGapsOrDuplicates()
     {
         var siteId = new SiteId(Guid.NewGuid());
-        var visitorId = new VisitorId(Guid.NewGuid());
         var seenMessageIds = new List<Guid>();
         for (var i = 0; i < 5; i++)
         {
+            // `25-68`: a distinct visitor per conversation - ix_conversations_one_open_per_visitor now
+            // refuses a second open conversation for the same visitor, and this test's own point (five
+            // searchable messages exist) never needed them to share one.
+            var visitorId = new VisitorId(Guid.NewGuid());
             var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
             var message = conversation.AddVisitorMessage(
                 visitorId, new MessageId(Guid.NewGuid()), new MessageBody($"refund request {i}"), Now);
@@ -146,9 +149,9 @@ public sealed class ConversationSearchStoreTests(PostgresFixture fixture)
             if (i == 0)
             {
                 db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-                db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             }
 
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             db.Conversations.Add(conversation);
             await db.SaveChangesAsync();
             seenMessageIds.Add(message.Id.Value);

@@ -117,5 +117,23 @@ public sealed class ConversationRepository(AgoChatDbContext db) : IConversationR
             db.ChangeTracker.Clear();
             throw new ConversationConcurrencyConflictException(conversation.Id);
         }
+        // A fourth translated shape, found live 2026-09-12: two `Conversation` rows for the same
+        // visitor, created microseconds apart - `StartConversationHandler`'s own read-then-write
+        // (`GetActiveForVisitorAsync` then, if null, `Conversation.Start`+`SaveAsync`) has nothing
+        // serializing two concurrent callers for the same visitor. Unlike the two clauses above, this
+        // one is not two writers racing to update the *same* row - it is two writers each inserting
+        // their *own* brand-new row, so there is no `xmin` for either to lose; only
+        // `ix_conversations_one_open_per_visitor` (`ConversationConfiguration`'s own remarks) catches
+        // it, on the loser's own `INSERT`. `StartConversationHandler` is the one caller that turns this
+        // into "the other request already started it, return that one" rather than a retry-and-reapply.
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "ix_conversations_one_open_per_visitor",
+        })
+        {
+            db.ChangeTracker.Clear();
+            throw new ConversationConcurrencyConflictException(conversation.Id);
+        }
     }
 }

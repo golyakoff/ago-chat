@@ -157,10 +157,16 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
     {
         foreach (var plan in Plan)
         {
-            var visitorId = new VisitorId(Guid.NewGuid());
             var conversationIds = Enumerable.Range(0, plan.Conversations)
                 .Select(_ => new ConversationId(Guid.NewGuid()))
                 .ToList();
+            // `25-68`: one visitor per conversation, not one visitor for the whole batch -
+            // `ix_conversations_one_open_per_visitor` now refuses a second open conversation for the
+            // same visitor, and this fixture's own point (a site with N conversations) never needed
+            // them to share a visitor in the first place; only the first conversation's own messages
+            // and attachments are read back below, so which visitor each row belongs to is otherwise
+            // untested.
+            var visitorIds = conversationIds.Select(_ => new VisitorId(Guid.NewGuid())).ToList();
 
             await using (var db = CreateDbContext())
             {
@@ -177,7 +183,7 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
                         new OperatorId(Guid.NewGuid()), plan.Id, OperatorStatus.Offline, capacity: 5));
                 }
 
-                if (conversationIds.Count > 0)
+                foreach (var visitorId in visitorIds)
                 {
                     db.Visitors.Add(new Visitor(visitorId, plan.Id, Now));
                 }
@@ -187,9 +193,9 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
 
             await using (var db = CreateDbContext())
             {
-                foreach (var conversationId in conversationIds)
+                for (var i = 0; i < conversationIds.Count; i++)
                 {
-                    db.Conversations.Add(Conversation.Start(conversationId, plan.Id, visitorId, Now));
+                    db.Conversations.Add(Conversation.Start(conversationIds[i], plan.Id, visitorIds[i], Now));
                 }
 
                 await db.SaveChangesAsync();
@@ -197,7 +203,7 @@ public sealed class PlatformOverviewFixture : IAsyncLifetime
 
             if (conversationIds.Count > 0)
             {
-                await SeedMessagesAsync(plan, conversationIds[0], visitorId);
+                await SeedMessagesAsync(plan, conversationIds[0], visitorIds[0]);
                 await SeedAttachmentsAsync(plan, conversationIds[0]);
             }
         }

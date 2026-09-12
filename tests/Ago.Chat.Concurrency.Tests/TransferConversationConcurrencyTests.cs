@@ -460,13 +460,21 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
     private async Task<Seed> SeedAsync(IReadOnlyList<int> operatorCapacities, int conversationCount)
     {
         var siteId = new SiteId(Guid.NewGuid());
-        var visitorId = new VisitorId(Guid.NewGuid());
+        // `25-68`: one visitor per conversation, not one visitor for the whole batch -
+        // ix_conversations_one_open_per_visitor now refuses a second open conversation for the same
+        // visitor, and this fixture's own point (N conversations to assign/transfer) never needed
+        // them to share one. Nothing downstream reads Seed.VisitorId beyond seeding it.
+        var visitorIds = Enumerable.Range(0, conversationCount).Select(_ => new VisitorId(Guid.NewGuid())).ToList();
         var operatorIds = operatorCapacities.Select(_ => new OperatorId(Guid.NewGuid())).ToList();
         var roleId = Guid.NewGuid();
 
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-        db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+        foreach (var visitorId in visitorIds)
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+        }
+
         db.Roles.Add(new RoleRecord
         {
             Id = roleId,
@@ -487,11 +495,11 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
 
         for (var i = 0; i < conversationCount; i++)
         {
-            db.Conversations.Add(Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now));
+            db.Conversations.Add(Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorIds[i], Now));
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
-        return new Seed(siteId, operatorIds, visitorId);
+        return new Seed(siteId, operatorIds, visitorIds[0]);
     }
 
     /// <summary>Assigns the two seeded waiting conversations one each to the two named operators,
