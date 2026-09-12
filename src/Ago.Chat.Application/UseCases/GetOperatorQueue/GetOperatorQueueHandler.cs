@@ -37,7 +37,8 @@ namespace Ago.Chat.Application.UseCases.GetOperatorQueue;
 /// this is a query, not a hot per-message path.</para>
 /// </summary>
 public sealed class GetOperatorQueueHandler(
-    IConversationRepository conversations, ITagRepository tags, IPermissionChecker permissions)
+    IConversationRepository conversations, IVisitorRepository visitors, ITagRepository tags,
+    IPermissionChecker permissions)
 {
     public async Task<Result<OperatorQueueResponse>> HandleAsync(GetOperatorQueue query, CancellationToken cancellationToken)
     {
@@ -75,12 +76,33 @@ public sealed class GetOperatorQueueHandler(
             assigned = assigned.Where(c => matchingEveryTagSoFar!.Contains(c.Id)).ToList();
         }
 
-        return new OperatorQueueResponse(waiting.Select(ToSummary).ToList(), assigned.Select(ToSummary).ToList());
+        // `25-56`: this handler loads full Conversation aggregates (this DTO's own remarks explain
+        // why), which carry a VisitorId but never the Visitor itself - one batch read for every
+        // distinct visitor across both lists, not a Visitor lookup bolted onto Conversation
+        // (IVisitorRepository.GetManyByIdsAsync's own remarks on why a batch, not a loop).
+        var visitorIds = waiting.Concat(assigned).Select(c => c.VisitorId).Distinct().ToList();
+        var visitorsById = await visitors.GetManyByIdsAsync(visitorIds, cancellationToken);
+
+        return new OperatorQueueResponse(
+            waiting.Select(c => ToSummary(c, visitorsById)).ToList(),
+            assigned.Select(c => ToSummary(c, visitorsById)).ToList());
     }
 
-    private static ConversationSummaryDto ToSummary(Conversation conversation) => new(
-        conversation.Id.Value, conversation.VisitorId.Value, conversation.State.ToString(),
-        conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.OperatorId?.Value,
-        OperatorName: null, conversation.HasAttachmentUploadGrant, conversation.AttachmentUploadGrantedAt,
-        conversation.AttachmentUploadGrantedBy?.Value);
+    private static ConversationSummaryDto ToSummary(
+        Conversation conversation, IReadOnlyDictionary<VisitorId, Visitor> visitorsById)
+    {
+        // `25-56`: absent only if the visitor row somehow vanished between the two reads (the FK
+        // guarantees it exists at the time this conversation was created and Visitor rows are never
+        // deleted, so this is a defensive fallback, not an expected path) - null EmojiCreature/EmojiFood
+        // is the same "additive, missing for a row this caller could not resolve" shape every other
+        // optional field on this DTO already uses.
+        var visitor = visitorsById.GetValueOrDefault(conversation.VisitorId);
+
+        return new(
+            conversation.Id.Value, conversation.VisitorId.Value, conversation.State.ToString(),
+            conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.OperatorId?.Value,
+            OperatorName: null, conversation.HasAttachmentUploadGrant, conversation.AttachmentUploadGrantedAt,
+            conversation.AttachmentUploadGrantedBy?.Value,
+            EmojiCreature: visitor?.EmojiCreature, EmojiFood: visitor?.EmojiFood);
+    }
 }

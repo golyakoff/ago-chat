@@ -78,12 +78,17 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // own remarks on the read paths below for why. A blocked conversation is meant to be indistinguishable
     // from one that does not exist, the same not-found-shaped hiding IErasureRequestRepository's own
     // cross-tenant check already establishes for a different reason.
+    // `25-56`: `join visitors v` - inner, not left, because every conversation's own `visitor_id` is a
+    // required foreign key (unlike `operator_id`, which is nullable and null for a Waiting row - the
+    // reason `op` above is a `left join`). Selects `v.emoji_creature`/`v.emoji_food`, additive the same
+    // way `op.display_name` above already is - see ConversationSummaryRow's own remarks.
     private const string AllForSiteSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
-               op.display_name as "OperatorName"
+               op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood"
         from conversations c
         left join operators op on op.id = c.operator_id
+        join visitors v on v.id = c.visitor_id
         where c.site_id = @SiteId
           and c.blocked_at is null
           and (@BeforeId is null or c.id < @BeforeId)
@@ -137,9 +142,10 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     private const string ByIdSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
-               op.display_name as "OperatorName"
+               op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood"
         from conversations c
         left join operators op on op.id = c.operator_id
+        join visitors v on v.id = c.visitor_id
         where c.id = @ConversationId and c.site_id = @SiteId and c.blocked_at is null
         """;
 
@@ -288,7 +294,9 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
         r.OperatorUnreadCount,
         r.Outcome,
-        r.OperatorName);
+        r.OperatorName,
+        r.EmojiCreature,
+        r.EmojiFood);
 
     private static VisitorHistoryItem ToVisitorHistoryItem(VisitorHistoryRow r) => new(
         new ConversationId(r.Id),

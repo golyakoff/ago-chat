@@ -17,6 +17,9 @@ namespace Ago.Chat.Application.Abstractions;
 /// that predates the column, or for a caller (`GetByIdAsync`'s own SQL) that does not join it in at
 /// all - only `GetAllForSiteAsync`'s admin site-wide list needs a name today, so it is the only join
 /// site.</param>
+/// <param name="EmojiCreature">`25-56`: additive, the identical rule <paramref name="OperatorName"/>
+/// above already establishes - joined in from `visitors` by both <c>AllForSiteSql</c>/<c>ByIdSql</c>,
+/// paired with <paramref name="EmojiFood"/>.</param>
 public sealed record ConversationSummaryItem(
     ConversationId Id,
     VisitorId VisitorId,
@@ -25,4 +28,6 @@ public sealed record ConversationSummaryItem(
     DateTimeOffset CreatedAt,
     int OperatorUnreadCount,
     string Outcome = nameof(Domain.ConversationOutcome.Unset),
-    string? OperatorName = null);
+    string? OperatorName = null,
+    string? EmojiCreature = null,
+    string? EmojiFood = null);

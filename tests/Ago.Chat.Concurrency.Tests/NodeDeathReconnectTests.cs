@@ -134,7 +134,7 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         // every site this fixture never seeds one for, which is every site here.
         var siteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache());
         var startConversation = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db), siteConfig, new SystemClock(), new UuidV7Generator());
+            new VisitorRepository(db), new ConversationRepository(db), siteConfig, new SystemClock(), new UuidV7Generator(), new VisitorEmojiPairGenerator());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(registry, tracker, node);

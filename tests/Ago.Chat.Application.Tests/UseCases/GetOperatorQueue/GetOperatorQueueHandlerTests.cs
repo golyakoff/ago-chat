@@ -116,7 +116,7 @@ public class GetOperatorQueueHandlerTests
         var tag = Tag.Create(tagId, SiteId, "VIP", Now);
         tags.Seed(tag);
 
-        var handler = new GetOperatorQueueHandler(conversations, tags, permissions);
+        var handler = new GetOperatorQueueHandler(conversations, new FakeVisitorRepository(), tags, permissions);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [tagId]), CancellationToken.None);
@@ -198,12 +198,50 @@ public class GetOperatorQueueHandlerTests
         Assert.Empty(result.Value.AssignedToMe);
     }
 
+    // `25-56` decision 1/5: the item's own warning made concrete - the emoji pair is keyed to the
+    // visitor, not the conversation, so the *same* visitor's two conversations (one waiting, one
+    // assigned to this operator) must read back the *same* pair, not two independent picks. Seeding the
+    // visitor with an already-assigned pair (rather than letting a real creation handler assign one)
+    // is deliberate: this test is about what GetOperatorQueueHandler reads back, not about assignment
+    // itself (StartConversationHandlerTests/ReceiveChannelMessageHandlerTests own that).
+    [Fact]
+    public async Task HandleAsync_TheSameVisitorsTwoConversations_CarryTheIdenticalEmojiPair()
+    {
+        var visitor = new Visitor(VisitorId, SiteId, Now);
+        visitor.AssignEmojiPair("🐳", "🌭");
+
+        var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(waiting);
+        conversations.Seed(assignedToMe);
+        var visitors = new FakeVisitorRepository();
+        visitors.Seed(visitor);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(conversations, visitors, new FakeTagRepository(), permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var waitingSummary = Assert.Single(result.Value.Waiting);
+        var assignedSummary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Equal("🐳", waitingSummary.EmojiCreature);
+        Assert.Equal("🌭", waitingSummary.EmojiFood);
+        Assert.Equal(waitingSummary.EmojiCreature, assignedSummary.EmojiCreature);
+        Assert.Equal(waitingSummary.EmojiFood, assignedSummary.EmojiFood);
+    }
+
     [Fact]
     public async Task HandleAsync_OperatorWithoutConversationReadPermission_ReturnsForbidden()
     {
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
-        var handler = new GetOperatorQueueHandler(conversations, new FakeTagRepository(), permissions);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions);
 
         var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
 
@@ -216,6 +254,8 @@ public class GetOperatorQueueHandlerTests
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
-        return (new GetOperatorQueueHandler(conversations, new FakeTagRepository(), permissions), conversations);
+        return (
+            new GetOperatorQueueHandler(conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions),
+            conversations);
     }
 }

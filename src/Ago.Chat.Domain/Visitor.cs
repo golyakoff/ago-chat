@@ -40,12 +40,62 @@ public sealed class Visitor
     /// </summary>
     public ChannelIdentityId? PreferredChannelIdentityId { get; private set; }
 
+    /// <summary>
+    /// `25-56` decisions 1/2/5: one member of <see cref="VisitorEmojiDictionary.Creatures"/>, paired
+    /// with <see cref="EmojiFood"/> - an operator-side memory aid, assigned once for this visitor and
+    /// never reassigned (see <see cref="AssignEmojiPair"/>'s own remarks for why that invariant lives
+    /// there rather than here).
+    ///
+    /// <para><see langword="null"/> only ever describes a visitor row that predates this item and has
+    /// not yet been backfilled - <c>Stage25AddVisitorEmojiPair</c>'s own data migration closes that gap
+    /// for every row that already existed, and every row this item's two creation call sites
+    /// (<c>StartConversationHandler</c>, <c>ReceiveChannelMessageHandler</c>) write from this point on
+    /// calls <see cref="AssignEmojiPair"/> before the first save, so nothing new is ever left null. The
+    /// property itself stays nullable rather than becoming a required constructor parameter precisely
+    /// so that neither of those true facts needs restating at every one of this type's ~90 existing
+    /// call sites across this codebase's tests, almost none of which have any opinion about a visitor's
+    /// emoji pair.</para>
+    /// </summary>
+    public string? EmojiCreature { get; private set; }
+
+    /// <summary>The other half of the pair - see <see cref="EmojiCreature"/>'s own remarks, which this
+    /// property shares in full (`25-56` decisions 1/2/5).</summary>
+    public string? EmojiFood { get; private set; }
+
     public Visitor(VisitorId id, SiteId siteId, DateTimeOffset now)
     {
         Id = id;
         SiteId = siteId;
         FirstSeenAt = now;
         LastSeenAt = now;
+    }
+
+    /// <summary>
+    /// `25-56` decision 5: "assigned once, permanent for that visitor" - the invariant lives here,
+    /// guarded by throwing on a second call, rather than as an immutable constructor parameter. A
+    /// constructor parameter would make the guarantee airtight by construction, but it would also force
+    /// every one of this type's existing callers - including every test that builds a
+    /// <see cref="Visitor"/> for a reason that has nothing to do with its emoji pair - to suddenly
+    /// supply one. This method costs the same guarantee (nothing outside this type can ever change
+    /// <see cref="EmojiCreature"/>/<see cref="EmojiFood"/> once set) for a far smaller blast radius: the
+    /// two real call sites that mint a brand-new <see cref="Visitor"/>
+    /// (<c>StartConversationHandler</c>, <c>ReceiveChannelMessageHandler</c>) call this immediately
+    /// after construction and before the first save, and nothing else in this codebase calls it at all.
+    /// </summary>
+    public void AssignEmojiPair(string creature, string food)
+    {
+        if (EmojiCreature is not null || EmojiFood is not null)
+        {
+            throw new InvalidOperationException(
+                $"Visitor {Id.Value} already has an emoji pair - decision 5 is explicit that it is " +
+                "assigned once and never reassigned.");
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(creature);
+        ArgumentException.ThrowIfNullOrWhiteSpace(food);
+
+        EmojiCreature = creature;
+        EmojiFood = food;
     }
 
     /// <summary>Records a return visit - the reason history survives a reload (vision.md).</summary>
