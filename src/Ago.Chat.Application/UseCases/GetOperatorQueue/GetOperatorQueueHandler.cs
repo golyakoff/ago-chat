@@ -38,7 +38,7 @@ namespace Ago.Chat.Application.UseCases.GetOperatorQueue;
 /// </summary>
 public sealed class GetOperatorQueueHandler(
     IConversationRepository conversations, IVisitorRepository visitors, ITagRepository tags,
-    IPermissionChecker permissions)
+    IPermissionChecker permissions, IVisitorContactDetailRepository contactDetails)
 {
     public async Task<Result<OperatorQueueResponse>> HandleAsync(GetOperatorQueue query, CancellationToken cancellationToken)
     {
@@ -83,13 +83,20 @@ public sealed class GetOperatorQueueHandler(
         var visitorIds = waiting.Concat(assigned).Select(c => c.VisitorId).Distinct().ToList();
         var visitorsById = await visitors.GetManyByIdsAsync(visitorIds, cancellationToken);
 
+        // `25-56`'s own second half: the identical one-batch-not-a-loop reasoning as the emoji lookup
+        // right above, against a different repository - a visitor's own name lives in
+        // IVisitorContactDetailRepository, not on Visitor itself (that interface's own remarks on
+        // GetNamesForVisitorsAsync).
+        var namesByVisitorId = await contactDetails.GetNamesForVisitorsAsync(visitorIds, cancellationToken);
+
         return new OperatorQueueResponse(
-            waiting.Select(c => ToSummary(c, visitorsById)).ToList(),
-            assigned.Select(c => ToSummary(c, visitorsById)).ToList());
+            waiting.Select(c => ToSummary(c, visitorsById, namesByVisitorId)).ToList(),
+            assigned.Select(c => ToSummary(c, visitorsById, namesByVisitorId)).ToList());
     }
 
     private static ConversationSummaryDto ToSummary(
-        Conversation conversation, IReadOnlyDictionary<VisitorId, Visitor> visitorsById)
+        Conversation conversation, IReadOnlyDictionary<VisitorId, Visitor> visitorsById,
+        IReadOnlyDictionary<VisitorId, string> namesByVisitorId)
     {
         // `25-56`: absent only if the visitor row somehow vanished between the two reads (the FK
         // guarantees it exists at the time this conversation was created and Visitor rows are never
@@ -103,6 +110,9 @@ public sealed class GetOperatorQueueHandler(
             conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.OperatorId?.Value,
             OperatorName: null, conversation.HasAttachmentUploadGrant, conversation.AttachmentUploadGrantedAt,
             conversation.AttachmentUploadGrantedBy?.Value,
-            EmojiCreature: visitor?.EmojiCreature, EmojiFood: visitor?.EmojiFood);
+            EmojiCreature: visitor?.EmojiCreature, EmojiFood: visitor?.EmojiFood,
+            // `25-56`'s own second half: absent whenever this visitor has never given a name - the
+            // ordinary case, not a defensive fallback the way the emoji pair's own absence above is.
+            VisitorName: namesByVisitorId.GetValueOrDefault(conversation.VisitorId));
     }
 }

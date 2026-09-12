@@ -18,4 +18,9 @@ internal sealed record ConversationSummaryRow(
     string? OperatorName = null,
     // `25-56`: additive - both call sites now join `visitors` in and select these two.
     string? EmojiCreature = null,
-    string? EmojiFood = null);
+    string? EmojiFood = null,
+    // `25-56`'s own second half: additive - both call sites now also `left join lateral` against
+    // `visitor_contact_details` for this visitor's own most recent `Name`-kind row's `value`. `left`,
+    // not `inner` - most visitors have never given one, and that is a real, common case, not an
+    // exceptional one.
+    string? VisitorName = null);

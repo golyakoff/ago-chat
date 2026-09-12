@@ -155,4 +155,61 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
 
         Assert.Equal([kept.Id], page.Conversations.Select(c => c.Id));
     }
+
+    // `25-56`'s own second half: proves the real `left join lateral` against `visitor_contact_details`
+    // in `AllForSiteSql`/`ByIdSql` actually runs against Postgres, not only the hand-mirrored logic
+    // `FakeConversationReadStore` gives GetAllConversationsForSiteHandlerTests. Two Name-kind rows for
+    // the same visitor, seeded out of order, prove the lateral's own `order by recorded_at desc limit 1`
+    // picks the most recent one, not the last one inserted.
+    [Fact]
+    public async Task GetByIdAsync_AVisitorWithTwoNameRows_ReturnsTheMostRecentlyRecordedOne()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(conversation);
+            // Seeded out of RecordedAt order on purpose - the lateral's own `order by recorded_at desc
+            // limit 1` must pick the most recent one by that column, not by insertion order.
+            db.VisitorContactDetails.Add(VisitorContactDetail.RecordFromVisitor(
+                new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Name, "Иван",
+                Now.AddMinutes(-10)));
+            db.VisitorContactDetails.Add(VisitorContactDetail.RecordFromVisitor(
+                new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Name, "Иван Иванов",
+                Now));
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var item = await store.GetByIdAsync(conversation.Id, siteId, CancellationToken.None);
+
+        Assert.Equal("Иван Иванов", item?.VisitorName);
+    }
+
+    // The ordinary case - most visitors never give a name at all, and this must not be confused with
+    // one that simply has no rows yet (no exception, no placeholder string).
+    [Fact]
+    public async Task GetAllForSiteAsync_AVisitorWithNoNameRow_ReturnsANullVisitorName()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(conversation);
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, CancellationToken.None);
+
+        Assert.Null(Assert.Single(page.Conversations).VisitorName);
+    }
 }

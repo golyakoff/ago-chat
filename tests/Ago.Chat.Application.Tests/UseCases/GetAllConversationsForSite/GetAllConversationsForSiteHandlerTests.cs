@@ -59,6 +59,26 @@ public class GetAllConversationsForSiteHandlerTests
         Assert.Equal(tagged.Id.Value, Assert.Single(result.Value.Conversations).ConversationId);
     }
 
+    // `25-56`'s own second half: the read store's `VisitorName` rides through to the wire DTO
+    // unchanged, and a conversation whose visitor never gave one carries a null rather than an empty
+    // string or a placeholder.
+    [Fact]
+    public async Task HandleAsync_AVisitorWithAName_CarriesItOnTheSummary_AndOneWithoutOneCarriesNull()
+    {
+        var (handler, readStore) = CreateFixture();
+        var named = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        var unnamed = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        readStore.Seed(named);
+        readStore.Seed(unnamed);
+        readStore.SeedVisitorName(named.VisitorId, "Иван Иванов");
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(AdminId, SiteId, null, 50), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Иван Иванов", result.Value.Conversations.Single(c => c.ConversationId == named.Id.Value).VisitorName);
+        Assert.Null(result.Value.Conversations.Single(c => c.ConversationId == unnamed.Id.Value).VisitorName);
+    }
+
     [Fact]
     public async Task HandleAsync_WithoutSiteConfigure_ReturnsForbidden()
     {

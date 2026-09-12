@@ -45,4 +45,29 @@ public sealed class VisitorContactDetailRepository(AgoChatDbContext db) : IVisit
         db.VisitorContactDetails.Remove(detail);
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    // `25-56`: one round trip for every distinct visitor `GetOperatorQueueHandler` needs a name for,
+    // not a `GetForVisitorAsync` call per row - the same batch shape `VisitorRepository.GetManyByIdsAsync`
+    // already uses for that handler's own emoji-pair lookup. Grouped and reduced to "most recent"
+    // client-side rather than in SQL: this table has no per-visitor row count worth an aggregate query
+    // over (IVisitorContactDetailRepository's own remarks - "small and bounded, nobody records hundreds
+    // of these per visitor"), and the queue's own two lists are already the same small/unpaginated shape
+    // that justifies GetManyByIdsAsync's own single query.
+    public async Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
+        IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken)
+    {
+        if (visitorIds.Count == 0)
+        {
+            return new Dictionary<VisitorId, string>();
+        }
+
+        var rows = await db.VisitorContactDetails
+            .Where(d => visitorIds.Contains(d.VisitorId) && d.Kind == VisitorContactDetailKind.Name)
+            .OrderByDescending(d => d.RecordedAt)
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(d => d.VisitorId)
+            .ToDictionary(g => g.Key, g => g.First().Value);
+    }
 }
