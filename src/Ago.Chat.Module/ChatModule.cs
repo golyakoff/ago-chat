@@ -27,6 +27,8 @@ using Ago.Chat.Application.UseCases.GetDocumentVersion;
 using Ago.Chat.Application.UseCases.GetSiteConsentAcceptances;
 using Ago.Chat.Application.UseCases.GetSiteConsentDocuments;
 using Ago.Chat.Application.UseCases.GetRequiredDocumentsForSubjectKind;
+using Ago.Chat.Application.UseCases.AddRequiredDocument;
+using Ago.Chat.Application.UseCases.RemoveRequiredDocument;
 using Ago.Chat.Application.UseCases.GetTenantAgreementsForSite;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.CreateTag;
@@ -1121,6 +1123,11 @@ public sealed class ChatModule : IProductModule
         // unauthenticated route (`GET /api/v1/documents/required/{subjectKind}`), registered here the
         // same way every other handler on this page is.
         services.AddScoped<GetRequiredDocumentsForSubjectKindHandler>();
+        // `24-16`: the platform owner's own write pair over the identical port - registered here the
+        // same way every other handler on this page is, backing OwnerDocumentEndpoints's own
+        // RequirePlatformOwner-gated add/remove routes.
+        services.AddScoped<AddRequiredDocumentHandler>();
+        services.AddScoped<RemoveRequiredDocumentHandler>();
         // `23-52`: the tenant's own site-scoped read of their account's acceptances of AGO's own
         // documents - the "way to see them" GetAcceptancesForSubjectHandler's own exemption entry
         // says no host endpoint builds yet; this is that endpoint's handler, registered the same way

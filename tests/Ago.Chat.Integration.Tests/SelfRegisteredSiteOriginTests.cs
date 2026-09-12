@@ -122,7 +122,7 @@ public sealed class SelfRegisteredSiteOriginTests(SiteCachingFixture fixture)
                 registrationDb, new EfOutboxWriter<AgoChatDbContext>(registrationDb), new UuidV7Generator(), new SystemClock()),
             // `24-03`: real, empty-by-default ports - no `required_documents` row exists in this
             // fixture's database, so this resolves to zero required keys.
-            new RequiredDocumentRepository(registrationDb),
+            new RequiredDocumentRepository(registrationDb, new UuidV7Generator(), new SystemClock()),
             new DocumentRepository(registrationDb),
             new FakeRateLimiter(),
             new RegisterSiteRateLimitOptions(),

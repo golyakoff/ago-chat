@@ -17,11 +17,12 @@ namespace Ago.Chat.Application.Abstractions;
 /// verdict a row change: add a row, and a subject kind newly requires a document with no code
 /// touched; remove one, and it stops requiring it, equally untouched.</para>
 ///
-/// <para><b>Read-only, and deliberately so for this item.</b> No CRUD surface for managing rows exists
-/// yet - out of this item's stated scope, which asks only that the requirement be *expressed as data
-/// this item reads*, not that this item also build the platform owner's management screen for it. A
-/// row is added today by a migration or a direct write; a dedicated owner-facing endpoint is a future,
-/// separate item's job, the same way `24-02`'s own publish endpoint predates any owner UI for it.</para>
+/// <para><b>`24-16`: no longer read-only.</b> `24-03` deliberately left this port with no write method -
+/// "a row is added today by a migration or a direct write; a dedicated owner-facing endpoint is a
+/// future, separate item's job." This item is that future item: <see cref="AddAsync"/> and
+/// <see cref="RemoveAsync"/> are the whole mechanism a platform owner needs, added to this same port
+/// rather than a second one, the identical "one port per table, reads and writes together" shape
+/// <see cref="IAcceptanceRepository"/> and `IDocumentRepository` already use for their own tables.</para>
 /// </summary>
 public interface IRequiredDocumentRepository
 {
@@ -33,4 +34,27 @@ public interface IRequiredDocumentRepository
     /// <c>RegisterSiteHandler</c>'s own remarks for why an empty result is a real, considered answer
     /// ("nothing beyond contract necessity today") rather than a gap.</summary>
     Task<IReadOnlyList<string>> GetRequiredDocumentKeysAsync(AcceptanceSubjectKind subjectKind, CancellationToken cancellationToken);
+
+    /// <summary>`24-16`: declares that a subject of <paramref name="subjectKind"/> must accept
+    /// <paramref name="documentKey"/> - the platform owner's own write, and `24-03`'s own port docstring
+    /// come true: "add a row, and a subject kind newly requires a document with no code touched."
+    /// Idempotent - a pair that is already required is not an error, and this returns
+    /// <see langword="false"/> rather than throwing, the same "second identical write is safe" posture
+    /// <c>RoleRepository.AddPermissionsAsync</c>'s own dedup already gives an almost identical
+    /// set-membership fact. Returns <see langword="true"/> only when a new row was actually
+    /// written.</summary>
+    Task<bool> AddAsync(AcceptanceSubjectKind subjectKind, string documentKey, CancellationToken cancellationToken);
+
+    /// <summary>`24-16`: withdraws the requirement. <b>Never touches <c>acceptance_records</c></b> - see
+    /// `adr/0111` and <see cref="AcceptanceRecord"/>'s own erasure remarks: an acceptance already
+    /// recorded against <paramref name="documentKey"/> is written by a wholly separate write
+    /// (<see cref="IAcceptanceRepository.SaveAsync"/>), through a wholly separate table with no foreign
+    /// key back to this one (`required_documents`' own only index is the composite
+    /// `(subject_kind, document_key)` uniqueness constraint - nothing else), so a row removed here
+    /// cannot cascade into one there structurally, not merely by this method choosing not to. A tenant
+    /// who accepted v3 accepted it, whether or not v3 (or the requirement itself) still exists.
+    /// Idempotent - removing a pair that was not required is not an error, and this returns
+    /// <see langword="false"/> rather than throwing. Returns <see langword="true"/> only when a row
+    /// actually existed to remove.</summary>
+    Task<bool> RemoveAsync(AcceptanceSubjectKind subjectKind, string documentKey, CancellationToken cancellationToken);
 }

@@ -475,6 +475,15 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
     {
         public Task<IReadOnlyList<string>> GetRequiredDocumentKeysAsync(AcceptanceSubjectKind subjectKind, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A rate-limited caller must never reach the required-documents lookup.");
+
+        // `24-16`: the two writes this port gained - neither is part of the rate-limited registration
+        // path this suite exercises either, the identical "never called" stub every other method on
+        // this class already gives.
+        public Task<bool> AddAsync(AcceptanceSubjectKind subjectKind, string documentKey, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach the required-documents write.");
+
+        public Task<bool> RemoveAsync(AcceptanceSubjectKind subjectKind, string documentKey, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach the required-documents write.");
     }
 
     private sealed class NeverCalledDocumentRepository : IDocumentRepository
