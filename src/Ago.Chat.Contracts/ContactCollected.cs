@@ -18,12 +18,19 @@
 /// <c>ModuleQuantityGrantedConsumer</c> discards a grant for a module key that is not its own.</para>
 ///
 /// <para><b><see cref="ContactDetailId"/> is this event's identity, not <see cref="SiteId"/> or the
-/// phone value.</b> A <see cref="Ago.Chat.Domain.VisitorContactDetail"/> is written once and never
-/// edited (that type's own remarks), so there is exactly one fact this id will ever describe - which
+/// phone value.</b> There is exactly one fact this id will ever describe *as this event saw it* - which
 /// is what lets the far side's idempotency key be this id rather than a phone number: two different
 /// contacts that happen to share a phone must stay two rows (`adr/0147`'s own "a phone that matches an
 /// existing customer does not merge"), and keying dedup on the id rather than the value is what makes
-/// that automatic rather than a special case the consumer has to remember.</para>
+/// that automatic rather than a special case the consumer has to remember.
+///
+/// <b>`25-58` gave <see cref="Ago.Chat.Domain.VisitorContactDetail"/> its first two mutation methods -
+/// this event is published only once, at record time, and is never republished on a later edit or
+/// assessment change.</b> A far-side consumer keyed on this id per the paragraph above would need to
+/// decide how to react to a value that changed under an id it was told never would; nothing in this
+/// codebase answers that today (no consumer exists yet - AGO Calendar is still planned, per `ago-root`'s
+/// own `CLAUDE.md`), so this is stated here as a real, open gap rather than guessed at with a republish
+/// shape nothing downstream exists to receive.</para>
 ///
 /// <para><b>Published twice for the same underlying row, deliberately: once live, once (if ever)
 /// through <c>ContactCarryoverBackfill</c>'s own retroactive pass.</b> Both publishers stage the

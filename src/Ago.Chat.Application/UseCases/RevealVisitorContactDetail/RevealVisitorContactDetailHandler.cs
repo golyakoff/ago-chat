@@ -73,6 +73,6 @@ public sealed class RevealVisitorContactDetailHandler(
 
         return new VisitorContactDetailDto(
             detail.Id.Value, detail.Kind.ToString(), detail.Value, detail.RecordedByOperatorId?.Value,
-            detail.Source.ToString(), detail.Verified, detail.RecordedAt, Masked: false);
+            detail.Source.ToString(), detail.Verified, detail.RecordedAt, Masked: false, detail.Assessment.ToString());
     }
 }

@@ -1,17 +1,20 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
+using Ago.Chat.Application.UseCases.EditVisitorContactDetail;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.RevealVisitorContactDetail;
+using Ago.Chat.Application.UseCases.SetVisitorContactDetailAssessment;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.ContactDetails;
 
 /// <summary>
-/// `14-14`/`23-09`/`adr/0079` section 6: `GET`/`POST /api/v1/conversations/{conversationId}/contact-details`
-/// and `DELETE /api/v1/conversations/{conversationId}/contact-details/{id}` - the only HTTP surface
-/// that reaches `IVisitorContactDetailRepository`.
+/// `14-14`/`23-09`/`adr/0079` section 6: `GET`/`POST /api/v1/conversations/{conversationId}/contact-details`,
+/// `DELETE /api/v1/conversations/{conversationId}/contact-details/{id}`, and (`25-58`)
+/// `PATCH .../{id}` (edit) plus `PATCH .../{id}/assessment` (confirm/mark invalid) - the only HTTP
+/// surface that reaches `IVisitorContactDetailRepository`.
 ///
 /// <para><b>`23-09`: `POST` is now dual-scheme, `GET`/`DELETE` stay operator-only - mapped directly on
 /// `app`, not nested inside the dual-scheme group.</b> The same reasoning `AttachmentEndpoints`'s own
@@ -34,6 +37,24 @@ public static class ContactDetailEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapDelete("/api/v1/conversations/{conversationId:guid}/contact-details/{contactDetailId:guid}", HandleDeleteAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `25-58`: real inline editing - an operator corrects an existing row's own value, never a
+        // second, competing one. Operator-only, matching `DELETE`/`GET` above - there is no
+        // visitor-facing edit (`EditVisitorContactDetail`'s own remarks).
+        app.MapPatch("/api/v1/conversations/{conversationId:guid}/contact-details/{contactDetailId:guid}", HandleEditAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `25-58`: the confirm/mark-invalid action - Phone and Email only
+        // (`SetVisitorContactDetailAssessmentHandler`'s own remarks on why an `Other` row is rejected
+        // here, not silently accepted and ignored). Its own route, not folded into the edit `PATCH`
+        // above - editing a value and asserting a judgment about it are two different writes with two
+        // different failure shapes (an edit can fail on the value's own validity; an assessment can
+        // fail on the row's own kind), the same "one route per distinct write" shape this file's
+        // existing `POST`/`DELETE`/`reveal` split already follows.
+        app.MapPatch(
+                "/api/v1/conversations/{conversationId:guid}/contact-details/{contactDetailId:guid}/assessment",
+                HandleSetAssessmentAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `23-11`: same route family, own Map call on the same group's own file - not a separate
@@ -104,7 +125,7 @@ public static class ContactDetailEndpoints
         // unmasked (RevealVisitorContactDetailHandler's own remarks).
         return Results.Ok(new ContactDetailDto(
             result.Value.Id, result.Value.Kind, result.Value.Value, result.Value.RecordedByOperatorId,
-            result.Value.Source, result.Value.Verified, result.Value.RecordedAt, Masked: false));
+            result.Value.Source, result.Value.Verified, result.Value.RecordedAt, Masked: false, result.Value.Assessment));
     }
 
     private static async Task<IResult> HandleDeleteAsync(
@@ -122,6 +143,48 @@ public static class ContactDetailEndpoints
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
+    }
+
+    /// <summary>`25-58`: `PATCH .../contact-details/{contactDetailId}` - an operator's own correction to
+    /// an existing row's own value. Reuses the list's own <see cref="ContactDetailDto"/> shape, the
+    /// identical "not a parallel type" reasoning `HandleRevealAsync`'s own remarks give for
+    /// itself.</summary>
+    private static async Task<IResult> HandleEditAsync(
+        Guid conversationId,
+        Guid contactDetailId,
+        EditContactDetailRequest request,
+        EditVisitorContactDetailHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new EditVisitorContactDetail(
+                user.GetOperatorId(), user.GetSiteId(), new ConversationId(conversationId),
+                new VisitorContactDetailId(contactDetailId), request.Value ?? string.Empty),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToDto(result.Value));
+    }
+
+    /// <summary>`25-58`: `PATCH .../contact-details/{contactDetailId}/assessment` - an operator's own
+    /// confirm/mark-invalid call, Phone and Email only.</summary>
+    private static async Task<IResult> HandleSetAssessmentAsync(
+        Guid conversationId,
+        Guid contactDetailId,
+        SetContactDetailAssessmentRequest request,
+        SetVisitorContactDetailAssessmentHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new SetVisitorContactDetailAssessment(
+                user.GetOperatorId(), user.GetSiteId(), new ConversationId(conversationId),
+                new VisitorContactDetailId(contactDetailId), request.Assessment ?? string.Empty),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToDto(result.Value));
     }
 
     /// <summary>`23-11`: `POST .../contact-details/{contactDetailId}/reveal` - one contact detail,
@@ -147,12 +210,22 @@ public static class ContactDetailEndpoints
     }
 
     private static ContactDetailDto ToDto(VisitorContactDetailDto d) =>
-        new(d.Id, d.Kind, d.Value, d.RecordedByOperatorId, d.Source, d.Verified, d.RecordedAt, d.Masked);
+        new(d.Id, d.Kind, d.Value, d.RecordedByOperatorId, d.Source, d.Verified, d.RecordedAt, d.Masked, d.Assessment);
 
     /// <summary>Nullable only because a client can omit either field - the handler decides an empty
     /// value or an unrecognised kind is an error, the same "validate downstream, translate the throw"
     /// split `NoteEndpoints.AddNoteRequest`'s own remarks describe for itself.</summary>
     public sealed record RecordContactDetailRequest(string? Kind, string? Value);
+
+    /// <summary>`25-58`: nullable for the same reason `RecordContactDetailRequest.Value` is - the
+    /// handler, not this endpoint, decides an empty value is an error.</summary>
+    public sealed record EditContactDetailRequest(string? Value);
+
+    /// <summary>`25-58`: the wire name of a <see cref="Domain.VisitorContactDetailAssessment"/> member -
+    /// `"Confirmed"` or `"Invalid"`, never `"Unset"` (the handler rejects that as not a settable
+    /// target, the same rule `SetConversationOutcome`'s own wire string follows for
+    /// <see cref="Domain.ConversationOutcome.Unset"/>).</summary>
+    public sealed record SetContactDetailAssessmentRequest(string? Assessment);
 
     /// <summary>`23-09`: <paramref name="RecordedByOperatorId"/> is nullable, and <paramref name="Source"/>/
     /// <paramref name="Verified"/> are new wire fields - see <c>VisitorContactDetailDto</c>'s own
@@ -161,10 +234,13 @@ public static class ContactDetailEndpoints
     /// <para>`23-11`: <paramref name="Masked"/> - see <c>VisitorContactDetailDto</c>'s own remarks.
     /// On the list read, <see langword="true"/> means <paramref name="Value"/> is a masked string and
     /// the console should offer a reveal action; on the record/reveal responses it is always
-    /// <see langword="false"/>, since a caller of either already has the real value in hand.</para></summary>
+    /// <see langword="false"/>, since a caller of either already has the real value in hand.</para>
+    ///
+    /// <para>`25-58`: <paramref name="Assessment"/> - see <c>VisitorContactDetailDto</c>'s own remarks on
+    /// why this is never <paramref name="Verified"/> restated under a new name.</para></summary>
     public sealed record ContactDetailDto(
         Guid Id, string Kind, string Value, Guid? RecordedByOperatorId, string Source, bool Verified,
-        DateTimeOffset RecordedAt, bool Masked);
+        DateTimeOffset RecordedAt, bool Masked, string Assessment);
 
     public sealed record ContactDetailsResponse(IReadOnlyList<ContactDetailDto> ContactDetails);
 }

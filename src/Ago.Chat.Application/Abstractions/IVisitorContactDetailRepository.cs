@@ -16,6 +16,11 @@ namespace Ago.Chat.Application.Abstractions;
 /// </summary>
 public interface IVisitorContactDetailRepository
 {
+    /// <summary>`25-58`: inserts a freshly-recorded detail, or persists an in-place edit/assessment
+    /// change on one already loaded through <see cref="GetByIdAsync"/> - the same "detached inserts,
+    /// tracked updates" branch <c>WebhookEndpointRepository.SaveAsync</c> already uses for its own
+    /// aggregate, since this type stopped being write-once the moment <see cref="VisitorContactDetail.EditValue"/>/
+    /// <see cref="VisitorContactDetail.SetAssessment"/> existed to call.</summary>
     Task SaveAsync(VisitorContactDetail detail, CancellationToken cancellationToken);
 
     /// <summary>Every contact detail recorded for this visitor, oldest first - an operator's own

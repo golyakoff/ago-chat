@@ -217,5 +217,6 @@ public sealed class RecordVisitorContactDetailHandler(
     private static RecordedVisitorContactDetail ToResult(VisitorContactDetail detail) =>
         new(
             detail.Id.Value, detail.VisitorId.Value, detail.Kind.ToString(), detail.Value,
-            detail.RecordedByOperatorId?.Value, detail.Source.ToString(), detail.Verified, detail.RecordedAt);
+            detail.RecordedByOperatorId?.Value, detail.Source.ToString(), detail.Verified, detail.RecordedAt,
+            detail.Assessment.ToString());
 }

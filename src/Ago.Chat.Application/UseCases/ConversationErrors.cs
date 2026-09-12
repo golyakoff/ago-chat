@@ -765,6 +765,26 @@ public static class ConversationErrors
     public static Error ContactDetailInvalidKind(string reason) =>
         new("VisitorContactDetail.InvalidKind", $"'{reason}' is not a valid contact detail kind.");
 
+    /// <summary>`25-58`: the wire value did not parse to a real <see cref="Domain.VisitorContactDetailAssessment"/>
+    /// member, or named the non-settable <see cref="Domain.VisitorContactDetailAssessment.Unset"/> - the
+    /// identical "validate the enum, translate the miss at the Application boundary" split
+    /// <see cref="ContactDetailInvalidKind"/> already draws for <see cref="Domain.VisitorContactDetailKind"/>.</summary>
+    public static Error ContactDetailInvalidAssessment(string reason) =>
+        new("VisitorContactDetail.InvalidAssessment", $"'{reason}' is not a settable contact detail assessment.");
+
+    /// <summary>`25-58`: an operator tried to confirm or mark invalid a <see cref="Domain.VisitorContactDetailKind.Other"/>
+    /// row - <see cref="Domain.VisitorContactDetail.SetAssessment"/>'s own guard, translated at the
+    /// Application boundary before the domain call is even made (`SetVisitorContactDetailAssessmentHandler`'s
+    /// own remarks: the expected case is resolved here, never left to reach the defence-in-depth throw).
+    /// `400`, the same "caller's own mistake to fix" bucket <see cref="ContactDetailInvalidKind"/> and
+    /// <see cref="ContactDetailInvalid"/> already join - the console never offers this action for an
+    /// `Other` row, so reaching this code at all means the caller (or a future, different client)
+    /// asked for something the row's own kind never supports.</summary>
+    public static Error ContactDetailAssessmentNotApplicable(string kind) =>
+        new(
+            "VisitorContactDetail.AssessmentNotApplicable",
+            $"'{kind}' contact details cannot be confirmed or marked invalid.");
+
     /// <summary>`24-05`: this site has <see cref="Domain.WidgetConfig.RequireContactConsent"/> turned
     /// on, and this visitor has no recorded acceptance of the contact-consent document yet -
     /// <c>RecordVisitorContactDetailHandler</c>'s own gate, checked in both

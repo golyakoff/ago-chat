@@ -143,6 +143,8 @@ using Ago.Chat.Application.UseCases.GetConsentRequirement;
 using Ago.Chat.Application.UseCases.RecordVisitorConsent;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
 using Ago.Chat.Application.UseCases.DeleteVisitorContactDetail;
+using Ago.Chat.Application.UseCases.EditVisitorContactDetail;
+using Ago.Chat.Application.UseCases.SetVisitorContactDetailAssessment;
 using Ago.Chat.Application.UseCases.InitiatePhoneVerification;
 using Ago.Chat.Application.UseCases.ConfirmPhoneVerification;
 using Ago.Chat.Application.UseCases.GetPricingForOwner;
@@ -1133,13 +1135,17 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<UntagConversationHandler>();
 
         // `14-14`/`adr/0079` section 6: unverified contact details - a phone/email/other fact an
-        // operator recorded because a visitor said it, never because AGO Chat verified it. The three
+        // operator recorded because a visitor said it, never because AGO Chat verified it. The
         // handlers below are the only callers of IVisitorContactDetailRepository in this codebase.
         services.AddScoped<RecordVisitorContactDetailHandler>();
         services.AddScoped<ListVisitorContactDetailsHandler>();
         services.AddScoped<DeleteVisitorContactDetailHandler>();
         // `23-11`: one contact detail, one reveal, one record - see the handler's own remarks.
         services.AddScoped<RevealVisitorContactDetailHandler>();
+        // `25-58`: real inline editing, and the confirm/mark-invalid action - see each handler's own
+        // remarks.
+        services.AddScoped<EditVisitorContactDetailHandler>();
+        services.AddScoped<SetVisitorContactDetailAssessmentHandler>();
         // `23-09`: rate limiting for RecordVisitorContactDetailHandler.HandleAsVisitorAsync only - the
         // same registration shape PhoneVerificationRateLimitOptions uses below for its own handler.
         services

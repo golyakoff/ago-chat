@@ -59,7 +59,7 @@ public sealed class ListVisitorContactDetailsHandler(
         IReadOnlyList<VisitorContactDetailDto> dtos = items
             .Select(d => new VisitorContactDetailDto(
                 d.Id.Value, d.Kind.ToString(), masked ? Mask(d.Value) : d.Value, d.RecordedByOperatorId?.Value,
-                d.Source.ToString(), d.Verified, d.RecordedAt, masked))
+                d.Source.ToString(), d.Verified, d.RecordedAt, masked, d.Assessment.ToString()))
             .ToList();
 
         return Result<IReadOnlyList<VisitorContactDetailDto>>.Success(dtos);
