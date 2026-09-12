@@ -36,6 +36,16 @@ public sealed class VisitorHub(
 {
     private const int DefaultPageSize = 50;
 
+    /// <summary>
+    /// `25-61`: the one hub-side rejection on this hub that a caller needs to tell apart from every
+    /// other send failure - see <see cref="SendAsync"/>'s own remarks for why this is a prefix on the
+    /// existing message rather than a second error-code channel, and why it is scoped to exactly this
+    /// one code on exactly this one method rather than a general mechanism for every hub failure.
+    /// `ago-widget`'s own `25-61` reads this exact literal - a change here is a wire-contract change
+    /// for that repository, not a local rename.
+    /// </summary>
+    internal const string ConversationClosedHubErrorPrefix = "Conversation.InvalidState: ";
+
     /// <summary>3-01: registers this connection so any node can later resolve "where is this
     /// visitor" (realtime.md). Site/visitor identity comes from the JWT, already validated before a
     /// hub method or lifecycle event ever runs.
@@ -246,7 +256,33 @@ public sealed class VisitorHub(
                 Context.ConnectionAborted);
             if (sent.IsFailure)
             {
-                throw new HubException(sent.Error!.Value.Message);
+                var error = sent.Error!.Value;
+
+                // `25-61`: on *this* send path, `Conversation.InvalidState` has exactly one cause -
+                // `Conversation.AddVisitorMessage`'s own closed-conversation check. Its only other
+                // throw (a participant mismatch) is caught separately in `MessageBatchWriter` and
+                // mapped to `Conversation.Forbidden`, never to this code. So a caller seeing this
+                // code here can treat it as "this conversation has already ended," not merely "some
+                // invalid-state rejection" - unlike the same code returned by, say,
+                // `AssignConversationHandler`, where a dozen other state conflicts share it.
+                //
+                // Every other rejection on this hub, and on `OperatorHub`, still rethrows as a bare
+                // `HubException(error.Message)` - free text, matching `docs/conventions/api-design.md`'s
+                // own stance that a write whose failure modes matter belongs on HTTP, where
+                // `ErrorExtensions.ToProblem` already turns `error.Code` into an RFC 7807 `type` a
+                // client branches on structurally. Deliberately not adopted here: moving the visitor's
+                // send path to REST is a materially bigger change than this item's Done-when asks for,
+                // and a hub method has no `type` field to carry a code in - the message is the only
+                // channel there is. Rather than invent a second, hub-only error vocabulary, this
+                // prefixes the message with the *same* stable code `ErrorExtensions.ToProblem` already
+                // surfaces as this error's REST `type` - one vocabulary, a second transport for one
+                // value out of it, scoped to the one case this item's own investigation confirmed is
+                // unambiguous on this path. Every other failure - rate limits, a malformed body, a
+                // participant mismatch, a stale attachment - still reaches the widget as free text
+                // exactly as before; this is not a general "hub errors now carry codes" mechanism.
+                throw error.Code == "Conversation.InvalidState"
+                    ? new HubException(ConversationClosedHubErrorPrefix + error.Message)
+                    : new HubException(error.Message);
             }
 
             await EchoToCallerAsync(id, visitorId, sent.Value);
