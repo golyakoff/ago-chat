@@ -35,6 +35,10 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
 {
     private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
+    /// <summary>See <see cref="TransferringRacesTheAssignmentEngine_NeverCorruptsCapacityOrDropsTheConversation"/>'s
+    /// own remarks for why this exists and why it is bounded rather than unlimited.</summary>
+    private const int StormAttempts = 3;
+
     /// <summary>
     /// `18-02`'s own instance of `6-10`'s shape: this transaction is a new participant in the
     /// engine's accepted, data-dependent lock-order cycle (`adr/0037`) - not addressed here, cannot
@@ -46,18 +50,44 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
     /// never see `40P01` for pressing "transfer"), and the exact claim/assignment invariant holds
     /// afterwards - which is also how a transaction that committed only half of itself would show up.
     ///
-    /// <para><b>`25-36`: skipped by default, not deleted.</b> The test's own last assertion
-    /// (<c>deadlockReports > 0</c>) is deliberately honest about needing a real Postgres deadlock to
-    /// have occurred - "a quiet run proves nothing," this class's own comment. That honesty is exactly
-    /// what makes it a probabilistic, environment-timing-dependent CI failure: found live 2026-09-09,
-    /// failing on a GitHub Actions runner with `deadlock reports=0` on a commit this storm has nothing
-    /// to do with (`25-34`), while the identical test passed twice locally the same day. A `Skip`ped
-    /// `[Fact]` still compiles and is still runnable by hand (`dotnet test --filter`) when actually
-    /// investigating the storm's own behaviour - it is excluded from the suite CI treats as a merge
-    /// gate, not removed as a proof.</para>
+    /// <para><b>`23-95`: a bounded retry over the storm, not a skip.</b> `25-36` disabled this test
+    /// outright after it failed live on a quiet CI runner (`deadlock reports=0`) on a commit its storm
+    /// has nothing to do with - the same honest self-check this class's own comment names ("a quiet
+    /// run proves nothing") is also what makes a *single* run environment-timing-dependent. Skipping
+    /// traded a rare false red for a permanent blind spot: the property `6-10`/`18-02` exist to guard
+    /// stopped being checked by CI at all. `23-95` restores the check instead of continuing to avoid
+    /// it: <see cref="TransferringRacesTheAssignmentEngine_NeverCorruptsCapacityOrDropsTheConversation"/>
+    /// itself just drives up to <see cref="StormAttempts"/> fresh attempts of
+    /// <see cref="RunStormAttemptAsync"/>, stopping at the first one that actually storms. Retuning the
+    /// storm's own parameters (thread counts, batch size, the 15s window) to storm more reliably was
+    /// deliberately not attempted - this item's own "Where this is likely to go wrong" section names
+    /// exactly why: this machine and a loaded CI runner are different contention distributions, and a
+    /// tuning tested only against the former is tuned against the wrong one. A retry needs no such
+    /// assumption; it only needs the storm to be *capable* of producing contention, which it
+    /// demonstrably is - this exact test passed 70 of 70 locally the same evening it failed once on
+    /// CI. What keeps this from hiding a real regression the way a bare retry would: any escaped
+    /// exception or capacity-invariant violation fails the attempt - and the test - immediately, never
+    /// retried; only "this attempt didn't storm" is retried, and exhausting every attempt without ever
+    /// storming still fails the test (see <see cref="RunStormAttemptAsync"/>'s own last lines).</para>
     /// </summary>
-    [Fact(Skip = "25-36: probabilistic - needs a real Postgres deadlock to occur under contention, and can spuriously fail on a quiet CI runner with no relation to the commit under test. Run by hand with --filter when actually investigating this storm.")]
+    [Fact]
     public async Task TransferringRacesTheAssignmentEngine_NeverCorruptsCapacityOrDropsTheConversation()
+    {
+        for (var attempt = 1; attempt <= StormAttempts; attempt++)
+        {
+            if (await RunStormAttemptAsync(attempt, StormAttempts))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>One storm attempt, on a fresh seed. Returns whether this attempt actually produced a
+    /// Postgres deadlock - the caller retries only on <c>false</c>. Every assertion that guards
+    /// correctness (no escaped exception, the exact capacity invariant) runs unconditionally and
+    /// throws immediately on the first attempt that fails it; only the "did contention even happen"
+    /// check is a retryable outcome rather than a hard failure.</summary>
+    private async Task<bool> RunStormAttemptAsync(int attempt, int maxAttempts)
     {
         const int capacity = 5;
         const int operatorCount = 3;
@@ -186,12 +216,11 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
             $"transferred={transferred}; active_chats=[{string.Join(", ", operators.Select(o => o.ActiveChats))}]; " +
             $"escaped={escaped.Count}; postgres deadlock reports={deadlockReports}");
 
+        // Guard the correctness invariants unconditionally, on every attempt - these must never be
+        // skipped by a retry, or a retry would hide exactly the regression `23-95` exists to keep
+        // catching (the "bare retry" failure mode its own backlog item names).
         Assert.Empty(escaped);
         AssertCapacityInvariant(seed, conversations, operators);
-        // Not an assertion about the fix - an assertion that this run was hostile enough to be
-        // evidence of anything, the same reasoning ClosesStormingAssignmentBatches_... gives for the
-        // identical check on the release side of this same cycle. A quiet run proves nothing.
-        Assert.True(deadlockReports > 0, "the storm produced no Postgres deadlock at all, so it proved nothing");
 
         // Deliberately not `Assert.True(transferred > 0, ...)`. Measured, not assumed: even after this
         // item's own retry-bound revision (2 attempts, no backoff -> 5, jittered), this exact storm
@@ -207,6 +236,28 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
         // (`load/`, Stage 7), not a concurrency-suite invariant - see the commit-prep report for the
         // honest residual this leaves.
         output.WriteLine($"transferred={transferred} (informational only - see this test's own remarks)");
+
+        if (deadlockReports > 0)
+        {
+            return true;
+        }
+
+        // Not an assertion about the fix - an assertion that this run was hostile enough to be
+        // evidence of anything, the same reasoning ClosesStormingAssignmentBatches_... gives for the
+        // identical check on the release side of this same cycle. A quiet run proves nothing, so it is
+        // retried rather than trusted - but only up to `maxAttempts`; exhausting every attempt without
+        // ever storming still fails the test, exactly as `23-95`'s own scope requires ("exhausting it
+        // must fail, not pass").
+        if (attempt == maxAttempts)
+        {
+            Assert.Fail(
+                $"the storm produced no Postgres deadlock in any of {maxAttempts} attempts, so it " +
+                "proved nothing even after retrying");
+        }
+
+        output.WriteLine(
+            $"attempt {attempt}/{maxAttempts}: no Postgres deadlock reports - retrying with a fresh seed");
+        return false;
     }
 
     /// <summary>Reads the deadlock graphs back out of the container's own log - the same technique
