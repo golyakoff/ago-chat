@@ -183,6 +183,26 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.HasIndex(c => new { c.VisitorId, c.Id })
             .HasDatabaseName("ix_conversations_visitor_all");
 
+        // Found live 2026-09-12: two `Conversation` rows for the same visitor, created microseconds
+        // apart, both `Assigned` to the same operator - an operator watching their own console saw the
+        // same visitor listed twice. `StartConversationHandler`'s own guard
+        // (`GetActiveForVisitorAsync` then, if null, `Conversation.Start`+`SaveAsync`) is a
+        // read-then-write with nothing serializing two concurrent callers for the same visitor - two
+        // browser tabs sharing one persisted `visitor_id`, or a widget reconnect racing its own prior
+        // connection, both pass the read and both insert. This index is what turns the second insert
+        // into a real Postgres `23505` instead of a second row: filtered exactly like
+        // `GetActiveForVisitorAsync`'s own predicate (`state <> 'Closed'`), so a visitor may still open
+        // a fresh conversation once their last one is actually closed, but never two open ones at once.
+        // `ConversationRepository.SaveAsync` catches the violation by name and translates it to
+        // `ConversationConcurrencyConflictException`, the identical shape `23-04`'s
+        // `ix_conversation_assignments_open` and `25-34`'s message-sequence index already use one
+        // screen up - `StartConversationHandler` is the one caller that turns that exception into "the
+        // other request already started it, return that one" rather than a retry-and-reapply.
+        builder.HasIndex(c => c.VisitorId)
+            .HasDatabaseName("ix_conversations_one_open_per_visitor")
+            .IsUnique()
+            .HasFilter("state <> 'Closed'");
+
         // `18-12`: the identical "computed property, EF pointed at the private fields by name" shape
         // MessageConfiguration already uses for Message.Content's own three backing fields - see that
         // class's remarks. All four nullable, all unindexed: the report reads them through

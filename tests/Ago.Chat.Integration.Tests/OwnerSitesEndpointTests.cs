@@ -308,23 +308,31 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
     private async Task SeedTenantAsync(SiteId siteId, DateTimeOffset createdAt)
     {
         var now = DateTimeOffset.UtcNow;
-        var visitorId = new VisitorId(Guid.NewGuid());
         var conversationIds = Enumerable.Range(0, 3).Select(_ => new ConversationId(Guid.NewGuid())).ToList();
+        // `25-68`: one visitor per conversation - ix_conversations_one_open_per_visitor now refuses a
+        // second open conversation for the same visitor, and this seed's own point (three
+        // conversations exist for this site) never needed them to share a visitor.
+        var visitorIds = conversationIds.Select(_ => new VisitorId(Guid.NewGuid())).ToList();
+        var visitorId = visitorIds[0];
 
         await using (var db = fixture.CreateDbContext())
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], "Twelve Oh Two Tenant", createdAt));
             db.Operators.Add(new Operator(new OperatorId(Guid.NewGuid()), siteId, OperatorStatus.Offline, capacity: 5));
             db.Operators.Add(new Operator(new OperatorId(Guid.NewGuid()), siteId, OperatorStatus.Offline, capacity: 5));
-            db.Visitors.Add(new Visitor(visitorId, siteId, now));
+            foreach (var v in visitorIds)
+            {
+                db.Visitors.Add(new Visitor(v, siteId, now));
+            }
+
             await db.SaveChangesAsync();
         }
 
         await using (var db = fixture.CreateDbContext())
         {
-            foreach (var conversationId in conversationIds)
+            for (var i = 0; i < conversationIds.Count; i++)
             {
-                db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, now));
+                db.Conversations.Add(Conversation.Start(conversationIds[i], siteId, visitorIds[i], now));
             }
 
             await db.SaveChangesAsync();

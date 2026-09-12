@@ -8,6 +8,7 @@ using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Dapper;
+using Microsoft.EntityFrameworkCore;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -104,7 +105,8 @@ public class PersonExportIntegrationTests(AttachmentFixture fixture)
         var operatorId = await SeedOperatorAsync(siteId, Permission.ConversationExport);
 
         var (visitorId, firstConversationId, _) = await SeedConversationAsync(siteId, "first: hi", "first: bye");
-        var secondConversationId = await SeedSecondConversationForVisitorAsync(siteId, visitorId, "second: back again");
+        var secondConversationId = await SeedSecondConversationForVisitorAsync(
+            siteId, visitorId, firstConversationId, "second: back again");
 
         var (strangerVisitorId, strangerConversationId, _) =
             await SeedConversationAsync(siteId, "stranger: hi", "stranger: bye");
@@ -200,12 +202,19 @@ public class PersonExportIntegrationTests(AttachmentFixture fixture)
         return (visitorId, conversation.Id, [firstMessageId, secondMessageId]);
     }
 
-    private async Task<ConversationId> SeedSecondConversationForVisitorAsync(SiteId siteId, VisitorId visitorId, string body)
+    private async Task<ConversationId> SeedSecondConversationForVisitorAsync(
+        SiteId siteId, VisitorId visitorId, ConversationId firstConversationId, string body)
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now.AddMinutes(10));
         conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody(body), Now.AddMinutes(10));
 
         await using var db = fixture.CreateDbContext();
+        // `25-68`: a visitor's own first conversation has to actually be closed before their second
+        // one can open - ix_conversations_one_open_per_visitor now enforces the same "at most one
+        // open conversation" invariant this test's own name ("back again") already implies.
+        var first = await db.Conversations.Include("_messages").Include("_moduleTasks")
+            .FirstAsync(c => c.Id == firstConversationId);
+        first.Close(Now.AddMinutes(5));
         db.Conversations.Add(conversation);
         await db.SaveChangesAsync();
 

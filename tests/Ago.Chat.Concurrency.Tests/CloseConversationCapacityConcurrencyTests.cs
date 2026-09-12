@@ -529,7 +529,13 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         Assert.NotNull(interval.EndedAt);
     }
 
-    private sealed record Seed(SiteId SiteId, IReadOnlyList<OperatorId> OperatorIds, VisitorId VisitorId);
+    /// <summary>`25-68`: <paramref name="VisitorIdByConversation"/> replaces a single shared
+    /// `VisitorId` - `ix_conversations_one_open_per_visitor` now refuses a second open conversation for
+    /// the same visitor, so every conversation this class seeds gets its own. Callers that need to
+    /// author a message on a specific conversation (<see cref="SendConcurrentVisitorMessageAsync"/>)
+    /// look up that conversation's own visitor here rather than assuming one shared identity.</summary>
+    private sealed record Seed(
+        SiteId SiteId, IReadOnlyList<OperatorId> OperatorIds, IReadOnlyDictionary<ConversationId, VisitorId> VisitorIdByConversation);
 
     /// <summary>`6-08`'s seam, reused verbatim from MarkConversationReadConcurrencyTests: every read
     /// goes to the real repository untouched, and each of the first <paramref name="maxInjections"/>
@@ -566,13 +572,18 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
     private async Task<Seed> SeedAsync(int operatorCount, int capacity, int conversationCount)
     {
         var siteId = new SiteId(Guid.NewGuid());
-        var visitorId = new VisitorId(Guid.NewGuid());
+        // `25-68`: one visitor per conversation - see Seed's own remarks.
+        var visitorIds = Enumerable.Range(0, conversationCount).Select(_ => new VisitorId(Guid.NewGuid())).ToList();
         var operatorIds = Enumerable.Range(0, operatorCount).Select(_ => new OperatorId(Guid.NewGuid())).ToList();
         var roleId = Guid.NewGuid();
 
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-        db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+        foreach (var visitorId in visitorIds)
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+        }
+
         db.Roles.Add(new RoleRecord
         {
             Id = roleId,
@@ -587,13 +598,15 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
         }
 
+        var conversationIds = Enumerable.Range(0, conversationCount).Select(_ => new ConversationId(Guid.NewGuid())).ToList();
         for (var i = 0; i < conversationCount; i++)
         {
-            db.Conversations.Add(Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now));
+            db.Conversations.Add(Conversation.Start(conversationIds[i], siteId, visitorIds[i], Now));
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
-        return new Seed(siteId, operatorIds, visitorId);
+        var visitorIdByConversation = conversationIds.Zip(visitorIds).ToDictionary(pair => pair.First, pair => pair.Second);
+        return new Seed(siteId, operatorIds, visitorIdByConversation);
     }
 
     private ConversationAssignmentJob CreateAssignmentJob(int batchSize) =>
@@ -632,7 +645,8 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         await using var db = fixture.CreateDbContext();
         var repository = new ConversationRepository(db);
         var conversation = (await repository.GetByIdAsync(conversationId, CancellationToken.None))!;
-        conversation.AddVisitorMessage(seed.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("incoming"), Now);
+        conversation.AddVisitorMessage(
+            seed.VisitorIdByConversation[conversationId], new MessageId(Guid.NewGuid()), new MessageBody("incoming"), Now);
         conversation.ClearDomainEvents();
         await repository.SaveAsync(conversation, CancellationToken.None);
     }

@@ -16,6 +16,20 @@ namespace Ago.Chat.Application.UseCases.StartConversation;
 /// conversation starts with (`Conversation.Start`'s own remarks - it is never a live gate re-checked
 /// later), the identical `adr/0031` "a stamp, not a gate" carve-out `SiteConfigDto`'s own remarks
 /// already invoke for `WidgetAutoOpenEnabled` on this same cached read.
+///
+/// <para><b>Found live 2026-09-12: two concurrent callers for the same visitor both saw
+/// <see cref="IConversationRepository.GetActiveForVisitorAsync"/> answer null and both created a
+/// conversation.</b> Two browser tabs sharing one persisted <c>visitor_id</c>, or a widget reconnect
+/// racing its own prior connection, both reach this method before either has committed. The read at
+/// line 50 below cannot see a row that has not been saved yet, no matter how it is written - the fix
+/// is not a better read, it is `ConversationConfiguration`'s own
+/// <c>ix_conversations_one_open_per_visitor</c>, which turns the loser's <c>SaveAsync</c> into a real
+/// Postgres unique-violation translated to <see cref="ConversationConcurrencyConflictException"/>
+/// (`ConversationRepository`'s own remarks). Caught here, once: the loser's own copy is worthless
+/// (its id lost the race), but the winner's row is already committed and visible to a fresh read -
+/// so the loser simply returns it, exactly as if <c>existing is not null</c> had been true from the
+/// start. Not a retry-and-reapply like `MarkConversationReadHandler`'s own shape: there is nothing
+/// to reapply, "start a conversation" has no decision left to make once one already exists.</para>
 /// </summary>
 public sealed class StartConversationHandler(
     IVisitorRepository visitors,
@@ -59,7 +73,26 @@ public sealed class StartConversationHandler(
         var conversationId = new ConversationId(idGenerator.NewId(now));
         var conversation = Conversation.Start(
             conversationId, command.SiteId, command.VisitorId, now, command.Source, attachmentUploadGrantedByDefault);
-        await conversations.SaveAsync(conversation, cancellationToken);
+        try
+        {
+            await conversations.SaveAsync(conversation, cancellationToken);
+        }
+        catch (ConversationConcurrencyConflictException)
+        {
+            // Lost the race - see this class's own remarks. The winner committed first, so it is
+            // there to be read now.
+            var winner = await conversations.GetActiveForVisitorAsync(command.VisitorId, cancellationToken);
+            if (winner is null)
+            {
+                // Unreachable by construction: the constraint that produced this exception only fires
+                // when a matching row already exists. Rethrown rather than silently treated as "no
+                // conversation" - the same "do not paper over a broken invariant" choice
+                // ConversationRepository's own remarks make for a null it cannot explain either.
+                throw;
+            }
+
+            return new StartConversationResult(winner.Id, IsNew: false, winner.HasAttachmentUploadGrant);
+        }
 
         return new StartConversationResult(conversation.Id, IsNew: true, conversation.HasAttachmentUploadGrant);
     }
