@@ -7,7 +7,8 @@ namespace Ago.Chat.Infrastructure.Postgres;
 
 /// <summary>
 /// `14-14`. Resolved by `RecordVisitorContactDetailHandler`/`ListVisitorContactDetailsHandler`/
-/// `DeleteVisitorContactDetailHandler` only - no other handler in this codebase depends on
+/// `DeleteVisitorContactDetailHandler`/`EditVisitorContactDetailHandler`/
+/// `SetVisitorContactDetailAssessmentHandler` only - no other handler in this codebase depends on
 /// `IVisitorContactDetailRepository`, the concrete expression of that interface's own "structurally
 /// incapable" remarks: this class shares no base type, no method, and no SQL with
 /// <see cref="ChannelIdentityRepository"/>.
@@ -16,11 +17,16 @@ public sealed class VisitorContactDetailRepository(AgoChatDbContext db) : IVisit
 {
     public async Task SaveAsync(VisitorContactDetail detail, CancellationToken cancellationToken)
     {
-        // Contact details are never edited once recorded (no Rename-shaped method on
-        // VisitorContactDetail), so the detached-vs-tracked branch WebhookEndpointRepository.SaveAsync
-        // needs does not apply here - every call is a fresh insert, the identical shape
-        // NoteRepository.SaveAsync already uses for the same reason.
-        db.VisitorContactDetails.Add(detail);
+        // `25-58`: the same detached-vs-tracked branch WebhookEndpointRepository.SaveAsync already
+        // uses for itself - a freshly Record()'d/RecordFromVisitor()'d detail was never loaded through
+        // this context (Detached), while one an edit or assessment handler mutated in place after its
+        // own GetByIdAsync is already tracked, so SaveChangesAsync alone picks up the change with no
+        // explicit Update() call needed.
+        if (db.Entry(detail).State == EntityState.Detached)
+        {
+            db.VisitorContactDetails.Add(detail);
+        }
+
         await db.SaveChangesAsync(cancellationToken);
     }
 

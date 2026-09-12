@@ -115,6 +115,11 @@ public static class ErrorExtensions
                 // Tag.Invalid above - an empty/oversized contact detail value, or a kind string that
                 // does not parse to a real Domain.VisitorContactDetailKind member.
                 or "VisitorContactDetail.Invalid" or "VisitorContactDetail.InvalidKind"
+                // `25-58`: the same "caller's mistake to fix" shape once more - an assessment string
+                // that does not parse to a real, settable Domain.VisitorContactDetailAssessment member,
+                // or an attempt to confirm/mark invalid a row whose Kind does not support it at all
+                // (ConversationErrors.ContactDetailAssessmentNotApplicable's own remarks).
+                or "VisitorContactDetail.InvalidAssessment" or "VisitorContactDetail.AssessmentNotApplicable"
                 // `14-15`: the caller's own mistake to fix - an unparsable phone number, or a code that
                 // did not match (ConversationErrors.PhoneVerificationWrongCode's own remarks on why the
                 // message never names a remaining-attempts count).

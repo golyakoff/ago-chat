@@ -47,6 +47,12 @@ internal sealed class VisitorContactDetailConfiguration : IEntityTypeConfigurati
         builder.Property(d => d.Source).HasColumnName("source").HasConversion<string>().HasMaxLength(16);
         builder.Property(d => d.Verified).HasColumnName("verified");
 
+        // `25-58`: stored as the CLR member name, the same default-string-conversion choice `Kind`/
+        // `Source` above already make for themselves - no CHECK constraint, so the plain conversion is
+        // honest. Every row before this migration is backfilled to `Unset` (the migration's own
+        // `defaultValue`) - the correct read for a row nobody had a chance to confirm or flag yet.
+        builder.Property(d => d.Assessment).HasColumnName("assessment").HasConversion<string>().HasMaxLength(16);
+
         builder.Property(d => d.RecordedAt).HasColumnName("recorded_at");
 
         // The only real read (GetForVisitorAsync) filters on visitor_id alone, ordered by

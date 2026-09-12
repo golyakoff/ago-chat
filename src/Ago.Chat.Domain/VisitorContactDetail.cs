@@ -38,11 +38,23 @@
 /// Those two keep a terminal, non-deleted row after unlinking/revoking because "this address stopped
 /// being valid" is itself a fact worth remembering - the row's own past existence had consequences
 /// (messages really were routed through it). A mistyped phone number an operator deletes seconds after
-/// noticing the typo has no such history to protect; the backlog item calls this "delete a mistaken
-/// entry" in exactly those words, so deletion (<c>IVisitorContactDetailRepository.DeleteAsync</c>) is a
-/// real row removal, not a state flip - there is no <c>Delete</c>/<c>Unlink</c>-shaped method on this
-/// type at all, because nothing downstream needs to ask "did this visitor ever have a contact detail
-/// that got removed."</para>
+/// noticing the typo has no such history to protect; deletion (<c>IVisitorContactDetailRepository.DeleteAsync</c>)
+/// stays a real row removal, not a state flip - there is no <c>Unlink</c>-shaped method on this type.
+/// <b>`25-58` changed which surface reaches that deletion, not the removal itself</b> - the console's
+/// own panel dropped its casual per-row delete button because <see cref="EditValue"/>/<see cref="SetAssessment"/>
+/// below cover the real case a typo or a dead number ever needed a button for ("correct it" or "flag
+/// it," strictly more informative than removing it outright); <c>DeleteVisitorContactDetailHandler</c>
+/// itself is untouched and still a real removal, reachable through the API and through this visitor's
+/// own erasure path (`ConversationErasureQuery`), just no longer offered as a casual console action.</para>
+///
+/// <para><b>`25-58`: this type gained its first two mutation methods, <see cref="EditValue"/> and
+/// <see cref="SetAssessment"/> - a real, deliberate widening of a type every earlier remark on this page
+/// called immutable once recorded.</b> Two things stay true across that widening, because the backlog
+/// item is explicit both must: <see cref="Source"/>/<see cref="RecordedByOperatorId"/> have no setter and
+/// no mutation method touches them - editing a row corrects the fact, never reassigns who reported it -
+/// and <see cref="Verified"/> stays exactly as unreachable as it always was, because the new
+/// <see cref="VisitorContactDetailAssessment"/> this item adds is a different, operator-asserted concept
+/// on its own column (that enum's own remarks explain the distinction in full).</para>
 /// </summary>
 public sealed class VisitorContactDetail
 {
@@ -60,7 +72,9 @@ public sealed class VisitorContactDetail
 
     public VisitorContactDetailKind Kind { get; }
 
-    public string Value { get; } = string.Empty;
+    /// <summary>`25-58`: a private setter, not a plain `{ get; }` - <see cref="EditValue"/> is the only
+    /// writer, and it is the only reason this stopped being immutable.</summary>
+    public string Value { get; private set; } = string.Empty;
 
     /// <summary>
     /// `23-09`: nullable since this widening - a visitor-supplied detail (<see cref="Source"/> ==
@@ -91,6 +105,15 @@ public sealed class VisitorContactDetail
     /// </summary>
     public bool Verified { get; }
 
+    /// <summary>
+    /// `25-58`: an operator's own confirmed/invalid call on a <see cref="VisitorContactDetailKind.Phone"/>
+    /// or <see cref="VisitorContactDetailKind.Email"/> row - see <see cref="VisitorContactDetailAssessment"/>'s
+    /// own remarks for why this is not, and must never become, a rename of <see cref="Verified"/>.
+    /// Always <see cref="VisitorContactDetailAssessment.Unset"/> for <see cref="VisitorContactDetailKind.Other"/>
+    /// - <see cref="SetAssessment"/> refuses to move it.
+    /// </summary>
+    public VisitorContactDetailAssessment Assessment { get; private set; }
+
     public DateTimeOffset RecordedAt { get; }
 
     private VisitorContactDetail(
@@ -104,6 +127,7 @@ public sealed class VisitorContactDetail
         RecordedByOperatorId = recordedByOperatorId;
         Source = source;
         Verified = verified;
+        Assessment = VisitorContactDetailAssessment.Unset;
         RecordedAt = recordedAt;
     }
 
@@ -155,4 +179,57 @@ public sealed class VisitorContactDetail
         DateTimeOffset now) =>
         new(id, visitorId, kind, ValidateAndTrim(value), recordedByOperatorId: null, VisitorContactDetailSource.Visitor,
             verified: false, now);
+
+    /// <summary>
+    /// `25-58`: an operator corrects this row's own value in place - a spelling fix, a corrected phone
+    /// number heard mid-conversation - real inline editing, never a second, competing row. The same
+    /// invariant <see cref="Record"/>/<see cref="RecordFromVisitor"/> already enforce for a fresh value
+    /// applies again here (empty-or-oversized throws <see cref="ArgumentException"/>), because a value
+    /// this type accepts must stay valid on every path that can ever set it, not only the two that
+    /// create a row.
+    ///
+    /// <para><b><see cref="Source"/> and <see cref="RecordedByOperatorId"/> are untouched - this method
+    /// does not take an operator id parameter at all.</b> The backlog item's own explicit warning:
+    /// editing changes the existing row, not the source - a visitor-submitted entry corrected by an
+    /// operator stays <see cref="VisitorContactDetailSource.Visitor"/>, exactly as it was, because this
+    /// is a correction to the fact, never a claim about who originally reported it. Getting this
+    /// backwards would misattribute a visitor's own data to an operator.</para>
+    ///
+    /// <para><b>Resets <see cref="Assessment"/> back to <see cref="VisitorContactDetailAssessment.Unset"/>
+    /// whenever it was not already.</b> An operator's earlier confirmed/invalid call was an assertion
+    /// about the <em>previous</em> value; carrying it forward onto a value nobody has actually confirmed
+    /// or flagged yet would misrepresent a stale assertion as a fresh one about a string that never
+    /// existed when the assertion was made.</para>
+    /// </summary>
+    public void EditValue(string value)
+    {
+        Value = ValidateAndTrim(value);
+        Assessment = VisitorContactDetailAssessment.Unset;
+    }
+
+    /// <summary>
+    /// `25-58`: an operator's own confirmed/invalid call, or a reversal back to
+    /// <see cref="VisitorContactDetailAssessment.Unset"/> if a caller ever needs one - see
+    /// <see cref="VisitorContactDetailAssessment"/>'s own remarks for what this is and, just as
+    /// deliberately, what it is not.
+    ///
+    /// <para>Throws <see cref="InvalidVisitorContactDetailStateException"/> for
+    /// <see cref="VisitorContactDetailKind.Other"/> - a name or a free-text note has no channel to
+    /// confirm or invalidate the way a phone number or an email address does (the backlog item's own
+    /// decision). This is defence in depth, not the primary guard: the Application layer
+    /// (<c>SetVisitorContactDetailAssessmentHandler</c>) rejects the same case first, with a normal,
+    /// user-facing error, exactly the "Application resolves the expected case, Domain guards the
+    /// invariant regardless" split <see cref="InvalidVisitorContactDetailStateException"/>'s own remarks
+    /// describe.</para>
+    /// </summary>
+    public void SetAssessment(VisitorContactDetailAssessment assessment)
+    {
+        if (Kind == VisitorContactDetailKind.Other)
+        {
+            throw new InvalidVisitorContactDetailStateException(
+                "Only Phone and Email contact details can be confirmed or marked invalid.");
+        }
+
+        Assessment = assessment;
+    }
 }
