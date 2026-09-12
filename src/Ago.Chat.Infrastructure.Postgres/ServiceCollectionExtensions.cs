@@ -46,6 +46,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IConversationAttachmentBudget, ConversationAttachmentBudgetStore>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
+        // `25-56`: singleton, the same "holds no state beyond the platform's own CSPRNG" shape
+        // IDemoCredentialGenerator/IWebhookSecretGenerator already use.
+        services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
         // `14-01`
         services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         // `14-12`: the pending-link-request aggregate's own port, and its code generator - the same

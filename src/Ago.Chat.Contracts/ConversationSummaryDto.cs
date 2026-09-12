@@ -30,10 +30,19 @@
 /// (via <c>useWorkspace().conversation</c>) the "who/when" attribution its own attachment-upload-grant
 /// toggle shows.
 /// </summary>
+/// <summary>
+/// `25-56`: <see cref="EmojiCreature"/>/<see cref="EmojiFood"/> are additive the same way every field
+/// above them already is - <see langword="null"/> for a row that predates the visitor's own pair being
+/// assigned, which after `Stage25AddVisitorEmojiPair`'s backfill migration is no caller at all. The
+/// console renders them beside the short code this DTO's own <c>VisitorId</c> is sliced from
+/// (`ConversationList`/`ConversationPage` - the two locations `25-56`'s backlog item names and no
+/// others), never in place of it.
+/// </summary>
 public sealed record ConversationSummaryDto(
     Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
     Guid? OperatorId = null, string? OperatorName = null, bool HasAttachmentUploadGrant = false,
-    DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null);
+    DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null,
+    string? EmojiCreature = null, string? EmojiFood = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

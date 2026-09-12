@@ -22,7 +22,8 @@ public sealed class StartConversationHandler(
     IConversationRepository conversations,
     GetSiteConfigByIdHandler siteConfig,
     IClock clock,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    IVisitorEmojiPairGenerator emojiPairs)
 {
     public async Task<Result<StartConversationResult>> HandleAsync(
         StartConversation command, CancellationToken cancellationToken)
@@ -33,6 +34,11 @@ public sealed class StartConversationHandler(
         if (visitor is null)
         {
             visitor = new Visitor(command.VisitorId, command.SiteId, now);
+            // `25-56` decision 5: assigned here, at first contact, and never again - this is one of
+            // exactly two places in this codebase that ever calls AssignEmojiPair (Visitor's own
+            // remarks name the other, ReceiveChannelMessageHandler).
+            var (creature, food) = emojiPairs.NextPair();
+            visitor.AssignEmojiPair(creature, food);
         }
         else
         {

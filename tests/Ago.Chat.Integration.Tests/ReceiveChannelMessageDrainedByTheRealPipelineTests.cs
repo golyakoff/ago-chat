@@ -82,6 +82,7 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
             var conversations = new ConversationRepository(db);
             var clock = new SystemClock();
             var idGenerator = new UuidV7Generator();
+            var emojiPairs = new VisitorEmojiPairGenerator();
 
             var handler = new ReceiveChannelMessageHandler(
                 identities,
@@ -91,11 +92,12 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
                 // actually checks.
                 new StartConversationHandler(
                     visitors, conversations, new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
-                    clock, idGenerator),
+                    clock, idGenerator, emojiPairs),
                 new SendVisitorMessageHandler(
                     conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
                 clock,
-                idGenerator);
+                idGenerator,
+                emojiPairs);
 
             var result = await handler.HandleAsync(
                 new ReceiveChannelMessage(

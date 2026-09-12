@@ -48,6 +48,7 @@ public class ReceiveChannelMessageHandlerTests
         var pendingLinks = new FakePendingChannelLinkRequestRepository();
         var clock = new FakeClock(Now);
         var idGenerator = new FakeIdGenerator();
+        var emojiPairs = new FakeVisitorEmojiPairGenerator();
         var pipeline = new FakeApplyingMessagePipeline(conversations, clock, idGenerator);
 
         var handler = new ReceiveChannelMessageHandler(
@@ -56,11 +57,12 @@ public class ReceiveChannelMessageHandlerTests
             pendingLinks,
             new StartConversationHandler(
             visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
-            idGenerator),
+            idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             clock,
-            idGenerator);
+            idGenerator,
+            emojiPairs);
 
         return new Harness(handler, identities, visitors, conversations, pipeline, pendingLinks, clock, idGenerator);
     }
@@ -440,15 +442,16 @@ public class ReceiveChannelMessageHandlerTests
         var conversations = new FakeConversationRepository();
         var clock = new FakeClock(Now);
         var idGenerator = new FakeIdGenerator();
+        var emojiPairs = new FakeVisitorEmojiPairGenerator();
         var pipeline = new FakeApplyingMessagePipeline(conversations, clock, idGenerator);
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(
             visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
-            idGenerator),
+            idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
-            clock, idGenerator);
+            clock, idGenerator, emojiPairs);
 
         var first = await handler.HandleAsync(
             Inbound(site, externalMessageId: "a", body: "first"), CancellationToken.None);
@@ -482,17 +485,18 @@ public class ReceiveChannelMessageHandlerTests
         var conversations = new FakeConversationRepository();
         var clock = new FakeClock(Now);
         var idGenerator = new FakeIdGenerator();
+        var emojiPairs = new FakeVisitorEmojiPairGenerator();
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(
             visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
-            idGenerator),
+            idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations,
                 new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5)),
                 new MessageSendRateLimitOptions(),
                 new FakeApplyingMessagePipeline(conversations, clock, idGenerator)),
-            clock, idGenerator);
+            clock, idGenerator, emojiPairs);
 
         var result = await handler.HandleAsync(Inbound(site), CancellationToken.None);
 

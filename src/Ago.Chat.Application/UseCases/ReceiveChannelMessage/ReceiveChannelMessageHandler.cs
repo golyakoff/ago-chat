@@ -74,7 +74,8 @@ public sealed class ReceiveChannelMessageHandler(
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendVisitorMessage,
     IClock clock,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    IVisitorEmojiPairGenerator emojiPairs)
 {
     public async Task<Result<ReceiveChannelMessageResult>> HandleAsync(
         ReceiveChannelMessage command, CancellationToken cancellationToken)
@@ -100,7 +101,13 @@ public sealed class ReceiveChannelMessageHandler(
                 // A brand-new external address gets a brand-new Visitor, never a match against an
                 // existing one - see ChannelIdentity's own remarks for why inference is refused here.
                 visitorId = new VisitorId(idGenerator.NewId(now));
-                await visitors.SaveAsync(new Visitor(visitorId.Value, command.SiteId, now), cancellationToken);
+                var newVisitor = new Visitor(visitorId.Value, command.SiteId, now);
+                // `25-56`: the second (and last) call site for AssignEmojiPair - see
+                // StartConversationHandler's own identical comment for why this happens here, at
+                // construction, rather than lazily on some later read.
+                var (creature, food) = emojiPairs.NextPair();
+                newVisitor.AssignEmojiPair(creature, food);
+                await visitors.SaveAsync(newVisitor, cancellationToken);
                 visitorWasNew = true;
             }
 

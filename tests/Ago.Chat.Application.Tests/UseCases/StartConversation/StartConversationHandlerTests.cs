@@ -20,7 +20,8 @@ public class StartConversationHandlerTests
         var conversations = new FakeConversationRepository();
         var siteConfig = new GetSiteConfigByIdHandler(sites ?? new FakeSiteRepository(), new FakeCache());
         var handler = new StartConversationHandler(
-            visitors, conversations, siteConfig, new FakeClock(Now), new FakeIdGenerator());
+            visitors, conversations, siteConfig, new FakeClock(Now), new FakeIdGenerator(),
+            new FakeVisitorEmojiPairGenerator());
         return (handler, visitors, conversations);
     }
 
@@ -91,6 +92,41 @@ public class StartConversationHandlerTests
         Assert.Equal(Now, saved.FirstSeenAt);
     }
 
+    // `25-56` decision 5: the pair is assigned once, at first contact, and a returning visitor's
+    // *second* conversation must read back the identical pair the *first* one triggered - not a fresh
+    // pick. The fake generator is seeded to hand out a different pair on every call, so this would fail
+    // if the handler ever re-assigned on the "visitor already exists" branch.
+    [Fact]
+    public async Task HandleAsync_WhenTheSameVisitorStartsASecondConversation_TheEmojiPairIsUnchanged()
+    {
+        var visitors = new FakeVisitorRepository();
+        var conversations = new FakeConversationRepository();
+        var siteConfig = new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache());
+        var emojiPairs = new FakeVisitorEmojiPairGenerator("🐳", "🌭");
+        var handler = new StartConversationHandler(
+            visitors, conversations, siteConfig, new FakeClock(Now), new FakeIdGenerator(), emojiPairs);
+
+        var first = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+        var afterFirstContact = await visitors.GetByIdAsync(VisitorId, CancellationToken.None);
+
+        // The first conversation closes and a different pair is now on offer - if the handler's
+        // "visitor already exists" branch ever called AssignEmojiPair again, the second conversation
+        // below would pick this new pair up instead of keeping the first one.
+        var firstConversation = await conversations.GetByIdAsync(first.Value.ConversationId, CancellationToken.None);
+        firstConversation!.Close(Now);
+        emojiPairs.Creature = "🐠";
+        emojiPairs.Food = "🥝";
+
+        await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+        var afterSecondConversation = await visitors.GetByIdAsync(VisitorId, CancellationToken.None);
+
+        Assert.Equal("🐳", afterFirstContact!.EmojiCreature);
+        Assert.Equal("🌭", afterFirstContact.EmojiFood);
+        Assert.Equal(afterFirstContact.EmojiCreature, afterSecondConversation!.EmojiCreature);
+        Assert.Equal(afterFirstContact.EmojiFood, afterSecondConversation.EmojiFood);
+        Assert.Equal(1, emojiPairs.CallCount);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenVisitorReturns_TouchesLastSeenAtWithoutChangingFirstSeenAt()
     {
@@ -102,7 +138,8 @@ public class StartConversationHandlerTests
         var returnVisit = Now.AddDays(1);
         var siteConfig = new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache());
         var handler = new StartConversationHandler(
-            visitors, conversations, siteConfig, new FakeClock(returnVisit), new FakeIdGenerator());
+            visitors, conversations, siteConfig, new FakeClock(returnVisit), new FakeIdGenerator(),
+            new FakeVisitorEmojiPairGenerator());
 
         await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 

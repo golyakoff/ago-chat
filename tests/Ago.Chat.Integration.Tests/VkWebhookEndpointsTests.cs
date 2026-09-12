@@ -345,6 +345,10 @@ public sealed class VkWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddSingleton<ICache, NoOpCache>();
         builder.Services.AddScoped<GetSiteConfigByIdHandler>();
+        // `25-56`: StartConversationHandler/ReceiveChannelMessageHandler's own new constructor
+        // dependency - the identical "every hand-rolled test host needs this too" reasoning the
+        // comments above already state for their own new dependencies.
+        builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
         builder.Services.AddScoped<ReceiveChannelMessageHandler>();

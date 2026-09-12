@@ -15,6 +15,13 @@ public sealed class FakeVisitorRepository : IVisitorRepository
     public Task<Visitor?> GetByIdAsync(VisitorId id, CancellationToken cancellationToken) =>
         Task.FromResult(_byId.GetValueOrDefault(id));
 
+    public Task<IReadOnlyDictionary<VisitorId, Visitor>> GetManyByIdsAsync(
+        IReadOnlyCollection<VisitorId> ids, CancellationToken cancellationToken)
+    {
+        var result = _byId.Where(kvp => ids.Contains(kvp.Key)).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        return Task.FromResult<IReadOnlyDictionary<VisitorId, Visitor>>(result);
+    }
+
     public Task SaveAsync(Visitor visitor, CancellationToken cancellationToken)
     {
         _byId[visitor.Id] = visitor;

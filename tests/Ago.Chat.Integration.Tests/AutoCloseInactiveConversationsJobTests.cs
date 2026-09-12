@@ -161,12 +161,13 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             new StartConversationHandler(
                 new VisitorRepository(db), new ConversationRepository(db),
                 new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()), new SystemClock(),
-                new UuidV7Generator()),
+                new UuidV7Generator(), new VisitorEmojiPairGenerator()),
             new SendVisitorMessageHandler(
                 new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
                 new SynchronousMessagePipeline(fixture.DataSource)),
             new SystemClock(),
-            new UuidV7Generator());
+            new UuidV7Generator(),
+            new VisitorEmojiPairGenerator());
 
         var result = await receiveChannelMessage.HandleAsync(
             new ReceiveChannelMessage(

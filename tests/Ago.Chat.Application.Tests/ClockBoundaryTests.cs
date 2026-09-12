@@ -31,7 +31,7 @@ public class ClockBoundaryTests
         var clock = new FakeClock(BeforeBerlinSpringForward);
         var handler = new StartConversationHandler(
             visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
-            new FakeIdGenerator());
+            new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
 
         await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
         var afterFirstContact = await visitors.GetByIdAsync(visitorId, CancellationToken.None);

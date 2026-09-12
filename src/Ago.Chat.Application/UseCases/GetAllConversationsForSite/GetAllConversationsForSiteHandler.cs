@@ -37,5 +37,11 @@ public sealed class GetAllConversationsForSiteHandler(
 
     private static ConversationSummaryDto ToSummary(ConversationSummaryItem item) => new(
         item.Id.Value, item.VisitorId.Value, item.State, item.CreatedAt, item.OperatorUnreadCount,
-        item.OperatorId?.Value, item.OperatorName);
+        item.OperatorId?.Value, item.OperatorName,
+        // `25-56`: this view has no attachment-upload-grant fields either (ConversationSummaryDto's
+        // own remarks on why only GetOperatorQueueHandler's two lists carry those) - named here so the
+        // trailing EmojiCreature/EmojiFood arguments below don't silently occupy the wrong positional
+        // slot.
+        HasAttachmentUploadGrant: false, AttachmentUploadGrantedAt: null, AttachmentUploadGrantedByOperatorId: null,
+        EmojiCreature: item.EmojiCreature, EmojiFood: item.EmojiFood);
 }

@@ -15,4 +15,7 @@ internal sealed record ConversationSummaryRow(
     string Outcome = "Unset",
     // `23-02`: additive - only `AllForSiteSql` joins `operators` in and selects this; `ByIdSql` leaves
     // it at its default, Dapper's own column-not-present behaviour for a nullable record parameter.
-    string? OperatorName = null);
+    string? OperatorName = null,
+    // `25-56`: additive - both call sites now join `visitors` in and select these two.
+    string? EmojiCreature = null,
+    string? EmojiFood = null);
