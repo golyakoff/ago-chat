@@ -109,7 +109,7 @@ public sealed class VisitorContactDetail
     /// `25-58`: an operator's own confirmed/invalid call on a <see cref="VisitorContactDetailKind.Phone"/>
     /// or <see cref="VisitorContactDetailKind.Email"/> row - see <see cref="VisitorContactDetailAssessment"/>'s
     /// own remarks for why this is not, and must never become, a rename of <see cref="Verified"/>.
-    /// Always <see cref="VisitorContactDetailAssessment.Unset"/> for <see cref="VisitorContactDetailKind.Other"/>
+    /// Always <see cref="VisitorContactDetailAssessment.Unset"/> for <see cref="VisitorContactDetailKind.Name"/>
     /// - <see cref="SetAssessment"/> refuses to move it.
     /// </summary>
     public VisitorContactDetailAssessment Assessment { get; private set; }
@@ -214,7 +214,7 @@ public sealed class VisitorContactDetail
     /// deliberately, what it is not.
     ///
     /// <para>Throws <see cref="InvalidVisitorContactDetailStateException"/> for
-    /// <see cref="VisitorContactDetailKind.Other"/> - a name or a free-text note has no channel to
+    /// <see cref="VisitorContactDetailKind.Name"/> - a name has no channel to
     /// confirm or invalidate the way a phone number or an email address does (the backlog item's own
     /// decision). This is defence in depth, not the primary guard: the Application layer
     /// (<c>SetVisitorContactDetailAssessmentHandler</c>) rejects the same case first, with a normal,
@@ -224,7 +224,7 @@ public sealed class VisitorContactDetail
     /// </summary>
     public void SetAssessment(VisitorContactDetailAssessment assessment)
     {
-        if (Kind == VisitorContactDetailKind.Other)
+        if (Kind == VisitorContactDetailKind.Name)
         {
             throw new InvalidVisitorContactDetailStateException(
                 "Only Phone and Email contact details can be confirmed or marked invalid.");

@@ -30,9 +30,9 @@ public enum VisitorContactDetailAssessment
 {
     /// <summary>The default for every <see cref="VisitorContactDetailKind.Phone"/>/<see cref="VisitorContactDetailKind.Email"/>
     /// row, past and future, until an operator explicitly picks one of the two real values below - and
-    /// the permanent, only value for <see cref="VisitorContactDetailKind.Other"/>, which
+    /// the permanent, only value for <see cref="VisitorContactDetailKind.Name"/>, which
     /// <see cref="VisitorContactDetail.SetAssessment"/> refuses to move off of at all
-    /// (<see cref="VisitorContactDetail"/>'s own remarks on why a name or a free-text note has no
+    /// (<see cref="VisitorContactDetail"/>'s own remarks on why a name has no
     /// channel to confirm or invalidate the way a phone number or an email address does).</summary>
     Unset,
 

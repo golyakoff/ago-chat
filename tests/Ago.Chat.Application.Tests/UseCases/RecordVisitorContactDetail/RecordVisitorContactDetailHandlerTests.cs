@@ -242,11 +242,11 @@ public class RecordVisitorContactDetailHandlerTests
     // per the backlog item's own "a required field enforced only in the DOM is not required."
     // ------------------------------------------------------------------------------------------
 
-    /// <summary>Done-when: "the e-mail is stored as its own kind rather than riding as `Other`."
+    /// <summary>Done-when: "the e-mail is stored as its own kind rather than riding as `Name`."
     /// `VisitorContactDetailKind.Email` needed no new domain work for this item - it already existed
     /// and simply was not a field the widget offered before `23-58`.</summary>
     [Fact]
-    public async Task HandleAsVisitorAsync_EmailKind_SavesAsItsOwnKind_NotOther()
+    public async Task HandleAsVisitorAsync_EmailKind_SavesAsItsOwnKind_NotName()
     {
         var fixture = CreateFixture();
 
@@ -280,15 +280,15 @@ public class RecordVisitorContactDetailHandlerTests
         Assert.Empty(fixture.ContactDetails.All);
     }
 
-    /// <summary>The name field's own server-side half - stored as `Other` (`ui/contactCapture.ts`'s
+    /// <summary>The name field's own server-side half - stored as `Name` (`ui/contactCapture.ts`'s
     /// own remarks on why), required exactly like the other two since `23-58`.</summary>
     [Fact]
-    public async Task HandleAsVisitorAsync_EmptyName_AsOtherKind_ReturnsInvalid_AndSavesNothing()
+    public async Task HandleAsVisitorAsync_EmptyName_AsNameKind_ReturnsInvalid_AndSavesNothing()
     {
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsVisitorAsync(
-            new RecordVisitorContactDetailAsVisitor(fixture.ConversationId, VisitorId, "Other", "   "),
+            new RecordVisitorContactDetailAsVisitor(fixture.ConversationId, VisitorId, "Name", "   "),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
