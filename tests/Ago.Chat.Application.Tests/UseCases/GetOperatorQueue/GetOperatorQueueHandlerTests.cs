@@ -116,7 +116,8 @@ public class GetOperatorQueueHandlerTests
         var tag = Tag.Create(tagId, SiteId, "VIP", Now);
         tags.Seed(tag);
 
-        var handler = new GetOperatorQueueHandler(conversations, new FakeVisitorRepository(), tags, permissions);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), tags, permissions, new FakeVisitorContactDetailRepository());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [tagId]), CancellationToken.None);
@@ -153,7 +154,8 @@ public class GetOperatorQueueHandlerTests
         tags.Seed(Tag.Create(vipTagId, SiteId, "VIP", Now));
         tags.Seed(Tag.Create(billingTagId, SiteId, "Billing", Now));
 
-        var handler = new GetOperatorQueueHandler(conversations, new FakeVisitorRepository(), tags, permissions);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), tags, permissions, new FakeVisitorContactDetailRepository());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [vipTagId, billingTagId]),
@@ -221,7 +223,8 @@ public class GetOperatorQueueHandlerTests
         visitors.Seed(visitor);
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
-        var handler = new GetOperatorQueueHandler(conversations, visitors, new FakeTagRepository(), permissions);
+        var handler = new GetOperatorQueueHandler(
+            conversations, visitors, new FakeTagRepository(), permissions, new FakeVisitorContactDetailRepository());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
@@ -235,13 +238,90 @@ public class GetOperatorQueueHandlerTests
         Assert.Equal(waitingSummary.EmojiFood, assignedSummary.EmojiFood);
     }
 
+    // `25-56`'s own second half, the identical case as the emoji-pair test right above but for
+    // VisitorName: the same visitor's two conversations must carry the same name, sourced from
+    // IVisitorContactDetailRepository rather than Visitor itself.
+    [Fact]
+    public async Task HandleAsync_TheSameVisitorsTwoConversations_CarryTheIdenticalVisitorName()
+    {
+        var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(waiting);
+        conversations.Seed(assignedToMe);
+        var contactDetails = new FakeVisitorContactDetailRepository();
+        contactDetails.Seed(VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Name, "Иван Иванов", Now));
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions, contactDetails);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var waitingSummary = Assert.Single(result.Value.Waiting);
+        var assignedSummary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Equal("Иван Иванов", waitingSummary.VisitorName);
+        Assert.Equal(waitingSummary.VisitorName, assignedSummary.VisitorName);
+    }
+
+    // The ordinary case - decision 4's "repeats are acceptable, the name is what actually
+    // disambiguates" only helps once a name exists; most visitors never give one.
+    [Fact]
+    public async Task HandleAsync_AVisitorWhoNeverGaveAName_CarriesANullVisitorName()
+    {
+        var (handler, conversations) = CreateHandler();
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        conversations.Seed(assignedToMe);
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(Assert.Single(result.Value.AssignedToMe).VisitorName);
+    }
+
+    // `IVisitorContactDetailRepository.GetNamesForVisitorsAsync`'s own documented reduction: no unique
+    // index on (visitor, kind) means more than one Name-kind row is possible (a visitor's own form
+    // submitted twice, once with a typo) - the most recently recorded one must win.
+    [Fact]
+    public async Task HandleAsync_AVisitorWithTwoNameRows_CarriesTheMostRecentlyRecordedOne()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var contactDetails = new FakeVisitorContactDetailRepository();
+        contactDetails.Seed(VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Name, "Ivan",
+            Now.AddMinutes(-10)));
+        contactDetails.Seed(VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), VisitorId, VisitorContactDetailKind.Name, "Иван Иванов", Now));
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions, contactDetails);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Иван Иванов", Assert.Single(result.Value.AssignedToMe).VisitorName);
+    }
+
     [Fact]
     public async Task HandleAsync_OperatorWithoutConversationReadPermission_ReturnsForbidden()
     {
         var conversations = new FakeConversationRepository();
         var permissions = new FakePermissionChecker();
         var handler = new GetOperatorQueueHandler(
-            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions);
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository());
 
         var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
 
@@ -255,7 +335,9 @@ public class GetOperatorQueueHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
         return (
-            new GetOperatorQueueHandler(conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions),
+            new GetOperatorQueueHandler(
+                conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+                new FakeVisitorContactDetailRepository()),
             conversations);
     }
 }

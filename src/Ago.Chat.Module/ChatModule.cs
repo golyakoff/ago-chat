@@ -1136,7 +1136,9 @@ public sealed class ChatModule : IProductModule
 
         // `14-14`/`adr/0079` section 6: unverified contact details - a phone/email/other fact an
         // operator recorded because a visitor said it, never because AGO Chat verified it. The
-        // handlers below are the only callers of IVisitorContactDetailRepository in this codebase.
+        // handlers below, plus `25-56`'s GetOperatorQueueHandler (registered above, for its own
+        // visitor-name batch lookup), are the only callers of IVisitorContactDetailRepository in this
+        // codebase.
         services.AddScoped<RecordVisitorContactDetailHandler>();
         services.AddScoped<ListVisitorContactDetailsHandler>();
         services.AddScoped<DeleteVisitorContactDetailHandler>();

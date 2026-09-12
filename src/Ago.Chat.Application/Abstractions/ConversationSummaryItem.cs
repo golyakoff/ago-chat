@@ -20,6 +20,13 @@ namespace Ago.Chat.Application.Abstractions;
 /// <param name="EmojiCreature">`25-56`: additive, the identical rule <paramref name="OperatorName"/>
 /// above already establishes - joined in from `visitors` by both <c>AllForSiteSql</c>/<c>ByIdSql</c>,
 /// paired with <paramref name="EmojiFood"/>.</param>
+/// <param name="VisitorName">`25-56`'s own second half: the visitor's own name, additive the same way -
+/// <see langword="null"/> when the visitor has never given one, or for a row that predates this field.
+/// Unlike <paramref name="EmojiCreature"/>/<paramref name="EmojiFood"/> this is not a plain column on
+/// `visitors` - both call sites join it from a `left join lateral` against `visitor_contact_details`
+/// picking that visitor's own most recent `Name`-kind row (`IVisitorContactDetailRepository
+/// .GetNamesForVisitorsAsync`'s own remarks on why "most recent" is the right reduction when more than
+/// one exists).</param>
 public sealed record ConversationSummaryItem(
     ConversationId Id,
     VisitorId VisitorId,
@@ -30,4 +37,5 @@ public sealed record ConversationSummaryItem(
     string Outcome = nameof(Domain.ConversationOutcome.Unset),
     string? OperatorName = null,
     string? EmojiCreature = null,
-    string? EmojiFood = null);
+    string? EmojiFood = null,
+    string? VisitorName = null);

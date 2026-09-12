@@ -408,6 +408,13 @@ public class ModuleTaskGatewayIntegrationTests
 
         public Task DeleteAsync(VisitorContactDetail detail, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        // `25-56`: unused by this suite - GetOperatorQueueHandler's own new dependency, not anything
+        // ModuleTaskGatewayIntegrationTests exercises - the identical "unused member throws" shape
+        // every other method on this fixed stand-in already uses.
+        public Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
+            IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FixedClock(DateTimeOffset now) : IClock

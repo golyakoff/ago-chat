@@ -33,4 +33,18 @@ public sealed class FakeVisitorContactDetailRepository : IVisitorContactDetailRe
         _byId.Remove(detail.Id);
         return Task.CompletedTask;
     }
+
+    /// <summary>`25-56`: mirrors the real repository's own "most recent Name-kind row per visitor"
+    /// reduction - good enough to test a handler's own batch-lookup wiring without a real
+    /// Postgres.</summary>
+    public Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
+        IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<VisitorId, string> names = _byId.Values
+            .Where(d => visitorIds.Contains(d.VisitorId) && d.Kind == VisitorContactDetailKind.Name)
+            .GroupBy(d => d.VisitorId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(d => d.RecordedAt).First().Value);
+
+        return Task.FromResult(names);
+    }
 }

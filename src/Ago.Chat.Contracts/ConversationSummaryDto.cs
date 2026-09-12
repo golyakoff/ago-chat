@@ -38,11 +38,20 @@
 /// (`ConversationList`/`ConversationPage` - the two locations `25-56`'s backlog item names and no
 /// others), never in place of it.
 /// </summary>
+/// <summary>
+/// `25-56`'s own second half: <see cref="VisitorName"/> - the visitor's own name, from a
+/// <c>VisitorContactDetailKind.Name</c> row (`25-62`'s rename of what was <c>Other</c>), the widget's
+/// own contact-capture form being its one real writer. Additive/nullable the identical way
+/// <see cref="EmojiCreature"/>/<see cref="EmojiFood"/> already are on this DTO - absent whenever the
+/// visitor has not given one (most visitors, most of the time) or the row predates this field, never a
+/// placeholder string. Renders between the emoji pair and the short code
+/// (`{emoji}{emoji} {name} {shortCode}`) in the same two locations and no others.
+/// </summary>
 public sealed record ConversationSummaryDto(
     Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
     Guid? OperatorId = null, string? OperatorName = null, bool HasAttachmentUploadGrant = false,
     DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null,
-    string? EmojiCreature = null, string? EmojiFood = null);
+    string? EmojiCreature = null, string? EmojiFood = null, string? VisitorName = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

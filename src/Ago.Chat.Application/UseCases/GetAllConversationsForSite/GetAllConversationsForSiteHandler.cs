@@ -43,5 +43,5 @@ public sealed class GetAllConversationsForSiteHandler(
         // trailing EmojiCreature/EmojiFood arguments below don't silently occupy the wrong positional
         // slot.
         HasAttachmentUploadGrant: false, AttachmentUploadGrantedAt: null, AttachmentUploadGrantedByOperatorId: null,
-        EmojiCreature: item.EmojiCreature, EmojiFood: item.EmojiFood);
+        EmojiCreature: item.EmojiCreature, EmojiFood: item.EmojiFood, VisitorName: item.VisitorName);
 }

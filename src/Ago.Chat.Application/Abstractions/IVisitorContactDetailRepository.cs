@@ -40,4 +40,28 @@ public interface IVisitorContactDetailRepository
     /// <summary>A real row removal, not a soft-delete flip - <see cref="VisitorContactDetail"/>'s own
     /// remarks on why this type carries no <c>Active</c>/<c>DeletedAt</c> pair to write instead.</summary>
     Task DeleteAsync(VisitorContactDetail detail, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-56`: <c>GetOperatorQueueHandler</c>'s own need - the same batch-by-distinct-id shape
+    /// <see cref="IVisitorRepository.GetManyByIdsAsync"/> already establishes for that handler's emoji
+    /// pair, applied here because a visitor's own name lives in this table, not on
+    /// <see cref="Visitor"/> itself (<see cref="VisitorContactDetailKind.Name"/>'s own remarks - the
+    /// widget's contact-capture form is this member's one real writer). Every visitor in
+    /// <paramref name="visitorIds"/> that has at least one <see cref="VisitorContactDetailKind.Name"/>
+    /// row gets an entry keyed by that row's own <see cref="VisitorContactDetail.Value"/>; a visitor
+    /// with none is simply absent from the result, the same "missing means unknown" shape
+    /// <see cref="IVisitorRepository.GetManyByIdsAsync"/>'s own caller already reads a missing
+    /// dictionary entry as.
+    ///
+    /// <para><b>Most recent by <see cref="VisitorContactDetail.RecordedAt"/> when a visitor has more
+    /// than one.</b> <c>VisitorContactDetailConfiguration</c> deliberately carries no unique index on
+    /// (visitor, kind) - a visitor may hold more than one contact detail of the same kind, and a repeat
+    /// <see cref="VisitorContactDetailKind.Name"/> row is a real possibility here too (the widget's own
+    /// contact-capture form has no dedupe against an earlier submission). The most recent row is the
+    /// visitor's own latest say on what to call them - the same "last write wins" reading
+    /// <see cref="VisitorContactDetail.EditValue"/> already gives an operator's in-place correction,
+    /// applied here to a second row instead of a second call to that method.</para>
+    /// </summary>
+    Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
+        IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken);
 }

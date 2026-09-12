@@ -9,6 +9,7 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 {
     private readonly Dictionary<ConversationId, Conversation> _bySource = [];
     private readonly Dictionary<TagId, HashSet<ConversationId>> _taggedBy = [];
+    private readonly Dictionary<VisitorId, string> _visitorNames = [];
 
     public void Seed(Conversation conversation) => _bySource[conversation.Id] = conversation;
 
@@ -17,6 +18,11 @@ public sealed class FakeConversationReadStore : IConversationReadStore
     /// conversation, without needing a real Postgres.</summary>
     public void SeedTag(ConversationId conversationId, TagId tagId) =>
         (_taggedBy.TryGetValue(tagId, out var set) ? set : _taggedBy[tagId] = []).Add(conversationId);
+
+    /// <summary>`25-56`: mirrors the real store's own `left join lateral` against
+    /// `visitor_contact_details` - a test seeds this the same way it seeds a tag association, without
+    /// needing a real Postgres or a second repository fake.</summary>
+    public void SeedVisitorName(VisitorId visitorId, string name) => _visitorNames[visitorId] = name;
 
     public Task<ConversationHistoryPage> GetHistoryAsync(
         ConversationId conversationId, SiteId siteId, int? beforeSequence, int pageSize, CancellationToken cancellationToken)
@@ -69,7 +75,7 @@ public sealed class FakeConversationReadStore : IConversationReadStore
             .Take(pageSize)
             .Select(c => new ConversationSummaryItem(
                 c.Id, c.VisitorId, c.OperatorId, c.State.ToString(), c.CreatedAt, c.OperatorUnreadCount,
-                c.Outcome.ToString()))
+                c.Outcome.ToString(), VisitorName: _visitorNames.GetValueOrDefault(c.VisitorId)))
             .ToList();
 
         var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
@@ -88,7 +94,8 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 
         return Task.FromResult<ConversationSummaryItem?>(new ConversationSummaryItem(
             conversation.Id, conversation.VisitorId, conversation.OperatorId, conversation.State.ToString(),
-            conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.Outcome.ToString()));
+            conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.Outcome.ToString(),
+            VisitorName: _visitorNames.GetValueOrDefault(conversation.VisitorId)));
     }
 
     /// <summary>`18-07`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive,

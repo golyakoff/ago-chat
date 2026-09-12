@@ -82,13 +82,29 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // required foreign key (unlike `operator_id`, which is nullable and null for a Waiting row - the
     // reason `op` above is a `left join`). Selects `v.emoji_creature`/`v.emoji_food`, additive the same
     // way `op.display_name` above already is - see ConversationSummaryRow's own remarks.
+    // `25-56`'s own second half: `left join lateral` against `visitor_contact_details` for this
+    // visitor's own most recent `Name`-kind row - `left`, not `join`, because most visitors have never
+    // given one (unlike the emoji pair, which every visitor has after the backfill migration).
+    // `visitor_contact_details` carries no `site_id` column (VisitorContactDetailConfiguration's own
+    // remarks - tenant scope is one level up, through the visitor's own `site_id`), so the lateral
+    // correlates on `visitor_id` alone, ordered by `recorded_at desc limit 1` - the identical
+    // "most recent wins" reduction `IVisitorContactDetailRepository.GetNamesForVisitorsAsync` uses for
+    // GetOperatorQueueHandler's own batch lookup, expressed here as SQL instead of a second round trip.
     private const string AllForSiteSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
-               op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood"
+               op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood",
+               vn.value as "VisitorName"
         from conversations c
         left join operators op on op.id = c.operator_id
         join visitors v on v.id = c.visitor_id
+        left join lateral (
+            select vcd.value
+            from visitor_contact_details vcd
+            where vcd.visitor_id = c.visitor_id and vcd.kind = 'Name'
+            order by vcd.recorded_at desc
+            limit 1
+        ) vn on true
         where c.site_id = @SiteId
           and c.blocked_at is null
           and (@BeforeId is null or c.id < @BeforeId)
@@ -142,10 +158,18 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     private const string ByIdSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
-               op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood"
+               op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood",
+               vn.value as "VisitorName"
         from conversations c
         left join operators op on op.id = c.operator_id
         join visitors v on v.id = c.visitor_id
+        left join lateral (
+            select vcd.value
+            from visitor_contact_details vcd
+            where vcd.visitor_id = c.visitor_id and vcd.kind = 'Name'
+            order by vcd.recorded_at desc
+            limit 1
+        ) vn on true
         where c.id = @ConversationId and c.site_id = @SiteId and c.blocked_at is null
         """;
 
@@ -296,7 +320,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.Outcome,
         r.OperatorName,
         r.EmojiCreature,
-        r.EmojiFood);
+        r.EmojiFood,
+        r.VisitorName);
 
     private static VisitorHistoryItem ToVisitorHistoryItem(VisitorHistoryRow r) => new(
         new ConversationId(r.Id),
