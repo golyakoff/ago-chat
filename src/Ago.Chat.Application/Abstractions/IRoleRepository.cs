@@ -72,6 +72,41 @@ public interface IRoleRepository
     /// own remarks on `GetIdByNameAsync`, but this method makes no assumption about that either).
     /// </summary>
     Task<IReadOnlyList<RoleSummary>> GetAllForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-77`: <see cref="AddPermissionsAsync"/>'s mirror - removes <paramref name="permissions"/> from
+    /// the named role's own permission set, idempotently in reverse: removing an already-absent
+    /// permission is a no-op, never an error and never a miss. A no-op (not a miss) when this site has
+    /// no role by that name, or when <paramref name="permissions"/> is empty - the identical "nothing to
+    /// do" shape <see cref="AddPermissionsAsync"/>'s own remarks state for the grant direction.
+    ///
+    /// <para><b>No magic roles.</b> <c>docs/backlog/25-77-*.md</c>'s own "Answered, 2026-09-13": the
+    /// platform owner may remove any permission from any role, `Admin`'s own defining
+    /// `site:configure`/`site:manage_operators` included - the owner is trusted, and this method carries
+    /// no allow/deny list narrowing what it will remove. A role can be reduced to holding no permissions
+    /// at all; that is a deliberate, reachable state, not a bug this method guards against.</para>
+    ///
+    /// <para><b>Publishes exactly like the grant direction</b> - one <c>RoleAssignmentsChanged</c>, in
+    /// the same transaction as the permission change (rule 4), for every operator currently holding
+    /// <paramref name="roleName"/> with a linked external identity. See <see cref="AddPermissionsAsync"/>'s
+    /// own remarks for the full reasoning this direction reuses unchanged: why the publish is keyed by
+    /// role rather than by caller, why an operator with no linked identity is skipped rather than thrown
+    /// for, and how this stays correct against a concurrent operator removal.</para>
+    ///
+    /// <para><b>The one real signature difference from the grant direction: <paramref name="removedBy"/>
+    /// and <paramref name="reason"/> are required, non-optional parameters.</b> `25-77`'s own "Answered":
+    /// a reason is required on every removal, the identical discipline `adr/0118`'s forced-revoke and
+    /// `23-86`'s unconditional-grant flag already require for taking something away from a tenant that it
+    /// already had - never assumed, never defaulted. Unlike those two precedents (a second write, on a
+    /// separate connection, after the domain write already committed), this method records the
+    /// <paramref name="reason"/> - one row in `role_permission_removal_overrides` - inside its own
+    /// already-open transaction, alongside the `roles` `UPDATE` and the outbox publish: the
+    /// implementation's own remarks state why that is possible here where it was not for
+    /// <c>ModuleRevokeOverrideRepository</c>'s own raw-Npgsql shape.</para>
+    /// </summary>
+    Task RemovePermissionsAsync(
+        SiteId siteId, string roleName, IReadOnlyCollection<string> permissions, string removedBy, string reason,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>One role, resolved by name for <see cref="IRoleRepository.GetByNameAsync"/> - a plain

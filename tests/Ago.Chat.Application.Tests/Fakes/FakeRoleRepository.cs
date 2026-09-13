@@ -61,6 +61,40 @@ public sealed class FakeRoleRepository : IRoleRepository
     public IReadOnlySet<string> PermissionsFor(SiteId siteId, string roleName) =>
         _permissions.TryGetValue((siteId, roleName), out var current) ? current : new HashSet<string>();
 
+    /// <summary>`25-77`: what <see cref="RemovePermissionsAsync"/> actually recorded - one entry per
+    /// call that found a real role, in call order, the fake's own equivalent of a
+    /// `role_permission_removal_overrides` row - so a test can assert both that a removal happened and
+    /// what reason it carried, without a database.</summary>
+    public List<(SiteId SiteId, string RoleName, IReadOnlyList<string> Permissions, string RemovedBy, string Reason)> RemovalOverrides { get; } = [];
+
+    public Task RemovePermissionsAsync(
+        SiteId siteId, string roleName, IReadOnlyCollection<string> permissions, string removedBy, string reason,
+        CancellationToken cancellationToken)
+    {
+        if (permissions.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (!_roleIds.ContainsKey((siteId, roleName)))
+        {
+            // No role by that name - the identical "nothing to do, nothing to attest to" branch the
+            // real RoleRepository's own remarks state for this case.
+            return Task.CompletedTask;
+        }
+
+        if (_permissions.TryGetValue((siteId, roleName), out var current))
+        {
+            foreach (var permission in permissions)
+            {
+                current.Remove(permission);
+            }
+        }
+
+        RemovalOverrides.Add((siteId, roleName, [.. permissions], removedBy, reason));
+        return Task.CompletedTask;
+    }
+
     /// <summary>`23-72`: `ChangeOperatorRoleHandler`'s own lookup - returns both the id and the
     /// permission set for a role seeded by either <see cref="Seed(SiteId,string,Guid,IReadOnlyList{string})"/>
     /// or grown afterward by <see cref="AddPermissionsAsync"/>/<see cref="SeedPermissions"/>, so the two

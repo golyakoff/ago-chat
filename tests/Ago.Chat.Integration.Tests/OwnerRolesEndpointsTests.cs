@@ -8,6 +8,7 @@ using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases.AddRolePermissionsAsOwner;
+using Ago.Chat.Application.UseCases.RemoveRolePermissionsAsOwner;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -180,6 +181,173 @@ public sealed class OwnerRolesEndpointsTests(OperatorOidcFixture fixture)
     }
 
     // ------------------------------------------------------------------------------------------
+    // `25-77`: the removal direction - DELETE on the identical resource the PUT tests above already
+    // name. Every mutating test here seeds its own fresh site too, the same restraint this file's own
+    // class remarks state for the add direction.
+    // ------------------------------------------------------------------------------------------
+
+    private static HttpRequestMessage DeleteRequest(SiteId siteId, string roleName, OwnerRolesEndpoints.RemoveRolePermissionsRequest body) =>
+        new(HttpMethod.Delete, PermissionsRoute(siteId, roleName)) { Content = System.Net.Http.Json.JsonContent.Create(body) };
+
+    /// <summary>The item's own headline Done-when, end to end: "no magic roles" - one of `Admin`'s own
+    /// defining permissions is removed through the real route, and the real row (not merely the
+    /// response) reflects it.</summary>
+    [Fact]
+    public async Task OwnerToken_RemovingAnAdminDefiningPermission_Succeeds_AndTheRealRowReflectsIt_NoCarveOut()
+    {
+        var siteId = await SeedSiteWithAdminRoleAsync();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            siteId, "Admin",
+            new OwnerRolesEndpoints.RemoveRolePermissionsRequest(
+                [Permission.SiteManageOperators.Value], "the tenant asked for a narrower Admin role")));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerRolesEndpoints.RemoveRolePermissionsResponse>();
+        Assert.NotNull(body);
+        Assert.Equal("Admin", body.RoleName);
+
+        var role = await GetRoleAsync(siteId, "Admin");
+        Assert.NotNull(role);
+        Assert.DoesNotContain(Permission.SiteManageOperators.Value, role.Permissions);
+        Assert.Contains(Permission.SiteConfigure.Value, role.Permissions);
+        Assert.Contains(Permission.AttachmentDelete.Value, role.Permissions);
+    }
+
+    /// <summary>The propagation half of the same Done-when: an operator already holding `Admin` on
+    /// this fresh site, with a linked external identity, learns the narrower permission set without
+    /// signing out and back in.</summary>
+    [Fact]
+    public async Task OwnerToken_RemovingAPermission_StagesARoleAssignmentsChangedRow_ForTheOperatorAlreadySignedIn()
+    {
+        var (siteId, externalSubjectId) = await SeedSiteWithAdminRoleAndLinkedOperatorAsync();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            siteId, "Admin",
+            new OwnerRolesEndpoints.RemoveRolePermissionsRequest([Permission.SiteConfigure.Value], "narrowing this role")));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var db = fixture.CreateDbContext();
+        var outboxRow = await db.Set<OutboxMessage>()
+            .Where(o => o.Type == nameof(RoleAssignmentsChanged) && o.PartitionKey == externalSubjectId)
+            .OrderByDescending(o => o.Id)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        Assert.NotNull(outboxRow);
+        var contract = JsonSerializer.Deserialize<RoleAssignmentsChanged>(outboxRow.Payload)!;
+        Assert.Equal(siteId.Value, contract.SiteId);
+        Assert.DoesNotContain(Permission.SiteConfigure.Value, contract.Permissions);
+    }
+
+    /// <summary>Fails-before, over the real route: a blank reason is refused with `400`, and the real
+    /// row is left exactly as it was.</summary>
+    [Fact]
+    public async Task OwnerToken_RemovingWithNoReason_IsRefused_AndTheRealRowIsUnchanged()
+    {
+        var siteId = await SeedSiteWithAdminRoleAsync();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            siteId, "Admin", new OwnerRolesEndpoints.RemoveRolePermissionsRequest([Permission.SiteConfigure.Value], "")));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var role = await GetRoleAsync(siteId, "Admin");
+        Assert.NotNull(role);
+        Assert.Contains(Permission.SiteConfigure.Value, role.Permissions);
+    }
+
+    /// <summary>Fails-before, over the real route: an unknown permission is refused with `400`, and the
+    /// real row is left exactly as it was.</summary>
+    [Fact]
+    public async Task OwnerToken_RemovingAnUnknownPermission_IsRefused_AndTheRealRowIsUnchanged()
+    {
+        var siteId = await SeedSiteWithAdminRoleAsync();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            siteId, "Admin", new OwnerRolesEndpoints.RemoveRolePermissionsRequest(["not:a-real-permission"], "a real reason")));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var role = await GetRoleAsync(siteId, "Admin");
+        Assert.NotNull(role);
+        Assert.Equal(BaselineAdminPermissions.OrderBy(p => p, StringComparer.Ordinal), role.Permissions.OrderBy(p => p, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task OwnerToken_RemovingFromARoleNameThatDoesNotExist_Returns400()
+    {
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            fixture.SeededSiteId, "SuperAdmin",
+            new OwnerRolesEndpoints.RemoveRolePermissionsRequest([Permission.ChannelManage.Value], "a real reason")));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>`24-12`: the access record, proven with the real owner subject off the real token and
+    /// the role's own real row id - `OwnerRolePermissionsRemoval`, a distinct kind from the grant
+    /// direction's own `OwnerRolePermissionsGrant` proven a few tests up.</summary>
+    [Fact]
+    public async Task OwnerToken_RemovingAPermission_LeavesAnAccessRecord_NamingTheRealOwnerSubject_AndTheRole()
+    {
+        var siteId = await SeedSiteWithAdminRoleAsync();
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        var ownerSubject = new JwtSecurityTokenHandler().ReadJwtToken(token).Subject;
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, token);
+
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            siteId, "Admin",
+            new OwnerRolesEndpoints.RemoveRolePermissionsRequest([Permission.SiteManageOperators.Value], "removed after review")));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var role = await GetRoleAsync(siteId, "Admin");
+        Assert.NotNull(role);
+
+        var records = await new AccessRecordRepository(fixture.DataSource)
+            .ListForSiteAsync(siteId, beforeId: null, limit: 50, CancellationToken.None);
+        var recorded = Assert.Single(
+            records.Items, r => r.AccessKind == AccessRecordKind.OwnerRolePermissionsRemoval && r.ResourceId == role.Id);
+        Assert.Equal(AccessRecordActorKind.PlatformOwner, recorded.ActorKind);
+        Assert.Equal(ownerSubject, recorded.ActorId);
+        Assert.Equal(AccessRecordResourceKind.Role, recorded.ResourceKind);
+    }
+
+    /// <summary>The `role_permission_removal_overrides` row itself, proven with the real reason and the
+    /// real owner subject - the `24-12` access record proves "an owner removed something from this
+    /// role"; this table proves "why", the same split `module_revoke_overrides` draws against its own
+    /// access-record sibling.</summary>
+    [Fact]
+    public async Task OwnerToken_RemovingAPermission_RecordsTheReason_InTheOverrideTable()
+    {
+        var siteId = await SeedSiteWithAdminRoleAsync();
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        var ownerSubject = new JwtSecurityTokenHandler().ReadJwtToken(token).Subject;
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, token);
+
+        const string reason = "the tenant's own support ticket #4821 asked for this permission removed";
+        var response = await ownerClient.SendAsync(DeleteRequest(
+            siteId, "Admin", new OwnerRolesEndpoints.RemoveRolePermissionsRequest([Permission.AttachmentDelete.Value], reason)));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var db = fixture.CreateDbContext();
+        var recorded = await db.Set<RolePermissionRemovalOverrideEntity>()
+            .AsNoTracking().SingleAsync(o => o.SiteId == siteId, CancellationToken.None);
+        Assert.Equal("Admin", recorded.RoleName);
+        Assert.Equal([Permission.AttachmentDelete.Value], recorded.Permissions);
+        Assert.Equal(ownerSubject, recorded.RemovedBy);
+        Assert.Equal(reason, recorded.Reason);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // The authorization boundary: this route is RequirePlatformOwner and nothing weaker - the
     // identical assertions OwnerOperatorsEndpointsTests' own equivalent tests already make for their
     // own owner-only route.
@@ -193,6 +361,21 @@ public sealed class OwnerRolesEndpointsTests(OperatorOidcFixture fixture)
 
         var response = await client.PutAsJsonAsync(
             PermissionsRoute(fixture.SeededSiteId, "Admin"), new OwnerRolesEndpoints.AddRolePermissionsRequest([Permission.ChannelManage.Value]));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>`25-77`'s own removal-side boundary check - the identical lesson, the identical route,
+    /// the opposite HTTP verb.</summary>
+    [Fact]
+    public async Task OrdinaryOperatorToken_IsRejected_OnTheRemovalRouteToo()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, await fixture.GetDemoOperatorAccessTokenAsync());
+
+        var response = await client.SendAsync(DeleteRequest(
+            fixture.SeededSiteId, "Admin",
+            new OwnerRolesEndpoints.RemoveRolePermissionsRequest([Permission.SiteManageOperators.Value], "a real reason")));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -314,6 +497,8 @@ public sealed class OwnerRolesEndpointsTests(OperatorOidcFixture fixture)
         // and the outbox - lands.
         builder.Services.AddScoped<IRoleRepository, RoleRepository>();
         builder.Services.AddScoped<AddRolePermissionsAsOwnerHandler>();
+        // `25-77`: the removal mirror - same real repository, same reason this whole file gives.
+        builder.Services.AddScoped<RemoveRolePermissionsAsOwnerHandler>();
         // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves this
         // straight from DI, the same way the production host does. IClock/IIdGenerator are already
         // registered above (AddPlatformKernel).
