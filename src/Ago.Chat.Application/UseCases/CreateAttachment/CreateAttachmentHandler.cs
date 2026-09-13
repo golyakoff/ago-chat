@@ -17,6 +17,13 @@ namespace Ago.Chat.Application.UseCases.CreateAttachment;
 /// <see cref="Permission.ConversationSend"/> and the conversation's own assignment, not the anonymous
 /// party this grant exists to slow down.
 ///
+/// `23-76`: alongside <see cref="IConversationAttachmentBudget"/>, this handler now also reserves
+/// against <see cref="ISiteAttachmentStorageBudget"/> - the tenant's own total, not just one
+/// conversation's. Both reservations happen inside the same transaction, right before the presign, and
+/// either refusing rolls both back (see <see cref="CreateAsync"/>'s own remarks) - a visitor identity
+/// is free to mint, so the conversation budget alone bounds nothing an attacker cannot simply reset by
+/// opening a fresh conversation.
+///
 /// References <c>Ago.Platform.Abstractions.IFileStorage</c> directly, per `clean-architecture.md`:
 /// generic technical ports live in the platform's dependency-free abstractions package and are safe
 /// for Application to reference inwards; only the *implementation* (`Ago.Platform.Storage.S3`) is an
@@ -29,9 +36,13 @@ public sealed class CreateAttachmentHandler(
     IRateLimiter rateLimiter,
     IPermissionChecker permissions,
     IConversationAttachmentBudget conversationBudget,
+    ISiteAttachmentStorageBudget siteBudget,
+    ISiteRepository sites,
+    IBillingSubscriptionRepository billingSubscriptions,
     IUnitOfWork unitOfWork,
     AttachmentOptions options,
     AttachmentRateLimitOptions rateLimitOptions,
+    AttachmentStorageQuotaOptions storageQuotaOptions,
     IIdGenerator idGenerator,
     IClock clock)
 {
@@ -157,6 +168,34 @@ public sealed class CreateAttachmentHandler(
             // was. The same shape every other mid-transaction refusal in this codebase uses
             // (TransferConversationHandler's own remarks).
             return ConversationErrors.AttachmentConversationBudgetExceeded(declaredSizeBytes, reservation.RemainingBytes);
+        }
+
+        // `23-76`: the tenant's own ceiling, reserved right alongside the conversation's - both must
+        // succeed or neither does (this item's own design point). A visitor identity is free to mint,
+        // so the per-conversation reservation above bounds nothing globally on its own ("a per-conversation
+        // budget does not protect storage at all," this item's own opening words) - this is the one that
+        // actually does. Site + base subscription are loaded here, inside the transaction, rather than
+        // cached: CLAUDE.md rule 8 - a compare-and-set read a write decision depends on (the ceiling
+        // itself, derived from `Site.Tier`) must come from the database, never a value read separately
+        // and trusted stale.
+        var site = await sites.GetByIdAsync(conversation.SiteId, cancellationToken);
+        if (site is null)
+        {
+            // AttachmentConfiguration.HasOne<Site>'s foreign key makes this unreachable in production -
+            // every conversation belongs to a site that must already exist.
+            throw new InvalidOperationException($"Site {conversation.SiteId.Value} was not found while checking its attachment storage budget.");
+        }
+
+        var baseSubscription = await billingSubscriptions.GetBaseForSiteAsync(conversation.SiteId, cancellationToken);
+        var siteBudgetBytes = SiteAttachmentQuotaPolicy.ComputeBudgetBytes(
+            storageQuotaOptions, site.Tier, baseSubscription?.CreatedAt, now);
+
+        var siteReservation = await siteBudget.TryReserveAsync(conversation.SiteId, declaredSizeBytes, siteBudgetBytes, cancellationToken);
+        if (!siteReservation.Reserved)
+        {
+            // Rolls back the conversation reservation above too - the same "dispose without commit"
+            // property this method's own remarks already rely on for the sibling refusal.
+            return ConversationErrors.AttachmentSiteBudgetExceeded(declaredSizeBytes, siteReservation.RemainingBytes);
         }
 
         var presigned = await fileStorage.CreateUploadAsync(

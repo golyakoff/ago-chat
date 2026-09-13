@@ -79,9 +79,13 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(732)),
             new NeverCalledPermissionChecker(),
             new NeverCalledConversationAttachmentBudget(),
+            new NeverCalledSiteAttachmentStorageBudget(),
+            new NeverCalledSiteRepository(),
+            new NeverCalledBillingSubscriptionRepository(),
             new NeverCalledUnitOfWork(),
             new AttachmentOptions(),
             rateLimitOptions,
+            new AttachmentStorageQuotaOptions(),
             new UuidV7Generator(),
             new SystemClock());
 
@@ -296,9 +300,13 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             new NeverCalledRateLimiter(),
             new NeverCalledPermissionChecker(),
             new NeverCalledConversationAttachmentBudget(),
+            new NeverCalledSiteAttachmentStorageBudget(),
+            new NeverCalledSiteRepository(),
+            new NeverCalledBillingSubscriptionRepository(),
             new NeverCalledUnitOfWork(),
             new AttachmentOptions(),
             new AttachmentRateLimitOptions(),
+            new AttachmentStorageQuotaOptions(),
             new UuidV7Generator(),
             new SystemClock());
 
@@ -402,6 +410,10 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
 
         public Task SaveAsync(Attachment attachment, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A rate-limited caller must never reach a save.");
+
+        public Task<Attachment?> FindReadyDuplicateAsync(
+            SiteId siteId, string contentHash, AttachmentId excluding, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach a dedup lookup.");
     }
 
     private sealed class NeverCalledFileStorage : IFileStorage
@@ -449,6 +461,60 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
     {
         public Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A rate-limited caller must never open a transaction.");
+    }
+
+    // `23-76`: the tenant-level checks sit after the conversation budget's own reservation, inside the
+    // same transaction - a rate-limited caller (or one refused by the conversation budget) never
+    // reaches any of these either, the identical reasoning NeverCalledConversationAttachmentBudget's
+    // own remarks give.
+    private sealed class NeverCalledSiteAttachmentStorageBudget : ISiteAttachmentStorageBudget
+    {
+        public Task<AttachmentBudgetResult> TryReserveAsync(
+            SiteId siteId, long bytes, long budgetBytes, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach the site attachment storage budget.");
+
+        public Task ReleaseAsync(SiteId siteId, long bytes, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+    }
+
+    private sealed class NeverCalledSiteRepository : ISiteRepository
+    {
+        public Task<Site?> GetByPublicKeyAsync(string publicKey, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<Site?> GetByIdAsync(SiteId id, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach a site lookup.");
+
+        public Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task SaveAsync(Site site, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+    }
+
+    private sealed class NeverCalledBillingSubscriptionRepository : IBillingSubscriptionRepository
+    {
+        public Task SaveAsync(BillingSubscription subscription, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<BillingSubscription?> GetByIdAsync(BillingSubscriptionId id, SiteId siteId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<BillingSubscription?> GetByIdAsync(BillingSubscriptionId id, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<BillingSubscription?> GetLatestForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<BillingSubscription?> GetBaseForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach a billing lookup.");
+
+        public Task<IReadOnlyList<BillingSubscriptionId>> ListDueForRenewalAsync(
+            DateTimeOffset now, int batchSize, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task UpdateAsync(BillingSubscription subscription, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
     }
 
     private sealed class AllowAllPermissionChecker : IPermissionChecker

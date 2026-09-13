@@ -174,4 +174,69 @@ public class AttachmentTests
 
         Assert.Throws<InvalidAttachmentStateException>(() => attachment.SetThumbnail("site/x/conv/y/z_thumb2.jpg"));
     }
+
+    // `23-76`: SetContentHash/PointToExistingObject - see Attachment.cs's own remarks for why both are
+    // only ever called from Ago.Chat.Worker's AttachmentDeduplicationConsumer, after confirm, never at
+    // presign or confirm time itself.
+
+    [Fact]
+    public void SetContentHash_WhenReady_SetsContentHash()
+    {
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+        attachment.ConfirmReady(42, "image/png", Now);
+
+        attachment.SetContentHash("deadbeef");
+
+        Assert.Equal("deadbeef", attachment.ContentHash);
+        // The object key is untouched - "first copy" keeps its own object.
+        Assert.Equal("site/x/conv/y/z.png", attachment.ObjectKey);
+    }
+
+    [Fact]
+    public void SetContentHash_WhenStillPending_ThrowsInvalidAttachmentStateException()
+    {
+        var attachment = CreatePending();
+
+        Assert.Throws<InvalidAttachmentStateException>(() => attachment.SetContentHash("deadbeef"));
+    }
+
+    [Fact]
+    public void PointToExistingObject_WhenReady_RewritesObjectKeyAndSetsContentHash()
+    {
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+        attachment.ConfirmReady(42, "image/png", Now);
+
+        attachment.PointToExistingObject("site/x/conv/other/existing.png", "deadbeef");
+
+        Assert.Equal("site/x/conv/other/existing.png", attachment.ObjectKey);
+        Assert.Equal("deadbeef", attachment.ContentHash);
+        // Repointing the object never changes state, size, or content type - only which bytes this
+        // row's own object key resolves to.
+        Assert.Equal(AttachmentState.Ready, attachment.State);
+    }
+
+    [Fact]
+    public void PointToExistingObject_WhenStillPending_ThrowsInvalidAttachmentStateException()
+    {
+        var attachment = CreatePending();
+
+        Assert.Throws<InvalidAttachmentStateException>(
+            () => attachment.PointToExistingObject("site/x/conv/other/existing.png", "deadbeef"));
+    }
+
+    [Fact]
+    public void PointToExistingObject_IsSafeAfterLinkingToAMessage()
+    {
+        // `23-76`'s own remarks: a message references the attachment by id, never its object key
+        // directly, so repointing here must not be blocked by an existing link - the next read simply
+        // presigns against the new key.
+        var attachment = CreatePending(sizeBytes: 42, contentType: "image/png");
+        attachment.ConfirmReady(42, "image/png", Now);
+        attachment.LinkToMessage(new MessageId(Guid.NewGuid()), ConversationId);
+
+        attachment.PointToExistingObject("site/x/conv/other/existing.png", "deadbeef");
+
+        Assert.Equal("site/x/conv/other/existing.png", attachment.ObjectKey);
+        Assert.NotNull(attachment.MessageId);
+    }
 }

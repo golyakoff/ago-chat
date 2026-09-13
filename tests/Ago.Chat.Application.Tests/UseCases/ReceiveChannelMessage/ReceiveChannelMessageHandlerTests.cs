@@ -56,7 +56,8 @@ public class ReceiveChannelMessageHandlerTests
             visitors,
             pendingLinks,
             new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
@@ -447,7 +448,8 @@ public class ReceiveChannelMessageHandlerTests
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
@@ -489,7 +491,8 @@ public class ReceiveChannelMessageHandlerTests
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations,

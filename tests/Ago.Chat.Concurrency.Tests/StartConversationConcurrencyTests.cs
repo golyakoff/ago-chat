@@ -60,6 +60,7 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
         var handler = new StartConversationHandler(
             new VisitorRepository(db), racing,
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
             new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
 
         var loserResult = await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
@@ -200,6 +201,7 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
         var handler = new StartConversationHandler(
             new VisitorRepository(db), new ConversationRepository(db),
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
             new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
         return await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
     }

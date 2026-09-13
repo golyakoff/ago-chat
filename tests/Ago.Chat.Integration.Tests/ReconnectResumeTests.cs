@@ -104,7 +104,9 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         // read just answers "not found" for every site this fixture never seeds one for).
         var siteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache());
         var startConversation = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db), siteConfig, new SystemClock(), new UuidV7Generator(), new VisitorEmojiPairGenerator());
+            new VisitorRepository(db), new ConversationRepository(db), siteConfig,
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
+            new SystemClock(), new UuidV7Generator(), new VisitorEmojiPairGenerator());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(

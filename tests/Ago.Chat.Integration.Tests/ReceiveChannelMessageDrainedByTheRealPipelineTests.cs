@@ -92,6 +92,7 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
                 // actually checks.
                 new StartConversationHandler(
                     visitors, conversations, new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+                    new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
                     clock, idGenerator, emojiPairs),
                 new SendVisitorMessageHandler(
                     conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),

@@ -103,9 +103,13 @@ public sealed class AttachmentUploadFlowTests(AttachmentFixture fixture)
         new FakeRateLimiter(),
         new PermissionChecker(db),
         new ConversationAttachmentBudgetStore(db),
+        new SiteAttachmentStorageBudgetStore(db),
+        new SiteRepository(db),
+        new BillingSubscriptionRepository(db),
         new EfUnitOfWork(db),
         options ?? new AttachmentOptions(),
         new AttachmentRateLimitOptions(),
+        new AttachmentStorageQuotaOptions(),
         new UuidV7Generator(),
         new SystemClock());
 

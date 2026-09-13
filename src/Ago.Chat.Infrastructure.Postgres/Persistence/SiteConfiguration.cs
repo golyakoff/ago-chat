@@ -313,5 +313,13 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // themselves. Defaults to 0 so every pre-existing row reads back "nothing sent yet," the first
         // real message's own compare-and-set moves it to 1.
         builder.Property<int>("TeamChatLastSequence").HasColumnName("team_chat_last_sequence").HasDefaultValue(0);
+
+        // `23-76`: the tenant's own byte budget, the identical shadow-property split
+        // `ConversationConfiguration`'s own `AttachmentBytesReserved` already establishes one screen
+        // over in that file - a raw-SQL atomic compare-and-set writer (`ISiteAttachmentStorageBudget`)
+        // an EF load-mutate-save could race, so it is never loaded or mutated through the `Site`
+        // aggregate itself. No index: read only as part of the one atomic UPDATE that already locates
+        // the row by primary key (`SiteAttachmentStorageBudgetStore`), never filtered or ordered on.
+        builder.Property<long>("AttachmentBytesReserved").HasColumnName("attachment_bytes_reserved").HasDefaultValue(0L);
     }
 }

@@ -18,12 +18,15 @@ public class CreateAttachmentHandlerTests
         FakeAttachmentRepository Attachments,
         FakeFileStorage FileStorage,
         FakeConversationAttachmentBudget Budget,
+        FakeSiteAttachmentStorageBudget SiteBudget,
         FakeUnitOfWork UnitOfWork,
         Conversation Conversation);
 
     private static Fixture CreateFixture(
         IRateLimiter? rateLimiter = null, bool grantOperatorPermission = true, bool assignOperator = true,
-        AttachmentOptions? options = null, bool grantAttachmentUpload = true)
+        AttachmentOptions? options = null, bool grantAttachmentUpload = true,
+        AttachmentStorageQuotaOptions? storageQuotaOptions = null, FakeSiteRepository? sites = null,
+        FakeBillingSubscriptionRepository? billingSubscriptions = null)
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
@@ -52,7 +55,19 @@ public class CreateAttachmentHandlerTests
         }
 
         var budget = new FakeConversationAttachmentBudget();
+        var siteBudget = new FakeSiteAttachmentStorageBudget();
         var unitOfWork = new FakeUnitOfWork();
+
+        // `23-76`: a free-tier site by default, matching `AttachmentStorageQuotaOptions`'s own default
+        // ceiling - callers proving the site-budget refusal itself pass their own `sites`/`options`
+        // (see `WhenTheSiteBudgetIsExceeded` below), everything else here keeps proving what it always
+        // proved, unaffected by a tenant-wide ceiling nothing in this test seeds close to.
+        var siteRepository = sites ?? new FakeSiteRepository();
+        if (sites is null)
+        {
+            siteRepository.Seed(new Site(SiteId, $"pk_{SiteId.Value:N}", []));
+        }
+
         var handler = new CreateAttachmentHandler(
             conversations,
             attachments,
@@ -60,13 +75,17 @@ public class CreateAttachmentHandlerTests
             rateLimiter ?? new FakeRateLimiter(),
             permissions,
             budget,
+            siteBudget,
+            siteRepository,
+            billingSubscriptions ?? new FakeBillingSubscriptionRepository(),
             unitOfWork,
             options ?? new AttachmentOptions(),
             new AttachmentRateLimitOptions(),
+            storageQuotaOptions ?? new AttachmentStorageQuotaOptions(),
             new FakeIdGenerator(),
             new FakeClock(Now));
 
-        return new Fixture(handler, conversations, attachments, fileStorage, budget, unitOfWork, conversation);
+        return new Fixture(handler, conversations, attachments, fileStorage, budget, siteBudget, unitOfWork, conversation);
     }
 
     [Fact]
@@ -270,5 +289,63 @@ public class CreateAttachmentHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Attachment.ConversationBudgetExceeded", result.Error!.Value.Code);
         Assert.Equal(0, fixture.FileStorage.CreateUploadCalls);
+    }
+
+    /// <summary>`23-76`'s own Done-when: "a tenant's total attachment storage is bounded, by tier, and
+    /// the bound is enforced at presign." A fresh conversation (so `23-75`'s own per-conversation
+    /// budget is nowhere near its own ceiling) still refuses once the *site's* free-tier total
+    /// (100 MiB by <see cref="AttachmentStorageQuotaOptions"/>'s own default) is already reserved -
+    /// proving this is a real, independent second check, not a restatement of the conversation one.
+    /// Names the remaining budget, the same "a refusal names a real number" requirement
+    /// <see cref="AttachmentConversationBudgetExceeded"/>'s own test above already proves for its
+    /// sibling.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenTheSiteBudgetIsExceeded_ReturnsSiteBudgetExceeded_NamesTheRemainder_AndDoesNotPresignOrCommit()
+    {
+        var storageQuotaOptions = new AttachmentStorageQuotaOptions { FreeTierTotalBytes = 1000 };
+        var fixture = CreateFixture(storageQuotaOptions: storageQuotaOptions);
+        fixture.SiteBudget.SeedReserved(SiteId, 900);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new CreateAttachmentAsVisitor(fixture.Conversation.Id, VisitorId, "image/png", 200), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.SiteBudgetExceeded", result.Error!.Value.Code);
+        Assert.Contains("100 byte(s) remaining", result.Error.Value.Message, StringComparison.Ordinal);
+        Assert.Equal(0, fixture.FileStorage.CreateUploadCalls);
+        Assert.Equal(0, fixture.UnitOfWork.TransactionsCommitted);
+        // The conversation's own reservation, made first, rolled back with the transaction - proving
+        // "both must reserve, or neither does" rather than the site refusal leaving a dangling
+        // conversation-level reservation behind.
+        Assert.Single(fixture.Budget.ReserveCalls);
+    }
+
+    /// <summary>The tenant ceiling scales with tier and paid tenure
+    /// (<see cref="SiteAttachmentQuotaPolicy"/>), not a flat number for every site - a paid-tier site
+    /// with two years of a base subscription behind it gets 2 GiB (2 x
+    /// <see cref="AttachmentStorageQuotaOptions.PaidTierBytesPerPaidYear"/>'s own default), not the
+    /// free-tier 100 MiB, so a reservation that would refuse a free site succeeds here.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenSiteIsPaidTierWithTwoPaidYears_ReservesAgainstTheScaledCeiling()
+    {
+        var sites = new FakeSiteRepository();
+        sites.Seed(new Site(SiteId, $"pk_{SiteId.Value:N}", [], tier: SubscriptionTierBands.Starter));
+        var billing = new FakeBillingSubscriptionRepository();
+        billing.Seed(BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_1", 2, SubscriptionTierBands.Starter, 1, 1,
+            Now.AddDays(-800)));
+
+        var fixture = CreateFixture(sites: sites, billingSubscriptions: billing);
+
+        // A small file - this test is about which *ceiling* the reservation is computed against, not
+        // about clearing AttachmentOptions.MaxSizeBytes's own unrelated per-file limit.
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new CreateAttachmentAsVisitor(fixture.Conversation.Id, VisitorId, "image/png", 1024), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        // ~2.2 years since the base subscription started -> 3 paid years - the ceiling the reservation
+        // was actually computed against, not the free-tier 100 MiB default.
+        var siteReservation = Assert.Single(fixture.SiteBudget.ReserveCalls);
+        Assert.Equal(3L * new AttachmentStorageQuotaOptions().PaidTierBytesPerPaidYear, siteReservation.BudgetBytes);
     }
 }
