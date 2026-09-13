@@ -72,7 +72,11 @@ public sealed class DeliveryObservabilityEndToEndTests(ConnectionFanoutFixture f
         await registry.RegisterAsync(new ConnectionId(Guid.NewGuid().ToString()), nodeA, PrincipalKeys.ForVisitor(visitorId), CancellationToken.None);
         await registry.RegisterAsync(new ConnectionId(Guid.NewGuid().ToString()), nodeB, PrincipalKeys.ForOperator(operatorId), CancellationToken.None);
 
-        var exportedActivities = new List<Activity>();
+        // `25-71`: a plain List<Activity> here can race any other test whose own activity source
+        // matches this wildcard and runs concurrently (xUnit's own parallel test classes) -
+        // SynchronizedActivityCollection gives the Assert.Single enumeration below a safe, locked
+        // snapshot instead of throwing "Collection was modified" under that contention.
+        var exportedActivities = new SynchronizedActivityCollection();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource(Ago.Platform.Observability.ObservabilityServiceCollectionExtensions.ActivitySourceWildcard)
             .AddInMemoryExporter(exportedActivities)

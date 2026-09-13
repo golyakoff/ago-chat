@@ -207,94 +207,9 @@ public sealed class TelemetryLeakGuardTests(PostgresFixture fixture)
             $"Span '{leakingTag.OperationName}' carried the outbound query string on attribute '{leakingTag.Key}': {leakingTag.Value}");
     }
 
-    /// <summary>
-    /// The <c>ICollection&lt;Activity&gt;</c> <see cref="OpenTelemetry.Trace.InMemoryExporterHelperExtensions.AddInMemoryExporter{T}"/>
-    /// asks for, made safe against concurrent writers - which the SDK's own default processor does
-    /// not guarantee (see the callers' remarks for the full mechanism). <see cref="ConcurrentBag{T}"/>
-    /// would make <see cref="Add"/> itself thread-safe but does not implement generic
-    /// <see cref="ICollection{T}"/>, so this wraps a plain <see cref="List{T}"/> behind one lock
-    /// instead: every mutation and every read take the same lock, and a read returns a full snapshot
-    /// rather than a live enumerator, so no thread can ever observe - or write into - a half-updated
-    /// list. This is "synchronize access" from the two real options for this race, chosen over
-    /// isolating the test into a non-parallel xUnit collection because it fixes the actual defect (a
-    /// thread-unsafe collection shared across threads outside this test's control) rather than
-    /// reducing how often it gets hit, and it does so without narrowing what the test watches - the
-    /// wildcard subscription itself is unchanged.
-    /// </summary>
-    private sealed class SynchronizedActivityCollection : ICollection<Activity>
-    {
-        private readonly List<Activity> _items = [];
-        private readonly Lock _gate = new();
-
-        public int Count
-        {
-            get
-            {
-                lock (_gate)
-                {
-                    return _items.Count;
-                }
-            }
-        }
-
-        public bool IsReadOnly => false;
-
-        public void Add(Activity item)
-        {
-            lock (_gate)
-            {
-                _items.Add(item);
-            }
-        }
-
-        public void Clear()
-        {
-            lock (_gate)
-            {
-                _items.Clear();
-            }
-        }
-
-        public bool Contains(Activity item)
-        {
-            lock (_gate)
-            {
-                return _items.Contains(item);
-            }
-        }
-
-        public void CopyTo(Activity[] array, int arrayIndex)
-        {
-            lock (_gate)
-            {
-                _items.CopyTo(array, arrayIndex);
-            }
-        }
-
-        public bool Remove(Activity item)
-        {
-            lock (_gate)
-            {
-                return _items.Remove(item);
-            }
-        }
-
-        // A snapshot copy, not a live view over _items - so a writer on another thread can never
-        // invalidate an enumerator a reader already holds, which is exactly the exception this
-        // collection exists to make impossible.
-        public IEnumerator<Activity> GetEnumerator()
-        {
-            List<Activity> snapshot;
-            lock (_gate)
-            {
-                snapshot = [.. _items];
-            }
-
-            return snapshot.GetEnumerator();
-        }
-
-        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-    }
+    // `25-71`: SynchronizedActivityCollection moved to its own file - a second, then a third, test
+    // class needed the identical fix, so it is a shared class now rather than a private one three
+    // files each redeclared.
 
     /// <summary>
     /// Captures every log entry any category emits, formatted the way a console/JSON provider would

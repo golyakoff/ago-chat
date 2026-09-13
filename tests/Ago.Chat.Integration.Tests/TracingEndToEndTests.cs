@@ -49,7 +49,12 @@ public sealed class TracingEndToEndTests(ConnectionFanoutFixture fixture)
     [Fact]
     public async Task SendingOneMessage_ProducesOneTraceId_SpanningHubThroughDelivery()
     {
-        var exportedActivities = new List<Activity>();
+        // `25-71`: a plain List<Activity> here can race any other test whose own activity source
+        // matches this wildcard (or "Npgsql") and runs concurrently (xUnit's own parallel test
+        // classes) - SynchronizedActivityCollection gives the Where/Assert.Single enumeration below
+        // a safe, locked snapshot instead of throwing "Collection was modified" under that
+        // contention.
+        var exportedActivities = new SynchronizedActivityCollection();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             // The same "Ago.*" wildcard AddPlatformObservability itself subscribes with
             // (Ago.Platform.Hosting's own remarks) - proves the actual subscription shape works,
