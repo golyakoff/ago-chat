@@ -88,6 +88,9 @@ public sealed class RegisterSiteHandler(
             // *existing* site's roles get brought up to when the calendar module is actually granted.
             Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
             Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
+            // `23-69`: ConversationMarkSpam joins the Operator set - see Permission's own remarks on
+            // why this, unlike ConversationBlock, is Operator- rather than Admin-scoped.
+            Permission.ConversationMarkSpam.Value,
         ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too - see Permission's own remarks

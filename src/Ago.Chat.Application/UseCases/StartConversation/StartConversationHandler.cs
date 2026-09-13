@@ -42,6 +42,7 @@ namespace Ago.Chat.Application.UseCases.StartConversation;
 public sealed class StartConversationHandler(
     IVisitorRepository visitors,
     IConversationRepository conversations,
+    IVisitorRestrictionRepository restrictions,
     GetSiteConfigByIdHandler siteConfig,
     IRateLimiter rateLimiter,
     ConversationCreateRateLimitOptions rateLimitOptions,
@@ -77,6 +78,19 @@ public sealed class StartConversationHandler(
             return new StartConversationResult(existing.Id, IsNew: false, existing.HasAttachmentUploadGrant);
         }
 
+        // `23-69`/`23-77`: the one new read this handler gains - alongside the existing
+        // GetActiveForVisitorAsync call right above, not a new pattern. Reached only on the
+        // genuinely-new-conversation path (an existing open conversation, resumed above, is never
+        // re-checked - both items' own scope is "the *next* conversation", see either backlog item's
+        // own "Answered" section). A restricted visitor's request is not refused, rate-limited or
+        // shaped any differently from here on - the response below stays a completely ordinary
+        // StartConversationResult, and the caller (widget/API) cannot tell the two apart. The silence
+        // both items' own answered "no message to the visitor" requirement asks for comes entirely
+        // from suppressRouting below keeping the resulting conversation from ever being dispatched or
+        // shown in a queue (Conversation.RoutingSuppressedAt's own remarks) - not from this handler
+        // lying about what happened.
+        var isRestricted = await restrictions.IsActiveAsync(command.SiteId, command.VisitorId, now, cancellationToken);
+
         // `23-76`: only the genuinely-new-conversation path spends this budget - resuming an existing
         // conversation (the branch just above) is not what resets `23-75`'s per-conversation attachment
         // budget, so it costs nothing here. Per-visitor first, per-site last - the same ordering
@@ -109,7 +123,8 @@ public sealed class StartConversationHandler(
 
         var conversationId = new ConversationId(idGenerator.NewId(now));
         var conversation = Conversation.Start(
-            conversationId, command.SiteId, command.VisitorId, now, command.Source, attachmentUploadGrantedByDefault);
+            conversationId, command.SiteId, command.VisitorId, now, command.Source, attachmentUploadGrantedByDefault,
+            suppressRouting: isRestricted);
         try
         {
             await conversations.SaveAsync(conversation, cancellationToken);

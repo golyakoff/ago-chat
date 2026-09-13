@@ -30,7 +30,8 @@ public class ClockBoundaryTests
         var conversations = new FakeConversationRepository();
         var clock = new FakeClock(BeforeBerlinSpringForward);
         var handler = new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            visitors, conversations, new FakeVisitorRestrictionRepository(),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
 

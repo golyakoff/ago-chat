@@ -160,6 +160,53 @@ public sealed class Conversation
         AttachmentUploadGrantedBy = grantedBy;
     }
 
+    /// <summary>
+    /// `23-69`/`23-77`: set only by <see cref="Start"/>, never afterward - <see langword="null"/> for
+    /// every ordinary conversation. When a visitor already carries an active
+    /// <c>Application.Abstractions.IVisitorRestrictionRepository</c> restriction (a time-windowed
+    /// spam mute from `23-69`'s "close as spam", or `23-77`'s own indefinite manual block) at the
+    /// moment <see cref="StartConversationHandler"/> would otherwise start a brand-new conversation
+    /// for them, this is stamped with that moment instead of being left <see langword="null"/> - the
+    /// conversation is created exactly as normal in every other respect (same id scheme, same
+    /// <see cref="ConversationState.Waiting"/> start state, still accepts and stores the visitor's own
+    /// messages via <see cref="AddVisitorMessage"/>, which does not check this flag) so that
+    /// <c>StartConversationHandler</c>'s own response is not special-cased at all - both items' own
+    /// answered "силенс" requirement (no message to the visitor, ever) is met by there being nothing
+    /// to special-case, not by the caller lying about what happened.
+    ///
+    /// <para><b>Deliberately not <see cref="BlockedAt"/>/<see cref="BlockedBy"/>.</b> Reusing `24-10`'s
+    /// pair here was considered and rejected: that pair's own invariant is "an operator, named in
+    /// <see cref="BlockedBy"/>, decided to block this one conversation" - nobody decides anything at
+    /// the moment this flag is set, a visitor-level restriction created earlier (against a *different*
+    /// conversation, or against none at all) is only being carried forward onto a new one, automatically.
+    /// Setting <see cref="BlockedAt"/> here with no real operator to name in <see cref="BlockedBy"/>
+    /// would either force a fake attribution or a nullable-<see cref="BlockedBy"/>-with-a-set-<see
+    /// cref="BlockedAt"/> case `IsBlocked`'s own remarks never anticipated - both are exactly the
+    /// "repurposing" both items' own dialogue with the author ruled out in favour of one new, additive
+    /// table. A second, separate flag costs one nullable column and keeps `24-10`'s own pair meaning
+    /// only ever what it already means.</para>
+    ///
+    /// <para><b>Reuses the exact routing gate `24-10` already built, rather than adding a new one.</b>
+    /// <c>WaitingConversationClaimQuery</c>'s own <c>SKIP LOCKED</c> claim and
+    /// <c>GetOperatorQueueHandler</c>'s own waiting/assigned filters are the two places this codebase
+    /// already keeps a conversation from ever reaching an operator; both are extended (alongside
+    /// <see cref="BlockedAt"/>, not instead of it) to also exclude a routing-suppressed row, rather than
+    /// this item inventing a fourth <see cref="ConversationState"/> or a parallel query surface.
+    /// <c>GetConversationHistoryHandler</c>/<c>GetVisitorHistoryHandler</c> deliberately keep reading
+    /// this flag as ordinary content, unlike <see cref="IsBlocked"/>: an operator who goes looking (via
+    /// search or a visitor's own history) is allowed to find what was silently suppressed, because
+    /// nothing in either item asks for it to be unfindable, only unrouted - "an operator never sees it"
+    /// (the background-worker brief's own fails-before wording) means never surfaced to them
+    /// unprompted, not erased from every read path the way a true `24-10` block is.</para>
+    /// </summary>
+    public DateTimeOffset? RoutingSuppressedAt { get; private set; }
+
+    /// <summary>Whether this conversation was silently kept from ever reaching an operator's queue,
+    /// from the moment it was created - see <see cref="RoutingSuppressedAt"/>'s own remarks for the
+    /// full mechanism and why it is a second flag rather than a repurposing of <see cref="IsBlocked"/>.
+    /// </summary>
+    public bool IsRoutingSuppressed => RoutingSuppressedAt is not null;
+
     /// <summary>`18-12`: the four backing fields <see cref="Source"/> is computed from - the same
     /// "private fields, computed public property, EF mapped to the fields by name" shape
     /// <c>Message._contentKind</c>/<c>_payload</c>/<c>_actions</c> already establish for a nullable
@@ -271,10 +318,18 @@ public sealed class Conversation
     /// site's own <c>WidgetConfig.AllowAttachmentUploadsByDefault</c> (`StartConversationHandler`'s own
     /// remarks); this factory has no site config to read on its own (Domain references nothing), so the
     /// decision is made by the caller and handed in as a plain <see langword="bool"/>.</para>
+    ///
+    /// <para>`23-69`/`23-77`: <paramref name="suppressRouting"/> joins on the identical terms once
+    /// more - <see cref="RoutingSuppressedAt"/>'s own remarks explain what setting it does and does
+    /// not change. The caller (<c>StartConversationHandler</c>) has already asked
+    /// <c>IVisitorRestrictionRepository</c> whether this visitor currently carries a restriction; this
+    /// factory has no such port to ask on its own (Domain references nothing), so, exactly like
+    /// <paramref name="attachmentUploadGrantedByDefault"/>, the answer arrives as a plain
+    /// <see langword="bool"/> rather than this method reaching out for it itself.</para>
     /// </summary>
     public static Conversation Start(
         ConversationId id, SiteId siteId, VisitorId visitorId, DateTimeOffset now, TrafficSource? source = null,
-        bool attachmentUploadGrantedByDefault = false)
+        bool attachmentUploadGrantedByDefault = false, bool suppressRouting = false)
     {
         var conversation = new Conversation(id, siteId, visitorId, now);
         if (source is { IsEmpty: false })
@@ -292,6 +347,15 @@ public sealed class Conversation
         if (attachmentUploadGrantedByDefault)
         {
             conversation.AttachmentUploadGrantedAt = now;
+        }
+
+        // `23-69`/`23-77`: the identical "seeded directly, this row has no xmin yet" reasoning right
+        // above, restated for RoutingSuppressedAt - see that property's own remarks for why this is a
+        // second flag rather than a call to Block() (which does not exist as a public domain method
+        // anyway - IConversationBlockRepository's own remarks on why blocking bypasses this aggregate).
+        if (suppressRouting)
+        {
+            conversation.RoutingSuppressedAt = now;
         }
 
         conversation._domainEvents.Add(new ConversationStarted(id, siteId, visitorId, now));

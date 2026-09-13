@@ -163,6 +163,17 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
             .HasColumnName("attachment_upload_granted_by")
             .HasConversion(IdConverters.NullableOperator);
 
+        // `23-69`/`23-77`: an ordinary mapped property, the identical "set once, at INSERT time, by
+        // Conversation.Start itself - no xmin to race" shape AttachmentUploadGrantedAt's own remarks
+        // give one screen up, restated for a flag with no operator to attribute (RoutingSuppressedAt's
+        // own remarks on why it is not BlockedAt/BlockedBy). No index here in Postgres's own EF-managed
+        // sense - GetOperatorQueueHandler reads it as part of an aggregate already located by
+        // GetWaitingForSiteAsync/GetAssignedToOperatorAsync, the identical "no index" reasoning
+        // BlockedAt/BlockedBy already need none for. WaitingConversationClaimQuery (Ago.Chat.Worker)
+        // reads the same `routing_suppressed_at` column directly, in raw SQL, bypassing this
+        // configuration entirely - see that query's own remarks.
+        builder.Property(c => c.RoutingSuppressedAt).HasColumnName("routing_suppressed_at");
+
         // `23-75`: a shadow property, the identical `active_chats` split right below this file's own
         // `HasIndex(c => c.SiteId)` block a screen up - this column has a raw-SQL atomic
         // compare-and-set writer (IConversationAttachmentBudget) an EF load-mutate-save could race,

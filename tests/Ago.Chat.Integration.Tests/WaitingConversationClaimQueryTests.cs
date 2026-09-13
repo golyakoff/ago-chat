@@ -125,6 +125,46 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
         await transaction.CommitAsync();
     }
 
+    /// <summary>`23-69`/`23-77`'s own direct proof of the fails-before both backlog items name: a
+    /// conversation a restricted visitor's <c>StartConversationHandler</c> call silently created
+    /// (<c>Conversation.RoutingSuppressedAt</c> stamped at construction, the identical "must never be
+    /// claimed" guarantee <see cref="ClaimBatchAsync_IgnoresABlockedWaitingConversation"/> right above
+    /// already proves for `24-10`'s own, separate flag) is never picked up by the automatic assignment
+    /// engine either - proven against the real `routing_suppressed_at IS NULL` predicate, not just that
+    /// the flag exists on the aggregate.</summary>
+    [Fact]
+    public async Task ClaimBatchAsync_IgnoresARoutingSuppressedWaitingConversation()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+
+            var suppressedVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(suppressedVisitorId, siteId, Now));
+            var suppressed = Conversation.Start(
+                new ConversationId(Guid.NewGuid()), siteId, suppressedVisitorId, Now, suppressRouting: true);
+            db.Conversations.Add(suppressed);
+
+            var ordinaryVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(ordinaryVisitorId, siteId, Now));
+            var ordinary = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, ordinaryVisitorId, Now);
+            db.Conversations.Add(ordinary);
+
+            await db.SaveChangesAsync();
+
+            await using var connection = await fixture.DataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var claimed = await WaitingConversationClaimQuery.ClaimBatchAsync(
+                connection, transaction, siteId, batchSize: 10, CancellationToken.None);
+
+            Assert.Equal([ordinary.Id], claimed);
+            await transaction.CommitAsync();
+        }
+    }
+
     private async Task<List<ConversationId>> SeedWaitingConversationsAsync(SiteId siteId, int count)
     {
         var ids = new List<ConversationId>();

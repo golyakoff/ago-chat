@@ -200,6 +200,24 @@ public class GetOperatorQueueHandlerTests
         Assert.Empty(result.Value.AssignedToMe);
     }
 
+    // `23-69`/`23-77`: the identical "an operator never sees it" filter right above, restated for the
+    // second, separate flag `StartConversationHandler` stamps on a brand-new conversation for a
+    // restricted visitor - Conversation.RoutingSuppressedAt's own remarks explain why this is not
+    // IsBlocked itself.
+    [Fact]
+    public async Task HandleAsync_ARoutingSuppressedWaitingConversation_IsExcluded()
+    {
+        var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, suppressRouting: true);
+
+        var (handler, conversations) = CreateHandler();
+        conversations.Seed(waiting);
+
+        var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value.Waiting);
+    }
+
     // `25-56` decision 1/5: the item's own warning made concrete - the emoji pair is keyed to the
     // visitor, not the conversation, so the *same* visitor's two conversations (one waiting, one
     // assigned to this operator) must read back the *same* pair, not two independent picks. Seeding the

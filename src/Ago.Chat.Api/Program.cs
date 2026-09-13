@@ -422,6 +422,11 @@ app.MapAuthEndpoints();
 app.MapWidgetActivityEndpoints();
 app.MapAttachmentEndpoints();
 app.MapConversationsEndpoints();
+// `23-69`/`23-77`: own Map call, the identical "a test host mapping only MapConversationsEndpoints
+// must never be made to resolve GetVisitorRestrictionsForSiteHandler/LiftVisitorRestrictionHandler
+// just because this route happened to share a folder" reasoning `MapAccessRecordsEndpoint` already
+// states for itself further down this file.
+app.MapVisitorRestrictionsEndpoints();
 app.MapOperatorsEndpoints();
 // `13-07`/`adr/0068`
 app.MapMeEndpoints();

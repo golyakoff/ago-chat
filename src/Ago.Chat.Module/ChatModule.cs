@@ -8,6 +8,10 @@ using Ago.Chat.Application.UseCases.RemoveRolePermissionsAsOwner;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
+using Ago.Chat.Application.UseCases.BlockVisitor;
+using Ago.Chat.Application.UseCases.CloseConversationAsSpam;
+using Ago.Chat.Application.UseCases.LiftVisitorRestriction;
+using Ago.Chat.Application.UseCases.GetVisitorRestrictionsForSite;
 using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
 using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
@@ -254,6 +258,14 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(ConversationCreateRateLimitOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<ConversationCreateRateLimitOptions>>().Value);
+
+        // `23-69`: the identical shape right above - CloseConversationAsSpamHandler, the only
+        // consumer, is registered for every host below, and takes the plain value directly.
+        services
+            .AddOptions<ConversationSpamMuteOptions>()
+            .Bind(configuration.GetSection(ConversationSpamMuteOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ConversationSpamMuteOptions>>().Value);
 
         // `5-03`: the platform's presigned-upload/download port (`5-02`) - registered here rather
         // than a host's own Program.cs for the same reason as everything else on this page:
@@ -1157,6 +1169,12 @@ public sealed class ChatModule : IProductModule
         // above, for the identical reason (BlockConversationHandler's own remarks).
         services.AddScoped<BlockConversationHandler>();
         services.AddScoped<UnblockConversationHandler>();
+        // `23-69`/`23-77`: the shared visitor-restriction mechanism's own writes and read - same
+        // registration shape as the block/unblock pair right above.
+        services.AddScoped<CloseConversationAsSpamHandler>();
+        services.AddScoped<BlockVisitorHandler>();
+        services.AddScoped<LiftVisitorRestrictionHandler>();
+        services.AddScoped<GetVisitorRestrictionsForSiteHandler>();
         // `23-78`: the grant/revoke writes - same registration shape as the block/unblock pair right
         // above, for the identical reason.
         services.AddScoped<GrantAttachmentUploadHandler>();

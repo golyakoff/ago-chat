@@ -58,8 +58,14 @@ public sealed class GetOperatorQueueHandler(
         // process this item deliberately leaves untouched (see this item's commit-prep notes: filtering
         // a blocked conversation out of that list too would leave its capacity claim never released).
         // This queue view is the only caller that needs a blocked conversation invisible.
-        waiting = waiting.Where(c => !c.IsBlocked).ToList();
-        assigned = assigned.Where(c => !c.IsBlocked).ToList();
+        //
+        // `23-69`/`23-77`: `!c.IsRoutingSuppressed` joins the identical filter - a conversation a
+        // restricted visitor silently opened must never appear in an operator's own queue either, the
+        // same "an operator never sees it" requirement `IsBlocked` is filtered for right here already.
+        // See `Conversation.RoutingSuppressedAt`'s own remarks for why this is a second flag rather
+        // than reusing `IsBlocked` itself.
+        waiting = waiting.Where(c => !c.IsBlocked && !c.IsRoutingSuppressed).ToList();
+        assigned = assigned.Where(c => !c.IsBlocked && !c.IsRoutingSuppressed).ToList();
 
         if (query.Tags is { Count: > 0 } tagIds)
         {

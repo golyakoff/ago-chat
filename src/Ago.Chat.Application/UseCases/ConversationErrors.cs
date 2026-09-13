@@ -1061,4 +1061,12 @@ public static class ConversationErrors
     /// is conditional on <c>Force</c>.</summary>
     public static Error RolePermissionRemovalReasonRequired(string reason) =>
         new("Role.PermissionRemovalReasonRequired", reason);
+
+    /// <summary>`23-69`/`23-77`: <c>LiftVisitorRestrictionHandler</c>'s own refusal - the visitor named
+    /// carries no currently-active <c>visitor_restrictions</c> row (never restricted, already lifted, or
+    /// already naturally expired). The same `409`-shaped "a request against this resource's own current
+    /// state" group <see cref="ConversationNotBlocked"/> already establishes, restated for a visitor
+    /// rather than a conversation.</summary>
+    public static Error VisitorNotRestricted(Guid visitorId) =>
+        new("Visitor.NotRestricted", $"Visitor {visitorId} has no active restriction to lift.");
 }

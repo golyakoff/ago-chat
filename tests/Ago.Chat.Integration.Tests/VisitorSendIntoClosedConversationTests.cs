@@ -121,7 +121,7 @@ public sealed class VisitorSendIntoClosedConversationTests(PostgresFixture fixtu
         var db = fixture.CreateDbContext();
         var siteConfig = new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache());
         var startConversation = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db), siteConfig,
+            new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource), siteConfig,
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), new SystemClock(), new UuidV7Generator(),
             new VisitorEmojiPairGenerator());
         var getHistory = new GetConversationHistoryHandler(

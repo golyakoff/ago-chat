@@ -91,7 +91,8 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
                 // `23-78`: real SiteRepository/no-op cache - never exercised for what this test
                 // actually checks.
                 new StartConversationHandler(
-                    visitors, conversations, new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+                    visitors, conversations, new VisitorRestrictionRepository(fixture.DataSource),
+                    new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                     new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
                     clock, idGenerator, emojiPairs),
                 new SendVisitorMessageHandler(
