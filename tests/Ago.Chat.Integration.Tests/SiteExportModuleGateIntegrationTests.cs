@@ -71,8 +71,10 @@ public sealed class SiteExportModuleGateIntegrationTests(AttachmentFixture fixtu
         var operatorId = await SeedOperatorAsync(siteId);
         var exportId = await RequestExportAsync(siteId, operatorId, clock);
 
+        // See the unreachable-module test's own remarks below on why this asserts *this* export's
+        // own outcome rather than SweepAsync's global, test-order-dependent return count.
         var job = CreateJob(clock);
-        Assert.Equal(1, await job.SweepAsync(CancellationToken.None));
+        await job.SweepAsync(CancellationToken.None);
 
         Assert.Equal("Ready", await GetExportStatusAsync(exportId));
         Assert.True(moduleServer.ReceivedRequests.Count > 0);
@@ -118,8 +120,16 @@ public sealed class SiteExportModuleGateIntegrationTests(AttachmentFixture fixtu
         var operatorId = await SeedOperatorAsync(siteId);
         var exportId = await RequestExportAsync(siteId, operatorId, clock);
 
+        // `SweepAsync`'s own return value is a global count over every `Pending` row this shared
+        // Postgres container currently holds (`SiteExportQuery.ListPendingAsync` has no per-test
+        // scoping - the identical unscoped-claim gap `25-72` names) - under real xUnit parallelism a
+        // concurrently-running test's own export can land in the same sweep and complete
+        // successfully, making this a nonzero, test-order-dependent number that was never this test's
+        // own claim to make (found failing under full-suite load, not by inspection). This test's own
+        // claim is narrower and is asserted directly below: *this* export, with an unreachable
+        // module, ends up Failed - the sweep count itself is incidental machinery, not the assertion.
         var job = CreateJob(clock);
-        Assert.Equal(0, await job.SweepAsync(CancellationToken.None));
+        await job.SweepAsync(CancellationToken.None);
 
         Assert.Equal("Failed", await GetExportStatusAsync(exportId));
         var reason = await GetFailureReasonAsync(exportId);
@@ -158,8 +168,10 @@ public sealed class SiteExportModuleGateIntegrationTests(AttachmentFixture fixtu
         var operatorId = await SeedOperatorAsync(siteId);
         var exportId = await RequestExportAsync(siteId, operatorId, clock);
 
+        // See the unreachable-module test's own remarks below on why this asserts *this* export's
+        // own outcome rather than SweepAsync's global, test-order-dependent return count.
         var job = CreateJob(clock);
-        Assert.Equal(1, await job.SweepAsync(CancellationToken.None));
+        await job.SweepAsync(CancellationToken.None);
         Assert.Equal("Ready", await GetExportStatusAsync(exportId));
 
         var downloadUrl = await GetDownloadUrlAsync(exportId, siteId, operatorId);
