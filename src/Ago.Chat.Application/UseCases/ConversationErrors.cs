@@ -1047,4 +1047,18 @@ public static class ConversationErrors
     /// permission nothing in this codebase ever checks.</summary>
     public static Error RolePermissionUnknown(string reason) =>
         new("Role.PermissionUnknown", reason);
+
+    // `25-77`: RemoveRolePermissionsAsOwnerHandler's own refusal - the removal direction's one real
+    // signature difference from the add side (IRoleRepository.RemovePermissionsAsync's own remarks:
+    // "the reason is required, non-optional"). Same shape `Module.RevokeReasonRequired`/`Module.
+    // QuantityUnconditionalGrantReasonRequired` already use for the identical "taking something away
+    // needs a stated reason" act on a different aggregate.
+
+    /// <summary>The caller's own mistake to fix - a blank or missing reason, or one longer than
+    /// <see cref="UseCases.RemoveRolePermissionsAsOwner.RemoveRolePermissionsAsOwnerHandler.MaxReasonLength"/>
+    /// allows. Required on every removal, unconditionally - `docs/backlog/25-77-*.md`'s own "Answered":
+    /// a reason is required every time, never only past some threshold the way `Module.RevokeReasonRequired`
+    /// is conditional on <c>Force</c>.</summary>
+    public static Error RolePermissionRemovalReasonRequired(string reason) =>
+        new("Role.PermissionRemovalReasonRequired", reason);
 }

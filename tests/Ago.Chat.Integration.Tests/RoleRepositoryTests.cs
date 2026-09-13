@@ -528,6 +528,310 @@ public sealed class RoleRepositoryTests(PostgresFixture fixture)
         Assert.Empty(roles);
     }
 
+    /// <summary>`25-77`: <see cref="RoleRepository.RemovePermissionsAsync"/>'s own headline claim,
+    /// proven against a real database rather than a fake: a real permission is actually removed from
+    /// the row, permissions it did not name are left untouched.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_RemovesTheNamedPermission_LeavesTheRestUntouched()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Admin",
+                Permissions = [Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value, Permission.AttachmentDelete.Value],
+            });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(
+                siteId, "Admin", [Permission.SiteManageOperators.Value], "owner-sub", "no longer needed", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var role = await verify.Set<RoleRecord>().AsNoTracking().SingleAsync(r => r.Id == roleId, CancellationToken.None);
+        Assert.Equal(
+            new[] { Permission.SiteConfigure.Value, Permission.AttachmentDelete.Value }.OrderBy(p => p, StringComparer.Ordinal),
+            role.Permissions.OrderBy(p => p, StringComparer.Ordinal));
+    }
+
+    /// <summary>"No magic roles" - `Admin`'s own defining permission is removable exactly like any
+    /// other, down to leaving the role with nothing at all. `array_agg` over zero matching rows returns
+    /// `NULL`, not an empty array - proving `coalesce(..., array[]::text[])` actually converts that to a
+    /// real, non-null empty `text[]` is the whole reason this test reads the raw column back rather than
+    /// trusting the SQL to typecheck.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_RemovingEveryPermission_LeavesAnEmptyArray_NotNull()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Admin", Permissions = [Permission.SiteConfigure.Value] });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(
+                siteId, "Admin", [Permission.SiteConfigure.Value], "owner-sub", "stripping this role bare", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var role = await verify.Set<RoleRecord>().AsNoTracking().SingleAsync(r => r.Id == roleId, CancellationToken.None);
+        Assert.NotNull(role.Permissions);
+        Assert.Empty(role.Permissions);
+    }
+
+    /// <summary>`25-77`'s own idempotence-in-reverse claim: removing a permission the role never had is
+    /// a harmless no-op, not an error - the identical guarantee `AddPermissionsAsync_CalledTwiceWithTheSamePermissions_IsIdempotent`
+    /// proves for the grant direction.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_RemovingAPermissionTheRoleNeverHad_IsANoOp()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Admin", Permissions = [Permission.SiteConfigure.Value] });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            var exception = await Record.ExceptionAsync(() => repository.RemovePermissionsAsync(
+                siteId, "Admin", [Permission.ChannelManage.Value], "owner-sub", "tidying up", CancellationToken.None));
+            Assert.Null(exception);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var role = await verify.Set<RoleRecord>().AsNoTracking().SingleAsync(r => r.Id == roleId, CancellationToken.None);
+        Assert.Equal([Permission.SiteConfigure.Value], role.Permissions);
+    }
+
+    /// <summary>No role by that name is a no-op, not an error, and writes no override row either - the
+    /// identical "nothing real happened, nothing to attest to" reasoning
+    /// <see cref="IRoleRepository.RemovePermissionsAsync"/>'s own remarks state.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_WhenNoRoleByThatNameExists_DoesNothing_AndRecordsNoOverride()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            var exception = await Record.ExceptionAsync(() => repository.RemovePermissionsAsync(
+                siteId, "Operator", [Permission.ConversationRead.Value], "owner-sub", "tidying up", CancellationToken.None));
+            Assert.Null(exception);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.False(await verify.Set<RolePermissionRemovalOverrideEntity>()
+            .AnyAsync(o => o.SiteId == siteId, CancellationToken.None));
+    }
+
+    /// <summary>An empty permission list never reaches the database at all - the identical early return
+    /// <see cref="AddPermissionsAsync_WithNoPermissions_LeavesTheRoleUnchanged"/> proves for the grant
+    /// direction.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_WithNoPermissions_LeavesTheRoleUnchanged_AndRecordsNoOverride()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationRead.Value] });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(siteId, "Operator", [], "owner-sub", "n/a", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var role = await verify.Set<RoleRecord>().AsNoTracking().SingleAsync(r => r.Id == roleId, CancellationToken.None);
+        Assert.Equal([Permission.ConversationRead.Value], role.Permissions);
+        Assert.False(await verify.Set<RolePermissionRemovalOverrideEntity>()
+            .AnyAsync(o => o.SiteId == siteId, CancellationToken.None));
+    }
+
+    /// <summary>`25-77`'s own headline claim: removing a permission stages a `RoleAssignmentsChanged`
+    /// row for an operator already holding the role, with a linked identity - the removal direction's
+    /// own version of `AddPermissionsAsync_ForASingleHolder_StagesARoleAssignmentsChangedRow_CarryingTheFullPermissionSet`,
+    /// carrying the *reduced* permission set this time.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_ForASingleHolder_StagesARoleAssignmentsChangedRow_CarryingTheReducedPermissionSet()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var externalSubjectId = $"sub-{Guid.NewGuid():N}";
+        var roleId = Guid.NewGuid();
+
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId));
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Admin",
+                Permissions = [Permission.SiteConfigure.Value, Permission.ChannelManage.Value],
+            });
+            seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(
+                siteId, "Admin", [Permission.ChannelManage.Value], "owner-sub", "revoked after a support ticket", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(
+            o => o.Type == nameof(RoleAssignmentsChanged) && o.PartitionKey == externalSubjectId, CancellationToken.None);
+        var contract = JsonSerializer.Deserialize<RoleAssignmentsChanged>(outboxRow.Payload)!;
+        Assert.Equal(siteId.Value, contract.SiteId);
+        Assert.Equal([Permission.SiteConfigure.Value], contract.Permissions);
+        Assert.Null(outboxRow.PublishedAt);
+    }
+
+    /// <summary>The two operators holding the same role both learn - not only whichever one happened to
+    /// exist first - the identical proof `AddPermissionsAsync_WithTwoOperatorsHoldingTheRole_StagesARowForEachOfThem`
+    /// gives for the grant direction.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_WithTwoOperatorsHoldingTheRole_StagesARowForEachOfThem()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var firstOperatorId = new OperatorId(Guid.NewGuid());
+        var secondOperatorId = new OperatorId(Guid.NewGuid());
+        var firstSubject = $"sub-{Guid.NewGuid():N}";
+        var secondSubject = $"sub-{Guid.NewGuid():N}";
+        var roleId = Guid.NewGuid();
+
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Operators.Add(new Operator(firstOperatorId, siteId, OperatorStatus.Offline, capacity: 5, firstSubject));
+            seed.Operators.Add(new Operator(secondOperatorId, siteId, OperatorStatus.Offline, capacity: 5, secondSubject));
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationRead.Value, Permission.ConversationSend.Value],
+            });
+            seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = firstOperatorId, RoleId = roleId });
+            seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = secondOperatorId, RoleId = roleId });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(
+                siteId, "Operator", [Permission.ConversationSend.Value], "owner-sub", "narrowing the role", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        foreach (var subject in new[] { firstSubject, secondSubject })
+        {
+            var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(
+                o => o.Type == nameof(RoleAssignmentsChanged) && o.PartitionKey == subject, CancellationToken.None);
+            var contract = JsonSerializer.Deserialize<RoleAssignmentsChanged>(outboxRow.Payload)!;
+            Assert.Equal([Permission.ConversationRead.Value], contract.Permissions);
+        }
+    }
+
+    /// <summary>`25-77`'s own reason-provenance claim: the reason and the removing owner's own subject
+    /// land in `role_permission_removal_overrides`, inside the identical transaction as the `roles`
+    /// `UPDATE` - proven by reading the real row back, not merely by the call not throwing.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_RecordsTheReason_AndRemovedBy_InTheOverrideTable()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Admin",
+                Permissions = [Permission.SiteConfigure.Value, Permission.SiteManageOperators.Value],
+            });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(
+                siteId, "Admin", [Permission.SiteManageOperators.Value], "owner-sub-42",
+                "the tenant asked us to lock this down after an incident", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var recorded = await verify.Set<RolePermissionRemovalOverrideEntity>()
+            .AsNoTracking().SingleAsync(o => o.SiteId == siteId, CancellationToken.None);
+        Assert.Equal("Admin", recorded.RoleName);
+        Assert.Equal([Permission.SiteManageOperators.Value], recorded.Permissions);
+        Assert.Equal("owner-sub-42", recorded.RemovedBy);
+        Assert.Equal("the tenant asked us to lock this down after an incident", recorded.Reason);
+        Assert.Equal(Now, recorded.RemovedAt);
+    }
+
+    /// <summary>Even a removal that changes nothing real (every named permission was already absent)
+    /// still records the reason - the owner attempted a real act and stated why, the identical
+    /// "restaging identical values is still recorded" posture `AddPermissionsAsync_CalledTwice_StagesARowEachTime_RealBeforeAndAfterCounts"
+    /// proves for the grant direction's own re-grant case.</summary>
+    [Fact]
+    public async Task RemovePermissionsAsync_EvenAsANoOp_StillRecordsTheOverride()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Admin", Permissions = [Permission.SiteConfigure.Value] });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+            await repository.RemovePermissionsAsync(
+                siteId, "Admin", [Permission.ChannelManage.Value], "owner-sub", "attempted, even though absent", CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.True(await verify.Set<RolePermissionRemovalOverrideEntity>()
+            .AnyAsync(o => o.SiteId == siteId, CancellationToken.None));
+    }
+
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;

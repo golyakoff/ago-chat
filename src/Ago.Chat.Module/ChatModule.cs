@@ -4,6 +4,7 @@ using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.AddRolePermissionsAsOwner;
+using Ago.Chat.Application.UseCases.RemoveRolePermissionsAsOwner;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
@@ -1088,6 +1089,9 @@ public sealed class ChatModule : IProductModule
         // at the route, the identical registration shape RestoreOperatorSeatAsOwnerHandler's own remarks
         // give a few lines up for the analogous owner-only write.
         services.AddScoped<AddRolePermissionsAsOwnerHandler>();
+        // `25-77`: the removal mirror - same registration shape, same route file
+        // (OwnerRolesEndpoints), same RequirePlatformOwner-only access-control story.
+        services.AddScoped<RemoveRolePermissionsAsOwnerHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
         // `12-01`'s owner policy), registered here for the same reason as everything else on this
         // page - ChatModule is where handler registration lives, and a host that never maps the route

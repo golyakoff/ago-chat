@@ -70,4 +70,16 @@ public enum AccessRecordKind
     /// names), this write reaches a table - `roles` - no existing <see cref="AccessRecordKind"/> member
     /// has ever named, so reusing one would misdescribe which row actually changed.</summary>
     OwnerRolePermissionsGrant,
+
+    /// <summary>`25-77`: the platform owner removing a permission from a tenant's role - "no magic
+    /// roles" (`docs/backlog/25-77-*.md`'s own "Answered": any permission, `Admin`'s own defining ones
+    /// included, may be taken away). A separate member from <see cref="OwnerRolePermissionsGrant"/>
+    /// right above, not a reuse of it, for the identical reason <see cref="OwnerModuleGrant"/> and
+    /// <see cref="OwnerModuleRevoke"/> are two members rather than one: both write the same underlying
+    /// table (`roles`, `enabled_modules` respectively), but a reviewer reading this deployment's own
+    /// access log needs to tell "the owner widened what a role can do" apart from "the owner narrowed
+    /// it" without opening each row's own resource details - the direction of an owner-only override is
+    /// exactly the fact `AccessRecordKind` already distinguishes for every other reversible act it
+    /// covers, and a role-permission write is no different.</summary>
+    OwnerRolePermissionsRemoval,
 }

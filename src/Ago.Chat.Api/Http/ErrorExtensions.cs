@@ -205,7 +205,11 @@ public static class ErrorExtensions
                 // one naming a string that is not a real, known Domain.Permission. The identical
                 // "brand-new code this item's own new route can actually produce" reasoning every other
                 // 400 in this group already states for itself.
-                or "Role.PermissionsRequired" or "Role.PermissionUnknown" => StatusCodes.Status400BadRequest,
+                or "Role.PermissionsRequired" or "Role.PermissionUnknown"
+                // `25-77`: the removal direction's own mistake to fix - a blank/missing/over-length
+                // reason, required unconditionally on every removal (never conditional on a force flag
+                // the way Module.RevokeReasonRequired is).
+                or "Role.PermissionRemovalReasonRequired" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

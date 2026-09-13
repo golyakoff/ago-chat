@@ -188,6 +188,140 @@ public sealed class RoleRepository(AgoChatDbContext db, IIdGenerator idGenerator
     }
 
     /// <summary>
+    /// `25-77`: <see cref="AddPermissionsAsync"/>'s mirror - see the port's own remarks for the full
+    /// contract. The `UPDATE` below is a set-difference rather than <see cref="AddPermissionsAsync"/>'s
+    /// own set-union, computed the same "inside the database, never read-modify-write in application
+    /// code" way for the identical race-safety reason - Postgres's own row-level lock on the `UPDATE`
+    /// serialises two concurrent removals (or a concurrent add and remove) naming the same role, so
+    /// there is no window for one caller's own change to be silently lost to the other's. `coalesce(...,
+    /// array[]::text[])` is what makes removing every permission a role has leave an explicit empty
+    /// array rather than a `NULL` column - "no magic roles" reaching all the way down to the SQL: a role
+    /// reduced to nothing is a normal, representable state, not a value this method has to special-case.
+    /// </summary>
+    public async Task RemovePermissionsAsync(
+        SiteId siteId, string roleName, IReadOnlyCollection<string> permissions, string removedBy, string reason,
+        CancellationToken cancellationToken)
+    {
+        if (permissions.Count == 0)
+        {
+            // Nothing to remove - the identical "empty means nothing to do" shape AddPermissionsAsync's
+            // own remarks state for the grant direction. Skipped before ever reaching the database, and
+            // before anything is recorded or published: nothing was asked for, so there is nothing to
+            // attest to and nobody has anything to learn.
+            return;
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var removedPermissions = permissions.ToArray();
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            update roles
+            set permissions = coalesce(
+                (select array_agg(p) from unnest(permissions) as p where p != all({removedPermissions})),
+                array[]::text[])
+            where site_id = {siteId.Value} and name = {roleName}
+            """,
+            cancellationToken);
+
+        var roleId = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId && r.Name == roleName)
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (roleId is null)
+        {
+            // No role by that name on this site - the `UPDATE` above touched zero rows, and there is no
+            // role whose holders could have anything to learn. Committed rather than rolled back only
+            // because nothing was ever staged to roll back - the identical branch AddPermissionsAsync's
+            // own remarks give for the grant direction. No override row either: there is no real act to
+            // attest to when the role named never existed.
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+
+        var now = clock.UtcNow;
+
+        // `25-77`: the reason, recorded inside this same transaction rather than a second connection
+        // after the fact - see the port's own remarks on why that is possible here. Written
+        // unconditionally once a real role was found, whether or not any of `removedPermissions` was
+        // actually still present on it - the owner attempted a real removal and stated why, the
+        // identical "restaging identical values is still recorded" posture AddPermissionsAsync's own
+        // remarks describe for a repeated, already-satisfied grant.
+        db.Set<RolePermissionRemovalOverrideEntity>().Add(new RolePermissionRemovalOverrideEntity
+        {
+            Id = idGenerator.NewId(now),
+            SiteId = siteId,
+            RoleName = roleName,
+            Permissions = [.. removedPermissions],
+            RemovedBy = removedBy,
+            Reason = reason,
+            RemovedAt = now,
+        });
+
+        // Unlocked candidate list - every operator on this site who currently holds this role and has a
+        // linked external identity. Each one is re-checked under a row lock immediately below, the
+        // identical shape AddPermissionsAsync's own remarks describe in full for the grant direction.
+        var candidateOperatorIds = await db.OperatorRoles
+            .Where(link => link.RoleId == roleId.Value)
+            .Join(db.Operators, link => link.OperatorId, o => o.Id, (link, o) => o)
+            .Where(o => o.SiteId == siteId && o.RemovedAt == null && o.ExternalSubjectId != null)
+            .OrderBy(o => o.Id)
+            .Select(o => o.Id)
+            .ToListAsync(cancellationToken);
+
+        if (candidateOperatorIds.Count == 0)
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+
+        var connection = (NpgsqlConnection)db.Database.GetDbConnection();
+        var npgsqlTransaction = (NpgsqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction();
+        var occurredAt = now;
+        var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+
+        foreach (var operatorId in candidateOperatorIds)
+        {
+            string? externalSubjectId;
+            bool isRemovedOperator;
+
+            await using (var lockCommand = new NpgsqlCommand(
+                "SELECT external_subject_id, removed_at FROM operators WHERE id = @id FOR UPDATE",
+                connection, npgsqlTransaction))
+            {
+                lockCommand.Parameters.AddWithValue("id", operatorId.Value);
+                await using var reader = await lockCommand.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    continue;
+                }
+
+                externalSubjectId = reader.IsDBNull(0) ? null : reader.GetString(0);
+                isRemovedOperator = !reader.IsDBNull(1);
+            }
+
+            if (isRemovedOperator || externalSubjectId is null)
+            {
+                continue;
+            }
+
+            var rolePermissions = await db.OperatorRoles
+                .Where(link => link.OperatorId == operatorId)
+                .Join(db.Roles, link => link.RoleId, role => role.Id, (link, role) => role.Permissions)
+                .ToListAsync(cancellationToken);
+            var allPermissions = rolePermissions.SelectMany(p => p).Distinct(StringComparer.Ordinal).ToList();
+
+            outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
+                externalSubjectId, siteId.Value, allPermissions, occurredAt, idGenerator));
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
     /// `23-72`: `ChangeOperatorRoleHandler`'s own lookup - see the port's own remarks on
     /// <see cref="IRoleRepository.GetByNameAsync"/> for why this is a second method rather than a
     /// widened <see cref="GetIdByNameAsync"/>.

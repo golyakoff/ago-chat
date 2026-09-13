@@ -501,6 +501,17 @@ internal static class TenantScopeExemptions
             + "site's role by naming it against the wrong SiteId; the (site, role name) pair is the row's own key. "
             + "ADD only - ConversationErrors.RolePermissionUnknown/RolePermissionsRequired are ordinary input "
             + "validation (a real, known Permission; a non-empty list), not a second authorization decision.",
+        ["Ago.Chat.Application.UseCases.RemoveRolePermissionsAsOwner.RemoveRolePermissionsAsOwnerHandler.HandleAsync"] =
+            "`25-77`, the removal mirror of AddRolePermissionsAsOwnerHandler right above - identical category, "
+            + "identical reasoning: SiteId names the tenant whose role is being narrowed, chosen by the owner, and "
+            + "RequirePlatformOwner on OwnerRolesEndpoints is the entire access-control story. 'No magic roles' "
+            + "(docs/backlog/25-77-*.md's own 'Answered'): any permission, Admin's own defining ones included, may "
+            + "be removed - this handler carries no allow/deny list narrowing what IRoleRepository.RemovePermissionsAsync "
+            + "will act on, so there is no second authorization question living here either. "
+            + "ConversationErrors.RolePermissionRemovalReasonRequired/RolePermissionUnknown/RolePermissionsRequired "
+            + "are ordinary input validation (a non-blank, bounded reason; a real, known Permission; a non-empty "
+            + "list), the identical 'not a second authorization decision' reasoning the add-side entry above "
+            + "already states.",
         ["Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner.UpdateSiteAllowedOriginsAsOwnerHandler.HandleAsync"] =
             "`23-48`, the platform owner's own write for a tenant's allowed origins - the author's own decision "
             + "('the answer', docs/backlog/23-48-*.md) is that only the platform owner may ever call this, not the "
