@@ -21,6 +21,20 @@
 /// than for "this attempt did not work." A row never moves out of <c>Expired</c> either: the same
 /// one-shot reasoning above applies - a tenant who wants the data again simply asks for a new
 /// export.</para>
+///
+/// <para><c>Processing</c> (`25-72`): a third, deliberately transient state between <c>Pending</c> and
+/// either <c>Ready</c> or <c>Failed</c> - a row a <c>SiteExportJob</c> replica has atomically claimed
+/// (<c>Ago.Chat.Worker.SiteExportClaimQuery.ClaimPendingBatchAsync</c>) and is currently
+/// building/uploading. Exists so two replicas ticking at the same time can never both read the same
+/// <c>Pending</c> row and both build the same archive (`25-72`'s own Found note) - the same "flip the
+/// status atomically before doing the slow work" shape <c>Ago.Chat.Worker.AttachmentOrphanSweepQuery</c>'s
+/// own claim already establishes for a different table. Unlike <c>Ready</c>/<c>Failed</c>/<c>Expired</c>,
+/// a <c>Processing</c> row is not meant to be a durable resting state - it resolves to <c>Ready</c> or
+/// <c>Failed</c> within one build-and-upload cycle, or, if the replica holding it crashed mid-flight, is
+/// swept back to <c>Pending</c> once it has sat <c>Processing</c> longer than
+/// <c>SiteExportJobOptions.StaleProcessingTimeout</c> - the recovery path this item's own Scope asks
+/// for, so a crashed worker never leaves a request stuck forever in a state nothing else ever revisits.
+/// </para>
 /// </summary>
 public enum ExportStatus
 {
@@ -28,4 +42,5 @@ public enum ExportStatus
     Ready,
     Failed,
     Expired,
+    Processing,
 }

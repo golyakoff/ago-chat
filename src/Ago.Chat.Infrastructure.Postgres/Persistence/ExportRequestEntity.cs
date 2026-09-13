@@ -36,4 +36,14 @@ internal sealed class ExportRequestEntity
     public DateTimeOffset RequestedAt { get; set; }
 
     public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>`25-72`: when a <c>SiteExportJob</c> replica atomically claimed this row (flipped it
+    /// <c>Pending</c> -&gt; <c>Processing</c>) - <see langword="null"/> for every other status. The
+    /// timestamp <c>SiteExportClaimQuery.ReclaimStaleBatchAsync</c>'s own stale sweep compares against
+    /// <c>SiteExportJobOptions.StaleProcessingTimeout</c> to decide a claim has been abandoned by a
+    /// crashed replica and is safe to hand back to <c>Pending</c>. Not reused from
+    /// <see cref="RequestedAt"/>: a request can sit <c>Pending</c> for a while before anything claims
+    /// it, so <c>RequestedAt</c> alone cannot tell "waiting to be claimed" apart from "claimed a long
+    /// time ago and stuck" - see <see cref="ExportStatus"/>'s own remarks on <c>Processing</c>.</summary>
+    public DateTimeOffset? ProcessingStartedAt { get; set; }
 }

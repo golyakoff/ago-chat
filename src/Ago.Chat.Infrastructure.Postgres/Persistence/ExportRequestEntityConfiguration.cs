@@ -18,6 +18,7 @@ internal sealed class ExportRequestEntityConfiguration : IEntityTypeConfiguratio
         builder.Property(e => e.FailureReason).HasColumnName("failure_reason");
         builder.Property(e => e.RequestedAt).HasColumnName("requested_at");
         builder.Property(e => e.CompletedAt).HasColumnName("completed_at");
+        builder.Property(e => e.ProcessingStartedAt).HasColumnName("processing_started_at");
 
         // Cascades with the site - an export request for a site that no longer exists (16-02's own
         // erasure job deleted it) is not a record worth keeping around; `16-02`'s SiteErasureJob
@@ -39,6 +40,14 @@ internal sealed class ExportRequestEntityConfiguration : IEntityTypeConfiguratio
         builder.HasIndex(e => e.CompletedAt)
             .HasDatabaseName("ix_export_requests_ready")
             .HasFilter("status = 'Ready'");
+
+        // `25-72`: serves SiteExportClaimQuery.ReclaimStaleBatchAsync's own stale-claim sweep - the
+        // identical "partial index on a queue-shaped predicate" reasoning ix_export_requests_pending/
+        // ix_export_requests_ready above already state, applied to the third queue this table now has:
+        // a `Processing` row waiting to either resolve or be judged abandoned.
+        builder.HasIndex(e => e.ProcessingStartedAt)
+            .HasDatabaseName("ix_export_requests_processing")
+            .HasFilter("status = 'Processing'");
 
         // No separate index for IExportRequestRepository.GetAsync's (id, site_id) read: `id` is
         // already the primary key and therefore already an index on its own, and `site_id` there is a
