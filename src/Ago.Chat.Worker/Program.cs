@@ -237,6 +237,11 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<DemoTenantExpiryJob>();
 
+// `22-08`/`adr/0149` rule 1: the internal lease's own renewal loop - SuspensionLeaseOptions is bound
+// once in ChatModule.ConfigureServices (shared by Ago.Chat.Api's own owner writes), so no separate
+// AddOptions call is needed here, unlike DemoTenantExpiryJobOptions right above.
+builder.Services.AddHostedService<SuspensionLeaseRenewalJob>();
+
 // `13-03`: the recurring monthly re-charge, retry/lapse machinery, and the operator-removal
 // conversation release - see each type's own remarks.
 builder.Services

@@ -919,4 +919,49 @@ public static class ConversationErrors
         new(
             "ModuleTaskChannelPriority.DuplicateEntry",
             $"Channel identity {channelIdentityId} appears more than once in the priority list.");
+
+    // `22-08`: the platform owner's own suspend/extend/lift trio, and the two gates that read
+    // Site.SuspendedUntil live - own codes here rather than a separate error class, the identical
+    // "shared vocabulary" precedent every other item on this file already follows.
+
+    /// <summary>The caller's own mistake to fix - a duration in minutes that is not a positive
+    /// integer. `SuspendTenantAsOwnerHandler`'s own remarks state why there is no upper bound: an
+    /// owner who wants a very long freeze is exercising the same judgement a very short one already
+    /// trusts them with, and `CLAUDE.md` forbids inventing a ceiling nothing measures.</summary>
+    public static Error TenantSuspensionDurationInvalid(string reason) =>
+        new("TenantSuspension.DurationInvalid", reason);
+
+    /// <summary>The caller's own mistake to fix - a blank or missing reason. Required on every act
+    /// (suspend, extend, lift) rather than only when overriding something, unlike
+    /// <see cref="ModuleRevokeReasonRequired"/>'s own conditional shape: a suspension is always the
+    /// asymmetric act `22-08`'s own Scope says it is, never a routine one that sometimes needs
+    /// justifying.</summary>
+    public static Error TenantSuspensionReasonRequired(string reason) =>
+        new("TenantSuspension.ReasonRequired", reason);
+
+    /// <summary>A real conflict with the site's own current state - suspending a site that is already
+    /// suspended is not this handler's job, extending or lifting the existing suspension is
+    /// (`SuspendTenantAsOwnerHandler`'s own remarks on why extend and suspend are deliberately separate
+    /// commands rather than one that infers the caller's intent).</summary>
+    public static Error TenantAlreadySuspended(Guid siteId) =>
+        new("TenantSuspension.AlreadySuspended", $"Site {siteId} is already suspended - extend or lift it instead of suspending again.");
+
+    /// <summary>The mirror of <see cref="TenantAlreadySuspended"/> - extending or lifting a site that
+    /// is not currently suspended has nothing to act on.</summary>
+    public static Error TenantNotSuspended(Guid siteId) =>
+        new("TenantSuspension.NotSuspended", $"Site {siteId} is not currently suspended.");
+
+    /// <summary>`Api.Auth.AuthEndpoints.HandleVisitorSessionAsync`'s own refusal - collapsed into the
+    /// widget's ordinary "degrade to no widget" failure style
+    /// (<c>ago-widget/src/errors.ts</c>'s own remarks), never a distinguishing message a stranger
+    /// probing a suspended tenant's public key could read as confirmation the account exists and is in
+    /// trouble.</summary>
+    public static Error TenantSuspendedSessionRefused() =>
+        new("TenantSuspension.SessionRefused", "This account is currently suspended.");
+
+    /// <summary><see cref="Application.UseCases.SendMessage.SendOperatorMessageHandler"/>'s own
+    /// refusal - an operator may still read every conversation on a suspended site (this item's own
+    /// Scope: "operators can read but not send"), only sending is gated.</summary>
+    public static Error TenantSuspendedCannotSend() =>
+        new("TenantSuspension.CannotSend", "This account is currently suspended; operators cannot send messages until it is lifted.");
 }

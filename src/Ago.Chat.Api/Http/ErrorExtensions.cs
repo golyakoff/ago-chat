@@ -73,7 +73,12 @@ public static class ErrorExtensions
             // conflict with anything concurrent, the identical shape `Conversation.Forbidden` already
             // has for itself (`ConversationErrors.AttachmentUploadNotGranted`'s own remarks on why the
             // message names no remedy).
-            "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" or "Attachment.UploadNotGranted" => StatusCodes.Status403Forbidden,
+            // `22-08`: the operator-send suspension gate - a real refusal (the account is currently
+            // suspended), not a malformed request or a conflict with anything concurrent, reached
+            // today only from OperatorHub's own HubException translation but mapped here too for
+            // completeness, the identical reasoning Conversation.OperatorHasNoSeat's own remarks give.
+            "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" or "Attachment.UploadNotGranted"
+                or "TenantSuspension.CannotSend" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
@@ -175,7 +180,13 @@ public static class ErrorExtensions
                 // to the 500 default below" reasoning Module.Invalid's own remarks give a few lines up
                 // for the identical situation (a pre-existing unmapped code is a different, deliberately
                 // untouched case; a code this item's own new routes can actually now produce is not).
-                or "RequiredDocument.Invalid" => StatusCodes.Status400BadRequest,
+                or "RequiredDocument.Invalid"
+                // `22-08`: the caller's own mistake to fix - a non-positive duration/extension in
+                // minutes too large to represent as an instant, or a blank/over-length reason on any
+                // of the suspend/extend/lift trio. The identical "brand-new code this item's own new
+                // routes can actually produce" reasoning `RequiredDocument.Invalid`'s own remarks give
+                // a few lines up.
+                or "TenantSuspension.DurationInvalid" or "TenantSuspension.ReasonRequired" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -252,7 +263,12 @@ public static class ErrorExtensions
                 // not a transient dependency failure, the identical "retry the exact same
                 // request" reasoning Document.PublishConflict's own remarks give for the
                 // identical shape.
-                or "Billing.PricePublishConflict" => StatusCodes.Status409Conflict,
+                or "Billing.PricePublishConflict"
+                // `22-08`: a real conflict with the account's own current suspension state - suspend a
+                // site that is already suspended, or extend/lift one that is not - resolved by a
+                // different action (extend, or nothing), never by fixing the request body, the
+                // identical shape `Operator.IsLastManager` right above already gives its own conflict.
+                or "TenantSuspension.AlreadySuspended" or "TenantSuspension.NotSuspended" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.

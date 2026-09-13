@@ -54,6 +54,10 @@ using Ago.Chat.Application.UseCases.GrantModuleQuantity;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner;
 using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
+using Ago.Chat.Application.UseCases.SuspendTenantAsOwner;
+using Ago.Chat.Application.UseCases.ExtendSuspensionAsOwner;
+using Ago.Chat.Application.UseCases.LiftSuspensionAsOwner;
+using Ago.Chat.Application.UseCases.ListSuspensionsForOwner;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
@@ -670,6 +674,21 @@ public sealed class ChatModule : IProductModule
         // once had) and the read the console polls through.
         services.AddScoped<RequestModuleQuantityImpactAsOwnerHandler>();
         services.AddScoped<GetModuleQuantityImpactPreviewAsOwnerHandler>();
+        // `22-08`/`adr/0166`: the account-wide suspension trio and its own console read - bound once
+        // here, shared by Ago.Chat.Api (the owner's own writes) and Ago.Chat.Worker
+        // (SuspensionLeaseRenewalJob's own periodic republish), the same "one options class, one
+        // binding, shared by every host" precedent ModuleFlowReportOptions already sets a few lines
+        // below.
+        services
+            .AddOptions<SuspensionLeaseOptions>()
+            .Bind(configuration.GetSection(SuspensionLeaseOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<SuspensionLeaseOptions>>().Value);
+        services.AddScoped<SuspendTenantAsOwnerHandler>();
+        services.AddScoped<ExtendSuspensionAsOwnerHandler>();
+        services.AddScoped<LiftSuspensionAsOwnerHandler>();
+        services.AddScoped<ListSuspensionsForOwnerHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();

@@ -234,6 +234,10 @@ public static class ServiceCollectionExtensions
         // `23-88`: the identical shape, for the async impact-preview question rather than the grant
         // itself - IModuleQuantityImpactPreviewStore's own remarks.
         services.AddScoped<IModuleQuantityImpactPreviewStore, ModuleQuantityImpactPreviewStore>();
+        // `22-08`: the account-wide freeze's own live read (never cached, CLAUDE.md rule 8) and its
+        // write-only audit trail - see each interface's own remarks.
+        services.AddScoped<ISiteSuspensionReadStore, SiteSuspensionReadStore>();
+        services.AddScoped<ISiteSuspensionRecordRepository, SiteSuspensionRecordRepository>();
         // `23-59`/`adr/0147`: "a grant carries over every contact ever collected" - the request-side
         // half; `Ago.Chat.Worker.ContactCarryoverJob` does the actual, bounded, resumable work later.
         services.AddScoped<IContactCarryoverRequestStore, ContactCarryoverRequestStore>();

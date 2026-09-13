@@ -324,7 +324,8 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
             new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
-            new PermissionChecker(db), new SynchronousMessagePipeline(fixture.DataSource));
+            new PermissionChecker(db), new SiteSuspensionReadStore(fixture.DataSource),
+            new SynchronousMessagePipeline(fixture.DataSource), new SystemClock());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var getVisitorHistory = new GetVisitorHistoryHandler(

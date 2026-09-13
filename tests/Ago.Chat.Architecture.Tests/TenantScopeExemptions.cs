@@ -483,6 +483,39 @@ internal static class TenantScopeExemptions
             + "been instead, because there is no sibling handler to branch off of.",
 
         // ---------------------------------------------------------------------------------------
+        // `22-08`/`adr/0166`: the account-wide enforcement freeze - the platform owner's own
+        // suspend/extend/lift trio and their shared list read. The identical category as
+        // EnableModuleForSiteAsOwnerHandler/RevokeModuleForSiteAsOwnerHandler/RestoreOperatorSeatAsOwnerHandler
+        // above: each takes a SiteId chosen by the owner, not a resource the caller already owns, and
+        // RequirePlatformOwner on OwnerSuspensionEndpoints is the entire access-control story -
+        // Ago.Chat.Application still has no port that can see a Keycloak realm-role claim, so a
+        // permission check here would be a second, weaker copy of a rule the policy already decided.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.SuspendTenantAsOwner.SuspendTenantAsOwnerHandler.HandleAsync"] =
+            "`22-08`, the platform owner's own initial freeze - SiteId names the account being suspended, "
+            + "chosen by the owner, and RequirePlatformOwner on OwnerSuspensionEndpoints is the entire "
+            + "access-control story. No prior row to cross-check the SiteId against - suspending is a write on "
+            + "the Site aggregate itself (sites.GetByIdAsync(siteId)), the same 'no prior object to check "
+            + "ownership of' shape EnableModuleForSiteAsOwnerHandler's own entry describes for granting a "
+            + "module.",
+        ["Ago.Chat.Application.UseCases.ExtendSuspensionAsOwner.ExtendSuspensionAsOwnerHandler.HandleAsync"] =
+            "`22-08`, the mirror of SuspendTenantAsOwnerHandler right above - pushes an already-suspended "
+            + "account's own deadline further out. Identical reasoning: SiteId names the account, chosen by "
+            + "the owner, and RequirePlatformOwner on OwnerSuspensionEndpoints is the entire access-control "
+            + "story.",
+        ["Ago.Chat.Application.UseCases.LiftSuspensionAsOwner.LiftSuspensionAsOwnerHandler.HandleAsync"] =
+            "`22-08`, the reversal - lifting a suspension early rather than letting it expire on its own. "
+            + "Identical reasoning to SuspendTenantAsOwnerHandler/ExtendSuspensionAsOwnerHandler above: SiteId "
+            + "names the account, chosen by the owner, and RequirePlatformOwner on OwnerSuspensionEndpoints is "
+            + "the entire access-control story.",
+        ["Ago.Chat.Application.UseCases.ListSuspensionsForOwner.ListSuspensionsForOwnerHandler.HandleAsync"] =
+            "`22-08`, the console's own \"who is currently suspended\" read - the same shape as "
+            + "ListSitesForOwnerHandler above, not GetSiteForOwnerHandler: it carries no SiteId at all, because "
+            + "the whole point is every currently-suspended tenant across the deployment, not one named site. "
+            + "RequirePlatformOwner on GET /api/v1/owner/suspensions is the entire access-control story. "
+            + "Read-only; no write happens here.",
+
+        // ---------------------------------------------------------------------------------------
         // `24-01`: the acceptance record's own two handlers. Neither carries a SiteId at all - not
         // an omission, a deliberate consequence of what an acceptance is. Recording your own
         // acceptance is not an act on a tenant-scoped resource the way writing a conversation note

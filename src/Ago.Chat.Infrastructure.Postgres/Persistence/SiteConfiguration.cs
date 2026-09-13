@@ -264,6 +264,21 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasConversion<string>()
             .HasDefaultValue(ContactVisibility.Visible);
 
+        // `22-08`: the account-wide freeze - Site.SuspendedUntil's own remarks explain why this is a
+        // nullable scalar with no CHECK constraint (there is no closed value set to enumerate, unlike
+        // ContactVisibility). Nullable, no default needed: every row that predates this column reads
+        // back `null` - "not suspended" - with no backfill, the identical "additive nullable column"
+        // shape DemoExpiresAt already establishes for itself.
+        builder.Property(s => s.SuspendedUntil).HasColumnName("suspended_until");
+
+        // The one read this column serves besides ISiteSuspensionReadStore's own live Dapper query -
+        // Ago.Chat.Worker.SuspensionLeaseRenewalJob's own periodic sweep for every currently-suspended
+        // site, the identical "index the column a live sweep filters on" reasoning DemoExpiresAt's own
+        // index just above already states for its own analogous sweep.
+        builder.HasIndex(s => s.SuspendedUntil)
+            .HasDatabaseName("ix_sites_suspended_until")
+            .HasFilter("suspended_until IS NOT NULL");
+
         // `23-06`: four shadow properties, the identical shape `ErasureRequestedAt` already
         // establishes just above for the identical reason - each has exactly one legitimate writer
         // (`ISiteInstallationSignalRepository`, via raw Npgsql conditional `UPDATE`s) and is read only

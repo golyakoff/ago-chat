@@ -41,7 +41,14 @@ public sealed record OwnerSiteDetailResponse(
     int RecentWindowDays,
     IReadOnlyList<OwnerSiteModuleDto> Modules,
     IReadOnlyList<string> AllowedOrigins,
-    IReadOnlyList<OwnerSiteOperatorDto> Operators);
+    IReadOnlyList<OwnerSiteOperatorDto> Operators,
+    // `22-08`: the account-wide freeze, added so the owner's detail screen (the one place it may be
+    // set, extended or lifted) has something to show without a second round trip - the identical
+    // "load straight off the write-side aggregate, low-frequency admin read, no caching concern"
+    // reasoning `AllowedOrigins`' own remarks give a few lines up. `null` means "not suspended",
+    // never rendered as a blank - Domain.Site.SuspendedUntil's own remarks state why this is
+    // deliberately never sourced from a cache.
+    DateTimeOffset? SuspendedUntil);
 
 /// <summary>
 /// `23-68`: one row of <see cref="OwnerSiteDetailResponse.Operators"/> - the identical shape

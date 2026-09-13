@@ -97,7 +97,7 @@ public sealed class RateLimitingTests(SiteCachingFixture fixture)
             };
             var result = await AuthEndpoints.HandleVisitorSessionAsync(
                 new AuthEndpoints.VisitorSessionRequest(publicKey),
-                getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource),
+                getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource), new SiteSuspensionReadStore(fixture.DataSource),
                 limiter, rateLimitOptions, new UuidV7Generator(), new SystemClock(), tokens, httpContext, CancellationToken.None);
             await result.ExecuteAsync(httpContext);
             return (httpContext.Response.StatusCode, httpContext.Response.Headers.RetryAfter.FirstOrDefault());
