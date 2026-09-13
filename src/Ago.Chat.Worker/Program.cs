@@ -413,6 +413,12 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportJob
 builder.Services.AddSingleton<SiteExportArchiveWriter>();
 builder.Services.AddHostedService<SiteExportJob>();
 
+// This item's own TTL sweep. No AddOptions<SiteExportPruneJobOptions>() call here, unlike every job
+// right above - ChatModule.ConfigureServices already bound and validated it (that class's own remarks:
+// GetSiteExportHistoryHandler, in Ago.Chat.Api, needs the identical bound instance this job reads its
+// RetentionWindow from, so the bind lives where both hosts can reach it, once).
+builder.Services.AddHostedService<SiteExportPruneJob>();
+
 // Liveness stays trivial (the process is running); readiness now means "can actually reach the
 // dependencies this dispatcher needs" (2-04), replacing 0-03's always-healthy stand-in.
 builder.Services.AddHealthChecks()

@@ -80,6 +80,7 @@ using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
+using Ago.Chat.Application.UseCases.GetSiteExportHistory;
 using Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
 using Ago.Chat.Application.UseCases.GetContactVisibility;
 using Ago.Chat.Application.UseCases.UpdateContactVisibility;
@@ -305,6 +306,20 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(SiteExportOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportOptions>>().Value);
+
+        // This item's own TTL: bound here, not Ago.Chat.Worker's Program.cs, precisely so both
+        // Ago.Chat.Worker's SiteExportPruneJob (IOptions<T>, the AccessRecordPruneJob shape) and
+        // Ago.Chat.Api's GetSiteExportHistoryHandler (a plain value, the SiteExportOptions shape right
+        // above) resolve the exact same bound instance from whichever host they run in -
+        // SiteExportPruneJobOptions's own remarks explain why one shared class, bound once, here, is
+        // what keeps the console's computed "auto-deletes on" date and the prune job's own deletion
+        // sweep from ever drifting apart.
+        services
+            .AddOptions<SiteExportPruneJobOptions>()
+            .Bind(configuration.GetSection(SiteExportPruneJobOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteExportPruneJobOptions>>().Value);
+
         // `24-11`: the person-scoped export's own bucket and its attachment-link lifetime - see
         // PersonExportRateLimitOptions'/PersonExportOptions' own remarks for why each is its own
         // class rather than a reuse of SiteExportRateLimitOptions/SiteExportJobOptions.
@@ -1116,6 +1131,10 @@ public sealed class ChatModule : IProductModule
         // above.
         services.AddScoped<RequestSiteExportHandler>();
         services.AddScoped<GetSiteExportStatusHandler>();
+
+        // This item's own console screen: the export-history list, registered the same "every host,
+        // only Ago.Chat.Api maps routes for it today" shape as the two right above.
+        services.AddScoped<GetSiteExportHistoryHandler>();
 
         // `24-11`: the subject-scoped export pair - synchronous, no request/status row, see
         // ExportConversationHandler's own remarks for why. Registered for every host, the same

@@ -6,6 +6,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetAccessRecordsForSite;
 using Ago.Chat.Application.UseCases.GetContactRevealsForSite;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
+using Ago.Chat.Application.UseCases.GetSiteExportHistory;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetTenantAgreementsForSite;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
@@ -70,6 +71,23 @@ public static class SitesEndpoints
         app.MapGet(
                 "/api/v1/sites/{siteId:guid}/message-archives/{retentionClass}/{period}/download",
                 HandleGetMessageArchiveDownloadUrlAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+    }
+
+    /// <summary>
+    /// This item's own console screen: `GET /api/v1/sites/{siteId}/exports` - deliberately its own
+    /// <c>Map</c> call, not folded into <see cref="MapSitesEndpoints"/> above, for the identical reason
+    /// <see cref="MapAccessRecordsEndpoint"/>'s own remarks give: several stripped-down integration
+    /// test hosts call <see cref="MapSitesEndpoints"/> to exercise routes that predate this one,
+    /// without ever registering <see cref="GetSiteExportHistoryHandler"/> in their own DI container -
+    /// folding this route in would break every other route in that method, in every test host that
+    /// never touches this one at all, the same "one endpoint's unresolvable service parameter breaks
+    /// Minimal API's metadata build for the whole data source" failure <see cref="MapAccessRecordsEndpoint"/>'s
+    /// own remarks describe in detail.
+    /// </summary>
+    public static void MapExportHistoryEndpoint(this WebApplication app)
+    {
+        app.MapGet("/api/v1/sites/{siteId:guid}/exports", HandleGetExportHistoryAsync)
             .RequireAuthorization("RequireOperatorIdentity");
     }
 
@@ -283,6 +301,33 @@ public static class SitesEndpoints
     }
 
     /// <summary>
+    /// This item's own console screen: `GET /api/v1/sites/{siteId}/exports` - every export request the
+    /// site has ever made, newest first, feeding the table the console's own "Скачать данные" page
+    /// renders (<see cref="GetSiteExportHistoryHandler"/>'s own remarks on why this is a separate
+    /// handler from the single-item poll right above). A bare JSON array, the identical shape
+    /// <see cref="HandleListMessageArchivesAsync"/> already returns for the same "small and bounded,
+    /// no pagination earns its keep here" reason.
+    /// </summary>
+    private static async Task<IResult> HandleGetExportHistoryAsync(
+        Guid siteId, GetSiteExportHistoryHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetSiteExportHistory(new SiteId(siteId), user.GetOperatorId()), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(result.Value
+            .Select(item => new SiteExportHistoryItemResponse(
+                item.ExportId, item.Status.ToString(), item.RequestedAt, item.CompletedAt, item.DownloadUrl,
+                item.ExpiresAt, item.FailureReason))
+            .ToList());
+    }
+
+    /// <summary>
     /// `24-12`: `GET /api/v1/sites/{siteId}/access-records` - the tenant's own read of who accessed
     /// their data, per this item's own Scope ("reachable by the tenant for their own site, not only by
     /// AGO"). `?before=&limit=` matches `api-design.md`'s pagination convention, the same spelling
@@ -420,6 +465,14 @@ public static class SitesEndpoints
     /// </summary>
     public sealed record SiteExportStatusResponse(
         Guid ExportId, string Status, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt, Uri? DownloadUrl, string? FailureReason);
+
+    /// <summary>One row of this item's own console history table. <paramref name="ExpiresAt"/> is the
+    /// date the console's own "дата автоматического удаления" column renders - present only for a
+    /// <c>"Ready"</c> row (<see cref="Application.UseCases.GetSiteExportHistory.SiteExportHistoryItem"/>'s
+    /// own remarks on why the other three states never carry one).</summary>
+    public sealed record SiteExportHistoryItemResponse(
+        Guid ExportId, string Status, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt, Uri? DownloadUrl,
+        DateTimeOffset? ExpiresAt, string? FailureReason);
 
     public sealed record MessageArchiveResponse(string RetentionClass, DateOnly PeriodStart, DateOnly PeriodEnd, DateTimeOffset ArchivedAt);
 

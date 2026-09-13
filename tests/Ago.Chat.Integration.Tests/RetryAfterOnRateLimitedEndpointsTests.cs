@@ -578,6 +578,9 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
 
         public Task<ExportRequestRecord?> GetAsync(Guid exportId, SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
+        public Task<IReadOnlyList<ExportRequestRecord>> ListForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
     }
 
     private sealed class NeverCalledConversationReadStore : IConversationReadStore

@@ -31,6 +31,15 @@ internal sealed class ExportRequestEntityConfiguration : IEntityTypeConfiguratio
             .HasDatabaseName("ix_export_requests_pending")
             .HasFilter("status = 'Pending'");
 
+        // This item's own TTL: serves SiteExportPruneQuery.ClaimExpiredReadyBatchAsync's own sweep,
+        // the identical "partial index on a queue-shaped predicate" reasoning ix_export_requests_pending
+        // above already states, applied to the opposite end of the same table's lifecycle - a `Ready`
+        // row waiting to age out of its retention window, rather than a `Pending` one waiting to be
+        // claimed.
+        builder.HasIndex(e => e.CompletedAt)
+            .HasDatabaseName("ix_export_requests_ready")
+            .HasFilter("status = 'Ready'");
+
         // No separate index for IExportRequestRepository.GetAsync's (id, site_id) read: `id` is
         // already the primary key and therefore already an index on its own, and `site_id` there is a
         // post-lookup filter on the one row the PK found, not a predicate that needs its own index -

@@ -12,10 +12,20 @@
 /// can simply ask for again, so there is no value in silently retrying a request that already failed
 /// once, and a terminal state lets the console show the tenant an honest "this attempt failed" rather
 /// than a spinner that never resolves.</para>
+///
+/// <para><c>Expired</c> (added by the TTL half of this same item): a second terminal state reached
+/// only from <c>Ready</c>, once <c>Ago.Chat.Worker</c>'s <c>SiteExportPruneJob</c> has deleted the
+/// archive object past its own retention window. Not folded into <c>Failed</c> - a failed export never
+/// produced an artifact at all (nothing to explain beyond <c>FailureReason</c>), while an expired one
+/// did, and the console owes the tenant a different sentence for "this succeeded, then was cleaned up"
+/// than for "this attempt did not work." A row never moves out of <c>Expired</c> either: the same
+/// one-shot reasoning above applies - a tenant who wants the data again simply asks for a new
+/// export.</para>
 /// </summary>
 public enum ExportStatus
 {
     Pending,
     Ready,
     Failed,
+    Expired,
 }

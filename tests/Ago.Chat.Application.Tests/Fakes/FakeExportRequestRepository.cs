@@ -43,4 +43,31 @@ public sealed class FakeExportRequestRepository : IExportRequestRepository
 
         return Task.FromResult<ExportRequestRecord?>(entry.Record);
     }
+
+    public Task<IReadOnlyList<ExportRequestRecord>> ListForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ExportRequestRecord> results = _requests.Values
+            .Where(entry => entry.SiteId == siteId)
+            .Select(entry => entry.Record)
+            .OrderByDescending(record => record.RequestedAt)
+            .ToList();
+        return Task.FromResult(results);
+    }
+
+    /// <summary>Lets a test mark a seeded request <c>Failed</c> - the mirror of
+    /// <see cref="SetReady"/> for the terminal-failure path.</summary>
+    public void SetFailed(Guid exportId, string failureReason, DateTimeOffset completedAt)
+    {
+        var (siteId, record) = _requests[exportId];
+        _requests[exportId] = (siteId, record with { Status = ExportStatus.Failed, FailureReason = failureReason, CompletedAt = completedAt });
+    }
+
+    /// <summary>Lets a test mark a seeded request <c>Expired</c> - the terminal state
+    /// <c>SiteExportPruneJob</c> moves a <c>Ready</c> request into once its retention window passes.
+    /// </summary>
+    public void SetExpired(Guid exportId)
+    {
+        var (siteId, record) = _requests[exportId];
+        _requests[exportId] = (siteId, record with { Status = ExportStatus.Expired, ObjectKey = null });
+    }
 }
