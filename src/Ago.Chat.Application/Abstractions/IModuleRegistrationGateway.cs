@@ -66,6 +66,33 @@ public interface IModuleRegistrationGateway
     /// </summary>
     Task<TenantDataErasureResult> EraseTenantDataAsync(
         ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `22-31`: `GET .../tenant-data` - the read-only sibling of <see cref="EraseTenantDataAsync"/>'s own
+    /// `DELETE` on the identical path, over the identical deployment-wide provisioning secret and for the
+    /// identical reason - the backlog item's own Depends-on names `22-30`'s module gate explicitly:
+    /// export needs the same reach to a tenant whose per-site <see cref="ModuleCredential"/> may be
+    /// revoked, lapsed, or never issued, which is exactly what this channel (unlike
+    /// <see cref="IModuleGateway"/>'s own per-site-credentialed one) does not depend on.
+    ///
+    /// <para><b>The module's own opaque bytes, not a parsed shape.</b> `adr/0149` rule 3 - chat never
+    /// parses a module's data - decides the return type here: <see cref="ModuleTenantExportResult.Content"/>
+    /// is a fully-received, seekable local stream the caller copies verbatim into its own export archive.
+    /// See <see cref="ModuleTenantExportResult"/>'s own remarks for why this port hands back a local
+    /// stream rather than the live network response.</para>
+    ///
+    /// <para><b>Resilience lives outside this method, applied by the caller.</b> The identical split
+    /// <see cref="IModuleGateway"/>'s own remarks state for its own boundary ("an implementation is
+    /// written as if the module always answers, and resilience is applied by wrapping it") - here that
+    /// means <c>Ago.Chat.Worker.SiteExportArchiveWriter</c> wraps this one call in its own
+    /// <c>Ago.Chat.Module.Modules.ModuleExportResiliencePipelines</c>, sized for a whole tenant's history
+    /// rather than reusing <see cref="HttpModuleRegistrationGateway"/>'s usual "deliberately unwrapped"
+    /// treatment of every other method here (this backlog item's own Answered section: a rare
+    /// provisioning-channel call that must now carry more than an operator-issued command, so it earns
+    /// the one exception).</para>
+    /// </summary>
+    Task<ModuleTenantExportResult> ExportTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken);
 }
 
 /// <param name="TenantExisted">Whether the module reports it held a row for this tenant at all -
@@ -91,3 +118,29 @@ public sealed record ModuleRegistrationTarget(ModuleKey ModuleKey, SiteId SiteId
 /// reconciliation check can tell "mid-rotation" apart from "settled".</param>
 public readonly record struct ModuleRegistrationRemoteStatus(
     bool Exists, DateTimeOffset? RegisteredAt, bool HasCredentialInGracePeriod);
+
+/// <summary>
+/// `22-31`: one module's opaque export artifact for one tenant. <see cref="Content"/> is a fully
+/// downloaded, seekable local file stream - never the live network response stream - so that
+/// <see cref="Ago.Chat.Module.Modules.ModuleExportResiliencePipelines"/> can safely retry the whole call
+/// on a transient failure: each attempt inside <c>HttpModuleRegistrationGateway.ExportTenantDataAsync</c>
+/// downloads into its own fresh temp file and cleans it up on failure, so a retried attempt never leaves
+/// a caller holding a half-written stream. The file is opened with <c>FileOptions.DeleteOnClose</c>, so
+/// disposing this result (after its bytes have been copied into the caller's own archive entry) is what
+/// removes the temp file - there is no separate cleanup step for a caller to forget.
+/// </summary>
+public sealed class ModuleTenantExportResult(int formatVersion, long sizeBytes, Stream content) : IAsyncDisposable
+{
+    /// <summary>The module's own format version for these bytes - opaque to chat (adr/0149 rule 3),
+    /// carried only so <c>manifest.json</c> can record it.</summary>
+    public int FormatVersion { get; } = formatVersion;
+
+    /// <summary>The exact byte count, known upfront because the download is already complete by the time
+    /// this result exists - unlike the live network response, whose length a chunked transfer may never
+    /// state.</summary>
+    public long SizeBytes { get; } = sizeBytes;
+
+    public Stream Content { get; } = content;
+
+    public ValueTask DisposeAsync() => Content.DisposeAsync();
+}

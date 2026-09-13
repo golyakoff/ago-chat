@@ -1,8 +1,10 @@
 ﻿using System.IO.Compression;
 using System.Net.Http.Headers;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -33,6 +35,7 @@ public sealed class SiteExportJob(
     IFileStorage fileStorage,
     SiteExportArchiveWriter archiveWriter,
     IClock clock,
+    IServiceScopeFactory scopeFactory,
     IOptions<SiteExportJobOptions> options,
     ILogger<SiteExportJob> logger) : BackgroundService
 {
@@ -114,11 +117,20 @@ public sealed class SiteExportJob(
         var tempPath = Path.Combine(Path.GetTempPath(), $"ago-chat-export-{exportId:N}.zip");
         try
         {
+            // `22-31`: IEnabledModuleReadStore and IModuleRegistrationGateway are both scoped
+            // (per-request/per-unit-of-work DbContext/HttpClient lifetimes), and this job itself is a
+            // singleton hosted service - the identical reason SiteErasureJob.EraseModulesAsync creates
+            // its own scope per site rather than taking either dependency as a constructor parameter.
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var moduleReadStore = scope.ServiceProvider.GetRequiredService<IEnabledModuleReadStore>();
+            var registrationGateway = scope.ServiceProvider.GetRequiredService<IModuleRegistrationGateway>();
+
             await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
             {
                 await using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
                 using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen: false);
-                await archiveWriter.WriteAsync(connection, archive, siteId, clock.UtcNow, cancellationToken);
+                await archiveWriter.WriteAsync(
+                    connection, archive, siteId, clock.UtcNow, moduleReadStore, registrationGateway, cancellationToken);
             }
 
             var length = new FileInfo(tempPath).Length;

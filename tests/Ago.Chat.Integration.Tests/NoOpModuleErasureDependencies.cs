@@ -35,6 +35,10 @@ internal sealed class UncalledModuleRegistrationGateway : IModuleRegistrationGat
     public Task<TenantDataErasureResult> EraseTenantDataAsync(
         ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
         throw new NotSupportedException("Not expected to be called - no EnabledModule row is seeded in this suite.");
+
+    public Task<ModuleTenantExportResult> ExportTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Not expected to be called - no EnabledModule row is seeded in this suite.");
 }
 
 /// <summary>Answers "not configured" - harmless here since the gateway above is never reached either

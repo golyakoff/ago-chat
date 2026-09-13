@@ -29,6 +29,14 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
 {
     private const string ProvisioningSecretHeaderName = "X-Ago-Module-Provisioning-Secret";
 
+    /// <summary>`22-31`: carries the module's own opaque format version alongside its bytes - a header,
+    /// not a JSON envelope wrapping the payload, because the payload itself is the whole point of this
+    /// call and must reach <see cref="ExportTenantDataAsync"/>'s own destination stream unparsed and
+    /// un-re-encoded (base64-wrapping a whole tenant's history inside JSON would cost real bytes for
+    /// no benefit - <see cref="IModuleRegistrationGateway.ExportTenantDataAsync"/>'s own remarks on why
+    /// this is bytes, not a parsed shape).</summary>
+    private const string ExportFormatVersionHeaderName = "X-Ago-Export-Format-Version";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task RegisterAsync(
@@ -80,6 +88,76 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
         }
     }
 
+    /// <summary>
+    /// `22-31`: `GET .../module-registrations/{tenantId}/tenant-data` - a distinct verb on the identical
+    /// path <see cref="EraseTenantDataAsync"/> already `DELETE`s, the read half of the same "reach a
+    /// tenant regardless of per-site credential state" channel.
+    ///
+    /// <para><b>Streamed to a local temp file, not buffered into memory, and not left as the live
+    /// network stream either.</b> <see cref="HttpCompletionOption.ResponseHeadersRead"/> means the
+    /// response body is never fully buffered by <c>HttpClient</c> itself before this method sees it, and
+    /// the subsequent <c>CopyToAsync</c> below moves it straight onto disk - the identical "never holds a
+    /// tenant's whole history in memory" property <c>Ago.Chat.Worker.SiteExportArchiveWriter</c>'s own
+    /// remarks already establish for the main archive. Landing it on a fresh temp file rather than
+    /// returning the live response stream is what makes this call safe to retry
+    /// (<see cref="ModuleTenantExportResult"/>'s own remarks): a retried attempt starts this method over
+    /// from nothing, never resumes a half-copied stream.</para>
+    /// </summary>
+    public async Task<ModuleTenantExportResult> ExportTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
+    {
+        var uri = BuildUri(module.EntryPoint, $"api/v1/module-registrations/{module.SiteId.Value}/tenant-data");
+        var response = await SendAsync(
+            HttpMethod.Get, uri, body: null, module.ModuleKey, provisioningSecret, cancellationToken,
+            HttpCompletionOption.ResponseHeadersRead);
+
+        try
+        {
+            if (!response.Headers.TryGetValues(ExportFormatVersionHeaderName, out var headerValues)
+                || !int.TryParse(headerValues.FirstOrDefault(), out var formatVersion))
+            {
+                throw new ModuleUnreachableException(
+                    module.ModuleKey,
+                    $"module's export response carried no valid {ExportFormatVersionHeaderName} header.");
+            }
+
+            var tempPath = Path.Combine(Path.GetTempPath(), $"ago-chat-module-export-{Guid.NewGuid():N}.tmp");
+
+            // FileOptions.DeleteOnClose: ModuleTenantExportResult's own remarks - the caller's eventual
+            // dispose is the entire cleanup story, there is no second step to forget.
+            var fileStream = new FileStream(
+                tempPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, bufferSize: 81920,
+                FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+            try
+            {
+                await using (var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken))
+                {
+                    try
+                    {
+                        await responseStream.CopyToAsync(fileStream, cancellationToken);
+                    }
+                    catch (IOException ex)
+                    {
+                        throw new ModuleUnreachableException(
+                            module.ModuleKey, $"module's export body could not be read: {ex.Message}", ex);
+                    }
+                }
+
+                fileStream.Position = 0;
+                return new ModuleTenantExportResult(formatVersion, fileStream.Length, fileStream);
+            }
+            catch
+            {
+                await fileStream.DisposeAsync();
+                throw;
+            }
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
     public async Task<ModuleRegistrationRemoteStatus> GetStatusAsync(
         ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
     {
@@ -101,7 +179,7 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
 
     private async Task<HttpResponseMessage> SendAsync(
         HttpMethod method, Uri uri, object? body, ModuleKey moduleKey, ModuleProvisioningSecret provisioningSecret,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, HttpCompletionOption completionOption = HttpCompletionOption.ResponseContentRead)
     {
         HttpResponseMessage response;
         try
@@ -113,7 +191,10 @@ public sealed class HttpModuleRegistrationGateway(HttpClient httpClient) : IModu
             }
 
             httpRequest.Headers.Add(ProvisioningSecretHeaderName, provisioningSecret.Value);
-            response = await httpClient.SendAsync(httpRequest, cancellationToken);
+            // `22-31`: ExportTenantDataAsync passes ResponseHeadersRead so a large tenant export is
+            // never buffered whole by HttpClient itself before this method can start streaming it onward -
+            // every other caller keeps the default, unchanged.
+            response = await httpClient.SendAsync(httpRequest, completionOption, cancellationToken);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {

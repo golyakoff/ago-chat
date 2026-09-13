@@ -639,6 +639,17 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<IModuleRegistrationGateway, HttpModuleRegistrationGateway>();
         services.AddSingleton<IModuleCredentialGenerator, ModuleCredentialGenerator>();
 
+        // `22-31`: the one method on IModuleRegistrationGateway that does get its own resilience pipeline
+        // - ModuleExportResiliencePipelines' own remarks explain why neither ModuleResiliencePipelines'
+        // visitor-message sizing above nor this gateway's usual unwrapped treatment fits
+        // ExportTenantDataAsync. Applied at the call site (Ago.Chat.Worker.SiteExportArchiveWriter), not
+        // by decorating this gateway - every other method here stays exactly as unwrapped as before.
+        services.AddResiliencePipelineOptions(
+            ModuleExportResiliencePipelines.PipelineName, configuration, ConfigureModuleExportResilienceDefaults);
+        services.AddSingleton(sp => new ModuleExportResiliencePipelines(
+            sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>()
+                .Get(ModuleExportResiliencePipelines.PipelineName)));
+
         // `23-65`/`adr/0150`: bound, deliberately, with no `.Validate()`/`.ValidateOnStart()` - see
         // ModuleProvisioningOptions' own remarks for why an unset value here must not fail this host's
         // boot the way ChannelCredentialCipherOptions right above it is required to.
@@ -1322,6 +1333,21 @@ public sealed class ChatModule : IProductModule
             BreakDuration = TimeSpan.FromSeconds(10),
         };
         options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 8, MaxQueuedActions = 32 };
+    }
+
+    /// <summary>
+    /// `22-31`: see <see cref="Modules.ModuleExportResiliencePipelines"/>'s own remarks for the full
+    /// reasoning behind every number here and why this pipeline carries no circuit breaker or bulkhead.
+    /// </summary>
+    private static void ConfigureModuleExportResilienceDefaults(ResiliencePipelineOptions options)
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromMinutes(2) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 2,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromSeconds(1),
+        };
     }
 
     /// <summary>

@@ -1341,5 +1341,11 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         public Task<TenantDataErasureResult> EraseTenantDataAsync(
             ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
             Task.FromResult(new TenantDataErasureResult(TenantExisted: true, Confirmed: true));
+
+        // `22-31`: the identical never-exercised minimal stub EraseTenantDataAsync's own remarks
+        // describe, restated for this suite's own newer sibling method.
+        public Task<ModuleTenantExportResult> ExportTenantDataAsync(
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+            Task.FromResult(new ModuleTenantExportResult(1, 0, new MemoryStream()));
     }
 }
