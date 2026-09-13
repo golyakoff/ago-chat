@@ -94,4 +94,28 @@ public sealed class FakeModuleRegistrationGateway : IModuleRegistrationGateway
             EraseTenantDataResultByModule.GetValueOrDefault(
                 module.ModuleKey, new TenantDataErasureResult(TenantExisted: true, Confirmed: true)));
     }
+
+    public List<(ModuleRegistrationTarget Module, ModuleProvisioningSecret ProvisioningSecret)> ExportTenantDataCalls { get; } = [];
+
+    public bool UnreachableOnExportTenantData { get; set; }
+
+    /// <summary>`22-31`: the bytes a test wants returned - a fresh <see cref="MemoryStream"/> per call,
+    /// since <see cref="ModuleTenantExportResult"/>'s own contract is a stream the caller disposes after
+    /// copying it, and a caller in this test suite may legitimately call this fake more than once.</summary>
+    public byte[] ExportPayload { get; set; } = [1, 2, 3];
+
+    public int ExportFormatVersionToReturn { get; set; } = 1;
+
+    public Task<ModuleTenantExportResult> ExportTenantDataAsync(
+        ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken)
+    {
+        ExportTenantDataCalls.Add((module, provisioningSecret));
+        if (UnreachableOnExportTenantData)
+        {
+            throw new ModuleUnreachableException(module.ModuleKey, "fake unreachable (export tenant data)");
+        }
+
+        var content = new MemoryStream(ExportPayload, writable: false);
+        return Task.FromResult(new ModuleTenantExportResult(ExportFormatVersionToReturn, ExportPayload.Length, content));
+    }
 }

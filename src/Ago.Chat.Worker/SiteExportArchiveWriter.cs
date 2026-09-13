@@ -1,6 +1,9 @@
 ﻿using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
+using Ago.Chat.Module.Modules;
 using Ago.Platform.Abstractions;
 using Npgsql;
 
@@ -54,16 +57,25 @@ namespace Ago.Chat.Worker;
 /// item's own brief gives for <c>sites</c>. Both calls are stated here rather than left for a future
 /// reader to wonder whether they were considered.</para>
 /// </summary>
-public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExportJobOptions options)
+public sealed class SiteExportArchiveWriter(
+    IFileStorage fileStorage, SiteExportJobOptions options,
+    IModuleProvisioningSecretProvider provisioningSecrets, ModuleExportResiliencePipelines exportResiliencePipelines)
 {
     private const int FormatVersion = 1;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <param name="moduleReadStore">`22-31`: scoped, resolved by <see cref="SiteExportJob"/> from its
+    /// own per-export <c>IServiceScopeFactory</c> scope - the identical reason
+    /// <c>SiteErasureJob.EraseModulesAsync</c> does the same, since this class itself is a
+    /// singleton (<c>ChatModule</c>'s own registration) and cannot hold a scoped dependency in its own
+    /// constructor.</param>
+    /// <param name="registrationGateway">Scoped for the identical reason.</param>
     public async Task WriteAsync(
-        NpgsqlConnection connection, ZipArchive archive, Guid siteId, DateTimeOffset exportedAt, CancellationToken cancellationToken)
+        NpgsqlConnection connection, ZipArchive archive, Guid siteId, DateTimeOffset exportedAt,
+        IEnabledModuleReadStore moduleReadStore, IModuleRegistrationGateway registrationGateway,
+        CancellationToken cancellationToken)
     {
-        await WriteManifestAsync(archive, siteId, exportedAt, cancellationToken);
         await WriteSiteAsync(archive, connection, siteId, cancellationToken);
         await WriteOperatorsAsync(archive, connection, siteId, cancellationToken);
         await WriteVisitorsAsync(archive, connection, siteId, cancellationToken);
@@ -80,10 +92,27 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
         await WriteNotesAsync(archive, connection, siteId, cancellationToken);
         await WriteTagsAsync(archive, connection, siteId, cancellationToken);
         await WriteConversationTagsAsync(archive, connection, siteId, cancellationToken);
+
+        // `22-31`: every module this site is known to have - attempted last, and manifest.json written
+        // only once this either succeeds for every one of them or throws. A throw here propagates out
+        // of this method, out of SiteExportJob.ProcessExportAsync, and is caught by SweepAsync exactly
+        // the way any other failure in this writer already is - the whole archive (including every
+        // store already written above) is discarded, never uploaded, and the export row is marked
+        // Failed naming the module. There is deliberately no partial-success path: a module's data
+        // half-attempted is worse than not attempted at all (this item's own Scope).
+        var moduleRecords = await WriteModulesAsync(
+            archive, new SiteId(siteId), moduleReadStore, registrationGateway, exportedAt, cancellationToken);
+
+        // Written last rather than first (this class's own previous shape): the modules array below
+        // cannot be known until every module above has answered, and a zip's own entries carry no
+        // ordering requirement a reader depends on - every existing reader of this archive opens an
+        // entry by name (archive.GetEntry("manifest.json")), never by position.
+        await WriteManifestAsync(archive, siteId, exportedAt, moduleRecords, cancellationToken);
     }
 
     private static async Task WriteManifestAsync(
-        ZipArchive archive, Guid siteId, DateTimeOffset exportedAt, CancellationToken cancellationToken)
+        ZipArchive archive, Guid siteId, DateTimeOffset exportedAt, IReadOnlyList<ModuleExportRecord> modules,
+        CancellationToken cancellationToken)
     {
         var manifest = new ManifestDocument(
             FormatVersion,
@@ -95,11 +124,81 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
                 "site", "operators", "visitors", "channelIdentities", "conversations", "messages", "attachments",
                 // `18-04`
                 "notes", "tags", "conversationTags",
-            ]);
+            ],
+            Modules: modules);
 
         var entry = archive.CreateEntry("manifest.json", CompressionLevel.Fastest);
         await using var entryStream = entry.Open();
         await JsonSerializer.SerializeAsync(entryStream, manifest, JsonOptions, cancellationToken);
+    }
+
+    /// <summary>
+    /// `22-31`: every module this site is known to have ever had - <see cref="IEnabledModuleReadStore.GetAllForSiteAsync"/>'s
+    /// own unfiltered read, the identical choice <c>SiteErasureJob.EraseModulesAsync</c> already makes
+    /// and for the identical reason: a revoked or lapsed grant still means the module holds this
+    /// tenant's data somewhere, so export must still ask it, not only a currently-active grant.
+    ///
+    /// <para><b>An empty result here is "this tenant has no calendar", not a failure.</b> Zero rows means
+    /// no module was ever enabled for this site - <c>manifest.json</c>'s own <c>modules</c> array comes
+    /// back empty, which is exactly the distinction this item's own Done-when asks the manifest to be
+    /// able to draw against the other case below: a module the site is known to have (at least one row
+    /// here) that cannot be reached throws instead of returning an empty or partial record, which aborts
+    /// the whole export (this method's own caller) rather than ever producing a manifest that silently
+    /// omits a module the site actually has.</para>
+    ///
+    /// <para><b>`adr/0155`: a revoke-then-re-enable can leave two rows for the same <see cref="ModuleKey"/>.</b>
+    /// This method asks each distinct key once - <see cref="IEnabledModuleReadStore.GetAllForSiteAsync"/>'s
+    /// own remarks: rows come back ordered by <c>enabled_at</c> ascending, so folding them into a
+    /// dictionary keyed by <see cref="ModuleKey"/> keeps the newest row's own <c>EntryPoint</c> for a
+    /// key that appears more than once.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<ModuleExportRecord>> WriteModulesAsync(
+        ZipArchive archive, SiteId siteId, IEnabledModuleReadStore moduleReadStore,
+        IModuleRegistrationGateway registrationGateway, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var modules = await moduleReadStore.GetAllForSiteAsync(siteId, now, cancellationToken);
+        if (modules.Count == 0)
+        {
+            return [];
+        }
+
+        var entryPointByModule = new Dictionary<ModuleKey, Uri>();
+        foreach (var module in modules)
+        {
+            entryPointByModule[module.ModuleKey] = module.EntryPoint;
+        }
+
+        var provisioningSecret = provisioningSecrets.TryGet();
+        if (provisioningSecret is null)
+        {
+            // The identical "no call was ever attempted, name the deployment gap rather than any one
+            // module" case SiteErasureJob.EraseModulesAsync's own remarks describe - here it fails the
+            // whole export rather than merely stalling a tick, since export has no "wait for next
+            // sweep" state to fall back to the way erasure's lifecycle gate does.
+            throw new ModuleUnreachableException(
+                entryPointByModule.Keys.First(), "this deployment has no module provisioning secret configured.");
+        }
+
+        var records = new List<ModuleExportRecord>(entryPointByModule.Count);
+        foreach (var (moduleKey, entryPoint) in entryPointByModule)
+        {
+            var target = new ModuleRegistrationTarget(moduleKey, siteId, entryPoint);
+            var pipeline = exportResiliencePipelines.For(moduleKey);
+
+            var result = await pipeline.ExecuteAsync(
+                async token => await registrationGateway.ExportTenantDataAsync(target, provisioningSecret.Value, token),
+                cancellationToken);
+
+            await using (result)
+            {
+                var entry = archive.CreateEntry($"modules/{moduleKey.Value}.bin", CompressionLevel.Fastest);
+                await using var entryStream = entry.Open();
+                await result.Content.CopyToAsync(entryStream, cancellationToken);
+                records.Add(new ModuleExportRecord(moduleKey.Value, Included: true, result.FormatVersion, result.SizeBytes));
+            }
+        }
+
+        return records;
     }
 
     private static async Task WriteSiteAsync(
@@ -432,7 +531,20 @@ public sealed class SiteExportArchiveWriter(IFileStorage fileStorage, SiteExport
     }
 
     private sealed record ManifestDocument(
-        int FormatVersion, Guid SiteId, DateTimeOffset ExportedAt, string AttachmentBytes, IReadOnlyList<string> Stores);
+        int FormatVersion, Guid SiteId, DateTimeOffset ExportedAt, string AttachmentBytes, IReadOnlyList<string> Stores,
+        IReadOnlyList<ModuleExportRecord> Modules);
+
+    /// <summary>`22-31`: one module's own entry in the manifest - this item's own Scope, verbatim: "its
+    /// key, whether it was included, its own format version, and the byte count." <see cref="Included"/>
+    /// is always <see langword="true"/> for every record this writer ever produces (a module that could
+    /// not be included aborts the whole export instead - <see cref="WriteModulesAsync"/>'s own remarks),
+    /// carried explicitly anyway because the manifest's own shape should say what it means rather than
+    /// leave a reader to infer "present" from "always true so far". <see cref="ModuleKey"/> is the raw
+    /// string, not the CLR <see cref="Domain.ModuleKey"/> type - the wire-facing convention this
+    /// codebase already uses everywhere else a closed-vocabulary value crosses into a JSON document
+    /// (<c>EnabledModuleDetailSummary.Status</c>'s own remarks state the identical rule for its own
+    /// string).</summary>
+    private sealed record ModuleExportRecord(string ModuleKey, bool Included, int FormatVersion, long ByteCount);
 
     private sealed record SiteExportRow(Guid Id, string Name, IReadOnlyList<string> AllowedOrigins);
 

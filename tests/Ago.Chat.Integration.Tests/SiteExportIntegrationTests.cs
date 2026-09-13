@@ -4,12 +4,16 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Chat.Module.Modules;
 using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Ago.Platform.Resilience;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -328,13 +332,36 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
         await db.SaveChangesAsync();
     }
 
+    /// <summary>`22-31`: <see cref="SiteExportArchiveWriter"/> now needs a per-export scope to resolve
+    /// <see cref="IEnabledModuleReadStore"/>/<see cref="IModuleRegistrationGateway"/> - both scoped, the
+    /// identical reason <c>SiteErasureModuleGateIntegrationTests.CreateJobs</c>'s own remarks give for
+    /// building a small, throwaway <see cref="ServiceCollection"/> here rather than a fake. None of this
+    /// file's own sites ever enable a module, so <see cref="IEnabledModuleReadStore.GetAllForSiteAsync"/>
+    /// genuinely returns an empty list against the real database - the "this tenant has no calendar"
+    /// path - and the registration gateway and provisioning secret provider below are never actually
+    /// called; they exist only so this graph resolves.</summary>
     private SiteExportJob CreateJob(IClock clock)
     {
         var options = new SiteExportJobOptions { AttachmentUrlLifetime = TimeSpan.FromMinutes(30) };
-        var archiveWriter = new SiteExportArchiveWriter(fixture.FileStorage, options);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(fixture.DataSource);
+        services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        services.AddScoped<IModuleRegistrationGateway>(_ => new HttpModuleRegistrationGateway(new HttpClient()));
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var exportPipelines = new ModuleExportResiliencePipelines(new ResiliencePipelineOptions());
+        var archiveWriter = new SiteExportArchiveWriter(
+            fixture.FileStorage, options, new NoProvisioningSecretProvider(), exportPipelines);
         return new SiteExportJob(
-            fixture.DataSource, fixture.FileStorage, archiveWriter, clock,
+            fixture.DataSource, fixture.FileStorage, archiveWriter, clock, scopeFactory,
             Options.Create(options), NullLogger<SiteExportJob>.Instance);
+    }
+
+    private sealed class NoProvisioningSecretProvider : IModuleProvisioningSecretProvider
+    {
+        public ModuleProvisioningSecret? TryGet() => null;
     }
 
     private async Task<(SiteId SiteId, string Name, string AllowedOrigin)> SeedSiteAsync(string name)
