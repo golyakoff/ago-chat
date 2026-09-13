@@ -486,6 +486,11 @@ app.MapSiteConsentDocumentEndpoints();
 // after AttachmentEndpoints.
 app.MapPhoneVerificationEndpoints();
 app.MapSitesEndpoints();
+// This item's own console screen: own Map call, not folded into MapSitesEndpoints above - see
+// SitesEndpoints' MapExportHistoryEndpoint's own remarks for why (a test host that maps only
+// MapSitesEndpoints must never be made to resolve GetSiteExportHistoryHandler just because this route
+// happened to share its file).
+app.MapExportHistoryEndpoint();
 // `24-12`: own Map call, not folded into MapSitesEndpoints above - see SitesEndpoints'
 // MapAccessRecordsEndpoint's own remarks for why (a test host that maps only MapSitesEndpoints must
 // never be made to resolve GetAccessRecordsForSiteHandler just because this route happened to share

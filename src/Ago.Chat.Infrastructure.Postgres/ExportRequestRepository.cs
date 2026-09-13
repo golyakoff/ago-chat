@@ -60,4 +60,34 @@ public sealed class ExportRequestRepository(NpgsqlDataSource dataSource) : IExpo
 
         return new ExportRequestRecord(exportId, status, objectKey, failureReason, requestedAt, completedAt);
     }
+
+    public async Task<IReadOnlyList<ExportRequestRecord>> ListForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            select id, status, object_key, failure_reason, requested_at, completed_at
+            from export_requests
+            where site_id = @siteId
+            order by requested_at desc
+            """,
+            connection);
+        command.Parameters.AddWithValue("siteId", siteId.Value);
+
+        var records = new List<ExportRequestRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var id = reader.GetGuid(0);
+            var status = Enum.Parse<ExportStatus>(reader.GetString(1));
+            var objectKey = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var failureReason = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var requestedAt = reader.GetFieldValue<DateTimeOffset>(4);
+            DateTimeOffset? completedAt = reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5);
+
+            records.Add(new ExportRequestRecord(id, status, objectKey, failureReason, requestedAt, completedAt));
+        }
+
+        return records;
+    }
 }

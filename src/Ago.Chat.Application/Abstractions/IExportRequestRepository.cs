@@ -49,6 +49,16 @@ public interface IExportRequestRepository
     /// never existed, never a cross-tenant existence leak.
     /// </summary>
     Task<ExportRequestRecord?> GetAsync(Guid exportId, SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// This item's own console screen: every export request a site has ever made, newest first by
+    /// <see cref="ExportRequestRecord.RequestedAt"/> - the same "flat, unpaginated list" shape
+    /// <c>GetTenantAgreementsForSiteHandler</c>'s own remarks accept, for the identical reason: a
+    /// site's own export history is not large (a tenant triggers this by hand, rate-limited to a
+    /// handful a day at most - <c>Ago.Chat.Application.UseCases.RequestSiteExport.SiteExportRateLimitOptions</c>),
+    /// so there is nothing here for a keyset page to earn its keep over.
+    /// </summary>
+    Task<IReadOnlyList<ExportRequestRecord>> ListForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
 }
 
 /// <summary>Read model for one export request - not a domain aggregate (see
