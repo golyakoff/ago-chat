@@ -108,6 +108,19 @@ internal static class TenantScopeExemptions
             + "established (gated by SiteManageOperators the ordinary way) - the presented code is what proves the "
             + "caller was actually handed an invite for that site, structurally the same 'ownership already proven "
             + "by construction' shape the visitor entries above use their signed token for.",
+        ["Ago.Chat.Application.UseCases.HasPendingOperatorInvite.HasPendingOperatorInviteHandler.HandleAsync"] =
+            "`25-73`. OnboardingPage's own registration-collision steer - carries only the caller's own validated "
+            + "token email (OperatorInviteEndpoints.HandleHasPendingInviteAsync reads it off the JWT, never the "
+            + "request), no SiteId and no RequestedBy, because the whole question is deliberately cross-tenant: "
+            + "\"does this identity's own email have a pending invite anywhere on this deployment\", the identical "
+            + "shape ListMyTenanciesHandler's own entry below describes for \"every Site this identity "
+            + "administers\" - a SiteId parameter would be a lie about what either call answers. Gated by "
+            + "RequireKeycloakIdentity, the same policy RedeemOperatorInviteHandler's own entry immediately below "
+            + "uses and for the identical reason: this caller may resolve to no operators row at all. What "
+            + "replaces a permission check is narrower than one: IPendingOperatorInviteByEmailReadStore compares "
+            + "only against that same caller-supplied email, so the row set this query can ever answer true for "
+            + "is already restricted to invites addressed to the caller's own address before any site is joined "
+            + "in - the identical 'not an enumeration risk' argument that port's own remarks make.",
         ["Ago.Chat.Application.UseCases.PreviewOperatorInvite.PreviewOperatorInviteHandler.HandleAsync"] =
             "`23-70`, the landing page a colleague reaches by opening the invite link before signing in at all - "
             + "carries no SiteId and no RequestedBy at all, one step earlier in the same flow "

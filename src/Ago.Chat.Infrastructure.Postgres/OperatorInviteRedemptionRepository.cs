@@ -62,6 +62,28 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
             return new OperatorInviteRedemptionResult.Expired();
         }
 
+        // `25-73`: the two new terminal, static facts this item's own design adds - both checked here,
+        // before any lock, the identical "cannot become false by waiting" reasoning this method's own
+        // remarks already give IsRedeemed/IsExpired above. Revoked is checked before the email match:
+        // an admin who revoked an invite meant to withdraw it outright, and a caller presenting the
+        // right code with the wrong email should still be told "revoked", not "wrong email", if both are
+        // true - the more final fact wins.
+        if (invite.IsRevoked)
+        {
+            return new OperatorInviteRedemptionResult.Revoked();
+        }
+
+        // `25-73`'s own real security boundary: the code says which invite, the authenticated caller's
+        // own token email says who is actually claiming it, and both must agree. Case-insensitive -
+        // email addresses are conventionally case-insensitive in the local part by RFC 5321's own
+        // "SHOULD NOT" and universally so in the domain part, and CreateOperatorInviteHandler's own
+        // `MailAddress`-normalised value never forced a particular case a real invitee's IdP claim would
+        // then have to match byte-for-byte.
+        if (attempt.Email is null || !string.Equals(attempt.Email, invite.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            return new OperatorInviteRedemptionResult.EmailMismatch();
+        }
+
         // `13-07`/`adr/0068`'s own adjustment: only this invite's own site, never "anywhere" - the
         // older, superseded rule `13-01`'s own backlog note was corrected away from once `13-07`
         // shipped (composite `(external_subject_id, site_id)` uniqueness, not global).

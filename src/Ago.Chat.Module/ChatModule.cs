@@ -31,6 +31,9 @@ using Ago.Chat.Application.UseCases.AddRequiredDocument;
 using Ago.Chat.Application.UseCases.RemoveRequiredDocument;
 using Ago.Chat.Application.UseCases.GetTenantAgreementsForSite;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.RevokeOperatorInvite;
+using Ago.Chat.Application.UseCases.ListOperatorInvites;
+using Ago.Chat.Application.UseCases.HasPendingOperatorInvite;
 using Ago.Chat.Application.UseCases.CreateTag;
 using Ago.Chat.Application.UseCases.DeleteTag;
 using Ago.Chat.Application.UseCases.GetConversationNotes;
@@ -290,8 +293,19 @@ public sealed class ChatModule : IProductModule
         services
             .AddOptions<OperatorInviteOptions>()
             .Bind(configuration.GetSection(OperatorInviteOptions.SectionName))
+            // `25-73`: ValidateDataAnnotations added - ConsoleBaseUrl is now [Required], and an unset
+            // value would silently build a redirect_uri pointing nowhere rather than failing at boot.
+            .ValidateDataAnnotations()
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<OperatorInviteOptions>>().Value);
+
+        // `25-73`: bound here too, not a host's own Program.cs - the identical per-site token-bucket
+        // shape SiteExportRateLimitOptions already establishes, a plain value with no secret in it.
+        services
+            .AddOptions<OperatorInviteCreationRateLimitOptions>()
+            .Bind(configuration.GetSection(OperatorInviteCreationRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<OperatorInviteCreationRateLimitOptions>>().Value);
 
         // `16-03`: bound here, not a host's own Program.cs - RequestSiteExportHandler/
         // GetSiteExportStatusHandler are registered for every host below, the same
@@ -1028,8 +1042,22 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ListMyTenanciesHandler>();
         // `13-01`: `Permission.SiteManageOperators`'s first real write-path caller, and the seat-limit
         // entitlement check's one enforcement point - see each handler's own remarks.
-        services.AddScoped<CreateOperatorInviteHandler>();
+        //
+        // `25-73`: CreateOperatorInviteHandler moved out of this list - it now depends on
+        // IOperatorInviteEmailProvisioner (Ago.Chat.Infrastructure.Keycloak), which carries a Keycloak
+        // service-account credential and is registered only by Ago.Chat.Api's own Program.cs, the
+        // identical "a credential's blast radius is partly a function of how many processes are handed
+        // it" reasoning that file's own AddKeycloakDemoIdentities/MintDemoTenantHandler wiring already
+        // follows for the one other Keycloak-writing handler in this codebase. Registering the handler
+        // here, in ChatModule (which runs in every host), would make that credential a required setting
+        // for Ago.Chat.Worker/Ago.Chat.Webhooks too, which have no business holding it.
         services.AddScoped<RedeemOperatorInviteHandler>();
+        // `25-73`: the console's own "отозвать" button and invite-list screen - neither depends on
+        // Keycloak at all (revocation is a plain aggregate write; the list is a Postgres read store), so
+        // both register here like every other ordinary handler, unlike CreateOperatorInviteHandler above.
+        services.AddScoped<RevokeOperatorInviteHandler>();
+        services.AddScoped<ListOperatorInvitesHandler>();
+        services.AddScoped<HasPendingOperatorInviteHandler>();
         // `23-70`: never registered when the preview endpoint was added - unnoticed because DI
         // resolution for a minimal-API parameter is a runtime check, and nothing exercised
         // `OperatorInviteEndpoints.HandlePreviewAsync` through the full authorization pipeline until a

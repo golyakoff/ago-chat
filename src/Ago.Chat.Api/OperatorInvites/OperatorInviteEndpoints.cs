@@ -3,8 +3,11 @@ using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.HasPendingOperatorInvite;
+using Ago.Chat.Application.UseCases.ListOperatorInvites;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
+using Ago.Chat.Application.UseCases.RevokeOperatorInvite;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Microsoft.Extensions.Options;
@@ -45,38 +48,111 @@ public static class OperatorInviteEndpoints
         app.MapPost("/api/v1/sites/{siteId:guid}/operator-invites", HandleCreateAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
+        // `25-73`: the console's own invite-list screen and its "отозвать" button - both gated the same
+        // `RequireOperatorIdentity` way as creation right above, `Permission.SiteManageOperators`
+        // checked inside each handler, not at this route's own policy layer.
+        app.MapGet("/api/v1/sites/{siteId:guid}/operator-invites", HandleListAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        app.MapPost("/api/v1/sites/{siteId:guid}/operator-invites/{operatorInviteId:guid}/revoke", HandleRevokeAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
         app.MapPost("/api/v1/operator-invites/redeem", HandleRedeemAsync)
+            .RequireAuthorization("RequireKeycloakIdentity");
+
+        // `25-73`: OnboardingPage's own registration-collision steer - RequireKeycloakIdentity, the
+        // identical policy the redeem route uses and for the identical reason: this caller may resolve
+        // to no `operators` row at all.
+        app.MapGet("/api/v1/operator-invites/pending-for-me", HandleHasPendingInviteAsync)
             .RequireAuthorization("RequireKeycloakIdentity");
 
         app.MapPost("/api/v1/operator-invites/preview", HandlePreviewAsync)
             .AllowAnonymous();
     }
 
+    private static async Task<IResult> HandleHasPendingInviteAsync(
+        HasPendingOperatorInviteHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        // No email claim at all reads as "no pending invite" - there is nothing to compare against,
+        // the identical "cannot agree with anything" reading RedeemOperatorInviteHandler's own remarks
+        // give a missing email elsewhere on this same redemption path.
+        var email = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Email);
+        var hasPendingInvite = email is null
+            ? false
+            : await handler.HandleAsync(new HasPendingOperatorInvite(email), cancellationToken);
+
+        return Results.Ok(new HasPendingOperatorInviteResponse(hasPendingInvite));
+    }
+
     private static async Task<IResult> HandleCreateAsync(
         Guid siteId,
         CreateOperatorInviteRequest request,
         CreateOperatorInviteHandler handler,
+        OperatorInviteCreationRateLimitOptions rateLimitOptions,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new CreateOperatorInvite(user.GetOperatorId(), new SiteId(siteId), request.RoleName), cancellationToken);
+            new CreateOperatorInvite(user.GetOperatorId(), new SiteId(siteId), request.RoleName, request.Email),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            var error = result.Error!.Value;
+            // `25-73`: the identical `RateLimitRetryAfter.Conservative` shape every other rate-limited
+            // code in this codebase already uses - this endpoint holds the same options its own
+            // handler used to make the decision, so no second `IRateLimiter.CheckAsync` is needed.
+            var retryAfter = error.Code == "OperatorInvite.RateLimited"
+                ? RateLimitRetryAfter.Conservative(rateLimitOptions.PerSiteRefillPerSecond)
+                : (TimeSpan?)null;
+            return error.ToProblem(httpContext, retryAfter);
+        }
+
+        // `201`, not `200` - a new operator_invites row was created, matching
+        // RegisterWebhookEndpointHandler's own "shown exactly once" precedent for a different generated
+        // bearer secret. `25-73`: Location now points at a real resource - the list endpoint this same
+        // item adds, filtered client-side to the one row, rather than the "no matching GET" gap this
+        // comment used to name (this item's own new read surface closes it).
+        return Results.Created(
+            $"/api/v1/sites/{siteId}/operator-invites",
+            new CreateOperatorInviteResponse(
+                result.Value.OperatorInviteId, result.Value.Code, result.Value.ExpiresAt, result.Value.SendFailed));
+    }
+
+    /// <summary>`25-73`: the console's own invite-list screen - "shown only when at least one invite
+    /// exists for the site" (this item's own point 7), so this always returns `200` with a (possibly
+    /// empty) array rather than a `404`/`204` the console would have to special-case.</summary>
+    private static async Task<IResult> HandleListAsync(
+        Guid siteId, ListOperatorInvitesHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(new ListOperatorInvites(user.GetOperatorId(), new SiteId(siteId)), cancellationToken);
 
         if (result.IsFailure)
         {
             return result.Error!.Value.ToProblem(httpContext);
         }
 
-        // `201`, not `200` - a new operator_invites row was created, matching
-        // RegisterWebhookEndpointHandler's own "shown exactly once" precedent for a different generated
-        // bearer secret. No Location: like `10-02`'s own bootstrap endpoint, there is no matching GET
-        // for a single invite yet (this item's own Out of scope names no console/read surface as
-        // needed) - flagged here rather than built speculatively, the identical gap SitesEndpoints'
-        // own remarks already accept for the same reason.
-        return Results.Created(
-            $"/api/v1/sites/{siteId}/operator-invites/{result.Value.OperatorInviteId}",
-            new CreateOperatorInviteResponse(result.Value.OperatorInviteId, result.Value.Code, result.Value.ExpiresAt));
+        return Results.Ok(new ListOperatorInvitesResponse(
+            [.. result.Value.Select(entry => new OperatorInviteListEntryResponse(
+                entry.OperatorInviteId, entry.Email, entry.CreatedAt, entry.ExpiresAt,
+                entry.Status.ToString(), entry.SmtpErrorCode))]));
+    }
+
+    /// <summary>`25-73`: revoking before acceptance means a later redemption attempt is refused with
+    /// `OperatorInvite.Revoked` (`RedeemOperatorInviteHandler`'s own new switch arm) - this endpoint's
+    /// own job is only to translate <see cref="RevokeOperatorInviteHandler"/>'s `Result` into a
+    /// response, the same shape every other write endpoint in this file already follows.</summary>
+    private static async Task<IResult> HandleRevokeAsync(
+        Guid siteId, Guid operatorInviteId, RevokeOperatorInviteHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RevokeOperatorInvite(user.GetOperatorId(), new SiteId(siteId), new OperatorInviteId(operatorInviteId)),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 
     private static async Task<IResult> HandleRedeemAsync(
@@ -148,11 +224,27 @@ public static class OperatorInviteEndpoints
         return Results.Ok(new OperatorInvitePreviewResponse(dto.SiteName, dto.InvitedByDisplayName, dto.ExpiresAt, dto.Status.ToString()));
     }
 
-    public sealed record CreateOperatorInviteRequest(string RoleName);
+    /// <summary>`25-73`: <see cref="Email"/> is required - refused by <see cref="CreateOperatorInviteHandler"/>
+    /// itself (`ConversationErrors.OperatorInviteInvalidEmail`) when absent or malformed, never only
+    /// hidden by the console's own form.</summary>
+    public sealed record CreateOperatorInviteRequest(string RoleName, string Email);
 
     /// <summary><see cref="Code"/> is the plaintext value, present in this response only - see
-    /// `CreatedOperatorInvite`'s own remarks.</summary>
-    public sealed record CreateOperatorInviteResponse(Guid OperatorInviteId, string Code, DateTimeOffset ExpiresAt);
+    /// `CreatedOperatorInvite`'s own remarks. `25-73`: <see cref="SendFailed"/> - see that record's own
+    /// remarks for why a send failure does not fail this call outright.</summary>
+    public sealed record CreateOperatorInviteResponse(Guid OperatorInviteId, string Code, DateTimeOffset ExpiresAt, bool SendFailed);
+
+    /// <summary>`25-73`: the console's own invite-list screen - "Status" is one of `Sent`/`SendFailed`/
+    /// `Revoked`/`Redeemed`/`Expired` (`OperatorInviteListStatus`'s own five cases), sent as its enum
+    /// member name, the identical `api-design.md` "clients branch on `type`, never on the message"
+    /// convention `OperatorInvitePreviewResponse.Status` already follows below.</summary>
+    public sealed record ListOperatorInvitesResponse(IReadOnlyList<OperatorInviteListEntryResponse> Invites);
+
+    public sealed record OperatorInviteListEntryResponse(
+        Guid OperatorInviteId, string Email, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status, string? SmtpErrorCode);
+
+    /// <summary>`25-73`: `OnboardingPage`'s own registration-collision steer.</summary>
+    public sealed record HasPendingOperatorInviteResponse(bool HasPendingInvite);
 
     public sealed record RedeemOperatorInviteRequest(string Code);
 

@@ -24,6 +24,16 @@ public sealed class OperatorInvite
 
     public SiteId SiteId { get; }
 
+    /// <summary>`25-73`: the invitee's own address - required since this item, because Keycloak's own
+    /// invite primitive (admin-created-user + `execute-actions-email`) is what actually delivers this
+    /// invite now, replacing the admin copying a link themselves. Not a replacement for
+    /// <see cref="CodeHash"/> - one email can legitimately hold invites to more than one site at once
+    /// (an agency operator invited to several shops), so the code is still what disambiguates *which*
+    /// invite a redemption is claiming; the email is the second half of the same security boundary
+    /// (`RedeemOperatorInviteHandler`'s own remarks: "the code says which invite, the Keycloak session
+    /// says who is actually claiming it, and both must agree").</summary>
+    public string Email { get; } = string.Empty;
+
     /// <summary>The site's own `roles` row the invitee will hold once redeemed - `"Operator"` or
     /// `"Admin"`, resolved by name to this id at generation time (`CreateOperatorInviteHandler`). A
     /// plain `Guid`, not a Domain id type, matching `OperatorRoleRecord.RoleId`'s own shape - roles
@@ -47,6 +57,22 @@ public sealed class OperatorInvite
 
     public bool IsRedeemed => RedeemedAt is not null;
 
+    /// <summary>`25-73`: when an admin revoked this invite before it was ever redeemed
+    /// (<see cref="Revoke"/>) - <see langword="null"/> for every invite nobody has revoked, the same
+    /// "absence is the ordinary case" reading <see cref="Site.SuspendedUntil"/>'s own remarks give an
+    /// optional instant elsewhere in this codebase.</summary>
+    public DateTimeOffset? RevokedAt { get; private set; }
+
+    public bool IsRevoked => RevokedAt is not null;
+
+    /// <summary>`25-73`: the SMTP-layer error Keycloak's own realm relay reported back for this
+    /// invite's `execute-actions-email` call, or <see langword="null"/> if it was sent without one (or
+    /// has not been attempted). Recorded so the console's own invite-list screen can show the real
+    /// failure rather than swallowing it into a log line (this item's own point 6) - never retried from
+    /// here, and never cleared once set: a resend is out of this item's own scope
+    /// ("no reminder/nudge mechanism is being built here").</summary>
+    public string? SendFailureCode { get; private set; }
+
     public bool IsExpired(DateTimeOffset now) => now >= ExpiresAt;
 
     private OperatorInvite(
@@ -54,6 +80,7 @@ public sealed class OperatorInvite
         SiteId siteId,
         Guid roleId,
         byte[] codeHash,
+        string email,
         OperatorId createdByOperatorId,
         DateTimeOffset createdAt,
         DateTimeOffset expiresAt,
@@ -64,6 +91,7 @@ public sealed class OperatorInvite
         SiteId = siteId;
         RoleId = roleId;
         CodeHash = codeHash;
+        Email = email;
         CreatedByOperatorId = createdByOperatorId;
         CreatedAt = createdAt;
         ExpiresAt = expiresAt;
@@ -81,10 +109,65 @@ public sealed class OperatorInvite
         SiteId siteId,
         Guid roleId,
         byte[] codeHash,
+        string email,
         OperatorId createdByOperatorId,
         DateTimeOffset now,
-        TimeSpan validFor) =>
-        new(id, siteId, roleId, codeHash, createdByOperatorId, now, now + validFor, redeemedAt: null, redeemedByOperatorId: null);
+        TimeSpan validFor)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            // `25-73`: a required field since this item - CreateOperatorInviteHandler is expected to
+            // validate the shape of the address before ever reaching this factory (the same
+            // "validate at the Application boundary, this constructor's only job is applying it" split
+            // Site's own update methods already draw), so reaching this is a caller bug, not a
+            // reportable business refusal - thrown, the same shape Site's constructor already uses for
+            // its own required PublicKey.
+            throw new ArgumentException("Operator invite email cannot be empty.", nameof(email));
+        }
+
+        return new(id, siteId, roleId, codeHash, email, createdByOperatorId, now, now + validFor, redeemedAt: null, redeemedByOperatorId: null);
+    }
+
+    /// <summary>`25-73`: an admin's own decision to withdraw an unredeemed invite - `OperatorsTeamPage`'s
+    /// new "отозвать" button, the console's own read-modify-write through <c>RevokeOperatorInviteHandler</c>.
+    /// Throws on an already-redeemed or already-revoked invite, the identical "the repository already
+    /// checked both facts before calling this; reaching the throw at all means a genuine race" shape
+    /// <see cref="Redeem"/>'s own remarks describe for itself - <see cref="RevokeOperatorInviteHandler"/>
+    /// (Application) is expected to have already checked <see cref="IsRedeemed"/>/<see cref="IsRevoked"/>
+    /// against a value this same load read, so this guard is the last line of defence, not the primary
+    /// check.</summary>
+    public void Revoke(DateTimeOffset now)
+    {
+        if (IsRedeemed)
+        {
+            throw new InvalidOperatorInviteStateException($"Operator invite {Id.Value} was already redeemed.");
+        }
+
+        if (IsRevoked)
+        {
+            throw new InvalidOperatorInviteStateException($"Operator invite {Id.Value} was already revoked.");
+        }
+
+        RevokedAt = now;
+    }
+
+    /// <summary>`25-73`: records that Keycloak's own realm relay failed to deliver this invite's
+    /// `execute-actions-email` at the SMTP layer - called by <c>CreateOperatorInviteHandler</c> in the
+    /// same request that generated this invite, immediately before the first save, so the failure and
+    /// the row it describes reach the database together rather than as a later update. Deliberately no
+    /// domain event: the one consumer that would ever read this is the console's own invite-list
+    /// screen, an operator-authenticated, uncached read straight from the database - the identical
+    /// "no propagation delay for an event to solve" reasoning <see cref="Site.UpdateCannedResponses"/>'s
+    /// own remarks give for its own no-event write.</summary>
+    public void MarkSendFailed(string smtpErrorCode)
+    {
+        if (string.IsNullOrWhiteSpace(smtpErrorCode))
+        {
+            throw new ArgumentException("SMTP error code cannot be empty.", nameof(smtpErrorCode));
+        }
+
+        SendFailureCode = smtpErrorCode;
+    }
 
     /// <summary>
     /// Marks this invite consumed by <paramref name="operatorId"/> - the new `Operator` row this
@@ -115,6 +198,14 @@ public sealed class OperatorInvite
         if (IsExpired(now))
         {
             throw new InvalidOperatorInviteStateException($"Operator invite {Id.Value} has expired.");
+        }
+
+        // `25-73`: the third terminal, static fact `OperatorInviteRedemptionRepository` checks before
+        // ever taking its row lock - the same "a caller that skipped that pre-check entirely" backstop
+        // this method's own remarks already describe for the two checks above.
+        if (IsRevoked)
+        {
+            throw new InvalidOperatorInviteStateException($"Operator invite {Id.Value} was revoked.");
         }
 
         RedeemedAt = now;

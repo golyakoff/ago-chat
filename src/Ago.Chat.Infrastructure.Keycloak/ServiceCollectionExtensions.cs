@@ -61,4 +61,52 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// `25-73`: registers <see cref="IOperatorInviteEmailProvisioner"/> against the same real Keycloak
+    /// <see cref="AddKeycloakDemoIdentities"/> targets - the identical `KeycloakAdminOptions` binding
+    /// (same service-account client, same `manage-users` scope), since both provisioners are ordinary
+    /// Admin API callers against the one realm this deployment has.
+    ///
+    /// <para><b>Called only by `Ago.Chat.Api`</b> - unlike the demo path, nothing else ever creates a
+    /// real operator invite (`Ago.Chat.Worker` only expires demo tenants, never sends invite mail) - and
+    /// deliberately not from `ChatModule`, the identical "a credential's blast radius is partly a
+    /// function of how many processes are handed it" reasoning <see cref="AddKeycloakDemoIdentities"/>'s
+    /// own remarks already give.</para>
+    ///
+    /// <para>Binds <see cref="KeycloakAdminOptions"/> a second time if <see cref="AddKeycloakDemoIdentities"/>
+    /// is also called (both do, in `Ago.Chat.Api`'s own `Program.cs`, if demo minting is enabled there
+    /// too) - harmless: <c>AddOptions&lt;T&gt;().Bind(...)</c> is idempotent against the same
+    /// configuration section, and the resulting <c>services.AddSingleton(...)</c> line simply resolves
+    /// the same already-validated value a second time rather than producing two.</para>
+    /// </summary>
+    public static IServiceCollection AddKeycloakOperatorInviteEmails(
+        this IServiceCollection services, IConfiguration configuration)
+    {
+        services
+            .AddOptions<KeycloakAdminOptions>()
+            .Bind(configuration.GetSection(KeycloakAdminOptions.SectionName))
+            .ValidateDataAnnotations()
+            // `25-73`: unlike the demo path's feature-flagged validation, operator-invite email is not
+            // behind a flag - every deployment that lets an admin create an invite needs a real
+            // BaseUrl/ClientSecret, so this one is unconditional rather than a delegate keyed on a
+            // second option.
+            .Validate(
+                options => !string.IsNullOrWhiteSpace(options.BaseUrl) && !string.IsNullOrWhiteSpace(options.ClientSecret),
+                $"{KeycloakAdminOptions.SectionName}:BaseUrl and :ClientSecret are required for operator-invite email (25-73).")
+            .ValidateOnStart();
+
+        services.AddHttpClient<IOperatorInviteEmailProvisioner, OperatorInviteEmailProvisioner>(client =>
+            {
+                // Three admin calls in sequence per invite (create-or-find, optionally sync-locale,
+                // send) - a longer budget than the demo provisioner's single call gets, for the
+                // identical reason a hung Keycloak must not hold an admin's "send invite" click open
+                // indefinitely, just with more round trips to allow for.
+                client.Timeout = TimeSpan.FromSeconds(20);
+            });
+
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<KeycloakAdminOptions>>().Value);
+
+        return services;
+    }
 }

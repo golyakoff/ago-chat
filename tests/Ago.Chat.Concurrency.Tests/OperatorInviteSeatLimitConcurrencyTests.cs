@@ -40,10 +40,13 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
         var invites = await GenerateInvitesAsync(seed, concurrentRedeemers);
 
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // `25-73`: each redeemer presents the exact email its own invite was generated for - the new
+        // code-and-email redemption check requires both to agree, and this test's own subject (the
+        // seat-limit race) must not be pre-empted by an unrelated EmailMismatch on every attempt.
         var tasks = invites.Select((invite, index) => Task.Run(async () =>
         {
             await gate.Task;
-            return await RedeemAsync(invite, $"redeemer-{index}");
+            return await RedeemAsync(invite.CodeHash, invite.Email, $"redeemer-{index}");
         })).ToList();
 
         gate.SetResult();
@@ -88,7 +91,7 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
         var seed = await SeedSiteAsync(seatLimit, existingOperators: 1);
         var invite = (await GenerateInvitesAsync(seed, count: 1))[0];
 
-        var rejected = await RedeemAsync(invite, "redeemer-rejected");
+        var rejected = await RedeemAsync(invite.CodeHash, invite.Email, "redeemer-rejected");
         Assert.IsType<OperatorInviteRedemptionResult.SeatLimitReached>(rejected);
 
         await using (var db = fixture.CreateDbContext())
@@ -98,7 +101,7 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
             await db.SaveChangesAsync();
         }
 
-        var succeeded = await RedeemAsync(invite, "redeemer-rejected");
+        var succeeded = await RedeemAsync(invite.CodeHash, invite.Email, "redeemer-rejected");
         Assert.IsType<OperatorInviteRedemptionResult.Success>(succeeded);
     }
 
@@ -130,30 +133,33 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
         return new Seed(siteId, roleId, creatorId);
     }
 
-    private async Task<List<byte[]>> GenerateInvitesAsync(Seed seed, int count)
+    private sealed record GeneratedInvite(byte[] CodeHash, string Email);
+
+    private async Task<List<GeneratedInvite>> GenerateInvitesAsync(Seed seed, int count)
     {
-        var codeHashes = new List<byte[]>();
+        var generated = new List<GeneratedInvite>();
         await using var db = fixture.CreateDbContext();
         for (var i = 0; i < count; i++)
         {
             var codeHash = new byte[32];
             Random.Shared.NextBytes(codeHash);
+            var email = $"invitee{i}@example.com";
             var invite = OperatorInvite.Generate(
-                new OperatorInviteId(Guid.NewGuid()), seed.SiteId, seed.RoleId, codeHash, seed.CreatedByOperatorId, Now,
-                TimeSpan.FromDays(7));
+                new OperatorInviteId(Guid.NewGuid()), seed.SiteId, seed.RoleId, codeHash, email,
+                seed.CreatedByOperatorId, Now, TimeSpan.FromDays(7));
             db.OperatorInvites.Add(invite);
-            codeHashes.Add(codeHash);
+            generated.Add(new GeneratedInvite(codeHash, email));
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
-        return codeHashes;
+        return generated;
     }
 
-    private async Task<OperatorInviteRedemptionResult> RedeemAsync(byte[] codeHash, string externalSubjectId)
+    private async Task<OperatorInviteRedemptionResult> RedeemAsync(byte[] codeHash, string email, string externalSubjectId)
     {
         await using var db = fixture.CreateDbContext();
         var repository = new OperatorInviteRedemptionRepository(db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db));
         return await repository.RedeemAsync(
-            new RedeemOperatorInviteAttempt(codeHash, externalSubjectId, Now.AddMinutes(1)), CancellationToken.None);
+            new RedeemOperatorInviteAttempt(codeHash, externalSubjectId, Now.AddMinutes(1), Email: email), CancellationToken.None);
     }
 }

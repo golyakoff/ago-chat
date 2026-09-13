@@ -77,8 +77,12 @@ public static class ErrorExtensions
             // suspended), not a malformed request or a conflict with anything concurrent, reached
             // today only from OperatorHub's own HubException translation but mapped here too for
             // completeness, the identical reasoning Conversation.OperatorHasNoSeat's own remarks give.
+            // `25-73`: the signed-in caller's own token email does not match the invite this code
+            // names - a real refusal (this identity is not who this invite was sent to), not a
+            // malformed request or a conflict with anything concurrent, the identical shape
+            // `Conversation.Forbidden` already has for itself.
             "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" or "Attachment.UploadNotGranted"
-                or "TenantSuspension.CannotSend" => StatusCodes.Status403Forbidden,
+                or "TenantSuspension.CannotSend" or "OperatorInvite.EmailMismatch" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
@@ -186,7 +190,11 @@ public static class ErrorExtensions
                 // of the suspend/extend/lift trio. The identical "brand-new code this item's own new
                 // routes can actually produce" reasoning `RequiredDocument.Invalid`'s own remarks give
                 // a few lines up.
-                or "TenantSuspension.DurationInvalid" or "TenantSuspension.ReasonRequired" => StatusCodes.Status400BadRequest,
+                or "TenantSuspension.DurationInvalid" or "TenantSuspension.ReasonRequired"
+                // `25-73`: the admin's own supplied invite email did not parse - the caller's mistake
+                // to fix, the identical "brand-new code this item's own new route can actually produce"
+                // shape every other 400 in this group already states for itself.
+                or "OperatorInvite.InvalidEmail" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -268,7 +276,12 @@ public static class ErrorExtensions
                 // site that is already suspended, or extend/lift one that is not - resolved by a
                 // different action (extend, or nothing), never by fixing the request body, the
                 // identical shape `Operator.IsLastManager` right above already gives its own conflict.
-                or "TenantSuspension.AlreadySuspended" or "TenantSuspension.NotSuspended" => StatusCodes.Status409Conflict,
+                or "TenantSuspension.AlreadySuspended" or "TenantSuspension.NotSuspended"
+                // `25-73`: withdrawn by the inviting site before anybody redeemed it - a real conflict
+                // with the row's own current state, resolved by nothing the caller can do (a fresh
+                // invite from the admin, not a retry), the identical shape `OperatorInvite.AlreadyRedeemed`
+                // right above already gives its own sibling conflict.
+                or "OperatorInvite.Revoked" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
@@ -320,9 +333,14 @@ public static class ErrorExtensions
             // own remarks on why it is a distinct code from Export.RateLimited rather than a reuse.
             // `24-05`: Consent.RateLimited joins the same group - ConversationErrors.ConsentRateLimited's
             // own remarks on why it is a distinct code from Message.RateLimited rather than a reuse.
+            // `25-73`: the fifth-invites-today bucket joins the same group - OperatorInviteEndpoints'
+            // own HandleCreateAsync computes its own conservative Retry-After from configuration it
+            // already holds, the identical `RateLimitRetryAfter.Conservative` shape every other code in
+            // this group already uses.
             "Message.RateLimited" or "Site.RateLimited" or "Export.RateLimited" or "PersonExport.RateLimited"
                 or "ReplyDraft.RateLimited" or "Consent.RateLimited"
                 or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut" or "demo.rate_limited"
+                or "OperatorInvite.RateLimited"
                 => StatusCodes.Status429TooManyRequests,
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
             // own remarks. `19-01`: ReplyDraft.Unavailable is the identical shape - the LLM provider is

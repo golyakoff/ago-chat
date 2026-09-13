@@ -138,4 +138,47 @@ public class RedeemOperatorInviteHandlerTests
         Assert.Equal("OperatorInvite.AdminLimitReached", result.Error!.Value.Code);
         Assert.Contains("1", result.Error.Value.Message);
     }
+
+    /// <summary>`25-73`'s own Done-when: "revoking before acceptance is proven to actually block a later
+    /// redemption attempt with the stated message" - this is the handler-mapping half of that proof
+    /// (the repository's own pre-lock check is proven separately, against real Postgres, by
+    /// `Ago.Chat.Concurrency.Tests`/`Ago.Chat.Integration.Tests`). Fails-before: reverting the new
+    /// `Revoked` switch arm in `RedeemOperatorInviteHandler` makes this fail with an
+    /// `InvalidOperationException` ("Unhandled OperatorInviteRedemptionResult: Revoked") instead of a
+    /// clean `Result`.</summary>
+    [Fact]
+    public async Task HandleAsync_OnRevoked_ReturnsOperatorInviteRevoked()
+    {
+        var handler = CreateHandler(new OperatorInviteRedemptionResult.Revoked(), out _);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.RedeemOperatorInvite.RedeemOperatorInvite("sub-123", "invite_abc123"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.Revoked", result.Error!.Value.Code);
+    }
+
+    /// <summary>`25-73`'s own real security boundary, the handler-mapping half: the code alone is not
+    /// enough once the repository reports the authenticated caller's email did not match the invite's
+    /// own. Fails-before: the identical "unhandled switch arm throws" failure
+    /// <see cref="HandleAsync_OnRevoked_ReturnsOperatorInviteRevoked"/>'s own remarks describe, for
+    /// `EmailMismatch` instead of `Revoked`.</summary>
+    [Fact]
+    public async Task HandleAsync_OnEmailMismatch_ReturnsOperatorInviteEmailMismatch()
+    {
+        var handler = CreateHandler(new OperatorInviteRedemptionResult.EmailMismatch(), out var redemptions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.RedeemOperatorInvite.RedeemOperatorInvite(
+                "sub-123", "invite_abc123", Email: "someone-else@example.com"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.EmailMismatch", result.Error!.Value.Code);
+        // The handler still passes the presented email through to the repository unchanged - the
+        // comparison itself is the repository's own job (RedeemOperatorInviteHandler's class-level
+        // remarks: "hash, delegate, map every outcome").
+        Assert.Equal("someone-else@example.com", redemptions.LastAttempt!.Email);
+    }
 }

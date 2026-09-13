@@ -15,4 +15,12 @@ namespace Ago.Chat.Application.Abstractions;
 public interface IOperatorInviteRepository
 {
     Task SaveAsync(OperatorInvite invite, CancellationToken cancellationToken);
+
+    /// <summary>`25-73`: an ordinary load, for the one write path this aggregate has that is a genuine
+    /// load-mutate-save of itself alone - <c>RevokeOperatorInviteHandler</c>. Deliberately not scoped
+    /// to a site here: the handler itself checks <see cref="OperatorInvite.SiteId"/> against the
+    /// caller's own site before ever calling <see cref="OperatorInvite.Revoke"/>, the same
+    /// "wrong tenant reads like no such row" split <c>ErrorExtensions</c>' own info-hiding group draws
+    /// at the Application boundary rather than inside a repository query.</summary>
+    Task<OperatorInvite?> GetByIdAsync(OperatorInviteId id, CancellationToken cancellationToken);
 }

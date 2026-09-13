@@ -16,4 +16,7 @@ public sealed class OperatorInviteRepository(AgoChatDbContext db) : IOperatorInv
 
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    public Task<OperatorInvite?> GetByIdAsync(OperatorInviteId id, CancellationToken cancellationToken) =>
+        db.OperatorInvites.FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
 }

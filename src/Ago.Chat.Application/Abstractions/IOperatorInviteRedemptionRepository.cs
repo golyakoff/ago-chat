@@ -47,13 +47,36 @@ public abstract record OperatorInviteRedemptionResult
     /// reason <see cref="SeatLimitReached"/>'s own remarks give.</summary>
     public sealed record AdminLimitReached(int AdminLimit) : OperatorInviteRedemptionResult;
 
+    /// <summary>`25-73`: withdrawn by the inviting site before anybody redeemed it
+    /// (<see cref="OperatorInvite.Revoke"/>) - checked before any lock is taken, the identical
+    /// "terminal, static fact" reasoning <see cref="NotFound"/>'s own group already gives
+    /// <see cref="Expired"/>/<see cref="AlreadyRedeemed"/>.</summary>
+    public sealed record Revoked : OperatorInviteRedemptionResult;
+
+    /// <summary>`25-73`'s own real security boundary: the code named a real, live invite, but the
+    /// authenticated caller's own token email does not match <see cref="OperatorInvite.Email"/> - the
+    /// code says which invite, the Keycloak session says who is actually claiming it, and this item's
+    /// design requires both to agree. Deliberately its own case, not folded into <see cref="NotFound"/>:
+    /// unlike a code that never existed, this caller *is* signed in and the invite *is* real, so hiding
+    /// that fact behind "no such invite" would only send a legitimate invitee who mistyped nothing back
+    /// to try the same code again - the honest, actionable answer is "this was not sent to you".</summary>
+    public sealed record EmailMismatch : OperatorInviteRedemptionResult;
+
     public sealed record Success(OperatorId OperatorId, SiteId SiteId) : OperatorInviteRedemptionResult;
 }
 
 /// <summary>`23-02`: <paramref name="Name"/>/<paramref name="Email"/> are the token's own `name`/
 /// `email` claims, carried through so <see cref="IOperatorInviteRedemptionRepository.RedeemAsync"/> can
 /// stamp them onto the new <c>Operator</c> row it creates - optional, appended at the end rather than
-/// inserted, so every existing positional construction of this record keeps compiling.</summary>
+/// inserted, so every existing positional construction of this record keeps compiling.
+///
+/// <para>`25-73`: <paramref name="Email"/> is no longer only a value to copy onto the new row - it is
+/// now also compared, case-insensitively, against the invite's own <see cref="OperatorInvite.Email"/>
+/// before redemption is allowed to proceed at all (<see cref="OperatorInviteRedemptionResult.EmailMismatch"/>).
+/// Still nullable: a validated token that genuinely carries no `email` claim cannot agree with anything,
+/// so <see langword="null"/> is treated as a mismatch rather than as "skip this check" - the same "cannot
+/// agree with the invite" reading a missing value deserves everywhere else in this codebase's own
+/// redemption path.</para></summary>
 public sealed record RedeemOperatorInviteAttempt(
     byte[] CodeHash, string ExternalSubjectId, DateTimeOffset Now, string? Name = null, string? Email = null);
 

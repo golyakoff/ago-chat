@@ -325,6 +325,34 @@ public static class ConversationErrors
     public static Error OperatorInviteAdminLimitReached(int adminLimit) =>
         new("OperatorInvite.AdminLimitReached", $"This site has reached its administrator limit of {adminLimit}.");
 
+    /// <summary>`25-73`: the admin withdrew this invite before anybody redeemed it
+    /// (<c>Domain.OperatorInvite.Revoke</c>) - a real conflict with the row's own current state, the
+    /// same "retry makes no sense" shape <see cref="OperatorInviteAlreadyRedeemed"/>'s own group already
+    /// gives its sibling. The console's own <em>"извините, ваше приглашение было отозвано"</em> is this
+    /// code's own presentation, not this message - clients branch on `type` (`api-design.md`).</summary>
+    public static Error OperatorInviteRevoked() =>
+        new("OperatorInvite.Revoked", "This operator invite was revoked.");
+
+    /// <summary>`25-73`'s own security boundary: the code named a real invite, but the signed-in
+    /// caller's own token email does not match the address it was issued to - see
+    /// <c>OperatorInviteRedemptionResult.EmailMismatch</c>'s own remarks for why this is its own code
+    /// rather than folded into <see cref="OperatorInviteNotFound"/>.</summary>
+    public static Error OperatorInviteEmailMismatch() =>
+        new("OperatorInvite.EmailMismatch", "This operator invite was issued to a different email address.");
+
+    /// <summary>`25-73`: the admin's own supplied address did not parse as one - the caller's mistake to
+    /// fix, the same "brand-new code this item's own new route can actually produce" shape
+    /// <c>RequiredDocument.Invalid</c>'s own remarks give the identical situation.</summary>
+    public static Error OperatorInviteInvalidEmail(string reason) =>
+        new("OperatorInvite.InvalidEmail", reason);
+
+    /// <summary>`25-73`: this site's fifth invite today - "five per site per day, refused past that with
+    /// a polite message naming the limit" (this item's own point 5), the identical `*.RateLimited`
+    /// vocabulary <see cref="ExportRateLimited"/> and every other rate-limited code in this class already
+    /// use, so `ErrorExtensions` needs one more switch arm, not a new status-code group.</summary>
+    public static Error OperatorInviteRateLimited(int perSiteCapacity) =>
+        new("OperatorInvite.RateLimited", $"This site has sent {perSiteCapacity} operator invites today - try again tomorrow.");
+
     // `13-02`: same shared vocabulary, same reason - CreateCheckoutSessionHandler adds its own codes
     // here rather than a separate error class.
     /// <summary>The requested seat count falls outside <see cref="Domain.SubscriptionTierBands.MinSeats"/>-

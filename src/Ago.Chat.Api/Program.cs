@@ -16,6 +16,7 @@ using Ago.Chat.Api.Demo;
 using Ago.Chat.Api.Documents;
 using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Infrastructure.Keycloak;
+using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Microsoft.Extensions.Options;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Me;
@@ -103,6 +104,13 @@ builder.Services
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<DemoTenantRateLimitOptions>>().Value);
 builder.Services.AddKeycloakDemoIdentities(builder.Configuration);
 builder.Services.AddScoped<MintDemoTenantHandler>();
+
+// `25-73`: the identical "wired here, not in ChatModule" reasoning right above, restated for the
+// second Keycloak-writing handler this codebase has - CreateOperatorInviteHandler now depends on
+// IOperatorInviteEmailProvisioner, which carries the same service-account credential.
+// Ago.Chat.Worker/Ago.Chat.Webhooks never send an invite, so they never register it and never hold it.
+builder.Services.AddKeycloakOperatorInviteEmails(builder.Configuration);
+builder.Services.AddScoped<CreateOperatorInviteHandler>();
 
 // 5-01: edge.md/api-design.md - CORS is per-site, driven by Site.AllowedOrigins from the database,
 // never a wildcard, never an ingress annotation. AddCors() wires the framework's CORS services;
