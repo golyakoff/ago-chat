@@ -129,12 +129,57 @@ public sealed class AttachmentOrphanSweepJobTests(AttachmentFixture fixture)
         Assert.Equal(0, await ReadReservedBytesAsync(conversationId));
     }
 
+    /// <summary>
+    /// `23-76`'s own extension of the identical Scope point right above - an abandoned presigned
+    /// upload reserved bytes against the tenant's own ceiling too, not only the conversation's, and
+    /// the sweep's single atomic statement must release both or it leaks the site-level reservation
+    /// forever (nothing else ever ties a deleted row back to a site).
+    /// </summary>
+    [Fact]
+    public async Task SweepAsync_ReleasesTheSweptAttachmentsSiteBudgetReservationToo()
+    {
+        const long declaredSizeBytes = 5; // matches UploadRealObjectAsync's own hardcoded "12345" body.
+        var (attachmentId, objectKey, conversationId, siteId) = await SeedWithConversationAndSiteIdAsync(
+            AttachmentState.Pending, Now - UploadLifetime - TimeSpan.FromMinutes(1));
+        await UploadRealObjectAsync(objectKey);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var conversationReservation = await new ConversationAttachmentBudgetStore(db)
+                .TryReserveAsync(conversationId, declaredSizeBytes, budgetBytes: declaredSizeBytes, CancellationToken.None);
+            Assert.True(conversationReservation.Reserved);
+        }
+        await using (var db = fixture.CreateDbContext())
+        {
+            var siteReservation = await new SiteAttachmentStorageBudgetStore(db)
+                .TryReserveAsync(siteId, declaredSizeBytes, budgetBytes: declaredSizeBytes, CancellationToken.None);
+            Assert.True(siteReservation.Reserved);
+        }
+        Assert.Equal(declaredSizeBytes, await ReadReservedSiteBytesAsync(siteId));
+
+        await CreateJob().SweepAsync(CancellationToken.None);
+
+        await using var verifyDb = fixture.CreateDbContext();
+        Assert.False(await verifyDb.Attachments.AnyAsync(a => a.Id == attachmentId));
+        Assert.Equal(0, await ReadReservedBytesAsync(conversationId));
+        Assert.Equal(0, await ReadReservedSiteBytesAsync(siteId));
+    }
+
     private async Task<long> ReadReservedBytesAsync(ConversationId conversationId)
     {
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
         await using var command = new Npgsql.NpgsqlCommand(
             "SELECT attachment_bytes_reserved FROM conversations WHERE id = @id", connection);
         command.Parameters.AddWithValue("id", conversationId.Value);
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<long> ReadReservedSiteBytesAsync(SiteId siteId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            "SELECT attachment_bytes_reserved FROM sites WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", siteId.Value);
         return (long)(await command.ExecuteScalarAsync())!;
     }
 
@@ -196,6 +241,34 @@ public sealed class AttachmentOrphanSweepJobTests(AttachmentFixture fixture)
         await db.SaveChangesAsync();
 
         return (attachment.Id, objectKey, conversationId);
+    }
+
+    /// <summary>The identical seed as <see cref="SeedWithConversationIdAsync"/>, also handing back the
+    /// site id - only <see cref="SweepAsync_ReleasesTheSweptAttachmentsSiteBudgetReservationToo"/>
+    /// needs it, to reserve against before sweeping.</summary>
+    private async Task<(AttachmentId Id, string ObjectKey, ConversationId ConversationId, SiteId SiteId)> SeedWithConversationAndSiteIdAsync(
+        AttachmentState state, DateTimeOffset createdAt)
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var objectKey = $"site/{siteId.Value}/conv/{conversationId.Value}/{Guid.NewGuid():N}.png";
+
+        var attachment = Attachment.CreatePending(
+            new AttachmentId(Guid.NewGuid()), siteId, conversationId, objectKey, "image/png", 5, createdAt);
+        if (state == AttachmentState.Ready)
+        {
+            attachment.ConfirmReady(5, "image/png", createdAt);
+        }
+
+        await using var db = fixture.CreateDbContext();
+        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+        db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+        db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, createdAt));
+        db.Attachments.Add(attachment);
+        await db.SaveChangesAsync();
+
+        return (attachment.Id, objectKey, conversationId, siteId);
     }
 
     private async Task UploadRealObjectAsync(string objectKey)

@@ -277,6 +277,9 @@ public sealed class AvitoWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddScoped<IPendingChannelLinkRequestRepository, PendingChannelLinkRequestRepository>();
         builder.Services.AddScoped<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new MessageSendRateLimitOptions());
+        // `23-76`: StartConversationHandler's own new constructor dependency - the identical
+        // "register the plain rate-limit options value directly" shape MessageSendRateLimitOptions above already needs.
+        builder.Services.AddSingleton(new ConversationCreateRateLimitOptions());
         builder.Services.AddSingleton<IMessagePipeline>(_ => new SynchronousMessagePipeline(fixture.DataSource));
         // `23-78`: StartConversationHandler's own new constructor dependency - the identical
         // "every hand-rolled test host needs this too" reasoning the comment right above already states

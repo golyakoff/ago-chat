@@ -31,7 +31,12 @@ public sealed class Attachment
 
     public MessageId? MessageId { get; private set; }
 
-    public string ObjectKey { get; } = string.Empty;
+    /// <summary>`23-76`: a private setter, not the original get-only shape - see
+    /// <see cref="PointToExistingObject"/>'s own remarks for the one caller that ever rewrites it after
+    /// construction (deduplication, repointing a redundant upload at the tenant's existing copy of the
+    /// identical bytes). Every other path - `CreatePending`, `ConfirmReady` - leaves it exactly as
+    /// presigned.</summary>
+    public string ObjectKey { get; private set; } = string.Empty;
 
     public string ContentType { get; } = string.Empty;
 
@@ -44,6 +49,25 @@ public sealed class Attachment
     /// migration alongside `5-04`, matching `MessageId`'s own "the column exists before its writer
     /// does" shape.</summary>
     public string? ThumbnailKey { get; private set; }
+
+    /// <summary>`23-76`: the tenant-scoped content hash driving deduplication - reserved by this
+    /// item's own schema, populated by nobody until `Ago.Chat.Worker`'s
+    /// `AttachmentDeduplicationConsumer` runs, the identical "the column exists before its writer does"
+    /// shape <see cref="ThumbnailKey"/> above already established for `5-04`. Nullable and unpopulated
+    /// for every attachment that predates this column - a dedup lookup that finds no hash on an old row
+    /// simply never matches it, which is the honest, correct behaviour (there is nothing to compare
+    /// against, not a false "no duplicate" claim about bytes this system never hashed).
+    ///
+    /// <para><b>Set at confirm-plus-one-step, not at confirm itself.</b> `IFileStorage.GetMetadataAsync`
+    /// (the one HEAD-verify already run at confirm) exposes only <c>SizeBytes</c>/<c>ContentType</c> -
+    /// no checksum - so a real, byte-verified hash needs the actual object bytes, which
+    /// `file-storage.md`'s own rule keeps out of the synchronous API request path entirely. This
+    /// mirrors `AttachmentThumbnailGenerator`'s own already-established precedent exactly: a bounded,
+    /// server-initiated download through the *same* presigned-URL/bare-`HttpClient` shape that job
+    /// already uses (`adr/0008`: `IFileStorage` is presign-only by design), run from `Ago.Chat.Worker`
+    /// reacting to the same `AttachmentConfirmed` event, never inline in the confirm request.</para>
+    /// </summary>
+    public string? ContentHash { get; private set; }
 
     public DateTimeOffset CreatedAt { get; }
 
@@ -178,6 +202,59 @@ public sealed class Attachment
         }
 
         ThumbnailKey = thumbnailKey;
+    }
+
+    /// <summary>
+    /// `23-76`: the "first copy" outcome of `AttachmentDeduplicationConsumer`'s own lookup - this
+    /// attachment's bytes are not (yet) a duplicate of anything else this tenant has, so its own object
+    /// stays exactly where it was uploaded, and its hash is recorded for a future upload to match
+    /// against. Idempotent by construction, the same read-then-write shape `SetThumbnail`'s own caller
+    /// already relies on for redelivery (`ThumbnailKey is not null` there; <see cref="ContentHash"/> is
+    /// not null here) - a redelivered `AttachmentConfirmed` is a no-op once this has already run once.
+    /// </summary>
+    public void SetContentHash(string contentHash)
+    {
+        if (State != AttachmentState.Ready)
+        {
+            throw new InvalidAttachmentStateException(
+                $"Cannot set a content hash for attachment {Id.Value} in state {State}; only {AttachmentState.Ready} accepts one.");
+        }
+
+        ContentHash = contentHash;
+    }
+
+    /// <summary>
+    /// `23-76`: the "duplicate" outcome - this attachment's own upload turned out to be bytes the
+    /// tenant already has stored under <paramref name="existingObjectKey"/>, so this row is repointed
+    /// at that object instead of retaining a second copy. "The same bytes uploaded repeatedly cost one
+    /// object, within a tenant" (this item's own Done-when) names the object-store cost, not the upload
+    /// itself - the redundant PUT already happened before dedup could ever act (bytes are not knowable
+    /// until the client's own PUT completes), and that is the honest, correct reading, not a shortfall.
+    ///
+    /// <para><b>Safe to call after this attachment may already be linked to a message.</b> A message
+    /// references the attachment by id, never its object key directly (this class's own remarks on
+    /// <see cref="MessageId"/>), so repointing <see cref="ObjectKey"/> here is transparent to anything
+    /// that already resolved a download URL through this attachment's own id - the next read simply
+    /// presigns against the new key. The caller (<c>AttachmentDeduplicationConsumer</c>) deletes the
+    /// now-redundant object only after this change is durably saved, never before - the same "commit
+    /// the fact, then reclaim the space" ordering this codebase already uses everywhere a delete could
+    /// otherwise race a reader.</para>
+    ///
+    /// <para>Idempotent the same way <see cref="SetContentHash"/> is: a redelivered event finds
+    /// <see cref="ContentHash"/> already set and this method is never called a second time (the
+    /// consumer's own read-then-write guard, not a check this method makes itself - `SetThumbnail`'s
+    /// own precedent for where that line is drawn).</para>
+    /// </summary>
+    public void PointToExistingObject(string existingObjectKey, string contentHash)
+    {
+        if (State != AttachmentState.Ready)
+        {
+            throw new InvalidAttachmentStateException(
+                $"Cannot deduplicate attachment {Id.Value} in state {State}; only {AttachmentState.Ready} can be repointed.");
+        }
+
+        ObjectKey = existingObjectKey;
+        ContentHash = contentHash;
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();

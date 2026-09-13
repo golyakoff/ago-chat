@@ -1,11 +1,19 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.StartConversation;
 
 /// <summary>
+/// `23-76`: <see cref="rateLimiter"/>/<see cref="rateLimitOptions"/> join this handler's dependencies
+/// so that creating conversations at speed cannot multiply `23-75`'s per-conversation attachment
+/// budget - a visitor is free to mint a new identity and open a new conversation, and without this
+/// check that budget "is a speed bump, not a limit" (this item's own words). See
+/// <see cref="ConversationCreateRateLimitOptions"/>'s own remarks for the two buckets and which one
+/// actually bounds the threat this item describes.
+///
 /// `23-78`: <see cref="siteConfig"/> joins this handler's dependencies to read the tenant-level default
 /// (<c>WidgetConfig.AllowAttachmentUploadsByDefault</c>) - composes through
 /// <see cref="GetSiteConfigByIdHandler"/> rather than a second <c>ISiteRepository.GetByIdAsync</c>
@@ -35,6 +43,8 @@ public sealed class StartConversationHandler(
     IVisitorRepository visitors,
     IConversationRepository conversations,
     GetSiteConfigByIdHandler siteConfig,
+    IRateLimiter rateLimiter,
+    ConversationCreateRateLimitOptions rateLimitOptions,
     IClock clock,
     IIdGenerator idGenerator,
     IVisitorEmojiPairGenerator emojiPairs)
@@ -65,6 +75,33 @@ public sealed class StartConversationHandler(
         if (existing is not null)
         {
             return new StartConversationResult(existing.Id, IsNew: false, existing.HasAttachmentUploadGrant);
+        }
+
+        // `23-76`: only the genuinely-new-conversation path spends this budget - resuming an existing
+        // conversation (the branch just above) is not what resets `23-75`'s per-conversation attachment
+        // budget, so it costs nothing here. Per-visitor first, per-site last - the same ordering
+        // convention `CreateAttachmentHandler`'s own remarks state ("a caller who was never going to
+        // pass their own limit should not also spend a share of the site's budget finding that out").
+        // See `ConversationCreateRateLimitOptions`'s own remarks on why the per-visitor bucket alone is
+        // a speed bump, not a limit - a fresh `VisitorId` is free to mint, so only the per-site bucket
+        // actually bounds the flood this item exists to stop; both are still checked, per this item's
+        // own literal text.
+        var visitorLimit = await rateLimiter.CheckAsync(
+            new RateLimitKey($"conversation-create:visitor:{command.VisitorId.Value}"),
+            new RateLimitRule(rateLimitOptions.PerVisitorCapacity, rateLimitOptions.PerVisitorRefillPerSecond),
+            cancellationToken);
+        if (!visitorLimit.Allowed)
+        {
+            return ConversationErrors.ConversationCreateRateLimited(visitorLimit.RetryAfter);
+        }
+
+        var siteLimit = await rateLimiter.CheckAsync(
+            new RateLimitKey($"conversation-create:site:{command.SiteId.Value}"),
+            new RateLimitRule(rateLimitOptions.PerSiteCapacity, rateLimitOptions.PerSiteRefillPerSecond),
+            cancellationToken);
+        if (!siteLimit.Allowed)
+        {
+            return ConversationErrors.ConversationCreateRateLimited(siteLimit.RetryAfter);
         }
 
         var config = await siteConfig.HandleAsync(new GetSiteConfigById.GetSiteConfigById(command.SiteId), cancellationToken);

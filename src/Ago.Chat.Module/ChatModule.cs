@@ -240,6 +240,14 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<MessageSendRateLimitOptions>>().Value);
 
+        // `23-76`: the identical shape right above - StartConversationHandler, the only consumer, is
+        // registered for every host, and takes the plain value directly.
+        services
+            .AddOptions<ConversationCreateRateLimitOptions>()
+            .Bind(configuration.GetSection(ConversationCreateRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<ConversationCreateRateLimitOptions>>().Value);
+
         // `5-03`: the platform's presigned-upload/download port (`5-02`) - registered here rather
         // than a host's own Program.cs for the same reason as everything else on this page:
         // CreateAttachmentHandler/ConfirmAttachmentHandler/GetAttachmentDownloadUrlHandler are
@@ -258,6 +266,14 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(AttachmentRateLimitOptions.SectionName))
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AttachmentRateLimitOptions>>().Value);
+
+        // `23-76`: the tenant's own storage ceiling - CreateAttachmentHandler is the only consumer,
+        // the identical "bound here, plain value handed in" shape as its two siblings just above.
+        services
+            .AddOptions<AttachmentStorageQuotaOptions>()
+            .Bind(configuration.GetSection(AttachmentStorageQuotaOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AttachmentStorageQuotaOptions>>().Value);
 
         // `10-02`: bound here, not Ago.Chat.Api's Program.cs - RegisterSiteHandler is registered for
         // every host below, the same MessageSendRateLimitOptions/AttachmentRateLimitOptions shape.

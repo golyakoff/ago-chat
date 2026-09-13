@@ -30,6 +30,16 @@ namespace Ago.Chat.Worker;
 /// rather than one release per attachment row - a batch of orphans rarely belongs to one conversation
 /// alone, but summing first means a conversation with several expired attachments in the same batch
 /// gets exactly one row-lock acquisition, not one per orphan.</para>
+///
+/// <para><b>`23-76`: a third CTE, <c>siteReleased</c>, releases each swept row's own site-level
+/// reservation in the identical statement</b> - the same "reserved by presign, released by the
+/// existing sweep, not a second mechanism" design point the `released` CTE above states for
+/// the conversation-level column, extended to <c>sites.attachment_bytes_reserved</c>
+/// (<c>ISiteAttachmentStorageBudget</c>). An abandoned presigned upload reserved bytes against both
+/// the conversation's own ceiling and the tenant's - releasing only the first would leak the second
+/// forever, since a `Pending` row this sweep deletes is the only place either reservation is ever
+/// tied back to a real attachment. Grouped by <c>site_id</c>, the identical "sum first, one row-lock
+/// per distinct key in the batch" shape `released` already uses for <c>conversation_id</c>.</para>
 /// </summary>
 public static class AttachmentOrphanSweepQuery
 {
@@ -47,7 +57,7 @@ public static class AttachmentOrphanSweepQuery
                     LIMIT @batchSize
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, object_key, conversation_id, size_bytes
+                RETURNING id, object_key, conversation_id, site_id, size_bytes
             ),
             released AS (
                 UPDATE conversations c
@@ -59,6 +69,17 @@ public static class AttachmentOrphanSweepQuery
                 ) agg
                 WHERE c.id = agg.conversation_id
                 RETURNING c.id
+            ),
+            siteReleased AS (
+                UPDATE sites s
+                SET attachment_bytes_reserved = GREATEST(s.attachment_bytes_reserved - agg.total, 0)
+                FROM (
+                    SELECT site_id, SUM(size_bytes) AS total
+                    FROM claimed
+                    GROUP BY site_id
+                ) agg
+                WHERE s.id = agg.site_id
+                RETURNING s.id
             )
             SELECT id, object_key FROM claimed
             """;

@@ -2,6 +2,7 @@
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Command = Ago.Chat.Application.UseCases.StartConversation.StartConversation;
 
 namespace Ago.Chat.Application.Tests.UseCases.StartConversation;
@@ -14,14 +15,14 @@ public class StartConversationHandlerTests
 
     private static (
         StartConversationHandler Handler, FakeVisitorRepository Visitors, FakeConversationRepository Conversations)
-        CreateHandler(FakeSiteRepository? sites = null)
+        CreateHandler(FakeSiteRepository? sites = null, IRateLimiter? rateLimiter = null)
     {
         var visitors = new FakeVisitorRepository();
         var conversations = new FakeConversationRepository();
         var siteConfig = new GetSiteConfigByIdHandler(sites ?? new FakeSiteRepository(), new FakeCache());
         var handler = new StartConversationHandler(
-            visitors, conversations, siteConfig, new FakeClock(Now), new FakeIdGenerator(),
-            new FakeVisitorEmojiPairGenerator());
+            visitors, conversations, siteConfig, rateLimiter ?? new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
+            new FakeClock(Now), new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
         return (handler, visitors, conversations);
     }
 
@@ -104,7 +105,8 @@ public class StartConversationHandlerTests
         var siteConfig = new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache());
         var emojiPairs = new FakeVisitorEmojiPairGenerator("🐳", "🌭");
         var handler = new StartConversationHandler(
-            visitors, conversations, siteConfig, new FakeClock(Now), new FakeIdGenerator(), emojiPairs);
+            visitors, conversations, siteConfig, new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
+            new FakeClock(Now), new FakeIdGenerator(), emojiPairs);
 
         var first = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
         var afterFirstContact = await visitors.GetByIdAsync(VisitorId, CancellationToken.None);
@@ -138,8 +140,8 @@ public class StartConversationHandlerTests
         var returnVisit = Now.AddDays(1);
         var siteConfig = new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache());
         var handler = new StartConversationHandler(
-            visitors, conversations, siteConfig, new FakeClock(returnVisit), new FakeIdGenerator(),
-            new FakeVisitorEmojiPairGenerator());
+            visitors, conversations, siteConfig, new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
+            new FakeClock(returnVisit), new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
 
         await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -206,5 +208,65 @@ public class StartConversationHandlerTests
         Assert.True(result.IsSuccess);
         Assert.False(result.Value.IsNew);
         Assert.False(result.Value.HasAttachmentUploadGrant);
+    }
+
+    // `23-76`: "creating conversations at speed does not multiply the available budget" - a fresh
+    // conversation is what resets `23-75`'s per-conversation attachment budget, so the genuinely-new
+    // path spends a rate-limit bucket before it is allowed to create one.
+
+    [Fact]
+    public async Task HandleAsync_WhenTheRateLimitIsExceeded_ReturnsConversationCreateRateLimited_WithoutStartingOne()
+    {
+        var (handler, _, conversations) = CreateHandler(rateLimiter: new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(7)));
+
+        var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.CreateRateLimited", result.Error!.Value.Code);
+        Assert.Null(await conversations.GetActiveForVisitorAsync(VisitorId, CancellationToken.None));
+    }
+
+    /// <summary>Proves the per-site bucket specifically is consulted, not just some bucket -
+    /// `SelectiveFakeRateLimiter` only denies keys naming "site", so a visitor-bucket-only check would
+    /// let this through.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenOnlyThePerSiteRateLimitIsExceeded_ReturnsConversationCreateRateLimited()
+    {
+        var (handler, _, _) = CreateHandler(rateLimiter: new SelectiveFakeRateLimiter("site", TimeSpan.FromSeconds(7)));
+
+        var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.CreateRateLimited", result.Error!.Value.Code);
+    }
+
+    /// <summary>Proves the per-visitor bucket specifically is consulted too - a site-bucket-only check
+    /// would let this through.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenOnlyThePerVisitorRateLimitIsExceeded_ReturnsConversationCreateRateLimited()
+    {
+        var (handler, _, _) = CreateHandler(rateLimiter: new SelectiveFakeRateLimiter("visitor", TimeSpan.FromSeconds(7)));
+
+        var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.CreateRateLimited", result.Error!.Value.Code);
+    }
+
+    /// <summary>The rate limit guards *creating* a conversation - resuming an existing one must never
+    /// spend it, or a legitimate, chatty-but-already-open visitor would eventually be refused their own
+    /// conversation history for no reason connected to `23-75`'s budget at all.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenResumingAnExistingConversation_TheRateLimitIsNeverConsulted()
+    {
+        var deniedLimiter = new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(7));
+        var (handler, _, conversations) = CreateHandler(rateLimiter: deniedLimiter);
+        var existing = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversations.Seed(existing);
+
+        var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.IsNew);
     }
 }

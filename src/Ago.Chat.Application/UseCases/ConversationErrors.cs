@@ -88,6 +88,18 @@ public static class ConversationErrors
             $"Declared size {declaredSizeBytes} bytes would exceed this conversation's attachment budget - " +
             $"{remainingBudgetBytes} byte(s) remaining.");
 
+    /// <summary>`23-76`: distinct from <see cref="AttachmentConversationBudgetExceeded"/> above even
+    /// though the shape is identical - that one is this *conversation's* own running total; this one is
+    /// the *tenant's*, and a client branching on <c>code</c> needs to tell "compress this file or start
+    /// a new conversation" apart from "this tenant's own storage is full, nothing this caller does about
+    /// it helps." Names the remaining budget for the same reason that one does - a caller needs a real
+    /// number to act on, not just a refusal.</summary>
+    public static Error AttachmentSiteBudgetExceeded(long declaredSizeBytes, long remainingBudgetBytes) =>
+        new(
+            "Attachment.SiteBudgetExceeded",
+            $"Declared size {declaredSizeBytes} bytes would exceed this tenant's total attachment storage budget - " +
+            $"{remainingBudgetBytes} byte(s) remaining.");
+
     /// <summary>`23-78`: the visitor-side gate itself - `CreateAttachmentHandler.HandleAsVisitorAsync`
     /// refuses a presigned upload slot for any conversation with no attachment-upload grant
     /// (<see cref="Domain.Conversation.HasAttachmentUploadGrant"/>). The message states the fact and
@@ -347,6 +359,18 @@ public static class ConversationErrors
     /// other rate limit in this vocabulary without parsing the message text.</summary>
     public static Error ExportRateLimited(TimeSpan retryAfter) =>
         new("Export.RateLimited", $"Too many export requests - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
+
+    /// <summary>`23-76`: distinct from every other <c>RateLimited</c> code here, the same reasoning
+    /// each of those gives for its own - "a fresh conversation is what resets `23-75`'s per-conversation
+    /// budget" (this item's own words), so <c>StartConversationHandler</c> gets its own bucket rather
+    /// than reusing <see cref="RateLimited"/> (which guards *sending within* an existing conversation,
+    /// a different action with a different abuse shape). Never applied to a resumed conversation - see
+    /// <c>StartConversationHandler</c>'s own remarks on why only the genuinely-new-conversation path
+    /// spends this budget.</summary>
+    public static Error ConversationCreateRateLimited(TimeSpan retryAfter) =>
+        new(
+            "Conversation.CreateRateLimited",
+            $"Too many new conversations - retry after {retryAfter.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s.");
 
     /// <summary>`24-11`: distinct from <see cref="ExportRateLimited"/> even though the shape is
     /// identical, the same reasoning that code's own remarks give - a person-scoped export is a

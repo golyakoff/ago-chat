@@ -21,4 +21,18 @@ public sealed class AttachmentRepository(AgoChatDbContext db) : IAttachmentRepos
 
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>`23-76`: backed by `ix_attachments_site_content_hash` (site_id, content_hash, filtered
+    /// to `state = 'Ready' AND content_hash IS NOT NULL`) - see that index's own remarks. `AsNoTracking`:
+    /// this is a read-only lookup the caller only ever reads fields off (never mutates and saves back
+    /// through this instance - it mutates its *own* attachment, loaded separately via
+    /// <see cref="GetByIdAsync"/>), so there is nothing for the change tracker to buy here.</summary>
+    public Task<Attachment?> FindReadyDuplicateAsync(
+        SiteId siteId, string contentHash, AttachmentId excluding, CancellationToken cancellationToken) =>
+        db.Attachments
+            .AsNoTracking()
+            .Where(a =>
+                a.SiteId == siteId && a.ContentHash == contentHash && a.State == AttachmentState.Ready && a.Id != excluding)
+            .OrderBy(a => a.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
 }

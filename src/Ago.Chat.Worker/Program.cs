@@ -225,6 +225,16 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<AttachmentThumbnailConsumer>();
 
+// `23-76`: the dedup consumer - a second, independent subscription to the same AttachmentConfirmed
+// event (see AttachmentDeduplicationConsumer's own remarks on why this is a sibling, not a change to
+// the thumbnail consumer above).
+builder.Services.AddScoped<AttachmentDeduplicator>();
+builder.Services
+    .AddOptions<AttachmentDeduplicationConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(AttachmentDeduplicationConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<AttachmentDeduplicationConsumer>();
+
 // `8-07`/`adr/0058`: the demo tenant expiry sweep - the narrow erasure this item builds because
 // `16-02` is scoped and unbuilt. Needs the same Keycloak admin credential Ago.Chat.Api holds, because
 // removing a demo tenant means removing its identity-provider user too; see that host's own remarks on

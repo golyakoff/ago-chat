@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
         // below - see that port's own remarks for why a compare-and-set like this gets a dedicated
         // port rather than a method on IAttachmentRepository/IConversationRepository.
         services.AddScoped<IConversationAttachmentBudget, ConversationAttachmentBudgetStore>();
+        services.AddScoped<ISiteAttachmentStorageBudget, SiteAttachmentStorageBudgetStore>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         // `25-56`: singleton, the same "holds no state beyond the platform's own CSPRNG" shape

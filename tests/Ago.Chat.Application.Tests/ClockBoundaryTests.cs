@@ -30,7 +30,8 @@ public class ClockBoundaryTests
         var conversations = new FakeConversationRepository();
         var clock = new FakeClock(BeforeBerlinSpringForward);
         var handler = new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()), clock,
+            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
 
         await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
