@@ -14,6 +14,14 @@ namespace Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 /// the repository, because it is one Postgres transaction across three tables
 /// (`operator_invites`/`sites`/`operators`) that no amount of Application-layer orchestration could
 /// make atomic from outside a single connection.
+///
+/// <para><b>`25-73`: the code alone is no longer enough.</b> <c>OperatorInviteRedemptionRepository</c>
+/// now also checks that <paramref name="command"/>'s own authenticated email agrees with the invite's
+/// (<see cref="OperatorInviteRedemptionResult.EmailMismatch"/>) and that nobody revoked it first
+/// (<see cref="OperatorInviteRedemptionResult.Revoked"/>) - this item's own real security boundary:
+/// "the code says which invite, the Keycloak session says who is actually claiming it, and both must
+/// agree." This handler's own job stays exactly what its class-level remarks already describe: hash,
+/// delegate, map every outcome - two more arms in the same switch, not a new shape.</para>
 /// </summary>
 public sealed class RedeemOperatorInviteHandler(IOperatorInviteRedemptionRepository redemptions, IClock clock)
 {
@@ -36,6 +44,8 @@ public sealed class RedeemOperatorInviteHandler(IOperatorInviteRedemptionReposit
                 ConversationErrors.OperatorInviteSeatLimitReached(seatLimitReached.SeatLimit),
             OperatorInviteRedemptionResult.AdminLimitReached adminLimitReached =>
                 ConversationErrors.OperatorInviteAdminLimitReached(adminLimitReached.AdminLimit),
+            OperatorInviteRedemptionResult.Revoked => ConversationErrors.OperatorInviteRevoked(),
+            OperatorInviteRedemptionResult.EmailMismatch => ConversationErrors.OperatorInviteEmailMismatch(),
             _ => throw new InvalidOperationException($"Unhandled {nameof(OperatorInviteRedemptionResult)}: {outcome.GetType().Name}."),
         };
     }

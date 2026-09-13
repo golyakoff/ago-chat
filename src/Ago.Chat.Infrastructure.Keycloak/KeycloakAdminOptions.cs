@@ -37,6 +37,18 @@ public sealed class KeycloakAdminOptions
     /// delegate rather than <c>[Required]</c>.</summary>
     public string ClientSecret { get; set; } = string.Empty;
 
+    /// <summary>`25-73`: the public client id <c>OperatorInviteEmailProvisioner</c> names as the
+    /// `client_id` on its own `execute-actions-email` call - Keycloak validates the `redirect_uri` it
+    /// is also given against *this* client's own registered valid-redirect-uri patterns, so it must be
+    /// the operator console's real client id, not the service-account client above. Defaulted to
+    /// `"ago-console"` (matching this repository's own conventional naming for the console's OIDC
+    /// client elsewhere) rather than left required - unlike <see cref="ClientSecret"/>, a wrong value
+    /// here fails loudly and specifically (Keycloak refuses the call with a client-not-found/invalid
+    /// redirect_uri error the console's own invite-list screen surfaces as a send failure), not
+    /// silently, so this item's own worker could not verify the real value against a live realm and
+    /// flags it for confirmation rather than guessing at a `[Required]` with no safe default.</summary>
+    public string ConsoleClientId { get; set; } = "ago-console";
+
     /// <summary>How long before a cached access token's own expiry to stop using it. Covers clock skew
     /// and the flight time of the request the token is about to be spent on.</summary>
     [Range(typeof(TimeSpan), "00:00:05", "00:05:00")]

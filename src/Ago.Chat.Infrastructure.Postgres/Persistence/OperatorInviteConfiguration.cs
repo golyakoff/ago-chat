@@ -17,11 +17,21 @@ internal sealed class OperatorInviteConfiguration : IEntityTypeConfiguration<Ope
         // type the table it actually points at already uses.
         builder.Property(i => i.RoleId).HasColumnName("role_id");
         builder.Property(i => i.CodeHash).HasColumnName("code_hash").IsRequired();
+        // `25-73`: required since this item - see OperatorInvite.Email's own remarks. The migration
+        // that adds this column also deletes every pre-existing row (this item's own point 8, "annulled
+        // outright"), so the column carries no default and needed none: the table is empty the moment
+        // it is added.
+        builder.Property(i => i.Email).HasColumnName("email").IsRequired();
         builder.Property(i => i.CreatedByOperatorId).HasColumnName("created_by_operator_id").HasConversion(IdConverters.Operator);
         builder.Property(i => i.CreatedAt).HasColumnName("created_at");
         builder.Property(i => i.ExpiresAt).HasColumnName("expires_at");
         builder.Property(i => i.RedeemedAt).HasColumnName("redeemed_at");
         builder.Property(i => i.RedeemedByOperatorId).HasColumnName("redeemed_by_operator_id").HasConversion(IdConverters.NullableOperator);
+        // `25-73`: RevokeOperatorInviteHandler's own write, SendFailed's own record-keeping - both
+        // optional, the same "absence is the ordinary case" shape RedeemedAt/RedeemedByOperatorId
+        // already establish just above for this identical aggregate.
+        builder.Property(i => i.RevokedAt).HasColumnName("revoked_at");
+        builder.Property(i => i.SendFailureCode).HasColumnName("send_failure_code");
 
         builder.HasOne<Site>().WithMany().HasForeignKey(i => i.SiteId);
         builder.HasOne<RoleRecord>().WithMany().HasForeignKey(i => i.RoleId);
@@ -32,6 +42,13 @@ internal sealed class OperatorInviteConfiguration : IEntityTypeConfiguration<Ope
         // refuses it" the same way OperatorConfiguration's own composite index backstops
         // ISiteRegistrationRepository's compare-and-set.
         builder.HasIndex(i => i.CodeHash).IsUnique().HasDatabaseName("ux_operator_invites_code_hash");
+
+        // `25-73`: named explicitly, in this project's own lower-snake-case convention
+        // (`ux_operator_invites_code_hash` right above) - EF Core already creates an index for this FK
+        // by convention (`IX_operator_invites_site_id`), which the generated migration renames rather
+        // than adds; stated here so the index OperatorInviteListReadStore's own new per-site query
+        // relies on is named deliberately, not left as a default this file never mentions.
+        builder.HasIndex(i => i.SiteId).HasDatabaseName("ix_operator_invites_site_id");
 
         // `data-model.md`'s `conversations`/`messages` precedent for "Postgres's built-in xmin system
         // column, not an extra column of our own to keep in sync by hand" - the same optimistic-

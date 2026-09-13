@@ -7,9 +7,9 @@ public class OperatorInviteTests
     private static readonly OperatorId CreatedBy = new(Guid.NewGuid());
     private static readonly Guid RoleId = Guid.NewGuid();
 
-    private static OperatorInvite Generate(TimeSpan? validFor = null) =>
+    private static OperatorInvite Generate(TimeSpan? validFor = null, string email = "invitee@example.com") =>
         OperatorInvite.Generate(
-            new OperatorInviteId(Guid.NewGuid()), SiteId, RoleId, [1, 2, 3], CreatedBy, Now,
+            new OperatorInviteId(Guid.NewGuid()), SiteId, RoleId, [1, 2, 3], email, CreatedBy, Now,
             validFor ?? TimeSpan.FromDays(7));
 
     [Fact]
@@ -81,5 +81,77 @@ public class OperatorInviteTests
         var invite = Generate(TimeSpan.FromDays(7));
 
         Assert.False(invite.IsExpired(invite.ExpiresAt - TimeSpan.FromTicks(1)));
+    }
+
+    /// <summary>`25-73`: email became a required field on this aggregate - `CreateOperatorInviteHandler`
+    /// validates the shape before ever calling this factory, but the factory itself still refuses an
+    /// empty value as a last line of defence, the same "thrown, a caller bug not a business refusal"
+    /// shape <see cref="Site"/>'s own constructor already uses for its required `PublicKey`.</summary>
+    [Fact]
+    public void Generate_WithNoEmail_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => Generate(email: ""));
+    }
+
+    [Fact]
+    public void Generate_SetsEmail()
+    {
+        var invite = Generate(email: "colleague@shop.example");
+
+        Assert.Equal("colleague@shop.example", invite.Email);
+    }
+
+    [Fact]
+    public void Revoke_MarksRevoked()
+    {
+        var invite = Generate();
+        var revokedAt = Now + TimeSpan.FromMinutes(5);
+
+        invite.Revoke(revokedAt);
+
+        Assert.True(invite.IsRevoked);
+        Assert.Equal(revokedAt, invite.RevokedAt);
+    }
+
+    [Fact]
+    public void Revoke_WhenAlreadyRedeemed_Throws()
+    {
+        var invite = Generate();
+        invite.Redeem(new OperatorId(Guid.NewGuid()), Now + TimeSpan.FromMinutes(5));
+
+        Assert.Throws<InvalidOperatorInviteStateException>(() => invite.Revoke(Now + TimeSpan.FromMinutes(10)));
+    }
+
+    [Fact]
+    public void Revoke_WhenAlreadyRevoked_Throws()
+    {
+        var invite = Generate();
+        invite.Revoke(Now + TimeSpan.FromMinutes(5));
+
+        Assert.Throws<InvalidOperatorInviteStateException>(() => invite.Revoke(Now + TimeSpan.FromMinutes(10)));
+    }
+
+    /// <summary>`25-73`'s own security boundary, at the domain layer: a revoked invite must never be
+    /// redeemable, whatever else about it still looks valid - `OperatorInviteRedemptionRepository`'s
+    /// own pre-lock check is the primary enforcement, this is the last-line-of-defence backstop
+    /// <see cref="Redeem"/>'s own remarks already describe for `IsRedeemed`/`IsExpired`.</summary>
+    [Fact]
+    public void Redeem_WhenRevoked_Throws()
+    {
+        var invite = Generate();
+        invite.Revoke(Now + TimeSpan.FromMinutes(1));
+
+        Assert.Throws<InvalidOperatorInviteStateException>(
+            () => invite.Redeem(new OperatorId(Guid.NewGuid()), Now + TimeSpan.FromMinutes(5)));
+    }
+
+    [Fact]
+    public void MarkSendFailed_RecordsTheSmtpErrorCode()
+    {
+        var invite = Generate();
+
+        invite.MarkSendFailed("550");
+
+        Assert.Equal("550", invite.SendFailureCode);
     }
 }

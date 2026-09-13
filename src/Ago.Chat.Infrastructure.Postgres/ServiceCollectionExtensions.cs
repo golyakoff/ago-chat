@@ -87,6 +87,13 @@ public static class ServiceCollectionExtensions
         // IOperatorInviteRepository/IOperatorInviteRedemptionRepository (IOperatorInvitePreviewReadStore's
         // own remarks on why).
         services.AddScoped<IOperatorInvitePreviewReadStore, OperatorInvitePreviewReadStore>();
+        // `25-73`: the console's own invite-list screen - its own port, not a sixth method on
+        // IOperatorInviteRepository/IOperatorInviteRedemptionRepository, the identical reasoning
+        // IOperatorInvitePreviewReadStore's own remarks give one line up.
+        services.AddScoped<IOperatorInviteListReadStore, OperatorInviteListReadStore>();
+        // `25-73`: OnboardingPage's own registration-collision steer - its own port, the identical
+        // reasoning IOperatorInviteListReadStore's own remarks give one line up.
+        services.AddScoped<IPendingOperatorInviteByEmailReadStore, PendingOperatorInviteByEmailReadStore>();
 
         // `23-17`: an operator's own work, reported against the load they carried it under - its own
         // port, not a fifth method here (IOperatorLoadReportReadStore's own remarks on why).

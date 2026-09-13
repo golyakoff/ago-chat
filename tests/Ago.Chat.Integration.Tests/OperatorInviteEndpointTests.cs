@@ -7,12 +7,15 @@ using Ago.Chat.Api.Sites;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
+using Ago.Chat.Application.UseCases.HasPendingOperatorInvite;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
+using Ago.Chat.Application.UseCases.ListOperatorInvites;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
+using Ago.Chat.Application.UseCases.RevokeOperatorInvite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -55,18 +58,36 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(OperatorOidcCollection.Name)]
 public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
 {
+    /// <summary>`25-73`: always reports the email sent - this test file's own subject is the new
+    /// code-and-email redemption security boundary, the rate limit, and the pre-existing seat/admin
+    /// capacity logic, none of which need a real Keycloak Admin API round trip to exercise. The real
+    /// <c>OperatorInviteEmailProvisioner</c> (create-or-find-user, `execute-actions-email`, locale) is
+    /// deliberately not exercised by this file - `OperatorOidcFixture`'s own realm carries no
+    /// service-account client with `manage-users` the way `DemoTenantFixture`'s does for
+    /// `KeycloakDemoIdentityProvisioner`, and wiring one up is a larger, separate change to this
+    /// fixture's own realm import this item's worker did not make. Stated here and in this item's own
+    /// report, not silently assumed covered.</summary>
+    private sealed class FakeOperatorInviteEmailProvisioner : IOperatorInviteEmailProvisioner
+    {
+        public Task<OperatorInviteProvisionOutcome> ProvisionAndSendAsync(
+            OperatorInviteProvisionRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult<OperatorInviteProvisionOutcome>(new OperatorInviteProvisionOutcome.Sent());
+    }
+
     [Fact]
     public async Task Redeem_ARealKeycloakTokenWithNoOperatorRowAnywhere_BecomesAWorkingOperatorOfTheInvitingSite()
     {
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, adminOperatorId, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, adminOperatorId, adminToken, _) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
 
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
-
+        // `25-73`: the redeemer is created first so the invite can be addressed to their own real
+        // token email - the new code-and-email redemption check requires both to agree.
         var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
         var redeemResponse = await redeemClient.PostAsJsonAsync(
@@ -116,11 +137,12 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
 
         var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
         var redeemResponse = await redeemClient.PostAsJsonAsync(
@@ -141,11 +163,12 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 3);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
 
-        var (firstRedeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (firstRedeemerToken, firstRedeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{firstRedeemerUsername}@example.test");
+
         using var firstRedeemer = host.GetTestClient();
         firstRedeemer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", firstRedeemerToken);
         var first = await firstRedeemer.PostAsJsonAsync(
@@ -168,9 +191,12 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+        // `25-73`: Expired is checked before the email-match check (OperatorInviteRedemptionRepository's
+        // own ordering), so this test's own subject does not depend on who the invite is addressed to -
+        // an arbitrary placeholder email is enough.
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", "invitee@example.test");
 
         await using (var db = fixture.CreateDbContext())
         {
@@ -186,6 +212,124 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
             "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
 
         Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
+    }
+
+    /// <summary>
+    /// `25-73`'s own real security boundary, proven end to end against real Postgres: a real, live,
+    /// unredeemed invite's own code is presented correctly, but the authenticated redeemer's own real
+    /// Keycloak token email does not match the address the invite was addressed to.
+    /// Fails-before: reverting `OperatorInviteRedemptionRepository`'s own email-comparison block back
+    /// out makes this test fail - the redemption would succeed (`200`) instead of being refused.
+    /// </summary>
+    [Fact]
+    public async Task Redeem_WithAnEmailThatDoesNotMatchTheInvite_IsRejectedForbidden()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+        // Addressed to an email nobody's real token will ever carry - this test's own subject is the
+        // mismatch itself, not who redeems.
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", "nobody-will-match@example.test");
+
+        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var response = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.EmailMismatch", problem.Title);
+
+        // The invite itself is untouched - a caller presenting the wrong email must not consume it,
+        // the identical "left exactly as it was" guarantee this file's own seat-limit test already
+        // proves for a different rejection.
+        await using var db = fixture.CreateDbContext();
+        var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
+        Assert.False(inviteRow.IsRedeemed);
+    }
+
+    /// <summary>
+    /// `25-73`'s own Done-when: "revoking before acceptance is proven to actually block a later
+    /// redemption attempt with the stated message" - proven here against a real revoke call, a real
+    /// Postgres row, and a real subsequent redemption attempt, not merely asserted from the handler's
+    /// own mapping (`RedeemOperatorInviteHandlerTests.HandleAsync_OnRevoked_ReturnsOperatorInviteRevoked`
+    /// proves that half; this is the other half - that revoking really reaches the row redemption reads).
+    /// Fails-before: reverting `OperatorInviteRedemptionRepository`'s own `IsRevoked` pre-lock check
+    /// back out makes this test fail - the redemption would succeed (`200`) instead of being refused,
+    /// even though the invite really was revoked first.
+    /// </summary>
+    [Fact]
+    public async Task Revoke_ThenRedeem_IsRejectedConflict()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+
+        using var adminClient2 = host.GetTestClient();
+        adminClient2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var revokeResponse = await adminClient2.PostAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites/{invite.OperatorInviteId}/revoke", content: null);
+        Assert.Equal(HttpStatusCode.NoContent, revokeResponse.StatusCode);
+
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+
+        Assert.Equal(HttpStatusCode.Conflict, redeemResponse.StatusCode);
+        var problem = await redeemResponse.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.Revoked", problem.Title);
+
+        await using var db = fixture.CreateDbContext();
+        var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
+        Assert.True(inviteRow.IsRevoked);
+        Assert.False(inviteRow.IsRedeemed);
+    }
+
+    /// <summary>`25-73`: the console's own invite-list screen, proven against a real create and a real
+    /// revoke - the row's own status flips from live to revoked, readable back exactly as
+    /// `ListOperatorInvitesHandler` computes it.</summary>
+    [Fact]
+    public async Task ListInvites_AfterCreateAndRevoke_ReflectsBothInTheStatus()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", "list-me@example.test");
+
+        using var listClient = host.GetTestClient();
+        listClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var beforeRevoke = await listClient.GetFromJsonAsync<OperatorInviteEndpoints.ListOperatorInvitesResponse>(
+            $"/api/v1/sites/{adminSite}/operator-invites");
+        Assert.NotNull(beforeRevoke);
+        var row = Assert.Single(beforeRevoke.Invites, i => i.OperatorInviteId == invite.OperatorInviteId);
+        Assert.Equal("list-me@example.test", row.Email);
+        Assert.Equal("Sent", row.Status);
+
+        using var revokeClient = host.GetTestClient();
+        revokeClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var revokeResponse = await revokeClient.PostAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites/{invite.OperatorInviteId}/revoke", content: null);
+        Assert.Equal(HttpStatusCode.NoContent, revokeResponse.StatusCode);
+
+        using var listClient2 = host.GetTestClient();
+        listClient2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var afterRevoke = await listClient2.GetFromJsonAsync<OperatorInviteEndpoints.ListOperatorInvitesResponse>(
+            $"/api/v1/sites/{adminSite}/operator-invites");
+        Assert.NotNull(afterRevoke);
+        var revokedRow = Assert.Single(afterRevoke.Invites, i => i.OperatorInviteId == invite.OperatorInviteId);
+        Assert.Equal("Revoked", revokedRow.Status);
     }
 
     [Fact]
@@ -214,9 +358,12 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, adminEmail) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 5);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+        // `25-73`: addressed to the admin's own email - AlreadyOperatorOnSite is checked only after the
+        // new email-match check passes, so this test's own subject (the conflict, not a mismatch) needs
+        // the invite issued to the exact identity that is about to redeem it.
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", adminEmail);
 
         // The site's own registering identity - already an Operator (and Admin) of this exact site -
         // tries to redeem a second invite for the same site.
@@ -240,13 +387,17 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 5);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
 
         // A second, unrelated identity that already administers its own, different site.
         using var otherSiteClient = host.GetTestClient();
-        var (_, _, otherAdminToken) = await RegisterFreshSiteAsync(otherSiteClient);
+        var (_, _, otherAdminToken, otherAdminEmail) = await RegisterFreshSiteAsync(otherSiteClient);
+
+        // `25-73`: addressed to the other admin's own email - both the code and the redeeming
+        // identity's email must agree, and this test's own subject is that a different site's admin may
+        // still redeem, not that any email will do.
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", otherAdminEmail);
 
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", otherAdminToken);
@@ -269,18 +420,20 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         // `13-08` raised the free tier's own default seat_limit from 1 to 2, so this test's own
         // "at capacity already" starting condition can no longer come from the default alone - lowered
         // explicitly to 1 instead, matching this test's actual subject (redemption at an arbitrary
         // limit, then a seat opening), which the free-tier default value itself is not.
         // `Invite_OnAFreshFreeTierSite_*` below are the tests that exercise the real default.
         await RaiseSeatLimitAsync(adminSite, seatLimit: 1);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
 
         // The identical identity presents the identical code both times - this test is about the
-        // invite's own redeemability surviving a rejection, not about who holds the code.
-        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        // invite's own redeemability surviving a rejection, not about who holds the code. `25-73`: the
+        // invite is addressed to this identity's own email so the seat-limit rejection (checked after
+        // the email-match check) is actually what this test's own first attempt hits.
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
 
         using var firstAttemptClient = host.GetTestClient();
         firstAttemptClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
@@ -321,10 +474,11 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, adminOperatorId, adminToken) = await RegisterFreshSiteAsync(client);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+        var (adminSite, adminOperatorId, adminToken, _) = await RegisterFreshSiteAsync(client);
 
-        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
         var redeemResponse = await redeemClient.PostAsJsonAsync(
@@ -354,10 +508,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
 
-        var firstInvite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
-        var (firstRedeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (firstRedeemerToken, firstRedeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var firstInvite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{firstRedeemerUsername}@example.test");
         using var firstRedeemer = host.GetTestClient();
         firstRedeemer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", firstRedeemerToken);
         var firstRedeemed = await firstRedeemer.PostAsJsonAsync(
@@ -368,9 +522,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         // A fresh client, not the outer `client` - CreateInviteAsync's own `using var adminClient =
         // client` disposes whatever it is handed, so the outer `client` is no longer usable after the
         // first CreateInviteAsync call above.
+        var (secondRedeemerToken, secondRedeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
         using var secondInviteClient = host.GetTestClient();
-        var secondInvite = await CreateInviteAsync(secondInviteClient, adminToken, adminSite, "Operator");
-        var (secondRedeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var secondInvite = await CreateInviteAsync(
+            secondInviteClient, adminToken, adminSite, "Operator", $"{secondRedeemerUsername}@example.test");
         using var secondRedeemer = host.GetTestClient();
         secondRedeemer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secondRedeemerToken);
         var rejected = await secondRedeemer.PostAsJsonAsync(
@@ -405,13 +560,13 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         // The free tier includes exactly one administrator (the founder) - room for a second is made
         // the same way `RaiseSeatLimitAsync` simulates a not-yet-built purchase surface for seats.
         await RaiseAdminLimitAsync(adminSite, adminLimit: 2);
 
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin");
-        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin", $"{redeemerUsername}@example.test");
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
         var redeemResponse = await redeemClient.PostAsJsonAsync(
@@ -451,10 +606,11 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin");
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
 
-        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin", $"{redeemerUsername}@example.test");
+
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
         var rejected = await redeemClient.PostAsJsonAsync(
@@ -488,7 +644,7 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
 
         var response = await operatorClient.PostAsJsonAsync(
             $"/api/v1/sites/{fixture.SeededSiteId.Value}/operator-invites",
-            new OperatorInviteEndpoints.CreateOperatorInviteRequest("Operator"));
+            new OperatorInviteEndpoints.CreateOperatorInviteRequest("Operator", "someone@example.test"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -506,9 +662,9 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         using var createClient = host.GetTestClient();
-        var invite = await CreateInviteAsync(createClient, adminToken, adminSite, "Operator");
+        var invite = await CreateInviteAsync(createClient, adminToken, adminSite, "Operator", "invitee@example.test");
 
         using var anonymousClient = host.GetTestClient();
         var response = await anonymousClient.PostAsJsonAsync(
@@ -537,8 +693,8 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", "invitee@example.test");
 
         await using (var db = fixture.CreateDbContext())
         {
@@ -564,11 +720,12 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
-        var (adminSite, _, adminToken) = await RegisterFreshSiteAsync(client);
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
         await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator");
 
-        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+
         using var redeemClient = host.GetTestClient();
         redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
         var redeemResponse = await redeemClient.PostAsJsonAsync(
@@ -599,9 +756,14 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    private async Task<(Guid SiteId, Guid OperatorId, string Token)> RegisterFreshSiteAsync(HttpClient client)
+    /// <summary>`25-73`: <c>Email</c> is the registering identity's own token email
+    /// (<c>$"{username}@example.test"</c>, `OperatorOidcFixture.CreateFreshUserAccessTokenAsync`'s own
+    /// convention) - callers that need to invite *this* identity back to its own site
+    /// (<see cref="Redeem_FromASubThatAlreadyAdministersThisSite_IsRejectedConflict"/>) need it to build
+    /// an invite this identity's own token can pass the new email-match check with.</summary>
+    private async Task<(Guid SiteId, Guid OperatorId, string Token, string Email)> RegisterFreshSiteAsync(HttpClient client)
     {
-        var (token, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        var (token, username) = await fixture.CreateFreshUserAccessTokenAsync();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await client.PostAsJsonAsync(
@@ -610,17 +772,23 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         var body = await response.Content.ReadFromJsonAsync<SitesEndpoints.RegisterSiteResponse>();
         Assert.NotNull(body);
 
-        return (body.SiteId, body.OperatorId, token);
+        return (body.SiteId, body.OperatorId, token, $"{username}@example.test");
     }
 
+    /// <summary>`25-73`: <paramref name="email"/> is now required by
+    /// <see cref="CreateOperatorInviteHandler"/> itself - every call site names the address deliberately,
+    /// almost always the intended redeemer's own token email (see
+    /// <see cref="RegisterFreshSiteAsync"/>'s own remarks), so the new code-and-email redemption check
+    /// this item adds actually agrees rather than rejecting a test's own happy path with
+    /// `OperatorInvite.EmailMismatch`.</summary>
     private async Task<OperatorInviteEndpoints.CreateOperatorInviteResponse> CreateInviteAsync(
-        HttpClient client, string adminToken, Guid siteId, string roleName)
+        HttpClient client, string adminToken, Guid siteId, string roleName, string email)
     {
         using var adminClient = client;
         adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
 
         var response = await adminClient.PostAsJsonAsync(
-            $"/api/v1/sites/{siteId}/operator-invites", new OperatorInviteEndpoints.CreateOperatorInviteRequest(roleName));
+            $"/api/v1/sites/{siteId}/operator-invites", new OperatorInviteEndpoints.CreateOperatorInviteRequest(roleName, email));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<OperatorInviteEndpoints.CreateOperatorInviteResponse>();
         Assert.NotNull(body);
@@ -672,11 +840,39 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
         builder.Services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
         builder.Services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();
-        builder.Services.AddSingleton(new OperatorInviteOptions());
+        builder.Services.AddSingleton(new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
+        // `25-73`: CreateOperatorInviteHandler's three new dependencies - ISiteRepository for the
+        // invite's own Locale lookup (the real SiteRepository, against this fixture's real Postgres),
+        // OperatorInviteCreationRateLimitOptions for the per-site daily bucket (the same FakeRateLimiter
+        // registered below always allows, matching every other rate-limited handler in this stripped
+        // host), and a fake IOperatorInviteEmailProvisioner - this host has no service-account client
+        // wired against OperatorOidcFixture's own realm the way DemoTenantFixture's does for
+        // KeycloakDemoIdentityProvisioner, so the real Keycloak-writing half of this item is
+        // deliberately not exercised here; see this file's own class-level remarks and the item's own
+        // report for what that leaves unverified.
+        builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        builder.Services.AddSingleton(new OperatorInviteCreationRateLimitOptions());
+        builder.Services.AddSingleton<IOperatorInviteEmailProvisioner, FakeOperatorInviteEmailProvisioner>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<CreateOperatorInviteHandler>();
         builder.Services.AddScoped<RedeemOperatorInviteHandler>();
+        // `25-73`: the console's own invite-list screen and its "отозвать" button -
+        // `MapOperatorInviteEndpoints` maps both routes unconditionally, so RequestDelegateFactory's
+        // own metadata inference needs both handlers resolvable from this container at host build time
+        // regardless of which single test method is running - found live: every test in this file
+        // failed host startup with "Body was inferred but the method does not allow inferred body
+        // parameters" until these two were registered, because an unregistered `handler` parameter on
+        // a route ASP.NET cannot infer a body for (GET, or a POST with no JSON body) is inferred as an
+        // invalid body parameter rather than a DI service.
+        builder.Services.AddScoped<IOperatorInviteListReadStore, OperatorInviteListReadStore>();
+        builder.Services.AddScoped<ListOperatorInvitesHandler>();
+        builder.Services.AddScoped<RevokeOperatorInviteHandler>();
+        // `25-73`: OnboardingPage's own registration-collision steer - the third new route
+        // `MapOperatorInviteEndpoints` maps unconditionally, so it needs the same "resolvable from
+        // this container at host build time" registration the two above already needed.
+        builder.Services.AddScoped<IPendingOperatorInviteByEmailReadStore, PendingOperatorInviteByEmailReadStore>();
+        builder.Services.AddScoped<HasPendingOperatorInviteHandler>();
         // `23-70`: the anonymous landing-page read - its own read store and options, same "resolve
         // from this stripped-down host's own container" shape as every other registration here.
         builder.Services.AddScoped<IOperatorInvitePreviewReadStore, OperatorInvitePreviewReadStore>();

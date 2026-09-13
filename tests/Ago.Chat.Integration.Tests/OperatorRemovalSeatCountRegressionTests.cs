@@ -37,15 +37,17 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
             await db.SaveChangesAsync();
         }
 
-        var (codeHash1, _) = await SeedInviteAsync(siteId, roleId);
+        var (codeHash1, _) = await SeedInviteAsync(siteId, roleId, "new1@example.com");
         await using var repositoryDb = fixture.CreateDbContext();
         var repository = new OperatorInviteRedemptionRepository(
             repositoryDb, new Ago.Platform.Kernel.UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(repositoryDb));
 
         // At seat_limit=1 with one live operator already occupying the site's only seat, a new
         // identity's redemption is rejected - the baseline every removal must actually change.
+        // `25-73`: the attempt's own email must match the invite's own email now - "new1@example.com"
+        // both times, the same address SeedInviteAsync generated the invite for.
         var beforeRemoval = await repository.RedeemAsync(
-            new RedeemOperatorInviteAttempt(codeHash1, "sub-new-1", Now), CancellationToken.None);
+            new RedeemOperatorInviteAttempt(codeHash1, "sub-new-1", Now, Email: "new1@example.com"), CancellationToken.None);
         Assert.IsType<OperatorInviteRedemptionResult.SeatLimitReached>(beforeRemoval);
 
         await using (var db = fixture.CreateDbContext())
@@ -55,22 +57,22 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
             await db.SaveChangesAsync();
         }
 
-        var (codeHash2, _) = await SeedInviteAsync(siteId, roleId);
+        var (codeHash2, _) = await SeedInviteAsync(siteId, roleId, "new2@example.com");
         var afterRemoval = await repository.RedeemAsync(
-            new RedeemOperatorInviteAttempt(codeHash2, "sub-new-2", Now), CancellationToken.None);
+            new RedeemOperatorInviteAttempt(codeHash2, "sub-new-2", Now, Email: "new2@example.com"), CancellationToken.None);
 
         var success = Assert.IsType<OperatorInviteRedemptionResult.Success>(afterRemoval);
         Assert.Equal(siteId, success.SiteId);
     }
 
-    private async Task<(byte[] CodeHash, OperatorInviteId InviteId)> SeedInviteAsync(SiteId siteId, Guid roleId)
+    private async Task<(byte[] CodeHash, OperatorInviteId InviteId)> SeedInviteAsync(SiteId siteId, Guid roleId, string email)
     {
         var inviteId = new OperatorInviteId(Guid.NewGuid());
         var codeHash = SHA256.HashData(Encoding.UTF8.GetBytes($"code-{Guid.NewGuid():N}"));
 
         await using var db = fixture.CreateDbContext();
         var invite = OperatorInvite.Generate(
-            inviteId, siteId, roleId, codeHash, new OperatorId(Guid.NewGuid()), Now, TimeSpan.FromDays(7));
+            inviteId, siteId, roleId, codeHash, email, new OperatorId(Guid.NewGuid()), Now, TimeSpan.FromDays(7));
         db.OperatorInvites.Add(invite);
         await db.SaveChangesAsync();
 
