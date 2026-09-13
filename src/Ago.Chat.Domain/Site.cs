@@ -255,6 +255,35 @@ public sealed class Site
     /// enforce directly (<c>SiteConfiguration</c>'s own remarks).</summary>
     public ContactVisibility ContactVisibility { get; private set; } = ContactVisibility.Visible;
 
+    /// <summary>
+    /// `22-08`/`adr/0166`: the account-wide enforcement freeze, an ordinary mapped scalar with a
+    /// private setter - the same "no wrapping value object" shape <see cref="Tier"/>/
+    /// <see cref="ContactVisibility"/> already establish for themselves, since there is no
+    /// cross-field invariant here either, only a nullable instant. <see langword="null"/> means "not
+    /// suspended", the same "absence is the ordinary case, not a sentinel" reading
+    /// <see cref="DemoExpiresAt"/> already gives an optional instant on this same aggregate.
+    ///
+    /// <para><b>Never read from a cache and never compared anywhere but live, against
+    /// <see cref="Ago.Platform.Abstractions.IClock"/>.</b> `CLAUDE.md` rule 8's own words -
+    /// "never cache what a write decision depends on" - apply to this column exactly as
+    /// <see cref="Application.Abstractions.IEnabledModuleReadStore"/>'s own remarks state for an
+    /// entitlement's expiry: every caller that gates on this value
+    /// (<c>Api.Auth.AuthEndpoints.HandleVisitorSessionAsync</c>, minting a fresh visitor session;
+    /// <c>Application.UseCases.SendMessage.SendOperatorMessageHandler</c>, an operator's own send) reads
+    /// it through <see cref="Application.Abstractions.ISiteSuspensionReadStore"/>, a live Dapper read
+    /// with no TTL, never through the 5-minute cached <c>SiteConfigDto</c>
+    /// <c>GetSiteConfigByPublicKeyHandler</c> already serves the widget handshake from - a suspended
+    /// site whose config happens to be cached must still be refused the instant the owner suspends
+    /// it, not up to five minutes later.</para>
+    ///
+    /// <para><b>A suspension nobody extends lifts itself with no manual step</b> - this column is
+    /// simply compared against "now" on every read, so its own expiry needs no sweep, the identical
+    /// "expiry checked live, never swept by a job" shape `adr/0149` rule 1 already states for the
+    /// lease this column's own value feeds across the product boundary
+    /// (<see cref="Domain.SiteSuspensionChanged"/>'s own remarks).</para>
+    /// </summary>
+    public DateTimeOffset? SuspendedUntil { get; private set; }
+
     /// <summary>`18-03`: this site's prepared-answer library. Empty for every row that predates the
     /// feature - the same "list defaults to nothing rather than throwing" shape
     /// <see cref="OfflineAutoReply"/> already established for its own rules.</summary>
@@ -501,6 +530,37 @@ public sealed class Site
     {
         ContactVisibility = rung;
         _domainEvents.Add(new SiteContactVisibilityUpdated(Id, PublicKey, rung, now));
+    }
+
+    /// <summary>
+    /// `22-08`: sets <see cref="SuspendedUntil"/> to a real instant - the one write path both an
+    /// initial suspend and an extension go through (<c>SuspendTenantAsOwnerHandler</c>,
+    /// <c>ExtendSuspensionAsOwnerHandler</c>). Whether the caller may call this at all - a site not
+    /// already suspended, for a suspend; a site already suspended, for an extension - is an Application
+    /// boundary check, the same "validate once, at the Application boundary, this method's only job is
+    /// applying it and recording that it happened" split <see cref="UpdateContactVisibility"/>'s own
+    /// remarks state for its own rung: this aggregate has no invariant of its own that a second
+    /// suspend-while-suspended would break (it would simply overwrite <paramref name="until"/>, which
+    /// is exactly what an extension *is*), so there is nothing here for a domain guard to protect.
+    /// </summary>
+    public void Suspend(DateTimeOffset until, DateTimeOffset now)
+    {
+        SuspendedUntil = until;
+        _domainEvents.Add(new SiteSuspensionChanged(Id, until, now));
+    }
+
+    /// <summary>
+    /// `22-08`: the reversal, by hand - lifting early rather than letting <see cref="SuspendedUntil"/>
+    /// pass on its own. Raises the identical <see cref="SiteSuspensionChanged"/>
+    /// <see cref="Suspend"/> does, carrying <see langword="null"/> - the snapshot this aggregate's
+    /// whole suspension state ever needs to publish, never a delta, so a caller two states removed from
+    /// "currently suspended" reads the identical fact whether it arrived by an explicit lift or (once
+    /// `SuspendedUntil` itself has passed) simply stopped mattering.
+    /// </summary>
+    public void LiftSuspension(DateTimeOffset now)
+    {
+        SuspendedUntil = null;
+        _domainEvents.Add(new SiteSuspensionChanged(Id, null, now));
     }
 
     /// <summary>

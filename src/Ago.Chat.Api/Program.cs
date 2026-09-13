@@ -527,6 +527,10 @@ app.MapOwnerOperatorsEndpoints();
 // `23-48`: the platform owner's own write for a tenant's allowed origins - its own Map call, the same
 // "own file, own registration" discipline OwnerSiteAllowedOriginsEndpoints' own remarks describe.
 app.MapOwnerSiteAllowedOriginsEndpoint();
+// `22-08`/`adr/0166`: the platform owner's own account-wide freeze - suspend/extend/unblock and the
+// console's own currently-suspended list, gated by RequirePlatformOwner exactly as every owner surface
+// above is (OwnerSuspensionEndpoints' own remarks).
+app.MapOwnerSuspensionEndpoints();
 // `24-02`: the named owner's own publish route - see OwnerDocumentEndpoints' own remarks for why
 // RequirePlatformOwner is the entire access-control story here too.
 app.MapOwnerDocumentEndpoints();

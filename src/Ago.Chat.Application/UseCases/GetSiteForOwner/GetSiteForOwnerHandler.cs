@@ -90,7 +90,8 @@ public sealed class GetSiteForOwnerHandler(
             ListSitesForOwnerHandler.RecentWindowDays,
             modules.Select(module => ToModuleDto(module, quantities)).ToList(),
             allowedOrigins,
-            operators.Select(ToOperatorDto).ToList());
+            operators.Select(ToOperatorDto).ToList(),
+            aggregate?.SuspendedUntil);
     }
 
     private static OwnerSiteOperatorDto ToOperatorDto(OperatorTeamMemberItem item) => new(

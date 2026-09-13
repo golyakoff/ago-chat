@@ -425,6 +425,10 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         // this file's own remarks already give for ISiteInstallationSignalRepository above - both mint
         // and renewal now read a site's entitlements the same live way rule 8 requires.
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `22-08`: HandleVisitorSessionAsync's own new dependency - unregistered, Minimal API cannot
+        // even infer whether this parameter is a body or a service, which fails every route on this
+        // stripped-down host at first request, not only a suspended-site one.
+        builder.Services.AddScoped<ISiteSuspensionReadStore, SiteSuspensionReadStore>();
         builder.Services.AddSingleton<ICache>(new RedisCache(
             fixture.RedisMultiplexer,
             new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(),

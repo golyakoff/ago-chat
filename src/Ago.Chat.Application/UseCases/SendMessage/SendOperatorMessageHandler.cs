@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.SendMessage;
@@ -13,10 +14,20 @@ namespace Ago.Chat.Application.UseCases.SendMessage;
 /// per-operator/per-site rate limit on this path (`3-05` scoped rate limiting to the visitor side
 /// only). `NotFound` and the participant/state checks `AddOperatorMessage` enforces are all
 /// discovered inside the pipeline worker instead of here.
+///
+/// <para><b>`22-08`: the account-wide suspension gate lives here, and deliberately not in
+/// `Ago.Chat.Infrastructure.Postgres.Pipeline.MessageBatchWriter`.</b> That writer is shared by
+/// visitor and operator traffic alike, and `docs/backlog/22-08-*.md`'s own Scope requires a visitor's
+/// inbound message to keep being accepted and stored during a suspension - "operators can read but not
+/// send", never "nothing is accepted at all". Gating here, before the message ever reaches the shared
+/// writer, is what keeps that distinction real rather than accidental: a visitor's
+/// `SendVisitorMessageHandler` never calls <see cref="ISiteSuspensionReadStore"/> at all.</para>
 /// </summary>
 public sealed class SendOperatorMessageHandler(
     IPermissionChecker permissions,
-    IMessagePipeline pipeline)
+    ISiteSuspensionReadStore suspensions,
+    IMessagePipeline pipeline,
+    IClock clock)
 {
     public async Task<Result<int>> HandleAsync(SendOperatorMessage command, CancellationToken cancellationToken)
     {
@@ -25,6 +36,14 @@ public sealed class SendOperatorMessageHandler(
         if (!allowed)
         {
             return ConversationErrors.Forbidden("Operator does not have permission to send messages for this site.");
+        }
+
+        // `22-08`: live, never cached - ISiteSuspensionReadStore's own remarks. Checked after the
+        // ordinary permission gate (an operator who may not send at all learns that first, not a fact
+        // about the account) and before anything about this specific message is inspected.
+        if (await suspensions.IsSuspendedAsync(command.SiteId, clock.UtcNow, cancellationToken))
+        {
+            return ConversationErrors.TenantSuspendedCannotSend();
         }
 
         MessageBody body;

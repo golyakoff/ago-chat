@@ -53,6 +53,7 @@ public static class AuthEndpoints
         GetSiteConfigByPublicKeyHandler getSite,
         ISiteInstallationSignalRepository installationSignals,
         IEnabledModuleReadStore moduleReadStore,
+        ISiteSuspensionReadStore suspensions,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRateLimitOptions> rateLimitOptions,
         IIdGenerator idGenerator,
@@ -81,6 +82,23 @@ public static class AuthEndpoints
         {
             return Results.Problem(
                 title: "Site not found", statusCode: StatusCodes.Status404NotFound, type: "site-not-found");
+        }
+
+        // `22-08`: the widget's own bootstrap gate - every session mint hits this, so a suspended
+        // account never gets a fresh visitor session, which is what "the widget degrades to nothing
+        // for a new chat session" (`docs/backlog/22-08-*.md`'s own Scope) actually means: nothing to
+        // build a session from, the identical failure shape a rate limit or a missing site already
+        // produces on this same route. Read live through ISiteSuspensionReadStore, never through
+        // `site`'s own 5-minute cached SiteConfigDto above - Domain.Site.SuspendedUntil's own remarks
+        // state why. A conversation already open is untouched by this check: it gates only the mint of
+        // a *new* session, never anything about an existing one (this item's own Done-when: "a visitor
+        // with a conversation already open... sees no error, and their message is still stored").
+        if (await suspensions.IsSuspendedAsync(new SiteId(site.SiteId), clock.UtcNow, cancellationToken))
+        {
+            return Results.Problem(
+                title: "This account is currently suspended.",
+                statusCode: StatusCodes.Status403Forbidden,
+                type: "tenant-suspended");
         }
 
         // 5-01, layer 2: the real per-site boundary - SiteOriginCorsPolicyProvider (layer 1) only

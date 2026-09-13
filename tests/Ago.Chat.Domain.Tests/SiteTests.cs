@@ -668,4 +668,89 @@ public class SiteTests
 
         Assert.Single(site.DomainEvents);
     }
+
+    // `22-08`: the account-wide freeze. Before Suspend/LiftSuspension existed, nothing on this
+    // aggregate could set or clear SuspendedUntil at all - the identical "domain-level fails-before"
+    // shape UpdateAllowedOrigins' own remarks state for itself.
+
+    [Fact]
+    public void Constructor_WhenValid_DefaultsSuspendedUntilToNull()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+
+        Assert.Null(site.SuspendedUntil);
+    }
+
+    [Fact]
+    public void Suspend_WhenCalled_SetsSuspendedUntil()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var until = DateTimeOffset.UtcNow.AddMinutes(30);
+
+        site.Suspend(until, DateTimeOffset.UtcNow);
+
+        Assert.Equal(until, site.SuspendedUntil);
+    }
+
+    [Fact]
+    public void Suspend_WhenCalled_RaisesDomainEventExactlyOnce_CarryingTheCompleteCurrentValue()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        var until = now.AddMinutes(30);
+
+        site.Suspend(until, now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteSuspensionChanged>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Equal(until, raised.SuspendedUntil);
+        Assert.Equal(now, raised.OccurredAt);
+    }
+
+    [Fact]
+    public void Suspend_WhenCalledAgainWithALaterInstant_ExtendsTheValue()
+    {
+        // Suspend is also the extension's own write path - ExtendSuspensionAsOwnerHandler's own
+        // remarks state why there is no separate domain method for "extend" versus "suspend".
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.Suspend(now.AddMinutes(10), now);
+
+        var extendedUntil = now.AddMinutes(40);
+        site.Suspend(extendedUntil, now);
+
+        Assert.Equal(extendedUntil, site.SuspendedUntil);
+    }
+
+    [Fact]
+    public void LiftSuspension_WhenCalled_ClearsSuspendedUntil()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.Suspend(now.AddMinutes(30), now);
+
+        site.LiftSuspension(now);
+
+        Assert.Null(site.SuspendedUntil);
+    }
+
+    [Fact]
+    public void LiftSuspension_WhenCalled_RaisesDomainEventCarryingNull()
+    {
+        var id = new SiteId(Guid.NewGuid());
+        var site = new Site(id, "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.Suspend(now.AddMinutes(30), now);
+        site.ClearDomainEvents();
+
+        site.LiftSuspension(now);
+
+        var domainEvent = Assert.Single(site.DomainEvents);
+        var raised = Assert.IsType<SiteSuspensionChanged>(domainEvent);
+        Assert.Equal(id, raised.SiteId);
+        Assert.Null(raised.SuspendedUntil);
+        Assert.Equal(now, raised.OccurredAt);
+    }
 }
