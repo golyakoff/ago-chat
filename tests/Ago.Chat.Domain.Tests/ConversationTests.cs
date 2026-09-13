@@ -73,6 +73,52 @@ public class ConversationTests
         Assert.Null(conversation.AttachmentUploadGrantedBy);
     }
 
+    /// <summary>`23-69`/`23-77`: the same "null means absent" default, restated for a third pair -
+    /// `Start`'s own `suppressRouting` parameter defaults to `false`, so every existing call site (no
+    /// visitor restriction check performed) keeps starting an ordinary, routable conversation.</summary>
+    [Fact]
+    public void Start_WithNoSuppressRouting_CreatesAConversation_ThatIsNotRoutingSuppressed()
+    {
+        var conversation = StartConversation();
+
+        Assert.False(conversation.IsRoutingSuppressed);
+        Assert.Null(conversation.RoutingSuppressedAt);
+    }
+
+    /// <summary>The one case `StartConversationHandler` actually reaches: a visitor already carrying an
+    /// active restriction. Stamped directly at construction - the same "safe through the aggregate
+    /// itself, this is an INSERT, not an UPDATE racing anything" reasoning
+    /// `Start_WithAttachmentUploadDefaultTrue...` already gives for its own pair, restated here.
+    /// </summary>
+    [Fact]
+    public void Start_WithSuppressRoutingTrue_CreatesAConversation_ThatIsRoutingSuppressed()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, suppressRouting: true);
+
+        Assert.True(conversation.IsRoutingSuppressed);
+        Assert.Equal(Now, conversation.RoutingSuppressedAt);
+        // Deliberately not IsBlocked - a second, separate flag (RoutingSuppressedAt's own remarks on
+        // why this is additive to `24-10`, not a repurposing of it).
+        Assert.False(conversation.IsBlocked);
+    }
+
+    /// <summary>Both items' own answered "no message to the visitor" requirement, at the domain level:
+    /// a routing-suppressed conversation still accepts and stores the visitor's own messages exactly
+    /// like an ordinary one - `AddVisitorMessage` has no reason to know this flag exists, since nothing
+    /// about accepting a message is a routing decision. This is what makes the silence honest rather
+    /// than a lie the widget would eventually notice (a rejected send would be exactly that).</summary>
+    [Fact]
+    public void AddVisitorMessage_OnARoutingSuppressedConversation_StillAcceptsAndStoresIt()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, suppressRouting: true);
+
+        var message = conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now.AddMinutes(1));
+
+        Assert.Single(conversation.Messages);
+        Assert.Equal(message.Id, conversation.Messages[0].Id);
+    }
+
     // `23-78`: the actual grant/revoke transition against an *existing* conversation has no
     // domain-level unit test of its own, for the identical reason `Start_CreatesAConversation_WithNoBlockState`
     // states for `IsBlocked` right above - `IConversationAttachmentUploadGrantRepository` writes it

@@ -2,6 +2,8 @@
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
+using Ago.Chat.Application.UseCases.BlockVisitor;
+using Ago.Chat.Application.UseCases.CloseConversationAsSpam;
 using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
 using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
 using Ago.Chat.Application.UseCases.UnblockConversation;
@@ -119,6 +121,13 @@ public static class ConversationsEndpoints
         app.MapPost("/api/v1/conversations/{conversationId:guid}/close", HandleCloseAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
+        // `23-69`: the same sub-resource shape as `/close` right above it - `conversation:mark_spam`,
+        // its own permission (Permission.ConversationMarkSpam's own remarks). `200` with the resulting
+        // mute window, not `204` like plain `/close`: unlike an ordinary close, this write has a second
+        // consequence worth handing straight back (CloseConversationAsSpamHandler's own remarks).
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/close-as-spam", HandleCloseAsSpamAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
         // `23-04`: the same sub-resource shape as `/close` right above - a deliberate take of a
         // `Waiting` conversation, reachable without opening a hub connection first so `/admin` and
         // `/search` can offer it directly. Dispatches the identical AssignConversationHandler
@@ -169,6 +178,14 @@ public static class ConversationsEndpoints
         app.MapPost("/api/v1/conversations/{conversationId:guid}/block", HandleBlockAsync)
             .RequireAuthorization("RequireOperatorIdentity");
         app.MapPost("/api/v1/conversations/{conversationId:guid}/unblock", HandleUnblockAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `23-77`: addressed by the conversation the operator is looking at, the same shape `/block`
+        // right above - but writes the new, visitor-scoped `visitor_restrictions` mechanism instead of
+        // (not through) `24-10`'s own per-conversation block (BlockVisitorHandler's own remarks). Same
+        // `conversation:block` permission, reused rather than a new one - that handler's own remarks
+        // explain why.
+        app.MapPost("/api/v1/conversations/{conversationId:guid}/block-visitor", HandleBlockVisitorAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `23-78`: the same sub-resource shape as `/block`/`/unblock` right above - `conversation:attachment_upload_grant`,
@@ -379,6 +396,24 @@ public static class ConversationsEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 
+    /// <summary>`23-69`: the wire shape of a successful "close as spam" - <c>MutedUntil</c> is the one
+    /// fact the console needs beyond an ordinary close's own `204` (`CloseConversationAsSpamHandler`'s
+    /// own remarks).</summary>
+    public sealed record CloseConversationAsSpamResponse(DateTimeOffset MutedUntil);
+
+    private static async Task<IResult> HandleCloseAsSpamAsync(
+        Guid conversationId, CloseConversationAsSpamHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new CloseConversationAsSpam(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new CloseConversationAsSpamResponse(result.Value.MutedUntil));
+    }
+
     /// <summary>`23-04`: no request body - a claim names only the conversation the route already
     /// addresses and the caller the auth token already carries, the same shape `/close` right above
     /// uses for an identical reason. `204`, not `200`: there is nothing this call computes that the
@@ -537,6 +572,29 @@ public static class ConversationsEndpoints
 
         var status = result.Value;
         return Results.Ok(new ConversationBlockStatusDto(status.ConversationId.Value, status.OccurredAt, status.OperatorId.Value));
+    }
+
+    /// <summary>`23-77`: the wire shape of a successful visitor block - <c>VisitorId</c> rather than
+    /// <c>ConversationId</c>, unlike <see cref="ConversationBlockStatusDto"/> right above, since this
+    /// action's whole point is that it reaches every conversation this visitor might open, not only the
+    /// one it was invoked from (<c>BlockVisitorHandler</c>'s own remarks).</summary>
+    public sealed record BlockVisitorResponse(Guid VisitorId, DateTimeOffset OccurredAt, Guid OperatorId);
+
+    private static async Task<IResult> HandleBlockVisitorAsync(
+        Guid conversationId, BlockVisitorHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new BlockVisitor(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        var status = result.Value;
+        return Results.Ok(new BlockVisitorResponse(status.VisitorId.Value, status.OccurredAt, status.OperatorId.Value));
     }
 
     /// <summary>`23-78`: the wire shape of a successful grant/revoke - both endpoints below return

@@ -162,6 +162,10 @@ public static class ServiceCollectionExtensions
         // `24-10`: the block/unblock write - see IConversationBlockRepository's own remarks for why it
         // is raw SQL like the port right above rather than a method on IConversationRepository.
         services.AddScoped<IConversationBlockRepository, ConversationBlockRepository>();
+        // `23-69`/`23-77`: the visitor-scoped restriction write/read - see
+        // IVisitorRestrictionRepository's own remarks for why one port serves both the write and the
+        // tenant's own read-back, the identical shape IAccessRecordRepository already uses.
+        services.AddScoped<IVisitorRestrictionRepository, VisitorRestrictionRepository>();
         // `23-78`: the grant/revoke write - the identical raw-SQL-bypass reasoning right above,
         // restated for a different current-state pair on the same table
         // (IConversationAttachmentUploadGrantRepository's own remarks).

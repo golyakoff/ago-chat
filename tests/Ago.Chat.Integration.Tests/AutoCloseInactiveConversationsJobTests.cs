@@ -159,7 +159,7 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             // checks (StartConversationHandler's own tenant-default read just answers "not found" for
             // every site this fixture never seeds one for).
             new StartConversationHandler(
-                new VisitorRepository(db), new ConversationRepository(db),
+                new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource),
                 new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                 new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), new SystemClock(),
                 new UuidV7Generator(), new VisitorEmojiPairGenerator()),

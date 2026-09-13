@@ -75,6 +75,10 @@ public sealed class MintDemoTenantHandler(
             // ordinary operator work, calendar:configure joins Admin below instead.
             Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
             Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
+            // `23-69`: ConversationMarkSpam joins the Operator set here too, the same restatement this
+            // class's own remarks already accept - see RegisterSiteHandler's own array for why this
+            // permission is Operator- rather than Admin-scoped.
+            Permission.ConversationMarkSpam.Value,
         ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too, the same restatement this

@@ -56,7 +56,8 @@ public class ReceiveChannelMessageHandlerTests
             visitors,
             pendingLinks,
             new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            visitors, conversations, new FakeVisitorRestrictionRepository(),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
@@ -448,7 +449,8 @@ public class ReceiveChannelMessageHandlerTests
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            visitors, conversations, new FakeVisitorRestrictionRepository(),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
@@ -491,7 +493,8 @@ public class ReceiveChannelMessageHandlerTests
         var handler = new ReceiveChannelMessageHandler(
             identities, visitors, new FakePendingChannelLinkRequestRepository(),
             new StartConversationHandler(
-            visitors, conversations, new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            visitors, conversations, new FakeVisitorRestrictionRepository(),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(

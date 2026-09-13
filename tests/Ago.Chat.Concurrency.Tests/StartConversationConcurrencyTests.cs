@@ -58,7 +58,7 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
             });
 
         var handler = new StartConversationHandler(
-            new VisitorRepository(db), racing,
+            new VisitorRepository(db), racing, new VisitorRestrictionRepository(fixture.DataSource),
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
             new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
@@ -199,7 +199,7 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
     {
         await using var db = fixture.CreateDbContext();
         var handler = new StartConversationHandler(
-            new VisitorRepository(db), new ConversationRepository(db),
+            new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource),
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
             new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());

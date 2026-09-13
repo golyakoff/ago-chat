@@ -29,10 +29,16 @@ public static class WaitingConversationClaimQuery
         // inbound message from a blocked visitor is... not routed"). A `Waiting` conversation can be
         // blocked the same as any other - nothing about this item restricts blocking to an already-
         // assigned or closed conversation.
+        //
+        // `23-69`/`23-77`: `routing_suppressed_at IS NULL` joins it - a conversation created for a
+        // visitor who already carried an active restriction is stamped with this at the moment
+        // `Conversation.Start` created it (`Conversation.RoutingSuppressedAt`'s own remarks) and must
+        // never be claimed here, the identical "never routed to an operator" guarantee `blocked_at`
+        // already gives, restated for a second, deliberately separate flag.
         const string sql = """
             SELECT id
             FROM conversations
-            WHERE site_id = @siteId AND state = 'Waiting' AND blocked_at IS NULL
+            WHERE site_id = @siteId AND state = 'Waiting' AND blocked_at IS NULL AND routing_suppressed_at IS NULL
             ORDER BY created_at
             LIMIT @batchSize
             FOR UPDATE SKIP LOCKED

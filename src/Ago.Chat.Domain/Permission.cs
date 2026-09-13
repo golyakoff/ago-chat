@@ -165,6 +165,23 @@ public readonly record struct Permission(string Value)
     public static readonly Permission CustomerEdit = new("customer:edit");
     public static readonly Permission CalendarConfigure = new("calendar:configure");
 
+    // `23-69`: dedicated, not a reuse of ConversationClose - the same granular-permission reasoning
+    // ConversationClose's own remarks already give relative to ConversationAssign, restated for a
+    // materially larger blast radius: closing as spam does not just end this one conversation, it
+    // writes a time-windowed restriction against the visitor themselves (`IVisitorRestrictionRepository`),
+    // silently keeping every conversation they open on this site from reaching an operator until it
+    // expires. An operator trusted with ordinary ConversationClose is not automatically trusted to make
+    // that call about a person, the same reasoning that kept ConversationErase/ConversationBlock/
+    // AttachmentDelete each their own permission rather than folded into a broader one already held.
+    // Operator-role by default (`RegisterSiteHandler.OperatorRolePermissions`,
+    // `MintDemoTenantHandler.OperatorRolePermissions`), unlike ConversationBlock: marking an incoming
+    // flood as spam is the ordinary, in-the-moment judgement call this item's own Why-abuse-is-not-the-
+    // argument section describes an operator making dozens of times a shift ("a tired person"), not a
+    // deliberate, escalated act the way `23-77`'s indefinite manual block is - the tenant's own recourse
+    // for a misjudgement is the record being attributed, visible and reversible (this item's own three
+    // scope properties), not a permission gate in front of the click.
+    public static readonly Permission ConversationMarkSpam = new("conversation:mark_spam");
+
     // `25-76`: reflected once, from this type's own public static fields - the same "closed vocabulary
     // via reflection" shape `23-99`'s own `requiredKeysOf` derives its key set the same way (there, from
     // a TypeScript literal object; here, from this record struct's own members). This is the one place

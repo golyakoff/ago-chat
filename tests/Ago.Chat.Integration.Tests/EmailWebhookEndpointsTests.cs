@@ -290,6 +290,10 @@ public sealed class EmailWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         builder.Services.AddScoped<IVisitorRepository, VisitorRepository>();
         builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
+        // `23-69`/`23-77`: StartConversationHandler's own new constructor dependency - the identical
+        // "every hand-rolled test host needs this too" reasoning the comments elsewhere in this method
+        // already state for their own new dependencies.
+        builder.Services.AddScoped<IVisitorRestrictionRepository, VisitorRestrictionRepository>();
         builder.Services.AddScoped<IPendingChannelLinkRequestRepository, PendingChannelLinkRequestRepository>();
         builder.Services.AddScoped<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new MessageSendRateLimitOptions());
