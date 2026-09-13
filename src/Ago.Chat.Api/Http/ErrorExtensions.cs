@@ -200,7 +200,12 @@ public static class ErrorExtensions
                 // `25-73`: the admin's own supplied invite email did not parse - the caller's mistake
                 // to fix, the identical "brand-new code this item's own new route can actually produce"
                 // shape every other 400 in this group already states for itself.
-                or "OperatorInvite.InvalidEmail" => StatusCodes.Status400BadRequest,
+                or "OperatorInvite.InvalidEmail"
+                // `25-76`: the platform owner's own role-permission tool - an empty permission list, or
+                // one naming a string that is not a real, known Domain.Permission. The identical
+                // "brand-new code this item's own new route can actually produce" reasoning every other
+                // 400 in this group already states for itself.
+                or "Role.PermissionsRequired" or "Role.PermissionUnknown" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

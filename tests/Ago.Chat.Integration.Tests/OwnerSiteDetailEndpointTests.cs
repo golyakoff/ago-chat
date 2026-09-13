@@ -508,6 +508,9 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         // above - it loads the write-side aggregate directly for AllowedOrigins, the one field
         // IPlatformOverviewReadStore does not carry (that handler's own remarks).
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        // `25-76`: GetSiteForOwnerHandler's own fifth read - every role this site has, with its own
+        // actual current permission list, added alongside the operator roster right above.
+        builder.Services.AddScoped<IRoleRepository, RoleRepository>();
         builder.Services.AddScoped<ListSitesForOwnerHandler>();
         builder.Services.AddScoped<GetSiteForOwnerHandler>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();

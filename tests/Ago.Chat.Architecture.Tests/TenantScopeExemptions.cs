@@ -489,6 +489,18 @@ internal static class TenantScopeExemptions
             + "seat-limit override this handler decides for itself (was the override meant), not who may call the "
             + "route at all - the identical shape RevokeModuleForSiteAsOwnerHandler's own Force/Reason already "
             + "establishes for a different override.",
+        ["Ago.Chat.Application.UseCases.AddRolePermissionsAsOwner.AddRolePermissionsAsOwnerHandler.HandleAsync"] =
+            "`25-76`, the platform owner's own role-permission tool - closes the live drift this item was found "
+            + "from (seven tenants, seven different `Admin` permission sets). The identical category as "
+            + "RestoreOperatorSeatAsOwnerHandler/EnableModuleForSiteAsOwnerHandler above: SiteId names the tenant "
+            + "whose role is being widened, chosen by the owner, not a resource the caller already owns, and "
+            + "RequirePlatformOwner on OwnerRolesEndpoints is the entire access-control story - Ago.Chat.Application "
+            + "still has no port that can see a Keycloak realm-role claim, so a permission check here would be a "
+            + "second, weaker copy of a rule the policy already decided. The SiteId/RoleName pair is used only to "
+            + "load the named role - roles.GetByNameAsync(siteId, roleName) - so a caller cannot widen a different "
+            + "site's role by naming it against the wrong SiteId; the (site, role name) pair is the row's own key. "
+            + "ADD only - ConversationErrors.RolePermissionUnknown/RolePermissionsRequired are ordinary input "
+            + "validation (a real, known Permission; a non-empty list), not a second authorization decision.",
         ["Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner.UpdateSiteAllowedOriginsAsOwnerHandler.HandleAsync"] =
             "`23-48`, the platform owner's own write for a tenant's allowed origins - the author's own decision "
             + "('the answer', docs/backlog/23-48-*.md) is that only the platform owner may ever call this, not the "

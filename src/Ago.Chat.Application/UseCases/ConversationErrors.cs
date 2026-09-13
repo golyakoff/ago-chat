@@ -1025,4 +1025,26 @@ public static class ConversationErrors
     /// Scope: "operators can read but not send"), only sending is gated.</summary>
     public static Error TenantSuspendedCannotSend() =>
         new("TenantSuspension.CannotSend", "This account is currently suspended; operators cannot send messages until it is lifted.");
+
+    // `25-76`: AddRolePermissionsAsOwnerHandler's own two refusals - a role name that does not resolve
+    // reuses OperatorRoleNotFound above rather than a third restatement of the identical miss.
+
+    /// <summary>The caller's own mistake to fix - the permission list the platform owner submitted was
+    /// empty. `AddPermissionsAsync` itself already treats an empty collection as a silent no-op (its
+    /// own remarks: "the same 'nothing to do' shape... so a module that needs nothing extra costs this
+    /// method nothing to call") - correct for a module grant that legitimately has nothing to add some
+    /// of the time, wrong for a person's own explicit "add a permission" click, which should never
+    /// silently do nothing and call it success.</summary>
+    public static Error RolePermissionsRequired(string reason) =>
+        new("Role.PermissionsRequired", reason);
+
+    /// <summary>The caller's own mistake to fix - one or more of the submitted permission values is not
+    /// a real, known permission (<see cref="Domain.Permission.AllKnownValues"/>). Refused before
+    /// <see cref="Application.Abstractions.IRoleRepository.AddPermissionsAsync"/> is ever called: that
+    /// method trusts its own <c>permissions</c> argument completely (it is, today, only ever called
+    /// with a module's own hand-written, already-known-good list), so this handler is the one place a
+    /// typed or pasted string is checked against the closed vocabulary before it can become a
+    /// permission nothing in this codebase ever checks.</summary>
+    public static Error RolePermissionUnknown(string reason) =>
+        new("Role.PermissionUnknown", reason);
 }

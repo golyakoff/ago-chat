@@ -77,4 +77,20 @@ public sealed class FakeRoleRepository : IRoleRepository
             : [];
         return Task.FromResult<RoleLookup?>(new RoleLookup(roleId, permissions));
     }
+
+    /// <summary>`25-76`: every role seeded for <paramref name="siteId"/> - the fake's own equivalent of
+    /// the real repository's single `roles` query, built from the identical `_roleIds`/`_permissions`
+    /// state every other method here already reads.</summary>
+    public Task<IReadOnlyList<RoleSummary>> GetAllForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<RoleSummary> rows = _roleIds
+            .Where(entry => entry.Key.Item1 == siteId)
+            .OrderBy(entry => entry.Key.Item2, StringComparer.Ordinal)
+            .Select(entry => new RoleSummary(
+                entry.Key.Item2,
+                entry.Value,
+                _permissions.TryGetValue(entry.Key, out var permissions) ? [.. permissions] : []))
+            .ToList();
+        return Task.FromResult(rows);
+    }
 }
