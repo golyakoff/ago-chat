@@ -47,7 +47,16 @@ public sealed class TelegramTraceUrlRedactionTests
         await using var telegram = await BuildFakeTelegramHostAsync(app =>
             app.MapGet($"/bot{RealToken}/getMe", () => Results.Json(new { ok = true, result = new { id = 1 } })));
 
-        var exported = new List<Activity>();
+        // `25-71`: a plain List<Activity> here raced xUnit's own parallel test classes -
+        // AddHttpClientInstrumentation() observes System.Net.Http's DiagnosticSource for the whole
+        // process, not just this TracerProvider's own scope, so any concurrent test's own outbound
+        // HttpClient call can append to this list while Assert.Single below enumerates it, throwing
+        // "Collection was modified" rather than a wrong-span failure. SynchronizedActivityCollection
+        // (originally TelemetryLeakGuardTests' own private fix for the identical race) locks every
+        // mutation and returns a snapshot on enumeration instead - safe against a concurrent Add; the
+        // origin-based predicate two lines below already existed to survive a concurrent span landing
+        // in the collection at all, this only fixes the enumeration itself throwing.
+        var exported = new SynchronizedActivityCollection();
         var services = new ServiceCollection();
         // The one registration ChatModule makes for this, resolved through the same IOptions pipeline
         // the instrumentation itself reads - not a hand-built HttpClientTraceInstrumentationOptions
