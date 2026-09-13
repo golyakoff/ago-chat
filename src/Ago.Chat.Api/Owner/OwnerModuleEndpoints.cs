@@ -8,6 +8,7 @@ using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
+using Ago.Chat.Application.UseCases.SetUnconditionalModuleGrantAsOwner;
 using Ago.Chat.Application.UseCases.VerifyModuleRegistrationAsOwner;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
@@ -68,6 +69,13 @@ public static class OwnerModuleEndpoints
         // one that blocks: the whole point is that neither one is a live call to the module.
         group.MapPost("/{moduleKey}/quantity/impact", HandleRequestQuantityImpactAsync);
         group.MapGet("/{moduleKey}/quantity/impact", HandleGetQuantityImpactAsync);
+
+        // `23-86`: case 1 of this item's own "Answered, 2026-09-13" section - an unconditional grant,
+        // independent of and combined by OR with whatever billing already says. A separate route from
+        // the plain quantity write above, not a field on GrantModuleQuantityRequest: this flag changes
+        // a second, independent input to what the row means, never Quantity itself (Domain.ModuleQuantityGrant's
+        // own remarks state why the two never collapse into one write).
+        group.MapPut("/{moduleKey}/unconditional-grant", HandleSetUnconditionalGrantAsync);
 
         // `23-83`/`adr/0151`: the two writes `22-11` never gave the platform owner, added only once
         // the tenant's own copies (`Api.Modules.ModuleEndpoints`) stopped existing as routes - not
@@ -237,6 +245,55 @@ public static class OwnerModuleEndpoints
                 result.Value.AffectedCount, result.Value.AffectedItemDisplayNames));
     }
 
+    /// <summary>
+    /// `23-86`: sets or lifts the platform owner's own unconditional-grant flag - see
+    /// <see cref="SetUnconditionalModuleGrantAsOwnerHandler"/>'s own remarks for what this does and does
+    /// not change. Reuses <see cref="AccessRecordKind.OwnerModuleQuantityGrant"/> rather than minting a
+    /// new enum member: this is still, mechanically, the platform owner writing this site's own
+    /// <c>ModuleQuantityGrant</c> row - `24-12`'s own "deliberately just the defensible set" restraint
+    /// applied to a write that is a second input to the identical row the existing member already
+    /// names, not a genuinely different kind of act the way grant/revoke/quantity are from each
+    /// other.
+    /// </summary>
+    private static async Task<IResult> HandleSetUnconditionalGrantAsync(
+        Guid siteId,
+        string moduleKey,
+        SetUnconditionalGrantRequest request,
+        SetUnconditionalModuleGrantAsOwnerHandler handler,
+        IAccessRecordRepository accessRecords,
+        IClock clock,
+        IIdGenerator idGenerator,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        // `23-86`: the caller's identity has to reach the domain row itself
+        // (ModuleQuantityGrant.UnconditionalGrantSetBy) - the identical "read directly off the
+        // validated token's sub, not threaded through" reasoning HandleRevokeAsync's own remarks give
+        // for the identical claim read, restated here because this read gates what gets stored, not
+        // merely what gets recorded alongside it.
+        var setBy = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        if (string.IsNullOrEmpty(setBy))
+        {
+            return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "Token carries no subject claim.");
+        }
+
+        var result = await handler.HandleAsync(
+            new SetUnconditionalModuleGrantAsOwner(
+                new SiteId(siteId), moduleKey, request.UnconditionallyGranted, setBy, request.Reason),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        await OwnerAccessRecorder.RecordAsync(
+            httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerModuleQuantityGrant,
+            new SiteId(siteId), AccessRecordResourceKind.ModuleQuantityGrant, resourceId: null, cancellationToken);
+
+        return Results.Ok(new SetUnconditionalGrantResponse(moduleKey, request.UnconditionallyGranted));
+    }
+
     /// <summary>`23-83`/`adr/0151`: mints a fresh credential on the platform owner's own behalf - see
     /// <see cref="RotateModuleCredentialAsOwnerHandler"/>'s own remarks. No access record is written
     /// here, unlike the grant/revoke/quantity handlers above: <see cref="AccessRecordKind"/> is a
@@ -294,6 +351,15 @@ public static class OwnerModuleEndpoints
     public sealed record GrantModuleQuantityRequest(int Quantity, int? ExpectedAffectedCount = null);
 
     public sealed record GrantModuleQuantityResponse(string ModuleKey, int Quantity);
+
+    /// <summary>`23-86`: the body <c>PUT .../modules/{moduleKey}/unconditional-grant</c> takes.
+    /// <see cref="Reason"/> is checked by <see cref="SetUnconditionalModuleGrantAsOwnerHandler"/>
+    /// before anything else it does - required whenever this route is called, in either direction
+    /// (<see cref="SetUnconditionalModuleGrantAsOwner.SetUnconditionalModuleGrantAsOwner"/>'s own
+    /// remarks on why lifting the flag is not exempt).</summary>
+    public sealed record SetUnconditionalGrantRequest(bool UnconditionallyGranted, string Reason);
+
+    public sealed record SetUnconditionalGrantResponse(string ModuleKey, bool UnconditionallyGranted);
 
     /// <summary>`23-88`: the body <c>POST .../modules/{moduleKey}/quantity/impact</c> takes - the
     /// candidate quantity the owner is considering, not yet granted.</summary>

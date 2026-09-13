@@ -57,6 +57,7 @@ using Ago.Chat.Application.UseCases.GrantModuleQuantity;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
 using Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner;
 using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
+using Ago.Chat.Application.UseCases.SetUnconditionalModuleGrantAsOwner;
 using Ago.Chat.Application.UseCases.SuspendTenantAsOwner;
 using Ago.Chat.Application.UseCases.ExtendSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.LiftSuspensionAsOwner;
@@ -730,6 +731,10 @@ public sealed class ChatModule : IProductModule
         // once had) and the read the console polls through.
         services.AddScoped<RequestModuleQuantityImpactAsOwnerHandler>();
         services.AddScoped<GetModuleQuantityImpactPreviewAsOwnerHandler>();
+        // `23-86`: the platform owner's own write for the unconditional-grant flag - the identical
+        // "separate command/handler, RequirePlatformOwner is the whole access-control story" shape
+        // GrantModuleQuantityAsOwnerHandler's own registration above already establishes.
+        services.AddScoped<SetUnconditionalModuleGrantAsOwnerHandler>();
         // `22-08`/`adr/0166`: the account-wide suspension trio and its own console read - bound once
         // here, shared by Ago.Chat.Api (the owner's own writes) and Ago.Chat.Worker
         // (SuspensionLeaseRenewalJob's own periodic republish), the same "one options class, one

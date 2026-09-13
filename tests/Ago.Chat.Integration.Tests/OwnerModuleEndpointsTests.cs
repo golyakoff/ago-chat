@@ -9,6 +9,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.EnableModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.GetModuleQuantityImpactPreviewAsOwner;
 using Ago.Chat.Application.UseCases.GrantModuleQuantityAsOwner;
+using Ago.Chat.Application.UseCases.SetUnconditionalModuleGrantAsOwner;
 using Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
@@ -1215,6 +1216,10 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RequestModuleQuantityImpactAsOwnerHandler>();
         builder.Services.AddScoped<GetModuleQuantityImpactPreviewAsOwnerHandler>();
         builder.Services.AddScoped<GrantModuleQuantityAsOwnerHandler>();
+        // `23-86`: the platform owner's own unconditional-grant flag - the identical real-Postgres
+        // posture the grant handler above already takes, reusing the identical IModuleQuantityGrantStore
+        // registration a few lines up.
+        builder.Services.AddScoped<SetUnconditionalModuleGrantAsOwnerHandler>();
         // `24-12`: the owner endpoint's own access-record write - OwnerAccessRecorder resolves this
         // straight from DI, the same way the production host does. IClock/IIdGenerator are already
         // registered above (AddPlatformKernel).

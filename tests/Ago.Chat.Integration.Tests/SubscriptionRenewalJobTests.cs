@@ -267,6 +267,94 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         Assert.Equal(5, site.SeatLimit);
     }
 
+    // `23-86`: the unconditional-grant flag's own OR-read, proven against a real Postgres transaction
+    // rather than argued - the exact clobbering bug this item's own brief warns about: a billing lapse
+    // must not silently turn off an entitlement the platform owner unconditionally granted, and the
+    // fix has to live where SubscriptionRenewalApplier's own writes land, or a redelivered/late lapse
+    // would still publish "revoked" and contradict what the flag promises.
+
+    /// <summary>The fails-before for this item's own OR-logic correctness requirement: with
+    /// <see cref="ModuleQuantityGrantStore.GrantAsync"/>'s own read of
+    /// <see cref="ModuleQuantityGrant.EffectiveQuantity"/> reverted to the plain <c>quantity</c>
+    /// parameter it published before this item (the change this test exists to catch a regression of),
+    /// this test fails: the lapse below would publish - and this row would then read - <c>0</c>, not
+    /// <c>1</c>, because <c>SubscriptionRenewalApplier.RevokeEntitlementAsync</c> calls
+    /// <c>GrantAsync</c> exactly as it always has, unaware the flag exists. Verified by hand for this
+    /// report: reverting <c>ModuleQuantityGrantStore.GrantAsync</c>'s outbox line to
+    /// <c>ModuleQuantityGrantedMapper.ToEnvelope(siteId.Value, moduleKey.Value, quantity, now, idGenerator)</c>
+    /// (the pre-`23-86` shape) makes <see cref="GetQuantityAsync_ForAnOptionWithTheFlagSet_SurvivesALapse_ButNotOnceTheFlagIsLifted"/>
+    /// fail its first assertion (expected 1, actual 0); restoring the OR-aware read makes it pass
+    /// again.</summary>
+    [Fact]
+    public async Task GetQuantityAsync_ForAnOptionWithTheFlagSet_SurvivesALapse_ButNotOnceTheFlagIsLifted()
+    {
+        var (siteId, _) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now + TimeSpan.FromDays(20));
+        var optionId = await SeedDueOptionSubscriptionAsync(siteId, new BillingOptionKey("channel-telegram"), periodEnd: Now);
+        var mappings = new Dictionary<string, string?> { ["channel-telegram"] = "channel" };
+        var moduleKey = new ModuleKey("channel");
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            // A real payment renews the option first - the grant a lapse is about to threaten has to
+            // be real, not merely the flag alone.
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            // `23-86` case 1: the platform owner unconditionally grants the identical entitlement by
+            // hand - a support decision independent of the payment that already renewed it.
+            var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            await grants.SetUnconditionalGrantAsync(
+                siteId, moduleKey, true, "owner-sub-abc", "keeping this on during a support investigation",
+                Now, CancellationToken.None);
+        }
+
+        await MarkPastDueAsync(optionId, Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            // The billing lapse - SubscriptionRenewalApplier's own RevokeEntitlementAsync, completely
+            // unaware the flag exists, calling GrantAsync exactly as it did before this item.
+            await BuildApplier(db, mappings).ApplyLapseAsync(optionId, Now + BillingSubscription.PastDueRetryWindow, CancellationToken.None);
+        }
+
+        await using (var verify = fixture.CreateDbContext())
+        {
+            var grants = new ModuleQuantityGrantStore(verify, new EfOutboxWriter<AgoChatDbContext>(verify), new UuidV7Generator());
+            // The billing lapse happened - Quantity itself really did go to zero, proving this is not
+            // a test where the lapse silently no-ops.
+            var row = await verify.ModuleQuantityGrants.AsNoTracking().SingleAsync(g => g.SiteId == siteId && g.ModuleKey == moduleKey);
+            Assert.Equal(0, row.Quantity);
+
+            // But the flag protects the effective read - and the published event, which is what a
+            // downstream consumer (ago-calendar's own ModuleQuantityGrantedConsumer, for a different
+            // module key) trusts as the final word rather than re-deriving it.
+            Assert.Equal(1, await grants.GetQuantityAsync(siteId, moduleKey, CancellationToken.None));
+
+            var latestOutboxRow = await verify.Set<OutboxMessage>()
+                .Where(o => o.Type == nameof(ModuleQuantityGranted) && o.PartitionKey == siteId.Value.ToString())
+                .OrderByDescending(o => o.OccurredAt)
+                .FirstAsync();
+            var contract = System.Text.Json.JsonSerializer.Deserialize<ModuleQuantityGranted>(latestOutboxRow.Payload)!;
+            Assert.Equal(1, contract.Quantity);
+        }
+
+        // Lifting the flag re-evaluates billing at that moment (this item's own text) - billing has
+        // already lapsed, so the entitlement now genuinely goes off.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            await grants.SetUnconditionalGrantAsync(
+                siteId, moduleKey, false, "owner-sub-abc", "support investigation concluded, billing lapsed",
+                Now + BillingSubscription.PastDueRetryWindow, CancellationToken.None);
+        }
+
+        await using var finalVerify = fixture.CreateDbContext();
+        var finalGrants = new ModuleQuantityGrantStore(finalVerify, new EfOutboxWriter<AgoChatDbContext>(finalVerify), new UuidV7Generator());
+        Assert.Equal(0, await finalGrants.GetQuantityAsync(siteId, moduleKey, CancellationToken.None));
+    }
+
     [Fact]
     public async Task ApplyLapseAsync_ForTheBaseSubscription_NeverTouchesAnOptionsOwnEntitlement()
     {

@@ -168,6 +168,12 @@ public static class ErrorExtensions
                 // one longer than RevokeModuleForSiteAsOwnerHandler.MaxReasonLength allows. The same
                 // "decide, don't default" shape Module.GrantExpiryInvalid already gives its own guard.
                 or "Module.RevokeReasonRequired"
+                // `23-86`: the caller's own mistake to fix - the unconditional-grant flag was set or
+                // lifted with no non-blank reason, or one longer than
+                // SetUnconditionalModuleGrantAsOwnerHandler.MaxReasonLength allows. The identical
+                // "decide, don't default" shape Module.RevokeReasonRequired already gives its own
+                // override a few lines up.
+                or "Module.QuantityUnconditionalGrantReasonRequired"
                 // `24-05`: the caller's own mistake to fix - a purpose string that does not parse to a
                 // real Domain.VisitorConsentPurpose member, the same "validate the enum, translate the
                 // miss" shape WidgetConfig.InvalidPosition/ChannelLinkRequest.InvalidKind already give

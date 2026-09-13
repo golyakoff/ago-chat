@@ -457,6 +457,13 @@ internal static class TenantScopeExemptions
             + "IPermissionChecker against Permission.SiteConfigure) rather than a nullable-OperatorId branch on it - "
             + "the identical 'one flag flips off every check' hazard EnableModuleForSiteAsOwnerHandler's own entry "
             + "above already names for its own tenant-facing sibling.",
+        ["Ago.Chat.Application.UseCases.SetUnconditionalModuleGrantAsOwner.SetUnconditionalModuleGrantAsOwnerHandler.HandleAsync"] =
+            "`23-86`, the platform owner's own write for the unconditional-grant flag - the identical category as "
+            + "GrantModuleQuantityAsOwnerHandler right above: SiteId names the tenant whose entitlement is being "
+            + "overridden, chosen by the owner, not a resource the caller already owns, and RequirePlatformOwner on "
+            + "OwnerModuleEndpoints is the entire access-control story. No tenant-facing sibling exists at all for "
+            + "this one, by design - the item's own 'Answered, 2026-09-13' section: 'the flag can only ever be set "
+            + "by the platform owner'.",
         ["Ago.Chat.Application.UseCases.RequestModuleQuantityImpactAsOwner.RequestModuleQuantityImpactAsOwnerHandler.HandleAsync"] =
             "`23-88`, the platform owner's own half of the async impact-preview round trip - the identical category "
             + "as GrantModuleQuantityAsOwnerHandler right above: SiteId names the tenant the question is about, "

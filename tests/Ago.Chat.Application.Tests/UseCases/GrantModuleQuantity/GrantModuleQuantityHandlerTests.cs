@@ -220,19 +220,42 @@ public sealed class FakeModuleQuantityGrantStore : IModuleQuantityGrantStore
 {
     public Dictionary<(SiteId, ModuleKey), int> Grants { get; } = [];
 
+    /// <summary>`23-86`: the platform owner's own unconditional-grant flag, tracked separately from
+    /// <see cref="Grants"/> - the identical "a second, independent input, never a second write to the
+    /// same field" shape <see cref="Domain.ModuleQuantityGrant"/>'s own remarks state for the real
+    /// store.</summary>
+    public Dictionary<(SiteId, ModuleKey), bool> UnconditionalGrants { get; } = [];
+
     public Task<int> GetQuantityAsync(SiteId siteId, ModuleKey moduleKey, CancellationToken cancellationToken) =>
-        Task.FromResult(Grants.GetValueOrDefault((siteId, moduleKey)));
+        Task.FromResult(EffectiveQuantity(siteId, moduleKey));
 
     public Task<IReadOnlyDictionary<ModuleKey, int>> GetAllForSiteAsync(
         SiteId siteId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<ModuleKey, int>>(
-            Grants.Where(kv => kv.Key.Item1 == siteId).ToDictionary(kv => kv.Key.Item2, kv => kv.Value));
+            Grants.Where(kv => kv.Key.Item1 == siteId)
+                .Select(kv => kv.Key.Item2)
+                .Distinct()
+                .ToDictionary(moduleKey => moduleKey, moduleKey => EffectiveQuantity(siteId, moduleKey)));
 
     public Task GrantAsync(
         SiteId siteId, ModuleKey moduleKey, int quantity, DateTimeOffset now, CancellationToken cancellationToken)
     {
         Grants[(siteId, moduleKey)] = quantity;
         return Task.CompletedTask;
+    }
+
+    public Task SetUnconditionalGrantAsync(
+        SiteId siteId, ModuleKey moduleKey, bool unconditionallyGranted, string setBy, string reason,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        UnconditionalGrants[(siteId, moduleKey)] = unconditionallyGranted;
+        return Task.CompletedTask;
+    }
+
+    private int EffectiveQuantity(SiteId siteId, ModuleKey moduleKey)
+    {
+        var quantity = Grants.GetValueOrDefault((siteId, moduleKey));
+        return UnconditionalGrants.GetValueOrDefault((siteId, moduleKey)) ? Math.Max(quantity, 1) : quantity;
     }
 }
 
