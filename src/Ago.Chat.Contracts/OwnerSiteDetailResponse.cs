@@ -28,6 +28,17 @@
 /// same rows, not a second query shape. <see cref="OwnerSiteOperatorDto.RoleNames"/> is what lets the
 /// console show the seat/role distinction plainly rather than implying a seat restore also restores a
 /// stripped role - `23-68`'s own "Where this is likely to go wrong."</param>
+/// <param name="Roles">`25-76`: every role this site has, with its own actual, current permission
+/// list - not the founder template a fresh registration would get today, what this specific row holds
+/// right now (this item's own "Found": seven live tenants, seven different `Admin` permission sets).
+/// Added to the same detail read every other per-tenant admin fact already rides on, rather than a
+/// second route, the identical "no second round trip" reasoning <see cref="Operators"/>'s own remarks
+/// give a few lines up.</param>
+/// <param name="AllKnownPermissions">`25-76`: every permission this deployment's code knows about
+/// (<c>Domain.Permission.AllKnownValues</c>), carried alongside <see cref="Roles"/> so the console's
+/// own "add a permission" picker has a closed vocabulary to offer without keeping its own copy that
+/// could drift from the server's - the same "the wire carries the vocabulary, not a client-side
+/// mirror of it" posture this item's own brief requires of the picker.</param>
 public sealed record OwnerSiteDetailResponse(
     Guid SiteId,
     string Name,
@@ -48,7 +59,20 @@ public sealed record OwnerSiteDetailResponse(
     // reasoning `AllowedOrigins`' own remarks give a few lines up. `null` means "not suspended",
     // never rendered as a blank - Domain.Site.SuspendedUntil's own remarks state why this is
     // deliberately never sourced from a cache.
-    DateTimeOffset? SuspendedUntil);
+    DateTimeOffset? SuspendedUntil,
+    IReadOnlyList<OwnerSiteRoleDto> Roles,
+    IReadOnlyList<string> AllKnownPermissions);
+
+/// <summary>
+/// `25-76`: one row of <see cref="OwnerSiteDetailResponse.Roles"/> - a role this site actually has,
+/// named, and the permission list its own `roles` row currently carries, read fresh rather than
+/// assumed from whatever a fresh registration would produce today.
+/// </summary>
+/// <param name="Name">The seeded role name (`"Operator"` or `"Admin"` today, `Ago.Chat.Application.
+/// Abstractions.IRoleRepository`'s own remarks - this item builds no way to name a third one).</param>
+/// <param name="Permissions">This role's own actual, current permission list - what the owner's "add a
+/// permission" action widens, never a template or a snapshot from registration time.</param>
+public sealed record OwnerSiteRoleDto(string Name, IReadOnlyList<string> Permissions);
 
 /// <summary>
 /// `23-68`: one row of <see cref="OwnerSiteDetailResponse.Operators"/> - the identical shape

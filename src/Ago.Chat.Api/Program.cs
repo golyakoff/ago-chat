@@ -537,6 +537,10 @@ app.MapOwnerModuleEndpoints();
 // `23-68`: the platform owner's own recovery write - restoring a locked-out operator's seat, gated by
 // RequirePlatformOwner exactly as every owner surface above is (OwnerOperatorsEndpoints' own remarks).
 app.MapOwnerOperatorsEndpoints();
+// `25-76`: the platform owner's own role-permission tool - adding a permission a tenant's role is
+// missing, gated by RequirePlatformOwner exactly as every owner surface above is
+// (OwnerRolesEndpoints' own remarks).
+app.MapOwnerRolesEndpoints();
 // `23-48`: the platform owner's own write for a tenant's allowed origins - its own Map call, the same
 // "own file, own registration" discipline OwnerSiteAllowedOriginsEndpoints' own remarks describe.
 app.MapOwnerSiteAllowedOriginsEndpoint();

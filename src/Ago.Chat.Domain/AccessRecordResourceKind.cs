@@ -38,4 +38,12 @@ public enum AccessRecordResourceKind
     /// one - restoring a seat acts on one specific operator among possibly several on the same site,
     /// so <c>site_id</c> alone would not say which.</summary>
     Operator,
+
+    /// <summary>`25-76`: <see cref="AccessRecordKind.OwnerRolePermissionsGrant"/>'s own resource - the
+    /// `roles` row whose permission list was widened, named by its own <c>Id</c>
+    /// (<see cref="Ago.Chat.Application.Abstractions.RoleLookup.Id"/>) - a real resource id, the same
+    /// "act on one specific row among possibly several on the same site" shape <see cref="Operator"/>'s
+    /// own remarks give for the identical reason (a site always has more than one role, so `site_id`
+    /// alone would not say which).</summary>
+    Role,
 }

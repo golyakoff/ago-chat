@@ -165,5 +165,29 @@ public readonly record struct Permission(string Value)
     public static readonly Permission CustomerEdit = new("customer:edit");
     public static readonly Permission CalendarConfigure = new("calendar:configure");
 
+    // `25-76`: reflected once, from this type's own public static fields - the same "closed vocabulary
+    // via reflection" shape `23-99`'s own `requiredKeysOf` derives its key set the same way (there, from
+    // a TypeScript literal object; here, from this record struct's own members). This is the one place
+    // that answers "every permission this codebase knows about" - the owner's role-permission tool
+    // (`AddRolePermissionsAsOwnerHandler`) validates a caller-supplied permission string against this
+    // list rather than trusting client input, and the read side exposes it unchanged so the console
+    // never keeps its own, driftable copy of the same vocabulary. Adding a new `Permission` field above
+    // is picked up automatically - nothing here needs to be told about a new member by hand, which is
+    // exactly what would otherwise go stale the same way `RegisterSiteHandler`'s own per-tenant role
+    // lists already have (this item's own "Found").
+    //
+    // Deliberately declared last, after every named permission field above: C# runs static field
+    // initializers in declaration order within the same type, and reflection reads a static field's
+    // *current* value at the moment `GetValue` runs - placed first (as this was originally written and
+    // caught by this item's own fails-before test), every field it reads back would still hold its
+    // default `{ Value = null }`, not yet assigned, because this field's own initializer would run
+    // before theirs.
+    public static readonly IReadOnlyList<string> AllKnownValues =
+        typeof(Permission)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(field => field.FieldType == typeof(Permission))
+            .Select(field => ((Permission)field.GetValue(null)!).Value)
+            .ToArray();
+
     public override string ToString() => Value;
 }

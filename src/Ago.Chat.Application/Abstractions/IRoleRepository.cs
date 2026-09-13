@@ -59,9 +59,28 @@ public interface IRoleRepository
     /// method costs nothing.
     /// </summary>
     Task<RoleLookup?> GetByNameAsync(SiteId siteId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-76`: every role this site has, with its own actual, current permission list - not the
+    /// founder template <see cref="UseCases.RegisterSite.RegisterSiteHandler"/> happened to write at
+    /// registration, what this specific row holds today (this item's own "Found": seven live tenants,
+    /// seven different `Admin` permission sets, because nothing before this item ever re-read one).
+    /// The owner's site-detail screen is the one caller, and it always wants every role on the site at
+    /// once - a single query over `roles` filtered by <c>site_id</c>, not <see cref="GetByNameAsync"/>
+    /// called once per fixed name, so a site is one round trip to describe fully regardless of how many
+    /// roles it happens to have (still always exactly the two seeded names today, `IRoleRepository`'s
+    /// own remarks on `GetIdByNameAsync`, but this method makes no assumption about that either).
+    /// </summary>
+    Task<IReadOnlyList<RoleSummary>> GetAllForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
 }
 
 /// <summary>One role, resolved by name for <see cref="IRoleRepository.GetByNameAsync"/> - a plain
 /// projection of the `roles` row, not a Domain model (roles have none yet, `OperatorInvite.RoleId`'s own
 /// remarks).</summary>
 public sealed record RoleLookup(Guid Id, IReadOnlyList<string> Permissions);
+
+/// <summary>One row of <see cref="IRoleRepository.GetAllForSiteAsync"/> - the identical two facts
+/// <see cref="RoleLookup"/> already carries for a role resolved by name, plus <see cref="Name"/> itself,
+/// since a caller reading every role on a site (rather than one it already named) has no other way to
+/// tell the rows apart.</summary>
+public sealed record RoleSummary(string Name, Guid Id, IReadOnlyList<string> Permissions);

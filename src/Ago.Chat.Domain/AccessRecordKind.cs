@@ -62,4 +62,12 @@ public enum AccessRecordKind
     /// that override was actually exercised, the identical split <see cref="OwnerModuleRevoke"/>'s own
     /// force/reason override already draws for its own table.</summary>
     OwnerOperatorSeatRestore,
+
+    /// <summary>`25-76`: the platform owner adding a permission a tenant's role was missing - the fix
+    /// for the drift this item's own "Found" names (seven live tenants, seven different `Admin`
+    /// permission sets). Not a reuse of an existing member: unlike `23-86`'s own
+    /// <see cref="OwnerModuleQuantityGrant"/> (a second input written into a row that member already
+    /// names), this write reaches a table - `roles` - no existing <see cref="AccessRecordKind"/> member
+    /// has ever named, so reusing one would misdescribe which row actually changed.</summary>
+    OwnerRolePermissionsGrant,
 }

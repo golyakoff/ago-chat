@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.UseCases.AddRolePermissionsAsOwner;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
@@ -1083,6 +1084,10 @@ public sealed class ChatModule : IProductModule
         // `23-72`: "an administrator can change an existing colleague's role, both directions" - see the
         // handler's own remarks.
         services.AddScoped<ChangeOperatorRoleHandler>();
+        // `25-76`: the platform owner's own role-permission tool - gated entirely by RequirePlatformOwner
+        // at the route, the identical registration shape RestoreOperatorSeatAsOwnerHandler's own remarks
+        // give a few lines up for the analogous owner-only write.
+        services.AddScoped<AddRolePermissionsAsOwnerHandler>();
         // `12-02`: only Ago.Chat.Api ever resolves this one (it backs a single HTTP endpoint gated by
         // `12-01`'s owner policy), registered here for the same reason as everything else on this
         // page - ChatModule is where handler registration lives, and a host that never maps the route

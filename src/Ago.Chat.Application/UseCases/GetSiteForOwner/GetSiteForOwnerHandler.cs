@@ -40,7 +40,7 @@ namespace Ago.Chat.Application.UseCases.GetSiteForOwner;
 /// </summary>
 public sealed class GetSiteForOwnerHandler(
     IPlatformOverviewReadStore siteReadStore, IEnabledModuleReadStore moduleReadStore, ISiteRepository siteRepository,
-    IModuleQuantityGrantStore quantityGrants, IOperatorTeamReadStore operatorTeam, IClock clock)
+    IModuleQuantityGrantStore quantityGrants, IOperatorTeamReadStore operatorTeam, IRoleRepository roles, IClock clock)
 {
     public async Task<Result<OwnerSiteDetailResponse>> HandleAsync(
         GetSiteForOwner query, CancellationToken cancellationToken)
@@ -77,6 +77,12 @@ public sealed class GetSiteForOwnerHandler(
         // so the console can name a locked-out operator to restore a seat for.
         var operators = await operatorTeam.GetForSiteAsync(query.SiteId, cancellationToken);
 
+        // `25-76`: this site's own roles, read fresh rather than assumed from whatever a new
+        // registration would produce today - the whole point of this item's own "Found" (seven live
+        // tenants, seven different `Admin` permission sets, because nothing before this item ever
+        // re-read one).
+        var roleRows = await roles.GetAllForSiteAsync(query.SiteId, cancellationToken);
+
         return new OwnerSiteDetailResponse(
             site.Id.Value,
             site.Name,
@@ -91,11 +97,15 @@ public sealed class GetSiteForOwnerHandler(
             modules.Select(module => ToModuleDto(module, quantities)).ToList(),
             allowedOrigins,
             operators.Select(ToOperatorDto).ToList(),
-            aggregate?.SuspendedUntil);
+            aggregate?.SuspendedUntil,
+            roleRows.Select(ToRoleDto).ToList(),
+            Permission.AllKnownValues);
     }
 
     private static OwnerSiteOperatorDto ToOperatorDto(OperatorTeamMemberItem item) => new(
         item.OperatorId.Value, item.DisplayName, item.Email, item.HoldsSeat, item.RoleNames);
+
+    private static OwnerSiteRoleDto ToRoleDto(RoleSummary role) => new(role.Name, role.Permissions);
 
     private static OwnerSiteModuleDto ToModuleDto(
         EnabledModuleDetailSummary module, IReadOnlyDictionary<ModuleKey, int> quantities) => new(

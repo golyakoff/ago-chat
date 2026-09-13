@@ -461,6 +461,73 @@ public sealed class RoleRepositoryTests(PostgresFixture fixture)
         });
     }
 
+    /// <summary>`25-76`: <see cref="RoleRepository.GetAllForSiteAsync"/>'s own single query over every
+    /// `roles` row a site has - proven against a real Postgres site carrying both seeded roles with
+    /// two genuinely different permission sets, so a passing test could not be an artifact of both rows
+    /// happening to look alike.</summary>
+    [Fact]
+    public async Task GetAllForSiteAsync_ReturnsEveryRole_WithItsOwnActualCurrentPermissions()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorRoleId = Guid.NewGuid();
+        var adminRoleId = Guid.NewGuid();
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = operatorRoleId,
+                SiteId = siteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationRead.Value, Permission.ConversationSend.Value],
+            });
+            seed.Roles.Add(new RoleRecord
+            {
+                Id = adminRoleId,
+                SiteId = siteId,
+                Name = "Admin",
+                // Deliberately missing `channel:manage` - the exact live-deployment gap this item was
+                // found from, restated as a fixture rather than described.
+                Permissions = [Permission.SiteConfigure.Value],
+            });
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using var db = fixture.CreateDbContext();
+        var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+        var roles = await repository.GetAllForSiteAsync(siteId, CancellationToken.None);
+
+        Assert.Equal(2, roles.Count);
+        var admin = Assert.Single(roles, r => r.Name == "Admin");
+        Assert.Equal(adminRoleId, admin.Id);
+        Assert.Equal([Permission.SiteConfigure.Value], admin.Permissions);
+        var @operator = Assert.Single(roles, r => r.Name == "Operator");
+        Assert.Equal(operatorRoleId, @operator.Id);
+        Assert.Equal(
+            new[] { Permission.ConversationRead.Value, Permission.ConversationSend.Value }.OrderBy(p => p, StringComparer.Ordinal),
+            @operator.Permissions.OrderBy(p => p, StringComparer.Ordinal));
+    }
+
+    /// <summary>A site with no roles at all (unreachable through ordinary registration, but this
+    /// method's own contract makes no assumption otherwise) reads back empty, not null and not an
+    /// error.</summary>
+    [Fact]
+    public async Task GetAllForSiteAsync_WithNoRolesOnTheSite_ReturnsAnEmptyList()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await seed.SaveChangesAsync(CancellationToken.None);
+        }
+
+        await using var db = fixture.CreateDbContext();
+        var repository = new RoleRepository(db, new UuidV7Generator(), new FixedClock(Now));
+        var roles = await repository.GetAllForSiteAsync(siteId, CancellationToken.None);
+
+        Assert.Empty(roles);
+    }
+
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;

@@ -201,4 +201,20 @@ public sealed class RoleRepository(AgoChatDbContext db, IIdGenerator idGenerator
 
         return row is null ? null : new RoleLookup(row.Id, row.Permissions);
     }
+
+    /// <summary>
+    /// `25-76`: one query over every `roles` row this site has - see the port's own remarks for why
+    /// this is a dedicated method rather than the caller looping <see cref="GetByNameAsync"/> once per
+    /// fixed name.
+    /// </summary>
+    public async Task<IReadOnlyList<RoleSummary>> GetAllForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        var rows = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId)
+            .OrderBy(r => r.Name)
+            .Select(r => new { r.Name, r.Id, r.Permissions })
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(r => new RoleSummary(r.Name, r.Id, r.Permissions)).ToList();
+    }
 }
