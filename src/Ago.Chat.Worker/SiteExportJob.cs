@@ -69,10 +69,30 @@ public sealed class SiteExportJob(
     {
         var startedAt = clock.UtcNow;
 
+        // `25-72`: reclaim before claiming, every cycle - a row a crashed replica left stuck
+        // `Processing` is handed back to `Pending` here so the claim right below can pick it straight
+        // back up in the same tick, rather than waiting on a second timer.
+        var staleThreshold = startedAt - options.Value.StaleProcessingTimeout;
+        int reclaimed;
+        await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
+        {
+            reclaimed = await SiteExportClaimQuery.ReclaimStaleBatchAsync(connection, staleThreshold, cancellationToken);
+        }
+
+        if (reclaimed > 0)
+        {
+            logger.LogWarning(
+                "Reclaimed {Count} export(s) stuck Processing past {Timeout}; returned to Pending.",
+                reclaimed, options.Value.StaleProcessingTimeout);
+        }
+
+        // `25-72`: an atomic claim, not a plain read - two replicas ticking at the same time claim
+        // disjoint batches, each row flipped to Processing before either replica starts building
+        // anything (SiteExportClaimQuery's own remarks).
         IReadOnlyList<PendingExport> pending;
         await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
-            pending = await SiteExportQuery.ListPendingAsync(connection, options.Value.BatchSize, cancellationToken);
+            pending = await SiteExportClaimQuery.ClaimPendingBatchAsync(connection, startedAt, options.Value.BatchSize, cancellationToken);
         }
 
         var completed = 0;

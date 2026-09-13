@@ -36,4 +36,22 @@ public sealed class SiteExportJobOptions
     /// the archive today and opens it next month gets working conversation and site data but dead
     /// attachment links.</summary>
     public TimeSpan AttachmentUrlLifetime { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>`25-72`: how long a request may sit <c>Processing</c> before
+    /// <c>SiteExportClaimQuery.ReclaimStaleBatchAsync</c> judges its claim abandoned (the replica that
+    /// held it crashed mid-build/upload, never crashed at all but is simply still running, or the two
+    /// are indistinguishable from here) and hands it back to <c>Pending</c> for any replica to claim
+    /// again. An internal robustness constant, not a customer-facing one - the same "starting point,
+    /// not measured" honesty <c>SiteExportPruneJobOptions.RetentionWindow</c>'s own remarks already
+    /// state for this file's sibling number (CLAUDE.md: "do not invent numbers... a typical production
+    /// figure"). Set to double <see cref="UploadUrlLifetime"/> - that value is already this codebase's
+    /// own stated generous estimate for how long uploading one finished archive can take
+    /// (<see cref="UploadUrlLifetime"/>'s own remarks), and building the archive in the first place
+    /// (the part before any upload even starts) can itself take real time for a large tenant; doubling
+    /// leaves slack for both phases together rather than assuming the build is free. Deliberately
+    /// generous over precise: reclaiming a request too early risks two replicas processing it at once
+    /// again - the exact failure this item exists to remove - while reclaiming it too late only delays
+    /// one stuck request by extra minutes, a far cheaper mistake to make in the wrong direction.
+    /// </summary>
+    public TimeSpan StaleProcessingTimeout { get; set; } = TimeSpan.FromHours(1);
 }
