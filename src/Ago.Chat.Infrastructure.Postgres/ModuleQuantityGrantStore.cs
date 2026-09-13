@@ -19,7 +19,9 @@ public sealed class ModuleQuantityGrantStore(AgoChatDbContext db, IOutboxWriter 
     {
         var grant = await db.ModuleQuantityGrants.AsNoTracking()
             .FirstOrDefaultAsync(g => g.SiteId == siteId && g.ModuleKey == moduleKey, cancellationToken);
-        return grant?.Quantity ?? 0;
+        // `23-86`: EffectiveQuantity, not Quantity - see IModuleQuantityGrantStore.GetQuantityAsync's
+        // own remarks for why every caller already means the OR'd answer.
+        return grant?.EffectiveQuantity ?? 0;
     }
 
     public async Task<IReadOnlyDictionary<ModuleKey, int>> GetAllForSiteAsync(
@@ -28,7 +30,7 @@ public sealed class ModuleQuantityGrantStore(AgoChatDbContext db, IOutboxWriter 
         var grants = await db.ModuleQuantityGrants.AsNoTracking()
             .Where(g => g.SiteId == siteId)
             .ToListAsync(cancellationToken);
-        return grants.ToDictionary(g => g.ModuleKey, g => g.Quantity);
+        return grants.ToDictionary(g => g.ModuleKey, g => g.EffectiveQuantity);
     }
 
     public async Task GrantAsync(
@@ -47,7 +49,40 @@ public sealed class ModuleQuantityGrantStore(AgoChatDbContext db, IOutboxWriter 
             grant.SetQuantity(quantity, now);
         }
 
-        outbox.Enqueue(ModuleQuantityGrantedMapper.ToEnvelope(siteId.Value, moduleKey.Value, quantity, now, idGenerator));
+        // `23-86`: grant.EffectiveQuantity, not the caller's own raw `quantity` - see this method's own
+        // remarks on IModuleQuantityGrantStore for why this is the one place the OR happens, so a
+        // billing-driven revoke (SubscriptionRenewalApplier, unchanged by this item) can never publish
+        // "revoked" while the platform owner's own unconditional-grant flag is still set on this row.
+        outbox.Enqueue(ModuleQuantityGrantedMapper.ToEnvelope(
+            siteId.Value, moduleKey.Value, grant.EffectiveQuantity, now, idGenerator));
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task SetUnconditionalGrantAsync(
+        SiteId siteId, ModuleKey moduleKey, bool unconditionallyGranted, string setBy, string reason,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var grant = await db.ModuleQuantityGrants
+            .FirstOrDefaultAsync(g => g.SiteId == siteId && g.ModuleKey == moduleKey, cancellationToken);
+
+        if (grant is null)
+        {
+            // `23-86` case 1: a trial the owner grants by hand, before any billing quantity was ever
+            // written for this (site, module) - the row is created with quantity zero, exactly as if a
+            // GrantAsync(..., 0, ...) had run first, so EffectiveQuantity below reads correctly off it.
+            grant = ModuleQuantityGrant.Grant(siteId, moduleKey, 0, now);
+            db.ModuleQuantityGrants.Add(grant);
+        }
+
+        grant.SetUnconditionalGrant(unconditionallyGranted, setBy, reason, now);
+
+        // Republished even though Quantity itself did not change here - EffectiveQuantity can still
+        // move (the flag is one of its two inputs), and every downstream consumer of
+        // ModuleQuantityGranted trusts the published number as the current fact (this method's own
+        // remarks on IModuleQuantityGrantStore.GrantAsync state the identical reasoning).
+        outbox.Enqueue(ModuleQuantityGrantedMapper.ToEnvelope(
+            siteId.Value, moduleKey.Value, grant.EffectiveQuantity, now, idGenerator));
 
         await db.SaveChangesAsync(cancellationToken);
     }

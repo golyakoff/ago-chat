@@ -687,6 +687,15 @@ public static class ConversationErrors
     public static Error ModuleQuantityImpactStale(string reason) =>
         new("Module.QuantityImpactStale", reason);
 
+    /// <summary>`23-86`: <see cref="SetUnconditionalModuleGrantAsOwner.SetUnconditionalModuleGrantAsOwner"/>
+    /// carried no non-blank reason, or one longer than
+    /// <see cref="SetUnconditionalModuleGrantAsOwner.SetUnconditionalModuleGrantAsOwnerHandler.MaxReasonLength"/> -
+    /// checked first, before this handler ever touches the store, the identical "decide, don't default"
+    /// shape <see cref="ModuleRevokeReasonRequired"/> already gives its own override
+    /// (`adr/0118`).</summary>
+    public static Error ModuleQuantityUnconditionalGrantReasonRequired(string reason) =>
+        new("Module.QuantityUnconditionalGrantReasonRequired", reason);
+
     /// <summary>`14-12`/`docs/conventions/text-commands.md`: a trigger word collides with Chat's own
     /// closed, product-level command vocabulary (<see cref="Domain.ReservedChatCommands"/>) - refused
     /// regardless of what any other module on this site has registered, since this word will never mean
