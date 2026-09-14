@@ -110,4 +110,30 @@ public sealed class GetPricingForOwnerHandlerTests
         Assert.Equal("v1", basePricedResource.CurrentVersion);
         Assert.Equal(490m, basePricedResource.CurrentAmountRub);
     }
+
+    // `25-101`: the exact case its own item exists to prove - a platform owner reading this screen
+    // before anyone has ever published a figure for the new channel add-on key sees it listed honestly
+    // as "built, not yet for sale" (a null amount, `25-43`'s own second decision), and the identical
+    // read reflects a real figure the instant one is published - the read half of the end-to-end proof
+    // whose write half is PublishPriceVersionHandlerTests.HandleAsync_ForTheNewChannelAddOnKey_PublishesV1.
+    [Fact]
+    public async Task HandleAsync_ListsTheChannelAddOnKey_NullUntilPublished_ThenItsRealAmount()
+    {
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 490m, Now);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 200m, Now);
+        var handler = new GetPricingForOwnerHandler(prices);
+
+        var beforePublish = await handler.HandleAsync(CancellationToken.None);
+        var unpublished = Assert.Single(beforePublish.PricedResources, r => r.Key == ChannelAddOnPricing.ChannelAddOnKey.Value);
+        Assert.Null(unpublished.CurrentVersion);
+        Assert.Null(unpublished.CurrentAmountRub);
+
+        prices.SeedVersion(ChannelAddOnPricing.ChannelAddOnKey, 100m, Now);
+        var afterPublish = await handler.HandleAsync(CancellationToken.None);
+
+        var published = Assert.Single(afterPublish.PricedResources, r => r.Key == ChannelAddOnPricing.ChannelAddOnKey.Value);
+        Assert.Equal("v1", published.CurrentVersion);
+        Assert.Equal(100m, published.CurrentAmountRub);
+    }
 }
