@@ -72,6 +72,7 @@ using Ago.Chat.Application.UseCases.SuspendTenantAsOwner;
 using Ago.Chat.Application.UseCases.ExtendSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.LiftSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.ListSuspensionsForOwner;
+using Ago.Chat.Application.UseCases.GetSuspensionStatusForSite;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
@@ -777,6 +778,14 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ExtendSuspensionAsOwnerHandler>();
         services.AddScoped<LiftSuspensionAsOwnerHandler>();
         services.AddScoped<ListSuspensionsForOwnerHandler>();
+        // `25-70`/`25-07`: the tenant's own read of its own account's suspension state
+        // (`SiteSuspensionEndpoints.HandleGetAsync`) - found missing, live, by `25-07`'s own new
+        // RouteHandlerDiRegistrationTests against this exact `main`: `GetSuspensionStatusForSiteHandler`
+        // was mapped as a Minimal API endpoint parameter in `25-70` and never registered here, the
+        // identical unregistered-handler shape `25-06` found in `PreviewOperatorInviteHandler` - the
+        // same crash-on-first-AuthorizationPolicyCache-enumeration this file's own three owner-side
+        // suspension handlers right above were already spared by being registered on arrival.
+        services.AddScoped<GetSuspensionStatusForSiteHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();
