@@ -55,6 +55,7 @@ public class ErasureRecordIntegrationTests(ErasureFixture fixture)
         "status",
         "storage_objects_deleted",
         "tags_deleted",
+        "visitor_restrictions_deleted",
     ];
 
     private sealed class SettableClock(DateTimeOffset now) : IClock
@@ -238,6 +239,64 @@ public class ErasureRecordIntegrationTests(ErasureFixture fixture)
         AssertRowNamesNeither(record, first.ConversationId.Value, first.VisitorId.Value);
         AssertRowNamesNeither(record, second.ConversationId.Value, second.VisitorId.Value);
         _ = subjectId;
+    }
+
+    /// <summary>
+    /// `25-78`'s own Done-when: the drain this item adds must be explicit and counted, not merely a
+    /// silent side effect of <c>DeleteSiteAsync</c>'s own cascade from `sites`/`visitors`. Two
+    /// restrictions on one visitor - a `23-69` spam mute and a `23-77` manual block, the two ways this
+    /// table's rows are ever written - both gone once the site is erased, and the receipt says two, not
+    /// zero and not merely "the site is gone so who knows".
+    /// </summary>
+    [Fact]
+    public async Task ErasingASite_DrainsVisitorRestrictionsExplicitly_AndCountsThemInTheReceipt()
+    {
+        var clock = new SettableClock(Now);
+        var siteId = await SeedSiteAsync("erasure-record-site-4");
+        var (adminOperatorId, _) = await SeedOperatorAsync(siteId);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+
+        var restrictions = new VisitorRestrictionRepository(fixture.DataSource);
+        await restrictions.RestrictAsync(
+            siteId, visitorId, adminOperatorId, VisitorRestrictionKind.Spam, Now.AddHours(24), conversationId,
+            Guid.NewGuid(), Now, CancellationToken.None);
+        await restrictions.RestrictAsync(
+            siteId, visitorId, adminOperatorId, VisitorRestrictionKind.Block, null, conversationId,
+            Guid.NewGuid(), Now, CancellationToken.None);
+
+        Assert.Equal(2, await CountAsync("select count(*) from visitor_restrictions where site_id = @id", siteId.Value));
+
+        var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
+        await using (var permissionDb = fixture.CreateDbContext())
+        {
+            var requestHandler = new RequestSiteErasureHandler(
+                erasureRequests, new PermissionChecker(permissionDb), new UuidV7Generator(), clock);
+            var requested = await requestHandler.HandleAsync(
+                new RequestSiteErasure(siteId, adminOperatorId), CancellationToken.None);
+            Assert.True(requested.IsSuccess, requested.IsFailure ? requested.Error!.Value.ToString() : null);
+        }
+
+        var recordingPublisher = new RecordingEventPublisher();
+        var cacheInvalidation = new CacheInvalidationPublisher(recordingPublisher, clock);
+        var provisioner = CreateProvisioner();
+        var conversationJob = CreateConversationJob(clock);
+        var siteJob = CreateSiteJob(clock, provisioner, cacheInvalidation);
+
+        for (var i = 0; i < 5; i++)
+        {
+            await conversationJob.SweepAsync(CancellationToken.None);
+            await siteJob.SweepAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(0, await CountAsync("select count(*) from sites where id = @id", siteId.Value));
+        Assert.Equal(0, await CountAsync("select count(*) from visitor_restrictions where site_id = @id", siteId.Value));
+
+        var record = await QuerySingleErasureRecordAsync(siteId.Value);
+        Assert.Equal("Site", (string)record.scope);
+        Assert.Equal("Completed", (string)record.status);
+        Assert.Equal(2, (int)record.visitor_restrictions_deleted);
+
+        AssertRowNamesNeither(record, conversationId.Value, visitorId.Value);
     }
 
     private static void AssertRowNamesNeither(dynamic record, Guid conversationId, Guid visitorId)

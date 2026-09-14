@@ -59,6 +59,11 @@ internal sealed class ErasureRecordEntityConfiguration : IEntityTypeConfiguratio
         builder.Property(e => e.ConversationsMarkedForErasure)
             .HasColumnName("conversations_marked_for_erasure").HasDefaultValue(0);
         builder.Property(e => e.IdentitiesDeleted).HasColumnName("identities_deleted").HasDefaultValue(0);
+        // `25-78`: site scope only - ConversationErasureJob deliberately never sets this (see
+        // SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync's own remarks for why a visitor's
+        // restriction history is a site-scoped erasure concern, not a conversation-scoped one).
+        builder.Property(e => e.VisitorRestrictionsDeleted)
+            .HasColumnName("visitor_restrictions_deleted").HasDefaultValue(0);
 
         // `ck_erasure_records_scope`/`ck_erasure_records_status`: the same "a CHECK constraint
         // backstops the enum at the storage level" reasoning SiteConfiguration's own widget-position

@@ -125,6 +125,49 @@ public static class SiteErasureQuery
     }
 
     /// <summary>
+    /// `25-78`: a visitor's own restriction history (`23-69`'s spam mutes, `23-77`'s manual blocks) -
+    /// drained explicitly here, site-wide, before <see cref="DeleteSiteAsync"/>'s own cascade would
+    /// otherwise remove the same rows silently. The same "primary mechanism is explicit, cascade is
+    /// defence in depth" shape <see cref="ConversationErasureQuery.DeleteNotesForConversationAsync"/>/
+    /// <see cref="ConversationErasureQuery.DeleteContactDetailsForVisitorAsync"/> already use - the gap
+    /// `docs/architecture/personal-data.md`'s own `visitor_restrictions` row named: this table cascades
+    /// from both `sites` and `visitors` today, so the rows were always removed by a whole-site erasure,
+    /// just never counted in the receipt the way every other drained table already is.
+    ///
+    /// <para><b>Site-scoped, deliberately not conversation-scoped - and this is the one this item's own
+    /// backlog asked to be decided explicitly.</b> <c>ConversationErasureJob</c> never calls a sibling
+    /// of this method for one conversation's own restrictions, narrow (only rows whose
+    /// <c>source_conversation_id</c> names the conversation being erased) or wide (every restriction the
+    /// visitor has). Both would be wrong for the same reason: a restriction is not evidence about one
+    /// conversation, it is <b>this visitor's current standing on this site</b> -
+    /// <see cref="Ago.Chat.Infrastructure.Postgres.VisitorRestrictionRepository.IsActiveAsync"/> is keyed
+    /// <c>(site_id, visitor_id)</c> and
+    /// gates every one of the visitor's <i>future</i> conversations, the ones the erasure request never
+    /// mentioned. Deleting the mute or block that a spam-flagged conversation earned, merely because that
+    /// one conversation was later erased on a routine privacy request, would silently lift an active
+    /// moderation decision as a side effect - a security regression dressed as compliance, not the
+    /// erasure this table's own `source_conversation_id` was built to survive (`Stage23AddVisitorRestrictions.cs`'s
+    /// own remarks: no foreign key to `conversations`, specifically so a restriction stays nameable, and
+    /// stays standing, after the conversation that triggered it is later erased). A restriction is closer
+    /// to `access_records`/`acceptance_records` - "a judgement about a person" the tenant may need to
+    /// revisit or defend - than to `visitor_contact_details`, whose visitor-wide erasure-time drain this
+    /// method's own shape otherwise resembles.</para>
+    ///
+    /// <para>Site scope is where a restriction correctly does go, in full, because it is the one place
+    /// `16-02`'s own two-scope design (`ErasureScope.Conversation`/`ErasureScope.Site`) actually erases
+    /// <i>the visitor</i>, not merely one of their conversations - once the site itself is gone there is
+    /// no future conversation left for any restriction to keep gating.</para>
+    /// </summary>
+    public static async Task<int> DeleteVisitorRestrictionsForSiteAsync(
+        NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "delete from visitor_restrictions where site_id = @siteId", connection);
+        command.Parameters.AddWithValue("siteId", siteId);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
     /// The site row itself - one statement, relying on the schema's cascades for everything still
     /// attached to it, the identical "one line, not a hand-ordered list of deletes" reasoning
     /// `DemoTenantRepository.DeleteSiteAsync`'s own remarks give in full: `operators` (and
@@ -141,16 +184,18 @@ public static class SiteErasureQuery
     /// `conversation_notes`/`conversation_tags` (drained per-conversation by
     /// <see cref="ConversationErasureQuery.DeleteNotesForConversationAsync"/>/
     /// <see cref="ConversationErasureQuery.DeleteTagsForConversationAsync"/> before each conversation
-    /// row itself was deleted) - so cascading into any of those five tables here deletes zero rows
-    /// rather than being the mechanism that empties them - the bounded <see cref="ConversationErasureQuery"/>
-    /// is what actually did that work, batch by batch. `tags` is the one table in this cascade list
-    /// that genuinely still has rows at this point: the tag *vocabulary* itself, which nothing drains
-    /// per-conversation because a tag definition outlives any one conversation that carried it.
-    /// `message_archives`' own rows are also genuinely non-empty here in general (one row survives per
-    /// archived period, even once a period's content is fully stripped) - this cascade removes the
-    /// *manifest rows*; the objects they name are a separate concern <see cref="SiteErasureJob.ProcessSiteAsync"/>
-    /// handles explicitly, before this method runs, because a foreign key cannot reach into object
-    /// storage.
+    /// row itself was deleted) and `visitor_restrictions` (`25-78`: drained explicitly, site-wide, by
+    /// <see cref="DeleteVisitorRestrictionsForSiteAsync"/> immediately above, just before this method
+    /// runs) - so cascading into any of those six tables here deletes zero rows rather than being the
+    /// mechanism that empties them - the bounded <see cref="ConversationErasureQuery"/> (and, for
+    /// `visitor_restrictions`, this file) is what actually did that work. `tags` is the one table in
+    /// this cascade list that genuinely still has rows at this point: the tag *vocabulary* itself, which
+    /// nothing drains per-conversation because a tag definition outlives any one conversation that
+    /// carried it. `message_archives`' own rows are also genuinely non-empty here in general (one row
+    /// survives per archived period, even once a period's content is fully stripped) - this cascade
+    /// removes the *manifest rows*; the objects they name are a separate concern
+    /// <see cref="SiteErasureJob.ProcessSiteAsync"/> handles explicitly, before this method runs, because
+    /// a foreign key cannot reach into object storage.
     /// </summary>
     public static async Task<int> DeleteSiteAsync(
         NpgsqlConnection connection, Guid siteId, CancellationToken cancellationToken)

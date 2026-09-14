@@ -90,6 +90,14 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
             Assert.True(sent.IsSuccess);
         }
 
+        // `25-78`: a spam mute, standing in for this visitor's own restriction history - the row
+        // `docs/architecture/personal-data.md`'s own `visitor_restrictions` row says a whole-site
+        // erasure must reach, explicitly and counted, not only through `DeleteSiteAsync`'s own cascade.
+        var restrictionId = Guid.NewGuid();
+        await new VisitorRestrictionRepository(fixture.DataSource).RestrictAsync(
+            siteId, visitorId, adminOperatorId, VisitorRestrictionKind.Spam, Now.AddHours(24), conversationId,
+            restrictionId, Now, CancellationToken.None);
+
         Assert.True(await fixture.UserExistsAsync(subjectId));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(thumbnailKey), CancellationToken.None));
@@ -100,6 +108,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(1, await CountAsync("select count(*) from tags where id = @siteId", tagId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @siteId", visitorId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from team_messages where site_id = @siteId", siteId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from visitor_restrictions where site_id = @siteId", siteId.Value));
 
         // The real HTTP-facing write: permission-checked, one flag set, no deletion here.
         var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
@@ -158,6 +167,11 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         // `23-32`: the room itself - a plain FK cascade from `sites`, proven the same way every other
         // cascaded table on this page is.
         Assert.Equal(0, await CountAsync("select count(*) from team_messages where site_id = @siteId", siteId.Value));
+        // `25-78`: drained explicitly by SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync, before
+        // this same row would otherwise have gone silently via the sites/visitors cascade -
+        // ErasureRecordIntegrationTests.ErasingASite_DrainsVisitorRestrictionsExplicitly_AndCountsThemInTheReceipt
+        // is what proves the count side of that claim; this assertion is the completeness side.
+        Assert.Equal(0, await CountAsync("select count(*) from visitor_restrictions where site_id = @siteId", siteId.Value));
 
         // MinIO: both the object and 5-04's thumbnail beside it.
         Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));

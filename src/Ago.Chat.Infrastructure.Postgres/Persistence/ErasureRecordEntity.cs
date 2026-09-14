@@ -61,4 +61,9 @@ internal sealed class ErasureRecordEntity
     public int ConversationsMarkedForErasure { get; set; }
 
     public int IdentitiesDeleted { get; set; }
+
+    /// <summary>`25-78`: site scope only - see <see cref="ErasureRecordEntityConfiguration"/>'s own
+    /// remarks and <c>SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync</c>'s for why this column
+    /// is never set on a `Conversation`-scope record.</summary>
+    public int VisitorRestrictionsDeleted { get; set; }
 }
