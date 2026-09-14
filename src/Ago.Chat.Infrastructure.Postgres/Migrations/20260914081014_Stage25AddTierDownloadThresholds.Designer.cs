@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914081014_Stage25AddTierDownloadThresholds")]
+    partial class Stage25AddTierDownloadThresholds
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1486,18 +1489,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
                         .HasColumnName("download_block_exempt");
-
-                    b.Property<DateTimeOffset?>("DownloadBlockExemptionChangedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("download_block_exemption_changed_at");
-
-                    b.Property<string>("DownloadBlockExemptionChangedBy")
-                        .HasColumnType("text")
-                        .HasColumnName("download_block_exemption_changed_by");
-
-                    b.Property<string>("DownloadBlockExemptionReason")
-                        .HasColumnType("text")
-                        .HasColumnName("download_block_exemption_reason");
 
                     b.Property<Guid?>("ErasureRecordId")
                         .HasColumnType("uuid")

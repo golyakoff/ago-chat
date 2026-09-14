@@ -279,6 +279,20 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasDatabaseName("ix_sites_suspended_until")
             .HasFilter("suspended_until IS NOT NULL");
 
+        // `25-83`: the platform owner's own free, indefinite bypass of the hard download-block
+        // threshold - Site.DownloadBlockExempt's own remarks. A plain boolean with a database default,
+        // never nullable: unlike SuspendedUntil there is no third "unknown" state to represent, every
+        // row that predates this column is simply not exempt.
+        builder.Property(s => s.DownloadBlockExempt)
+            .HasColumnName("download_block_exempt")
+            .HasDefaultValue(false);
+
+        // The last owner who set the flag above, and why - Site.DownloadBlockExemptionChangedBy's own
+        // remarks on why this is a single "current value's own audit" pair, not a full history table.
+        builder.Property(s => s.DownloadBlockExemptionChangedBy).HasColumnName("download_block_exemption_changed_by");
+        builder.Property(s => s.DownloadBlockExemptionReason).HasColumnName("download_block_exemption_reason");
+        builder.Property(s => s.DownloadBlockExemptionChangedAt).HasColumnName("download_block_exemption_changed_at");
+
         // `23-06`: four shadow properties, the identical shape `ErasureRequestedAt` already
         // establishes just above for the identical reason - each has exactly one legitimate writer
         // (`ISiteInstallationSignalRepository`, via raw Npgsql conditional `UPDATE`s) and is read only

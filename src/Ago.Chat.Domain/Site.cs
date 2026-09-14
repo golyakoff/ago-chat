@@ -284,6 +284,40 @@ public sealed class Site
     /// </summary>
     public DateTimeOffset? SuspendedUntil { get; private set; }
 
+    /// <summary>`25-83`: the platform owner's own per-tenant bypass of the hard download-block
+    /// threshold - off by default, granted free and indefinitely, never a tenant-facing toggle
+    /// (`docs/backlog/25-83-*.md`'s own Out of scope: "any tenant-facing self-service control over
+    /// either threshold or the override - both stay the platform owner's alone"). The identical
+    /// "plain scalar, no wrapping value object, private setter, read live by whichever handler's write
+    /// decision depends on it" shape <see cref="SuspendedUntil"/> already establishes just above, for
+    /// the same reason: <see cref="Application.UseCases.GetAttachmentDownloadUrl.GetAttachmentDownloadUrlHandler"/>
+    /// reads this off a freshly loaded <see cref="Site"/> on every call, never a cached value (CLAUDE.md
+    /// rule 8 - a compare-and-set read a write decision depends on comes from the database, not a
+    /// cache).</summary>
+    public bool DownloadBlockExempt { get; private set; }
+
+    /// <summary>`25-83`: the last owner who set <see cref="DownloadBlockExempt"/> to its current
+    /// value - <see langword="null"/> for a row this migration's own default left untouched. A single
+    /// "who set the current value, and why" pair (this and <see cref="DownloadBlockExemptionReason"/>),
+    /// not a full history table: the identical scope <c>Domain.ModuleQuantityGrant</c>'s own
+    /// unconditional-grant flag keeps for itself (<c>IModuleQuantityGrantStore.SetUnconditionalGrantAsync</c>'s
+    /// own <c>setBy</c>/<c>reason</c> parameters), reused here rather than building this item's own
+    /// dedicated audit table the way <c>22-08</c>'s heavier <c>ISiteSuspensionRecordRepository</c>
+    /// does for a fact this codebase's own owner console already lists on its own screen - this flag
+    /// has no such screen yet (this item's own report states why), so a full append-only ledger has no
+    /// reader to serve today.</summary>
+    public string? DownloadBlockExemptionChangedBy { get; private set; }
+
+    /// <summary>The owner's own stated justification for the current value of
+    /// <see cref="DownloadBlockExempt"/> - required by <c>SetDownloadBlockExemptionAsOwnerHandler</c>
+    /// on every change, the same "consequential, easy-to-forget-why act" reasoning every other
+    /// owner-only override reason in this codebase already gives.</summary>
+    public string? DownloadBlockExemptionReason { get; private set; }
+
+    /// <summary>When <see cref="DownloadBlockExempt"/> last changed - <see langword="null"/> exactly
+    /// when <see cref="DownloadBlockExemptionChangedBy"/> is.</summary>
+    public DateTimeOffset? DownloadBlockExemptionChangedAt { get; private set; }
+
     /// <summary>`18-03`: this site's prepared-answer library. Empty for every row that predates the
     /// feature - the same "list defaults to nothing rather than throwing" shape
     /// <see cref="OfflineAutoReply"/> already established for its own rules.</summary>
@@ -561,6 +595,44 @@ public sealed class Site
     {
         SuspendedUntil = null;
         _domainEvents.Add(new SiteSuspensionChanged(Id, null, now));
+    }
+
+    /// <summary>`25-83`: grants this site's own free, indefinite bypass of the hard download-block
+    /// threshold. No domain invariant to protect the way <see cref="Suspend"/>'s own remarks describe
+    /// for itself - a grant on an already-exempt site simply restates the same fact with a fresh
+    /// <paramref name="reason"/>/<paramref name="grantedBy"/>, which is exactly what an owner
+    /// correcting or re-affirming their own earlier reasoning would want, not an error.
+    ///
+    /// <para><b>Deliberately raises no domain event</b> - unlike every other <see cref="Site"/>
+    /// mutation in this file (<see cref="Suspend"/>, <see cref="UpdateContactVisibility"/>,
+    /// <see cref="ActivateSubscription"/>...), each of which has its own <c>*Mapper</c> translating it
+    /// into an outbox envelope some real consumer reads (a cache invalidation, a cross-product
+    /// contract). This flag has no such audience: <c>GetAttachmentDownloadUrlHandler</c> reads
+    /// <see cref="DownloadBlockExempt"/> directly off a freshly loaded <see cref="Site"/> on every
+    /// call (this property's own remarks - CLAUDE.md rule 8, never cached), nothing invalidates a
+    /// cache because nothing caches this value, and no other product needs to know. Raising an event
+    /// with no <c>*Mapper</c> and no <c>outbox.Enqueue</c> call to give it would be a domain event
+    /// that exists only to be discarded by <c>ClearDomainEvents()</c> - worse than not raising one,
+    /// since a reader would reasonably expect an event in this list to go somewhere. The audit trail
+    /// (who, when, why) is instead carried directly on this aggregate - <see cref="DownloadBlockExemptionChangedBy"/>'s
+    /// own remarks.</para>
+    /// </summary>
+    public void GrantDownloadBlockExemption(string grantedBy, string reason, DateTimeOffset now)
+    {
+        DownloadBlockExempt = true;
+        DownloadBlockExemptionChangedBy = grantedBy;
+        DownloadBlockExemptionReason = reason;
+        DownloadBlockExemptionChangedAt = now;
+    }
+
+    /// <summary>The reversal - see <see cref="GrantDownloadBlockExemption"/>'s own remarks in
+    /// full.</summary>
+    public void RevokeDownloadBlockExemption(string revokedBy, string reason, DateTimeOffset now)
+    {
+        DownloadBlockExempt = false;
+        DownloadBlockExemptionChangedBy = revokedBy;
+        DownloadBlockExemptionReason = reason;
+        DownloadBlockExemptionChangedAt = now;
     }
 
     /// <summary>

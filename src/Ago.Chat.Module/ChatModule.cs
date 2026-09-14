@@ -73,6 +73,8 @@ using Ago.Chat.Application.UseCases.ExtendSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.LiftSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.ListSuspensionsForOwner;
 using Ago.Chat.Application.UseCases.GetSuspensionStatusForSite;
+using Ago.Chat.Application.UseCases.SetDownloadBlockExemptionAsOwner;
+using Ago.Chat.Application.UseCases.GetDownloadUsageForSite;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
@@ -787,6 +789,11 @@ public sealed class ChatModule : IProductModule
         // same crash-on-first-AuthorizationPolicyCache-enumeration this file's own three owner-side
         // suspension handlers right above were already spared by being registered on arrival.
         services.AddScoped<GetSuspensionStatusForSiteHandler>();
+        // `25-83`: the download-cap trio - the owner's own exemption toggle and the tenant's own
+        // console-banner read, registered here on arrival rather than repeating `25-07`'s own found
+        // gap (an endpoint mapped before its handler was ever registered).
+        services.AddScoped<SetDownloadBlockExemptionAsOwnerHandler>();
+        services.AddScoped<GetDownloadUsageForSiteHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
         services.AddScoped<RouteConversationToModuleHandler>();

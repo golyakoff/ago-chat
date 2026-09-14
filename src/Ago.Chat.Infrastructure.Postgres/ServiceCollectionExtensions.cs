@@ -49,6 +49,8 @@ public static class ServiceCollectionExtensions
         // remarks for why none of the three widens ISiteAttachmentStorageBudget itself.
         services.AddScoped<IAttachmentEgressMeter, AttachmentEgressMeterStore>();
         services.AddScoped<IAttachmentEgressReadStore, AttachmentEgressReadStore>();
+        // `25-83`: the tier grid this egress figure is now enforced against.
+        services.AddScoped<IDownloadThresholdReadStore, DownloadThresholdReadStore>();
         services.AddScoped<IAttachmentBudgetReadStore, AttachmentBudgetReadStore>();
         services.AddScoped<ISiteAttachmentListReadStore, SiteAttachmentListReadStore>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();

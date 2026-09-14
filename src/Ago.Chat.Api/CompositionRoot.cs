@@ -523,6 +523,9 @@ public static class CompositionRoot
         // `25-70`: own file, own Map call - see SiteSuspensionEndpoints' own remarks; the tenant's own read of
         // its own account's suspension state.
         app.MapSiteSuspensionEndpoints();
+        // `25-83`: own file, own Map call - see DownloadUsageEndpoints' own remarks; the tenant's own read of
+        // its own account's download usage, driving the console's own warning banner.
+        app.MapDownloadUsageEndpoints();
         // `13-01`
         app.MapOperatorInviteEndpoints();
         // `8-07`: the anonymous demo-credential route. Registered unconditionally; the handler refuses when
@@ -561,6 +564,9 @@ public static class CompositionRoot
         // console's own currently-suspended list, gated by RequirePlatformOwner exactly as every owner surface
         // above is (OwnerSuspensionEndpoints' own remarks).
         app.MapOwnerSuspensionEndpoints();
+        // `25-83`: the platform owner's own per-tenant download-block exemption - own file, own Map call,
+        // the identical discipline OwnerSuspensionEndpoints' own remarks state just above.
+        app.MapOwnerDownloadBlockExemptionEndpoints();
         // `24-02`: the named owner's own publish route - see OwnerDocumentEndpoints' own remarks for why
         // RequirePlatformOwner is the entire access-control story here too.
         app.MapOwnerDocumentEndpoints();

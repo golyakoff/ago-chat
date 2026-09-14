@@ -86,8 +86,21 @@ public static class ErrorExtensions
             // names - a real refusal (this identity is not who this invite was sent to), not a
             // malformed request or a conflict with anything concurrent, the identical shape
             // `Conversation.Forbidden` already has for itself.
+            // `25-83`: the hard download-block threshold - the identical shape `TenantSuspension.CannotSend`
+            // right beside it already has: a real, account-wide refusal (this tenant's own monthly
+            // download allowance is spent), not a malformed request or a conflict with anything
+            // concurrent, and not tied to the caller's own individual permission grant the way
+            // `Conversation.Forbidden` is. Found by code inspection while fixing the sibling gap right
+            // below (`Site.DownloadBlockExemptionReasonRequired`, caught live by this item's own
+            // `OwnerDownloadBlockExemptionEndpointTests`) and checked for here too -
+            // `GetAttachmentDownloadUrlHandler` has returned this code since it was written, and it
+            // fell through to this switch's `500` default the whole time (no test in this codebase
+            // exercises `GET /api/v1/attachments/{id}` over real HTTP yet, for any outcome - a
+            // follow-up item, not this one, closes that), exactly the `Operator.NotFound` gap `23-72`'s
+            // own remarks above describe for a different code.
             "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" or "Attachment.UploadNotGranted"
-                or "TenantSuspension.CannotSend" or "OperatorInvite.EmailMismatch" => StatusCodes.Status403Forbidden,
+                or "TenantSuspension.CannotSend" or "OperatorInvite.EmailMismatch"
+                or "Attachment.DownloadBlocked" => StatusCodes.Status403Forbidden,
             "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
@@ -219,7 +232,15 @@ public static class ErrorExtensions
                 // call than BulkDeleteSiteAttachmentsHandler.MaxBatchSize allows. The identical
                 // "brand-new code this item's own new route can actually produce" reasoning every
                 // other 400 in this group already states for itself.
-                or "Attachment.BulkDeleteTooMany" => StatusCodes.Status400BadRequest,
+                or "Attachment.BulkDeleteTooMany"
+                // `25-83`: the platform owner's own exemption toggle - a blank or over-length reason,
+                // the caller's own mistake to fix, the identical "brand-new code this item's own new
+                // route can actually produce" reasoning every other 400 in this group already states
+                // for itself. Found and fixed by this item's own real-HTTP test
+                // (`OwnerDownloadBlockExemptionEndpointTests.OwnerToken_WithNoReason_IsRefused_AndGrantsNothing`) -
+                // the same pre-existing unmapped-code gap `Attachment.DownloadBlocked`'s own remarks
+                // describe a few lines up, for the write side rather than the read side.
+                or "Site.DownloadBlockExemptionReasonRequired" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

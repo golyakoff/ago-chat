@@ -391,6 +391,16 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<InactivityWatchdogJob>();
 
+// `25-83`: the download-threshold soft-warning sweep - see DownloadThresholdWatchdogJob's own remarks
+// for why this is a sweep and not an inline send from GetAttachmentDownloadUrlHandler. Registered here,
+// not ChatModule, the identical "internal Worker-only plumbing" shape InactivityWatchdogJobOptions just
+// above already takes.
+builder.Services
+    .AddOptions<DownloadThresholdWatchdogJobOptions>()
+    .Bind(builder.Configuration.GetSection(DownloadThresholdWatchdogJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<DownloadThresholdWatchdogJob>();
+
 // `23-59`/`adr/0147`: the automatic retroactive contact carry-over - see ContactCarryoverJob's own
 // remarks for why this is a recurring sweep rather than a manually-run tool.
 builder.Services

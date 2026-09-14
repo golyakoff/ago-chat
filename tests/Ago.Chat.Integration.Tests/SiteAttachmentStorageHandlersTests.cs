@@ -166,12 +166,16 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
         var downloadHandler = new GetAttachmentDownloadUrlHandler(
             new AttachmentRepository(downloadDb),
             new ConversationRepository(downloadDb),
+            new SiteRepository(downloadDb),
             new FakeFileStorage(),
             new PermissionChecker(downloadDb),
             new NoOpCache(),
             new NoOpEgressMeter(),
+            new AttachmentEgressReadStore(fixture.DataSource),
+            new DownloadThresholdReadStore(fixture.DataSource),
             new AttachmentOptions(),
             new FixedClock(Now),
+            new UuidV7Generator(),
             NullLogger<GetAttachmentDownloadUrlHandler>.Instance);
 
         var downloadResult = await downloadHandler.HandleAsVisitorAsync(
@@ -198,12 +202,16 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
             var downloadHandler = new GetAttachmentDownloadUrlHandler(
                 new AttachmentRepository(db),
                 new ConversationRepository(db),
+                new SiteRepository(db),
                 new FakeFileStorage(),
                 new PermissionChecker(db),
                 new NoOpCache(),
                 new NoOpEgressMeter(),
+                new AttachmentEgressReadStore(fixture.DataSource),
+                new DownloadThresholdReadStore(fixture.DataSource),
                 new AttachmentOptions(),
                 new FixedClock(Now),
+                new UuidV7Generator(),
                 NullLogger<GetAttachmentDownloadUrlHandler>.Instance);
 
             var result = await downloadHandler.HandleAsVisitorAsync(
@@ -293,12 +301,16 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
             var downloadHandler = new GetAttachmentDownloadUrlHandler(
                 new AttachmentRepository(db),
                 new ConversationRepository(db),
+                new SiteRepository(db),
                 new FakeFileStorage(),
                 new PermissionChecker(db),
                 new NoOpCache(),
                 new AttachmentEgressMeterStore(fixture.DataSource),
+                new AttachmentEgressReadStore(fixture.DataSource),
+                new DownloadThresholdReadStore(fixture.DataSource),
                 new AttachmentOptions(),
                 new FixedClock(Now),
+                new UuidV7Generator(),
                 NullLogger<GetAttachmentDownloadUrlHandler>.Instance);
 
             var result = await downloadHandler.HandleAsVisitorAsync(
@@ -315,6 +327,249 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
         Assert.True(egress.IsSuccess);
         Assert.Equal(1, egress.Value.DownloadCount);
         Assert.Equal(sizeBytes, egress.Value.BytesOut);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // `25-83`: the hard download-block threshold, against real Postgres rather than
+    // `Ago.Chat.Application.Tests`' own mocked `FakeDownloadThresholdReadStore`/
+    // `FakeAttachmentEgressReadStore` - the real `tier_download_thresholds` table
+    // (`DownloadThresholdReadStore`) and the real `site_attachment_egress` row the real
+    // `AttachmentEgressMeterStore` writes, read back by the real `GetAttachmentDownloadUrlHandler`.
+    // Each test seeds its own unique tier name (`SeedSiteWithConversationReadPermissionAndThresholdAsync`)
+    // rather than reusing the migration-seeded "free"/"starter" rows - `tier_download_thresholds` is
+    // shared reference data across this whole collection's tests, and a distinct tier per test is what
+    // keeps one test's own threshold from leaking into another's.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>`docs/backlog/25-83-*.md`'s own Done-when: "every presigned GET refuses... proven by
+    /// fault injection" - the visitor half.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenTheSiteIsAtItsHardThreshold_RefusesTheDownload_OverRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(softThresholdBytes: 100, hardThresholdBytes: 200);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+
+        // The real write path, not a hand-inserted row - the same AttachmentEgressMeterStore
+        // GetAttachmentDownloadUrlHandler.RecordDownloadAsync itself calls.
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 200, CancellationToken.None);
+
+        await using var db = fixture.CreateDbContext();
+        var result = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>The operator half of the identical fault-injection proof - `docs/backlog/25-83-*.md`'s
+    /// own explicit "no carve-out for either caller" decision, checked against real Postgres rather
+    /// than only `GetAttachmentDownloadUrlHandlerTests`' own mocked equivalent.</summary>
+    [Fact]
+    public async Task HandleAsOperatorAsync_WhenTheSiteIsAtItsHardThreshold_RefusesTheDownload_OverRealPostgres()
+    {
+        var (siteId, operatorId) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(softThresholdBytes: 100, hardThresholdBytes: 200);
+        var (conversationId, _) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await AssignOperatorToConversationAsync(conversationId, operatorId);
+
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 200, CancellationToken.None);
+
+        await using var db = fixture.CreateDbContext();
+        var result = await CreateDownloadHandler(db).HandleAsOperatorAsync(
+            new GetAttachmentDownloadUrlAsOperator(attachmentId, operatorId, siteId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>Below the hard threshold, the identical real-Postgres setup still succeeds - the
+    /// negative control that proves the two tests above are refused by the threshold itself, not by
+    /// some other real-Postgres wiring difference from `Egress_ReflectsWhatTheRealDownloadHandlerRecorded`
+    /// right above.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenBelowTheHardThreshold_StillSucceeds_OverRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(softThresholdBytes: 100, hardThresholdBytes: 200);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 199, CancellationToken.None);
+
+        await using var db = fixture.CreateDbContext();
+        var result = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    /// <summary>`docs/backlog/25-83-*.md`'s own Done-when: "a visitor's refused download drops a
+    /// locale-aware system message into that exact conversation" - proven this time against a real
+    /// `Conversation` row a second, independent read genuinely finds afterwards, not only against
+    /// `FakeConversationRepository`'s in-memory list (`GetAttachmentDownloadUrlHandlerTests`'s own
+    /// equivalent). English default; <see cref="HandleAsVisitorAsync_WhenBlocked_PersistsTheRussianSystemMessage_InRealPostgres"/>
+    /// is the Russian half.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenBlocked_PersistsTheSystemMessage_InRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(softThresholdBytes: 100, hardThresholdBytes: 200);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 200, CancellationToken.None);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+        }
+
+        await using var verifyDb = fixture.CreateDbContext();
+        var conversation = await new ConversationRepository(verifyDb).GetByIdAsync(conversationId, CancellationToken.None);
+        var systemMessage = Assert.Single(conversation!.Messages, m => m.AuthorKind == MessageAuthorKind.System);
+        Assert.Contains("monthly download limit", systemMessage.Body.Value);
+    }
+
+    /// <summary>The Russian half - `RouteConversationToModuleHandler`'s own four texts are the
+    /// precedent this system message follows (`GetAttachmentDownloadUrlHandler.DownloadBlockedText`'s
+    /// own remarks): `Locale.Ru` on the site gets natural Russian wording, checked here against a row
+    /// a fresh read genuinely finds, not the handler's in-process `Conversation` instance.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenBlocked_PersistsTheRussianSystemMessage_InRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(softThresholdBytes: 100, hardThresholdBytes: 200);
+        await using (var localeDb = fixture.CreateDbContext())
+        {
+            var siteRepository = new SiteRepository(localeDb);
+            var site = await siteRepository.GetByIdAsync(siteId, CancellationToken.None);
+            site!.UpdateLocale(Locale.Ru, Now);
+            await siteRepository.SaveAsync(site, CancellationToken.None);
+        }
+
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 200, CancellationToken.None);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+        }
+
+        await using var verifyDb = fixture.CreateDbContext();
+        var conversation = await new ConversationRepository(verifyDb).GetByIdAsync(conversationId, CancellationToken.None);
+        var systemMessage = Assert.Single(conversation!.Messages, m => m.AuthorKind == MessageAuthorKind.System);
+        Assert.Contains("месячного лимита скачиваний", systemMessage.Body.Value);
+    }
+
+    /// <summary>`docs/backlog/25-83-*.md`'s own explicit override Done-when, proven in both directions
+    /// against real Postgres: blocked before the platform owner's own <see cref="Site.GrantDownloadBlockExemption"/>
+    /// is applied, genuinely bypassed once it is. <see cref="OwnerDownloadBlockExemptionEndpointTests"/>
+    /// proves the identical fact through the real owner-only HTTP route rather than the domain method
+    /// called directly, as this test does.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenTheSiteIsExempt_BypassesTheHardBlock_OverRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(softThresholdBytes: 100, hardThresholdBytes: 200);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 500, CancellationToken.None);
+
+        await using (var blockedDb = fixture.CreateDbContext())
+        {
+            var blockedResult = await CreateDownloadHandler(blockedDb).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+            Assert.True(blockedResult.IsFailure);
+            Assert.Equal("Attachment.DownloadBlocked", blockedResult.Error!.Value.Code);
+        }
+
+        await using (var exemptDb = fixture.CreateDbContext())
+        {
+            var siteRepository = new SiteRepository(exemptDb);
+            var site = await siteRepository.GetByIdAsync(siteId, CancellationToken.None);
+            site!.GrantDownloadBlockExemption("owner@example.com", "goodwill exception", Now);
+            await siteRepository.SaveAsync(site, CancellationToken.None);
+        }
+
+        await using var allowedDb = fixture.CreateDbContext();
+        var allowedResult = await CreateDownloadHandler(allowedDb).HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+        Assert.True(allowedResult.IsSuccess);
+    }
+
+    private GetAttachmentDownloadUrlHandler CreateDownloadHandler(AgoChatDbContext db) => new(
+        new AttachmentRepository(db),
+        new ConversationRepository(db),
+        new SiteRepository(db),
+        new FakeFileStorage(),
+        new PermissionChecker(db),
+        new NoOpCache(),
+        new NoOpEgressMeter(),
+        new AttachmentEgressReadStore(fixture.DataSource),
+        new DownloadThresholdReadStore(fixture.DataSource),
+        new AttachmentOptions(),
+        new FixedClock(Now),
+        new UuidV7Generator(),
+        NullLogger<GetAttachmentDownloadUrlHandler>.Instance);
+
+    /// <summary>A fresh, unique tariff tier per call - `tier_download_thresholds` is shared reference
+    /// data across every test in this collection (the migration's own two seeded rows,
+    /// `Stage25AddTierDownloadThresholds`'s own remarks), so a test-owned tier name is what keeps one
+    /// test's own threshold from being visible to, or overwritten by, another's. Grants
+    /// `conversation:read`, not `site:configure`
+    /// (<see cref="SeedSiteWithConfigurePermissionAsync"/>'s own grant) - the permission
+    /// `GetAttachmentDownloadUrlHandler.HandleAsOperatorAsync` actually checks.</summary>
+    private async Task<(SiteId SiteId, OperatorId OperatorId)> SeedSiteWithConversationReadPermissionAndThresholdAsync(
+        long softThresholdBytes, long hardThresholdBytes)
+    {
+        var tier = $"test_{Guid.NewGuid():N}";
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        {
+            await using var command = new NpgsqlCommand(
+                """
+                INSERT INTO tier_download_thresholds (tier, soft_threshold_bytes, hard_threshold_bytes, updated_at, updated_by)
+                VALUES (@tier, @soft, @hard, now(), 'SiteAttachmentStorageHandlersTests')
+                """,
+                connection);
+            command.Parameters.AddWithValue("tier", tier);
+            command.Parameters.AddWithValue("soft", softThresholdBytes);
+            command.Parameters.AddWithValue("hard", hardThresholdBytes);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+
+        await using var db = fixture.CreateDbContext();
+        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], tier: tier));
+        db.Operators.Add(new Operator(
+            operatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: $"ext_{operatorId.Value:N}"));
+        var roleId = Guid.NewGuid();
+        db.Roles.Add(new RoleRecord
+        {
+            Id = roleId,
+            SiteId = siteId,
+            Name = "Admin",
+            Permissions = [Permission.ConversationRead.Value],
+        });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+        await db.SaveChangesAsync();
+
+        return (siteId, operatorId);
+    }
+
+    private async Task AssignOperatorToConversationAsync(ConversationId conversationId, OperatorId operatorId)
+    {
+        await using var db = fixture.CreateDbContext();
+        var repository = new ConversationRepository(db);
+        var conversation = await repository.GetByIdAsync(conversationId, CancellationToken.None);
+        conversation!.AssignTo(operatorId, Now);
+        await repository.SaveAsync(conversation, CancellationToken.None);
     }
 
     private async Task<(SiteId SiteId, OperatorId OperatorId)> SeedSiteWithConfigurePermissionAsync()
