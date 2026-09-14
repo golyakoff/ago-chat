@@ -62,6 +62,18 @@ public abstract record OperatorInviteRedemptionResult
     /// to try the same code again - the honest, actionable answer is "this was not sent to you".</summary>
     public sealed record EmailMismatch : OperatorInviteRedemptionResult;
 
+    /// <summary>`25-85`: more than one live, unexpired, unrevoked invite is addressed to the same email
+    /// - <see cref="IOperatorInviteRedemptionRepository.RedeemPendingForEmailAsync"/>'s own case, never
+    /// reachable from <see cref="IOperatorInviteRedemptionRepository.RedeemAsync"/> (a code names exactly
+    /// one invite by construction). Deliberately its own case rather than folded into
+    /// <see cref="NotFound"/>: "no invite" and "more than one, and this method will not guess which"
+    /// are different facts, even though both leave
+    /// `Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller.RedeemPendingOperatorInviteForCallerHandler`'s
+    /// own caller with the same practical answer today (fall back to the manual code field the invite's
+    /// own email already carries) - see that handler's own remarks for why they currently map to the
+    /// same client-facing error rather than two.</summary>
+    public sealed record Ambiguous : OperatorInviteRedemptionResult;
+
     public sealed record Success(OperatorId OperatorId, SiteId SiteId) : OperatorInviteRedemptionResult;
 }
 
@@ -80,6 +92,15 @@ public abstract record OperatorInviteRedemptionResult
 public sealed record RedeemOperatorInviteAttempt(
     byte[] CodeHash, string ExternalSubjectId, DateTimeOffset Now, string? Name = null, string? Email = null);
 
+/// <summary>`25-85`: <see cref="Email"/> here plays a different role than it does in
+/// <see cref="RedeemOperatorInviteAttempt"/> - there it is a second factor *checked against* a code
+/// that already named one specific invite; here it is the *only* key, because this attempt carries no
+/// code at all. See <see cref="IOperatorInviteRedemptionRepository.RedeemPendingForEmailAsync"/>'s own
+/// remarks for why that is still the same trust boundary `25-73`'s dual check already established, not
+/// a weaker one.</summary>
+public sealed record RedeemPendingOperatorInviteByEmailAttempt(
+    string Email, string ExternalSubjectId, DateTimeOffset Now, string? Name = null);
+
 /// <summary>
 /// `13-01`: the one write path that can ever add a second, third, ... `Operator` to a `Site` - the gap
 /// `10-02`'s own Out of scope named and left unbuilt. Its own port, not an `OperatorInvite`
@@ -95,4 +116,31 @@ public sealed record RedeemOperatorInviteAttempt(
 public interface IOperatorInviteRedemptionRepository
 {
     Task<OperatorInviteRedemptionResult> RedeemAsync(RedeemOperatorInviteAttempt attempt, CancellationToken cancellationToken);
+
+    /// <summary>`25-85`: the "activate it here" card on `OnboardingPage` (`ago-console`) needs a way to
+    /// finish redemption for an invitee who never had the code in hand to begin with - see this item's
+    /// own worker report for why widening <c>HasPendingOperatorInviteHandler</c> to *return* the code
+    /// (the backlog's own literal suggestion) turned out to be impossible: <see cref="OperatorInvite.CodeHash"/>
+    /// is a one-way SHA-256, so the plaintext code is not recoverable from storage at all, by the exact
+    /// same design that makes a redeemed invite's code safe to leave in a database nobody has to trust
+    /// forever.
+    ///
+    /// <para><b>Why this is not a weaker security boundary than <see cref="RedeemAsync"/>'s own
+    /// code-plus-email check.</b> A code proves two things at once today: *which* invite (it is the only
+    /// key `RedeemAsync` looks up by) and *intent* (something the invitee's own inbox handed them). For
+    /// this method's own caller - already authenticated, own token email already read off the validated
+    /// JWT the same way `RedeemOperatorInviteHandler`'s own email-match check already does - the "which
+    /// invite" half is answered by the email lookup itself, and this item's own backlog text already
+    /// names the "intent" half as no longer a gap worth guarding once the caller is genuinely
+    /// authenticated: "grants exactly the trust level the already-shipped `CallbackPage` path already
+    /// grants" (`CallbackPage` redeems automatically off `?inviteCode=...` the instant sign-in succeeds,
+    /// with no separate click proving the person meant to redeem *this* invite over some other one they
+    /// might also hold - the identical shape this method now gives the second, `/onboarding`-originated
+    /// path). The one case a code's own uniqueness protects against that email alone cannot - the same
+    /// address holding two or more live invites, so "redeem the one for this email" is genuinely
+    /// ambiguous - is <see cref="OperatorInviteRedemptionResult.Ambiguous"/>, answered by refusing to
+    /// guess rather than by picking one.</para>
+    /// </summary>
+    Task<OperatorInviteRedemptionResult> RedeemPendingForEmailAsync(
+        RedeemPendingOperatorInviteByEmailAttempt attempt, CancellationToken cancellationToken);
 }

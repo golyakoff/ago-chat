@@ -120,6 +120,7 @@ using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
+using Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.ListNonEntitledChannelCredentialsAsOwner;
 using Ago.Chat.Application.UseCases.DisconnectNonEntitledChannelCredentialsAsOwner;
@@ -1099,6 +1100,10 @@ public sealed class ChatModule : IProductModule
         // here, in ChatModule (which runs in every host), would make that credential a required setting
         // for Ago.Chat.Worker/Ago.Chat.Webhooks too, which have no business holding it.
         services.AddScoped<RedeemOperatorInviteHandler>();
+        // `25-85`: the "activate it here" card's own no-code redemption path - neither depends on
+        // Keycloak (unlike CreateOperatorInviteHandler above), so it registers here like the
+        // code-based RedeemOperatorInviteHandler right above it, not in Ago.Chat.Api's own Program.cs.
+        services.AddScoped<RedeemPendingOperatorInviteForCallerHandler>();
         // `25-73`: the console's own "отозвать" button and invite-list screen - neither depends on
         // Keycloak at all (revocation is a plain aggregate write; the list is a Postgres read store), so
         // both register here like every other ordinary handler, unlike CreateOperatorInviteHandler above.
