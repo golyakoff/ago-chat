@@ -37,6 +37,7 @@ public static class PricedResourceKeys
         new(SubscriptionTierBands.BaseSeatPriceKey, "Business tier - base price (up to the included seats)"),
         new(SubscriptionTierBands.ExtraSeatPriceKey, "Business tier - price per seat beyond the included seats"),
         new(SubscriptionTierBands.AdminExtraPriceKey, "Price per Administrator beyond the two a paid plan includes"),
+        new(DownloadOveragePricing.OveragePerGigabyteKey, "Price per gigabyte of attachment downloads past a tier's hard threshold"),
     ];
 
     /// <summary><see langword="true"/> only for a key this registry actually lists - the check

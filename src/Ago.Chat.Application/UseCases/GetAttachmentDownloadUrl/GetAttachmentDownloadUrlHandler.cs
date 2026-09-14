@@ -46,6 +46,8 @@ public sealed class GetAttachmentDownloadUrlHandler(
     IAttachmentEgressMeter egressMeter,
     IAttachmentEgressReadStore egressReads,
     IDownloadThresholdReadStore thresholds,
+    IDownloadOverageReadStore overageReads,
+    IPriceCatalogRepository prices,
     AttachmentOptions options,
     IClock clock,
     IIdGenerator idGenerator,
@@ -219,12 +221,84 @@ public sealed class GetAttachmentDownloadUrlHandler(
             return null;
         }
 
+        // `25-84`: past the hard threshold is no longer automatically a refusal - the tenant may have
+        // paid their way past it, or be on the auto-bill path that never stopped them in the first
+        // place. Everything above this line is `25-83` unchanged.
+        if (await IsOverageAuthorizedAsync(site, egress, tierThresholds, periodMonth, cancellationToken))
+        {
+            return null;
+        }
+
         if (isVisitor)
         {
             await TryAddDownloadBlockedMessageAsync(conversation, site.Locale.ToString(), now, cancellationToken);
         }
 
         return ConversationErrors.AttachmentDownloadBlocked(attachment.SiteId.Value);
+    }
+
+    /// <summary>
+    /// `25-84`: whether this tenant may keep downloading despite being past the hard threshold, because
+    /// the overage is being paid for. <see langword="false"/> means `25-83`'s own block stands exactly
+    /// as it shipped.
+    ///
+    /// <para><b>"Pay once, then meter" - the reading of `25-84` that satisfies all of its own sentences
+    /// at once, and the one real ambiguity this item had to settle.</b> The backlog says three things
+    /// that only fit together one way: the charge is metered per gigabyte and not a flat unlock; a
+    /// payment is "valid until the end of the current calendar month, however little of it remains";
+    /// and "both modes ultimately charge the same meter - the toggle decides *when* the tenant commits
+    /// to paying it, not *whether*." So a manual tenant's checkout does two things: it settles the
+    /// overage accrued up to that instant, and it opts them into the *same* accrual auto-bill has had
+    /// all along for the rest of the calendar month. The two alternatives both break one of those
+    /// sentences - charging again at every further gigabyte would re-block a tenant seconds after they
+    /// paid (and is not what "valid until the end of the month" can mean), while treating the payment
+    /// as buying the rest of the month outright would make a tenant who goes 0.01 GB over on the 1st pay
+    /// a Rouble for unlimited egress, which is not a meter at all.</para>
+    ///
+    /// <para><b>An unpublished price closes the escape hatch rather than opening it.</b> If nobody has
+    /// published a version of <see cref="DownloadOveragePricing.OveragePerGigabyteKey"/>, there is no
+    /// figure to charge, and the two ways to fail are "let everyone through uncharged" and "leave
+    /// `25-83`'s block exactly where it was." The second is chosen - it is the pre-`25-84` behaviour,
+    /// it costs nobody money, and it is the same "a key with no published version is the ordinary
+    /// 'built, not yet for sale' state" reading `25-43`'s own second decision established, applied to a
+    /// gate instead of a charge site. Note this is the opposite direction from
+    /// <see cref="IDownloadThresholdReadStore"/>'s own missing-row rule (which fails *open*) - and
+    /// deliberately so: a missing threshold row means "no limit was ever configured", while a missing
+    /// price means "the paid way past a limit that *was* configured is not for sale yet."</para>
+    ///
+    /// <para><b>The cap applies to a manual tenant too, once they have opted in.</b>
+    /// `docs/backlog/25-84-*.md` asks the cap question about auto-bill specifically, but after a manual
+    /// checkout the tenant is in the identical situation the question is about - accruing without
+    /// acting - so one rule covers both rather than two rules a reader would have to keep apart. See
+    /// <see cref="DownloadThresholds.AutoBillCapRub"/>'s own remarks for why the answer to that question
+    /// was yes.</para>
+    /// </summary>
+    private async Task<bool> IsOverageAuthorizedAsync(
+        Site site,
+        SiteAttachmentEgress egress,
+        DownloadThresholds tierThresholds,
+        DateOnly periodMonth,
+        CancellationToken cancellationToken)
+    {
+        var price = await prices.FindCurrentAsync(DownloadOveragePricing.OveragePerGigabyteKey, cancellationToken);
+        if (price is null)
+        {
+            return false;
+        }
+
+        var settlement = await overageReads.GetSettlementAsync(site.Id, periodMonth, cancellationToken);
+
+        if (site.DownloadOverageBillingMode == DownloadOverageBillingMode.Manual && !settlement.HasPaidCheckout)
+        {
+            return false;
+        }
+
+        var bytesOver = egress.BytesOut - tierThresholds.HardThresholdBytes;
+        var outstandingBytes = Math.Max(0L, bytesOver - settlement.SettledBytes);
+        var monthToDateRub = settlement.SettledAmountRub
+            + DownloadOveragePricing.ComputeOverageRub(outstandingBytes, price.AmountRub);
+
+        return tierThresholds.AutoBillCapRub is not { } cap || monthToDateRub < cap;
     }
 
     /// <summary>`25-83`: "a system message lands directly in the conversation where a visitor's

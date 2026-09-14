@@ -46,6 +46,15 @@ public abstract record BillingWebhookApplyResult
     /// `Site.Tier`/`Site.SeatLimit` now read <paramref name="Tier"/>/<paramref name="SeatLimit"/>.</summary>
     public sealed record Applied(SiteId SiteId, string Tier, int SeatLimit) : BillingWebhookApplyResult;
 
+    /// <summary>`25-84`: a new `payment.succeeded` event for a <c>download_overage_charges</c> row
+    /// rather than a subscription - the manual path's own purchase, now settled. This is the moment the
+    /// tenant is actually unblocked: nothing earlier in that flow changes the download gate's answer
+    /// (<c>PurchaseDownloadOverageHandler</c>'s own remarks on why the redirect alone proves nothing),
+    /// and nothing later is needed, which is what makes `docs/backlog/25-84-*.md`'s "the next presigned
+    /// GET after payment succeeds without waiting for any billing cycle boundary" literally true rather
+    /// than approximately.</summary>
+    public sealed record DownloadOverageSettled(SiteId SiteId, decimal AmountRub) : BillingWebhookApplyResult;
+
     /// <summary>A new `payment.canceled` event, applied: the pending row is now `Failed`.
     /// `Site.Tier`/`Site.SeatLimit` are untouched - this item's own Scope: "they were never changed from
     /// free in the first place".</summary>

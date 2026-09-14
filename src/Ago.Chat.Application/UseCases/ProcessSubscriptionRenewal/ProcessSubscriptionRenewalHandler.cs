@@ -52,8 +52,11 @@ namespace Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 /// </summary>
 public sealed class ProcessSubscriptionRenewalHandler(
     IBillingSubscriptionRepository subscriptions,
+    ISiteRepository sites,
     IYooKassaPaymentsClient yooKassa,
     IPriceCatalogRepository prices,
+    IDownloadThresholdReadStore thresholds,
+    IDownloadOverageReadStore overageReads,
     ISubscriptionRenewalApplier applier,
     IClock clock)
 {
@@ -123,8 +126,20 @@ public sealed class ProcessSubscriptionRenewalHandler(
                 $"Billing subscription {command.SubscriptionId.Value} is due for renewal but "
                 + $"'{SubscriptionTierBands.ExtraSeatPriceKey.Value}' has no published price - see this handler's own remarks.");
 
-        var amount = SubscriptionTierBands.ComputeSeatPriceRub(subscription.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
+        var seatAmount = SubscriptionTierBands.ComputeSeatPriceRub(subscription.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
         var description = $"AGO Chat - {subscription.Tier} tier renewal, {subscription.RequestedSeats} seats";
+
+        // `25-84`: the auto-bill path's own settlement, folded into the charge this renewal was going to
+        // make anyway - see ResolveOverageLinesAsync for what is and is not swept, and
+        // `DownloadOverageInvoiceLine`'s own remarks for why "a line item" is realised as an amount, a
+        // description and a ledger row rather than an invoice aggregate this codebase does not have.
+        var overageLines = await ResolveOverageLinesAsync(subscription, now, cancellationToken);
+        var overageAmount = overageLines.Sum(line => line.AmountRub);
+        var amount = seatAmount + overageAmount;
+        if (overageAmount > 0m)
+        {
+            description += $"; attachment download overage {overageAmount} RUB";
+        }
         // Deterministic, not a fresh id per call - ChargeStoredPaymentMethodRequest's own remarks on why
         // this is what makes a two-replica race over the same due row safe rather than a double charge.
         var idempotenceKey = $"renewal:{command.SubscriptionId.Value}:{now:yyyy-MM-dd}";
@@ -136,7 +151,7 @@ public sealed class ProcessSubscriptionRenewalHandler(
         {
             case ChargeStoredPaymentMethodResult.Success:
                 await applier.ApplyRenewalSuccessAsync(
-                    command.SubscriptionId, now, basePrice.Sequence, extraPrice.Sequence, cancellationToken);
+                    command.SubscriptionId, now, basePrice.Sequence, extraPrice.Sequence, overageLines, cancellationToken);
                 return new SubscriptionRenewalOutcome.Renewed();
 
             case ChargeStoredPaymentMethodResult.Refused refused:
@@ -146,5 +161,65 @@ public sealed class ProcessSubscriptionRenewalHandler(
             default:
                 throw new InvalidOperationException($"Unhandled {nameof(ChargeStoredPaymentMethodResult)} case: {chargeResult.GetType().Name}.");
         }
+    }
+
+    /// <summary>
+    /// `25-84`: which months of unsettled download overage this renewal is entitled to charge for, and
+    /// what each costs at the currently-published per-gigabyte price.
+    ///
+    /// <para><b>Liability, not merely arrears - a manual tenant who never paid is never swept.</b> A
+    /// site on <see cref="DownloadOverageBillingMode.AutoBill"/> agreed (through the platform owner) to
+    /// be charged for whatever accrues, so every unsettled month is swept. A site on
+    /// <see cref="DownloadOverageBillingMode.Manual"/> is swept only for months in which it actually
+    /// completed a checkout - that purchase is the moment it opted into the meter for the rest of that
+    /// month (<c>GetAttachmentDownloadUrlHandler.IsOverageAuthorizedAsync</c>'s own remarks on "pay
+    /// once, then meter"). A manual month with no checkout means the tenant sat blocked and never
+    /// agreed to anything, and the small residue past the threshold - the one download that crossed it -
+    /// is not a debt.</para>
+    ///
+    /// <para><b>The site's mode and tier are read now, not per month.</b> This codebase stores no
+    /// history of either, so a tenant who changed tier or mode mid-backlog is measured against what they
+    /// are today. Stated rather than hidden; making it exact needs a history table neither `25-83` nor
+    /// this item built.</para>
+    ///
+    /// <para><b>An unpublished overage price skips the sweep; it never fails the renewal.</b> The seat
+    /// prices throw when missing (this handler's own remarks just above - a subscription that reached
+    /// `Succeeded` proved they existed), but an overage price that was never published means this
+    /// feature is simply not for sale in this deployment, and refusing to renew a paying customer's
+    /// subscription over it would be absurdly disproportionate.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<DownloadOverageInvoiceLine>> ResolveOverageLinesAsync(
+        BillingSubscription subscription, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var overagePrice = await prices.FindCurrentAsync(DownloadOveragePricing.OveragePerGigabyteKey, cancellationToken);
+        if (overagePrice is null)
+        {
+            return [];
+        }
+
+        var site = await sites.GetByIdAsync(subscription.SiteId, cancellationToken);
+        if (site is null || site.DownloadBlockExempt)
+        {
+            // An exempt tenant is the platform owner's own free pass (`25-83`) - free means free,
+            // including of anything this item would otherwise sweep onto their invoice.
+            return [];
+        }
+
+        var tierThresholds = await thresholds.GetForTierAsync(site.Tier, cancellationToken);
+        var upTo = new DateOnly(now.Year, now.Month, 1);
+        var outstanding = await overageReads.GetOutstandingAsync(
+            subscription.SiteId, tierThresholds.HardThresholdBytes, upTo, cancellationToken);
+
+        var autoBill = site.DownloadOverageBillingMode == DownloadOverageBillingMode.AutoBill;
+
+        return outstanding
+            .Where(month => autoBill || month.HasPaidCheckout)
+            .Select(month => new DownloadOverageInvoiceLine(
+                month.PeriodMonth,
+                month.OutstandingBytes,
+                DownloadOveragePricing.ComputeOverageRub(month.OutstandingBytes, overagePrice.AmountRub),
+                overagePrice.Sequence))
+            .Where(line => line.AmountRub > 0m)
+            .ToList();
     }
 }

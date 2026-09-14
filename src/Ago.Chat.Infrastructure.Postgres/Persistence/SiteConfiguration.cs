@@ -293,6 +293,20 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property(s => s.DownloadBlockExemptionReason).HasColumnName("download_block_exemption_reason");
         builder.Property(s => s.DownloadBlockExemptionChangedAt).HasColumnName("download_block_exemption_changed_at");
 
+        // `25-84`: the owner's own per-tenant billing-mode toggle, stored as its member name rather
+        // than an ordinal (the same convention `BillingSubscription.Status` uses) - a column somebody
+        // will read by hand in a billing dispute should say `AutoBill`, not `1`. The database default
+        // is `Manual`, which is the behaviour every row already has - see
+        // `Domain.DownloadOverageBillingMode`'s own remarks on why the backlog's "recommended default"
+        // is a recommendation to the owner, not a migration that starts charging everybody.
+        builder.Property(s => s.DownloadOverageBillingMode)
+            .HasColumnName("download_overage_billing_mode")
+            .HasConversion<string>()
+            .HasDefaultValue(Domain.DownloadOverageBillingMode.Manual);
+        builder.Property(s => s.DownloadOverageBillingModeChangedBy).HasColumnName("download_overage_billing_mode_changed_by");
+        builder.Property(s => s.DownloadOverageBillingModeReason).HasColumnName("download_overage_billing_mode_reason");
+        builder.Property(s => s.DownloadOverageBillingModeChangedAt).HasColumnName("download_overage_billing_mode_changed_at");
+
         // `23-06`: four shadow properties, the identical shape `ErasureRequestedAt` already
         // establishes just above for the identical reason - each has exactly one legitimate writer
         // (`ISiteInstallationSignalRepository`, via raw Npgsql conditional `UPDATE`s) and is read only

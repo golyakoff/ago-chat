@@ -3,6 +3,8 @@ using Ago.Chat.Application.UseCases.BulkDeleteSiteAttachments;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteAttachmentEgress;
+using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+using Ago.Chat.Application.UseCases.PurchaseDownloadOverage;
 using Ago.Chat.Application.UseCases.GetSiteAttachmentStorageSummary;
 using Ago.Chat.Application.UseCases.ListSiteAttachments;
 using Ago.Chat.Domain;
@@ -173,6 +175,8 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
             new NoOpEgressMeter(),
             new AttachmentEgressReadStore(fixture.DataSource),
             new DownloadThresholdReadStore(fixture.DataSource),
+            new DownloadOverageReadStore(fixture.DataSource),
+            new PriceCatalogRepository(downloadDb),
             new AttachmentOptions(),
             new FixedClock(Now),
             new UuidV7Generator(),
@@ -209,6 +213,8 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
                 new NoOpEgressMeter(),
                 new AttachmentEgressReadStore(fixture.DataSource),
                 new DownloadThresholdReadStore(fixture.DataSource),
+                new DownloadOverageReadStore(fixture.DataSource),
+                new PriceCatalogRepository(db),
                 new AttachmentOptions(),
                 new FixedClock(Now),
                 new UuidV7Generator(),
@@ -308,6 +314,8 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
                 new AttachmentEgressMeterStore(fixture.DataSource),
                 new AttachmentEgressReadStore(fixture.DataSource),
                 new DownloadThresholdReadStore(fixture.DataSource),
+                new DownloadOverageReadStore(fixture.DataSource),
+                new PriceCatalogRepository(db),
                 new AttachmentOptions(),
                 new FixedClock(Now),
                 new UuidV7Generator(),
@@ -502,7 +510,12 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
         Assert.True(allowedResult.IsSuccess);
     }
 
-    private GetAttachmentDownloadUrlHandler CreateDownloadHandler(AgoChatDbContext db) => new(
+    private GetAttachmentDownloadUrlHandler CreateDownloadHandler(AgoChatDbContext db) =>
+        CreateDownloadHandler(db, Now);
+
+    /// <summary>`25-84`: the same handler with the clock moved - what proves a paid month does not carry
+    /// into the next one without inventing an expiry job to drive.</summary>
+    private GetAttachmentDownloadUrlHandler CreateDownloadHandler(AgoChatDbContext db, DateTimeOffset now) => new(
         new AttachmentRepository(db),
         new ConversationRepository(db),
         new SiteRepository(db),
@@ -512,8 +525,10 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
         new NoOpEgressMeter(),
         new AttachmentEgressReadStore(fixture.DataSource),
         new DownloadThresholdReadStore(fixture.DataSource),
+        new DownloadOverageReadStore(fixture.DataSource),
+        new PriceCatalogRepository(db),
         new AttachmentOptions(),
-        new FixedClock(Now),
+        new FixedClock(now),
         new UuidV7Generator(),
         NullLogger<GetAttachmentDownloadUrlHandler>.Instance);
 
@@ -525,20 +540,22 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
     /// (<see cref="SeedSiteWithConfigurePermissionAsync"/>'s own grant) - the permission
     /// `GetAttachmentDownloadUrlHandler.HandleAsOperatorAsync` actually checks.</summary>
     private async Task<(SiteId SiteId, OperatorId OperatorId)> SeedSiteWithConversationReadPermissionAndThresholdAsync(
-        long softThresholdBytes, long hardThresholdBytes)
+        long softThresholdBytes, long hardThresholdBytes, decimal? autoBillCapRub = null)
     {
         var tier = $"test_{Guid.NewGuid():N}";
         await using (var connection = await fixture.DataSource.OpenConnectionAsync())
         {
             await using var command = new NpgsqlCommand(
                 """
-                INSERT INTO tier_download_thresholds (tier, soft_threshold_bytes, hard_threshold_bytes, updated_at, updated_by)
-                VALUES (@tier, @soft, @hard, now(), 'SiteAttachmentStorageHandlersTests')
+                INSERT INTO tier_download_thresholds (tier, soft_threshold_bytes, hard_threshold_bytes, auto_bill_cap_rub, updated_at, updated_by)
+                VALUES (@tier, @soft, @hard, @cap, now(), 'SiteAttachmentStorageHandlersTests')
                 """,
                 connection);
             command.Parameters.AddWithValue("tier", tier);
             command.Parameters.AddWithValue("soft", softThresholdBytes);
             command.Parameters.AddWithValue("hard", hardThresholdBytes);
+            // `25-84`: NULL means uncapped, which is what every `25-83` test here means by not passing one.
+            command.Parameters.AddWithValue("cap", (object?)autoBillCapRub ?? DBNull.Value);
             await command.ExecuteNonQueryAsync();
         }
 
@@ -680,5 +697,300 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
     {
         public Task RecordAsync(SiteId siteId, DateOnly periodMonth, long bytes, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+    }
+
+    // ----------------------------------------------------------------------------------------------
+    // `25-84`: the paid way past `25-83`'s own block, against real Postgres - the real
+    // `download_overage_charges` table, the real `published_price_versions` row the migration seeded,
+    // and the real `BillingWebhookApplier` that promotes a pending checkout. Each test starts from the
+    // identical blocked state `HandleAsVisitorAsync_WhenTheSiteIsAtItsHardThreshold_RefusesTheDownload_OverRealPostgres`
+    // above proves is refused, so a pass here is evidence about the escape hatch and nothing else.
+    // ----------------------------------------------------------------------------------------------
+
+    private const long OneGibibyte = 1024L * 1024L * 1024L;
+
+    /// <summary>`docs/backlog/25-84-*.md`'s own Done-when: "auto-bill accrues... the tenant never
+    /// blocks", with zero action from the tenant - no checkout, no row in
+    /// <c>download_overage_charges</c> at all, just the owner's toggle.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnAutoBill_IsNotBlocked_OverRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(
+            softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await SetBillingModeAsync(siteId, DownloadOverageBillingMode.AutoBill);
+
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 3 * OneGibibyte, CancellationToken.None);
+
+        await using var db = fixture.CreateDbContext();
+        var result = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    /// <summary><b>The immediate-unblock proof, end to end.</b> `docs/backlog/25-84-*.md`'s own literal
+    /// wording - "the tenant's next presigned GET after payment succeeds without waiting for any billing
+    /// cycle boundary." Blocked, then a real checkout through the real handler, then still blocked
+    /// (the pending row is not payment), then the real ЮKassa webhook applier settles it, then the very
+    /// next download succeeds. No clock is advanced, no renewal runs, no job ticks between the webhook
+    /// and the successful download.</summary>
+    [Fact]
+    public async Task ManualPath_PayThenDownload_UnblocksImmediately_OverRealPostgres()
+    {
+        var (siteId, operatorId) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(
+            softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await GrantSiteConfigureAsync(siteId, operatorId);
+
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 3 * OneGibibyte, CancellationToken.None);
+
+        // 1. Manual is the default, and the default is blocked.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var blocked = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+            Assert.True(blocked.IsFailure);
+            Assert.Equal("Attachment.DownloadBlocked", blocked.Error!.Value.Code);
+        }
+
+        // 2. A real checkout through the real handler, against the real migration-seeded 100 RUB/GB
+        //    price - 2 GiB over, so exactly 200 RUB.
+        var yooKassa = new RecordingYooKassaClient("pmt_overage_" + Guid.NewGuid().ToString("N"));
+        await using (var db = fixture.CreateDbContext())
+        {
+            var purchase = new PurchaseDownloadOverageHandler(
+                new SiteRepository(db), new PermissionChecker(db),
+                new AttachmentEgressReadStore(fixture.DataSource),
+                new DownloadThresholdReadStore(fixture.DataSource),
+                new DownloadOverageReadStore(fixture.DataSource),
+                new DownloadOverageChargeRepository(db),
+                new PriceCatalogRepository(db),
+                yooKassa,
+                new BillingOptions { CheckoutReturnUrl = "https://console.example/billing" },
+                new UuidV7Generator(), new FixedClock(Now));
+
+            var checkout = await purchase.HandleAsync(
+                new PurchaseDownloadOverage(operatorId, siteId), CancellationToken.None);
+
+            Assert.True(checkout.IsSuccess);
+            Assert.Equal(200.00m, checkout.Value.AmountRub);
+            Assert.Equal(2 * OneGibibyte, checkout.Value.BytesOver);
+        }
+
+        // 3. Still blocked - a pending row is not payment ("never the redirect alone").
+        await using (var db = fixture.CreateDbContext())
+        {
+            var stillBlocked = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+            Assert.True(stillBlocked.IsFailure);
+        }
+
+        // 4. The real webhook applier, on a real `payment.succeeded`.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var applier = new BillingWebhookApplier(db, new NoOpOutboxWriter(), new UuidV7Generator());
+            var applied = await applier.ApplyAsync(
+                new BillingWebhookApplyRequest(yooKassa.PaymentId, "payment.succeeded", null, Now), CancellationToken.None);
+
+            var settled = Assert.IsType<BillingWebhookApplyResult.DownloadOverageSettled>(applied);
+            Assert.Equal(siteId, settled.SiteId);
+            Assert.Equal(200.00m, settled.AmountRub);
+        }
+
+        // 5. The very next presigned GET succeeds. Nothing else happened in between.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var afterPaying = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+            Assert.True(afterPaying.IsSuccess);
+        }
+    }
+
+    /// <summary>The paid unblock does not carry into the next calendar month -
+    /// `docs/backlog/25-84-*.md`'s own "does not carry into the next month... no refund or rollover
+    /// credit." The identical settled charge, read by a handler whose clock says the month rolled over,
+    /// leaves the tenant blocked again. Proven without any expiry job existing at all, because the
+    /// <c>period_month</c> stamp on the row is what expires.</summary>
+    [Fact]
+    public async Task ASettledCheckout_DoesNotUnblockTheFollowingMonth_OverRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(
+            softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+
+        var nextMonth = Now.AddMonths(1);
+        var meter = new AttachmentEgressMeterStore(fixture.DataSource);
+        await meter.RecordAsync(siteId, new DateOnly(Now.Year, Now.Month, 1), 3 * OneGibibyte, CancellationToken.None);
+        await meter.RecordAsync(siteId, new DateOnly(nextMonth.Year, nextMonth.Month, 1), 3 * OneGibibyte, CancellationToken.None);
+
+        // A real, settled checkout - but stamped with this month.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var charge = DownloadOverageCharge.PendingCheckout(
+                new DownloadOverageChargeId(Guid.NewGuid()), siteId, new DateOnly(Now.Year, Now.Month, 1),
+                bytesOver: 2 * OneGibibyte, amountRub: 200m, priceVersion: 1,
+                yooKassaPaymentId: "pmt_" + Guid.NewGuid().ToString("N"), createdAt: Now);
+            charge.MarkSucceeded(Now);
+            await new DownloadOverageChargeRepository(db).SaveAsync(charge, CancellationToken.None);
+        }
+
+        // This month: unblocked.
+        await using (var db = fixture.CreateDbContext())
+        {
+            Assert.True((await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None)).IsSuccess);
+        }
+
+        // Next month: blocked again, with the identical row still in the table.
+        await using (var db = fixture.CreateDbContext())
+        {
+            var result = await CreateDownloadHandler(db, nextMonth).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+
+            Assert.True(result.IsFailure);
+            Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+        }
+    }
+
+    /// <summary>`docs/backlog/25-84-*.md`'s own second open question, answered and proven against real
+    /// Postgres: the auto-bill cap is a real column on `tier_download_thresholds`, and reaching it
+    /// returns an auto-billed tenant to the `25-83` block. 6 GiB over at the migration-seeded 100 RUB/GB
+    /// is 600 RUB, past this tier's own 500 RUB cap.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnAutoBill_AndPastTheTiersAutoBillCap_IsBlockedAgain_OverRealPostgres()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(
+            softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte, autoBillCapRub: 500m);
+        var (conversationId, visitorId) = await SeedConversationAsync(siteId);
+        var attachmentId = await CreateReadyAttachmentAsync(siteId, conversationId, 50);
+        await SetBillingModeAsync(siteId, DownloadOverageBillingMode.AutoBill);
+
+        await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 7 * OneGibibyte, CancellationToken.None);
+
+        await using var db = fixture.CreateDbContext();
+        var result = await CreateDownloadHandler(db).HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>The real Dapper outstanding query - the one a renewal sweeps from. Two months of real
+    /// `site_attachment_egress` rows and one real settled charge, and the store computes the same
+    /// arithmetic the fake does, against the real `SUM`/`bool_or` group.</summary>
+    [Fact]
+    public async Task DownloadOverageReadStore_ComputesOutstandingPerMonth_NetOfSettledCharges()
+    {
+        var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(
+            softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte);
+        var thisMonth = new DateOnly(Now.Year, Now.Month, 1);
+        var nextMonth = new DateOnly(Now.AddMonths(1).Year, Now.AddMonths(1).Month, 1);
+
+        var meter = new AttachmentEgressMeterStore(fixture.DataSource);
+        await meter.RecordAsync(siteId, thisMonth, 4 * OneGibibyte, CancellationToken.None);
+        await meter.RecordAsync(siteId, nextMonth, 2 * OneGibibyte, CancellationToken.None);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            var charge = DownloadOverageCharge.PendingCheckout(
+                new DownloadOverageChargeId(Guid.NewGuid()), siteId, thisMonth,
+                bytesOver: OneGibibyte, amountRub: 100m, priceVersion: 1,
+                yooKassaPaymentId: "pmt_" + Guid.NewGuid().ToString("N"), createdAt: Now);
+            charge.MarkSucceeded(Now);
+            await new DownloadOverageChargeRepository(db).SaveAsync(charge, CancellationToken.None);
+        }
+
+        var store = new DownloadOverageReadStore(fixture.DataSource);
+
+        var settlement = await store.GetSettlementAsync(siteId, thisMonth, CancellationToken.None);
+        Assert.Equal(OneGibibyte, settlement.SettledBytes);
+        Assert.Equal(100m, settlement.SettledAmountRub);
+        Assert.True(settlement.HasPaidCheckout);
+
+        var outstanding = await store.GetOutstandingAsync(siteId, OneGibibyte, nextMonth, CancellationToken.None);
+        Assert.Equal(2, outstanding.Count);
+        // This month: 4 GiB total, 1 GiB threshold, 1 GiB already settled -> 2 GiB outstanding.
+        Assert.Equal(thisMonth, outstanding[0].PeriodMonth);
+        Assert.Equal(2 * OneGibibyte, outstanding[0].OutstandingBytes);
+        Assert.True(outstanding[0].HasPaidCheckout);
+        // Next month: 2 GiB total, 1 GiB threshold, nothing settled -> 1 GiB outstanding, unpaid.
+        Assert.Equal(nextMonth, outstanding[1].PeriodMonth);
+        Assert.Equal(OneGibibyte, outstanding[1].OutstandingBytes);
+        Assert.False(outstanding[1].HasPaidCheckout);
+    }
+
+    /// <summary>The migration's own seeded `v1` row is real, readable and exactly 100 RUB -
+    /// `docs/backlog/25-84-*.md`'s own first Done-when ("100 RUB as the shipped default"), checked
+    /// against the database rather than against the constant a test could have retyped.</summary>
+    [Fact]
+    public async Task TheShippedOveragePrice_Is100Rub_AndIsOwnerRepublishable()
+    {
+        await using var db = fixture.CreateDbContext();
+        var prices = new PriceCatalogRepository(db);
+
+        var current = await prices.FindCurrentAsync(DownloadOveragePricing.OveragePerGigabyteKey, CancellationToken.None);
+
+        Assert.NotNull(current);
+        Assert.Equal(100.00m, current.AmountRub);
+        // Registered, which is the only thing that lets the platform owner publish a new version for it
+        // (`PublishPriceVersionHandler` checks exactly this).
+        Assert.True(PricedResourceKeys.IsKnown(DownloadOveragePricing.OveragePerGigabyteKey));
+    }
+
+    private async Task SetBillingModeAsync(SiteId siteId, DownloadOverageBillingMode mode)
+    {
+        await using var db = fixture.CreateDbContext();
+        var repository = new SiteRepository(db);
+        var site = await repository.GetByIdAsync(siteId, CancellationToken.None);
+        site!.SetDownloadOverageBillingMode(mode, "owner-test", "proving the paid path", Now);
+        await repository.SaveAsync(site, CancellationToken.None);
+    }
+
+    /// <summary>`25-84`'s own checkout needs `site:configure`, not the `conversation:read`
+    /// <see cref="SeedSiteWithConversationReadPermissionAndThresholdAsync"/> grants - added to the same
+    /// role rather than a second one, so the operator is the same person throughout the test.</summary>
+    private async Task GrantSiteConfigureAsync(SiteId siteId, OperatorId operatorId)
+    {
+        await using var db = fixture.CreateDbContext();
+        var roleId = Guid.NewGuid();
+        db.Roles.Add(new RoleRecord
+        {
+            Id = roleId,
+            SiteId = siteId,
+            Name = "BillingAdmin",
+            Permissions = [Permission.SiteConfigure.Value],
+        });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>`25-84`: records whichever payment id this test wants the webhook to quote back, so the
+    /// applier can be driven without a real ЮKassa. The same "a fake at the port, real everything below
+    /// it" split every other integration test in this file uses for `IFileStorage`.</summary>
+    private sealed class RecordingYooKassaClient(string paymentId) : IYooKassaPaymentsClient
+    {
+        public string PaymentId { get; } = paymentId;
+
+        public Task<CreatePaymentResult> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult<CreatePaymentResult>(
+                new CreatePaymentResult.Success(PaymentId, "https://yookassa.example/confirm/" + PaymentId));
+
+        public Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
+            ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("`25-84`'s own checkout never charges a stored method - see PurchaseDownloadOverageHandler's own remarks.");
+    }
+
+    private sealed class NoOpOutboxWriter : IOutboxWriter
+    {
+        public void Enqueue(EventEnvelope envelope, string? traceContext = null)
+        {
+        }
     }
 }

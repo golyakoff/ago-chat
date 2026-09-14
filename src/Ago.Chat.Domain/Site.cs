@@ -318,6 +318,32 @@ public sealed class Site
     /// when <see cref="DownloadBlockExemptionChangedBy"/> is.</summary>
     public DateTimeOffset? DownloadBlockExemptionChangedAt { get; private set; }
 
+    /// <summary>`25-84`: the platform-owner-only, per-tenant toggle deciding *when* this tenant commits
+    /// to paying the metered download-overage charge - see <see cref="DownloadOverageBillingMode"/>'s
+    /// own remarks, including why <see cref="DownloadOverageBillingMode.Manual"/> (and not the
+    /// backlog's "recommended default") is what every existing row keeps. A sibling of
+    /// <see cref="DownloadBlockExempt"/> above and read on the identical terms - live, uncached, off a
+    /// freshly loaded aggregate inside the same download gate - but a genuinely different act: the
+    /// exemption says "this tenant is never charged and never blocked", this says "this tenant pays for
+    /// what they use, and here is when they are asked to".</summary>
+    public DownloadOverageBillingMode DownloadOverageBillingMode { get; private set; }
+
+    /// <summary>The same "who set the current value, and why" pair
+    /// <see cref="DownloadBlockExemptionChangedBy"/> keeps, for the toggle above - not a shared pair
+    /// with the exemption, because the two are set by different acts at different times and a single
+    /// shared reason column would attribute one owner's justification to the other's decision.</summary>
+    public string? DownloadOverageBillingModeChangedBy { get; private set; }
+
+    /// <summary>The owner's own stated justification for the current value of
+    /// <see cref="DownloadOverageBillingMode"/> - required on every change by
+    /// <c>SetDownloadOverageBillingModeAsOwnerHandler</c>, for the identical reason the exemption's own
+    /// reason is required.</summary>
+    public string? DownloadOverageBillingModeReason { get; private set; }
+
+    /// <summary>When <see cref="DownloadOverageBillingMode"/> last changed - <see langword="null"/>
+    /// exactly when <see cref="DownloadOverageBillingModeChangedBy"/> is.</summary>
+    public DateTimeOffset? DownloadOverageBillingModeChangedAt { get; private set; }
+
     /// <summary>`18-03`: this site's prepared-answer library. Empty for every row that predates the
     /// feature - the same "list defaults to nothing rather than throwing" shape
     /// <see cref="OfflineAutoReply"/> already established for its own rules.</summary>
@@ -633,6 +659,22 @@ public sealed class Site
         DownloadBlockExemptionChangedBy = revokedBy;
         DownloadBlockExemptionReason = reason;
         DownloadBlockExemptionChangedAt = now;
+    }
+
+    /// <summary>`25-84`: the platform owner setting how this tenant pays for download overage. One
+    /// method for both directions, carrying the mode - the identical shape
+    /// <see cref="GrantDownloadBlockExemption"/>'s own pair deliberately did *not* use, because that
+    /// flag is a boolean with two named acts ("grant"/"revoke") while this is a value with no
+    /// direction: "set to manual" is not the reversal of "set to auto-bill" in any sense a reader would
+    /// gain from two methods. Raises no domain event, for the identical reason the exemption pair does
+    /// not - nothing downstream reacts to this; the download gate reads it live on the next
+    /// request.</summary>
+    public void SetDownloadOverageBillingMode(DownloadOverageBillingMode mode, string setBy, string reason, DateTimeOffset now)
+    {
+        DownloadOverageBillingMode = mode;
+        DownloadOverageBillingModeChangedBy = setBy;
+        DownloadOverageBillingModeReason = reason;
+        DownloadOverageBillingModeChangedAt = now;
     }
 
     /// <summary>

@@ -22,5 +22,28 @@ public sealed record GetDownloadUsageForSite(OperatorId RequestedBy, SiteId Site
 /// bypass of the hard threshold (<see cref="Site.DownloadBlockExempt"/>). A site can read
 /// <c>BytesOut &gt;= HardThresholdBytes</c> as true while <see cref="IsHardCrossed"/> is false -
 /// exempt and over the raw number, but not actually blocked.</param>
+/// <param name="BillingMode">`25-84`: <see cref="Domain.DownloadOverageBillingMode"/>'s own member
+/// name - what the console needs to tell "blocked, and there is a button that fixes it" apart from
+/// "blocked, and paying is not how this tenant's account works". The platform owner sets it; the tenant
+/// only ever reads it (`docs/backlog/25-84-*.md`'s own Out of scope).</param>
+/// <param name="OutstandingOverageBytes">Bytes past <paramref name="HardThresholdBytes"/> that no
+/// succeeded charge covers yet - zero for a tenant who is not over, or whose overage is fully
+/// settled.</param>
+/// <param name="OutstandingOverageRub">What <paramref name="OutstandingOverageBytes"/> costs at the
+/// currently-published per-gigabyte price - <see langword="null"/> exactly when nothing has ever been
+/// published for that key, which is the honest "not for sale in this deployment" state `25-43`'s own
+/// second decision names. Deliberately a server-computed figure rather than a price the console
+/// multiplies for itself - `25-23`'s own "a real, sourced figure on the wire, never invented
+/// client-side" discipline, which is what keeps the number a tenant is asked to pay identical to the
+/// number the charge is actually computed from.</param>
+/// <param name="OverageSettledRub">What this month's overage has already cost, across both paths -
+/// what <paramref name="AutoBillCapRub"/> is measured against together with the outstanding amount.</param>
+/// <param name="AutoBillCapRub">This tier's own auto-bill ceiling, or <see langword="null"/> for
+/// uncapped - see <see cref="Ago.Chat.Application.Abstractions.DownloadThresholds.AutoBillCapRub"/>.</param>
+/// <param name="IsAtAutoBillCap">Whether this month's overage has reached that ceiling, so downloads are
+/// blocked despite the tenant paying - the one blocked state a purchase cannot lift, which is why the
+/// console must be able to tell it apart rather than offering a button that would refuse.</param>
 public sealed record DownloadUsageStatus(
-    long BytesOut, long SoftThresholdBytes, long HardThresholdBytes, bool IsSoftCrossed, bool IsHardCrossed, bool IsExempt);
+    long BytesOut, long SoftThresholdBytes, long HardThresholdBytes, bool IsSoftCrossed, bool IsHardCrossed, bool IsExempt,
+    string BillingMode, long OutstandingOverageBytes, decimal? OutstandingOverageRub, decimal OverageSettledRub,
+    decimal? AutoBillCapRub, bool IsAtAutoBillCap);
