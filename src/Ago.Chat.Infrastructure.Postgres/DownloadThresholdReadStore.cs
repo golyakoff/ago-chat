@@ -11,7 +11,8 @@ namespace Ago.Chat.Infrastructure.Postgres;
 public sealed class DownloadThresholdReadStore(NpgsqlDataSource dataSource) : IDownloadThresholdReadStore
 {
     private const string Sql = """
-        SELECT soft_threshold_bytes AS "SoftThresholdBytes", hard_threshold_bytes AS "HardThresholdBytes"
+        SELECT soft_threshold_bytes AS "SoftThresholdBytes", hard_threshold_bytes AS "HardThresholdBytes",
+               auto_bill_cap_rub AS "AutoBillCapRub"
         FROM tier_download_thresholds
         WHERE tier = @Tier
         """;
@@ -26,8 +27,11 @@ public sealed class DownloadThresholdReadStore(NpgsqlDataSource dataSource) : ID
         // This port's own remarks: no row for this tier fails open, never closed.
         return row is null
             ? DownloadThresholds.Unbounded(tier)
-            : new DownloadThresholds(tier, row.SoftThresholdBytes, row.HardThresholdBytes);
+            : new DownloadThresholds(tier, row.SoftThresholdBytes, row.HardThresholdBytes, row.AutoBillCapRub);
     }
 
-    private sealed record ThresholdRow(long SoftThresholdBytes, long HardThresholdBytes);
+    /// <summary>`25-84`: <c>AutoBillCapRub</c> is nullable all the way down - a NULL column means the
+    /// platform owner deliberately left this tier uncapped, which is a different fact from "the cap is
+    /// zero" and must not be flattened into one on the way up.</summary>
+    private sealed record ThresholdRow(long SoftThresholdBytes, long HardThresholdBytes, decimal? AutoBillCapRub);
 }

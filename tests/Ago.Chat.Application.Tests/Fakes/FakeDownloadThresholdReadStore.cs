@@ -9,8 +9,11 @@ public sealed class FakeDownloadThresholdReadStore : IDownloadThresholdReadStore
 {
     private readonly Dictionary<string, DownloadThresholds> _byTier = [];
 
-    public void Seed(string tier, long softThresholdBytes, long hardThresholdBytes) =>
-        _byTier[tier] = new DownloadThresholds(tier, softThresholdBytes, hardThresholdBytes);
+    /// <summary>`25-84`: <paramref name="autoBillCapRub"/> defaults to <see langword="null"/> - uncapped -
+    /// so every pre-existing call site keeps meaning exactly what it meant before this item, and only a
+    /// test that is actually about the cap has to mention it.</summary>
+    public void Seed(string tier, long softThresholdBytes, long hardThresholdBytes, decimal? autoBillCapRub = null) =>
+        _byTier[tier] = new DownloadThresholds(tier, softThresholdBytes, hardThresholdBytes, autoBillCapRub);
 
     public Task<DownloadThresholds> GetForTierAsync(string tier, CancellationToken cancellationToken) =>
         Task.FromResult(_byTier.GetValueOrDefault(tier) ?? DownloadThresholds.Unbounded(tier));

@@ -22,6 +22,8 @@ public class GetAttachmentDownloadUrlHandlerTests
         FakeAttachmentEgressMeter EgressMeter,
         FakeAttachmentEgressReadStore EgressReads,
         FakeDownloadThresholdReadStore Thresholds,
+        FakeDownloadOverageReadStore OverageReads,
+        FakePriceCatalogRepository Prices,
         FakeSiteRepository Sites,
         Site Site,
         FakeAttachmentRepository Attachments,
@@ -68,6 +70,10 @@ public class GetAttachmentDownloadUrlHandlerTests
         var egressMeter = new FakeAttachmentEgressMeter();
         var egressReads = new FakeAttachmentEgressReadStore();
         var thresholds = new FakeDownloadThresholdReadStore();
+        // `25-84`: neither seeded by default - an unpublished overage price leaves `25-83`'s own block
+        // exactly where it was, which is what every pre-existing test here asserts.
+        var overageReads = new FakeDownloadOverageReadStore();
+        var prices = new FakePriceCatalogRepository();
         var handler = new GetAttachmentDownloadUrlHandler(
             attachments,
             conversations,
@@ -78,14 +84,16 @@ public class GetAttachmentDownloadUrlHandlerTests
             egressMeter,
             egressReads,
             thresholds,
+            overageReads,
+            prices,
             new AttachmentOptions(),
             new FakeClock(Now),
             new FakeIdGenerator(),
             NullLogger<GetAttachmentDownloadUrlHandler>.Instance);
 
         return new Fixture(
-            handler, fileStorage, attachment, conversation, permissions, egressMeter, egressReads, thresholds, sites, site,
-            attachments, conversations);
+            handler, fileStorage, attachment, conversation, permissions, egressMeter, egressReads, thresholds,
+            overageReads, prices, sites, site, attachments, conversations);
     }
 
     [Fact]
@@ -360,5 +368,167 @@ public class GetAttachmentDownloadUrlHandlerTests
 
         var saved = await fixture.Conversations.GetByIdAsync(fixture.Conversation.Id, CancellationToken.None);
         Assert.Empty(saved!.Messages);
+    }
+
+    // ----------------------------------------------------------------------------------------------
+    // `25-84`: the paid way past `25-83`'s own block. Every test here seeds the identical
+    // at-the-hard-threshold situation the `25-83` tests above prove is refused, and changes exactly one
+    // thing - so a pass here is evidence about the escape hatch, never about the threshold arithmetic.
+    // ----------------------------------------------------------------------------------------------
+
+    private const long OneGibibyte = 1024L * 1024L * 1024L;
+
+    /// <summary>Seeds `25-83`'s own blocked state: a hard threshold of one gibibyte, and egress
+    /// <paramref name="gibibytesOver"/> past it.</summary>
+    private static void SeedBlockedAt(Fixture fixture, decimal gibibytesOver)
+    {
+        fixture.Thresholds.Seed("free", softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte);
+        fixture.EgressReads.SeedBytesOut(
+            SiteId, new DateOnly(Now.Year, Now.Month, 1), bytesOut: OneGibibyte + (long)(OneGibibyte * gibibytesOver));
+    }
+
+    /// <summary>`docs/backlog/25-84-*.md`'s own auto-bill promise: "crossing the hard threshold
+    /// auto-applies the per-GB charge as it accrues and keeps the tenant unblocked... no explicit action
+    /// from the tenant at the moment of crossing." The same fixture as
+    /// <see cref="HandleAsVisitorAsync_WhenTheSiteIsAtItsHardThreshold_ReturnsDownloadBlocked"/>, one
+    /// field different.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnAutoBill_IsNotBlockedPastTheHardThreshold()
+    {
+        var fixture = CreateFixture();
+        SeedBlockedAt(fixture, gibibytesOver: 2m);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+        fixture.Site.SetDownloadOverageBillingMode(DownloadOverageBillingMode.AutoBill, "owner", "agreed on the call", Now);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    /// <summary>The manual path blocks exactly as `25-83`'s own base case does until a real checkout has
+    /// actually settled - `docs/backlog/25-84-*.md`: "crossing the hard threshold blocks as `25-83`'s own
+    /// base case describes." Manual is the default mode, so this is what every existing tenant
+    /// gets.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnManual_AndNothingPaid_IsStillBlocked()
+    {
+        var fixture = CreateFixture();
+        SeedBlockedAt(fixture, gibibytesOver: 2m);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>A settled checkout for this month unblocks the manual path - and only a `Succeeded`
+    /// one: the pending case below is the control that proves the redirect alone changes nothing.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnManual_AndACheckoutSettled_IsNoLongerBlocked()
+    {
+        var fixture = CreateFixture();
+        SeedBlockedAt(fixture, gibibytesOver: 2m);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+        fixture.OverageReads.SeedCharge(SiteId, new DateOnly(Now.Year, Now.Month, 1), bytesOver: 2 * OneGibibyte, amountRub: 200m);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    /// <summary>A pending row is not payment - "never the redirect alone" (`13-02`, restated by
+    /// `25-84`). A tenant who opened the hosted checkout page and walked away is exactly as blocked as
+    /// before they clicked.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnManual_AndTheCheckoutIsOnlyPending_IsStillBlocked()
+    {
+        var fixture = CreateFixture();
+        SeedBlockedAt(fixture, gibibytesOver: 2m);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+        fixture.OverageReads.SeedCharge(
+            SiteId, new DateOnly(Now.Year, Now.Month, 1), bytesOver: 2 * OneGibibyte, amountRub: 200m,
+            status: DownloadOverageChargeStatus.Pending);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>`docs/backlog/25-84-*.md`'s own second open question, answered in code: auto-bill has a
+    /// secondary ceiling, and it bites. 6 GiB over at 100 RUB/GiB is 600 RUB, past a 500 RUB cap - the
+    /// tenant returns to exactly the `25-83` block despite being on auto-bill.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnAutoBill_AndPastTheAutoBillCap_IsBlockedAgain()
+    {
+        var fixture = CreateFixture();
+        fixture.Thresholds.Seed(
+            "free", softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte, autoBillCapRub: 500m);
+        fixture.EgressReads.SeedBytesOut(SiteId, new DateOnly(Now.Year, Now.Month, 1), bytesOut: 7 * OneGibibyte);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+        fixture.Site.SetDownloadOverageBillingMode(DownloadOverageBillingMode.AutoBill, "owner", "agreed on the call", Now);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>Just under the same cap, the identical fixture succeeds - the negative control that
+    /// proves the test above is refused by the cap and not by anything else about its setup. 4 GiB over
+    /// at 100 RUB/GiB is 400 RUB, under 500.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnAutoBill_AndUnderTheAutoBillCap_StillSucceeds()
+    {
+        var fixture = CreateFixture();
+        fixture.Thresholds.Seed(
+            "free", softThresholdBytes: OneGibibyte / 2, hardThresholdBytes: OneGibibyte, autoBillCapRub: 500m);
+        fixture.EgressReads.SeedBytesOut(SiteId, new DateOnly(Now.Year, Now.Month, 1), bytesOut: 5 * OneGibibyte);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+        fixture.Site.SetDownloadOverageBillingMode(DownloadOverageBillingMode.AutoBill, "owner", "agreed on the call", Now);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+    }
+
+    /// <summary>A deployment where nobody ever published a per-gigabyte price has no escape hatch at all
+    /// - `25-83`'s block stands, even on auto-bill. The opposite direction from a missing *threshold*
+    /// row (which fails open); see <c>IsOverageAuthorizedAsync</c>'s own remarks for why.</summary>
+    [Fact]
+    public async Task HandleAsVisitorAsync_WhenOnAutoBill_ButNoPriceWasEverPublished_IsStillBlocked()
+    {
+        var fixture = CreateFixture();
+        SeedBlockedAt(fixture, gibibytesOver: 2m);
+        fixture.Site.SetDownloadOverageBillingMode(DownloadOverageBillingMode.AutoBill, "owner", "agreed on the call", Now);
+
+        var result = await fixture.Handler.HandleAsVisitorAsync(
+            new GetAttachmentDownloadUrlAsVisitor(fixture.Attachment.Id, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Attachment.DownloadBlocked", result.Error!.Value.Code);
+    }
+
+    /// <summary>An operator is not carved out of any of this either - `25-83`'s own "no carve-out for
+    /// either caller" decision applies to the paid path exactly as it applies to the block.</summary>
+    [Fact]
+    public async Task HandleAsOperatorAsync_WhenOnAutoBill_IsNotBlockedPastTheHardThreshold()
+    {
+        var fixture = CreateFixture();
+        SeedBlockedAt(fixture, gibibytesOver: 2m);
+        fixture.Prices.SeedVersion(DownloadOveragePricing.OveragePerGigabyteKey, 100m, Now);
+        fixture.Site.SetDownloadOverageBillingMode(DownloadOverageBillingMode.AutoBill, "owner", "agreed on the call", Now);
+
+        var result = await fixture.Handler.HandleAsOperatorAsync(
+            new GetAttachmentDownloadUrlAsOperator(fixture.Attachment.Id, OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
     }
 }

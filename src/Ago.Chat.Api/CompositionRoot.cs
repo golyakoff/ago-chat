@@ -571,6 +571,8 @@ public static class CompositionRoot
         // `25-83`: the platform owner's own per-tenant download-block exemption - own file, own Map call,
         // the identical discipline OwnerSuspensionEndpoints' own remarks state just above.
         app.MapOwnerDownloadBlockExemptionEndpoints();
+        // `25-84`
+        app.MapOwnerDownloadOverageBillingModeEndpoints();
         // `24-02`: the named owner's own publish route - see OwnerDocumentEndpoints' own remarks for why
         // RequirePlatformOwner is the entire access-control story here too.
         app.MapOwnerDocumentEndpoints();

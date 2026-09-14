@@ -583,6 +583,13 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         // single route. `IAttachmentEgressReadStore` is already registered just above for `23-82`'s
         // own group.
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IDownloadThresholdReadStore, DownloadThresholdReadStore>();
+        // `25-84`: the same handler now also reads the overage ledger and the price catalog, to report
+        // what a blocked tenant would have to pay. Registered here because this host builds its
+        // service list one line at a time rather than calling the production composition root - which
+        // is exactly what made the full-suite run catch this as a `500` on a route this file's own test
+        // expects a `403` from.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IDownloadOverageReadStore, DownloadOverageReadStore>();
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IPriceCatalogRepository, PriceCatalogRepository>();
         builder.Services.AddScoped<GetDownloadUsageForSiteHandler>();
 
         builder.Services.AddAuthentication()

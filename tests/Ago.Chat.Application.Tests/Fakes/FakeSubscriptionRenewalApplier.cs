@@ -22,12 +22,18 @@ public sealed class FakeSubscriptionRenewalApplier : ISubscriptionRenewalApplier
         return Task.CompletedTask;
     }
 
+    // `25-84`: the download-overage lines the handler decided this renewal's own charge carried -
+    // recorded so a test can assert on what was swept, not merely that a renewal happened.
+    public List<IReadOnlyList<DownloadOverageInvoiceLine>> RenewedWithOverageLines { get; } = [];
+
     public Task ApplyRenewalSuccessAsync(
         BillingSubscriptionId id, DateTimeOffset now, int baseSeatPriceVersion, int extraSeatPriceVersion,
+        IReadOnlyList<DownloadOverageInvoiceLine> overageSettlements,
         CancellationToken cancellationToken)
     {
         RenewedSuccessfully.Add(id);
         RenewedWithPriceVersions.Add((baseSeatPriceVersion, extraSeatPriceVersion));
+        RenewedWithOverageLines.Add(overageSettlements);
         return Task.CompletedTask;
     }
 

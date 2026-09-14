@@ -20,6 +20,10 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     public DbSet<OperatorInvite> OperatorInvites => Set<OperatorInvite>();
     public DbSet<BillingSubscription> BillingSubscriptions => Set<BillingSubscription>();
     public DbSet<BillingWebhookEvent> BillingWebhookEvents => Set<BillingWebhookEvent>();
+
+    /// <summary>`25-84`: the append-only download-overage charge ledger - see
+    /// <see cref="DownloadOverageCharge"/> for why it is append-only rather than a running total.</summary>
+    public DbSet<DownloadOverageCharge> DownloadOverageCharges => Set<DownloadOverageCharge>();
     internal DbSet<RoleRecord> Roles => Set<RoleRecord>();
     internal DbSet<OperatorRoleRecord> OperatorRoles => Set<OperatorRoleRecord>();
     // `16-03`: migration-scaffolding only - ExportRequestEntity's own remarks explain why nothing

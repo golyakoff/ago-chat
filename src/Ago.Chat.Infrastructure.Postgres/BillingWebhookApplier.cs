@@ -67,6 +67,21 @@ public sealed class BillingWebhookApplier(AgoChatDbContext db, IOutboxWriter out
             s => s.YooKassaPaymentId == request.YooKassaPaymentId, cancellationToken);
         if (subscription is null)
         {
+            // `25-84`: a payment id this deployment created can also belong to a download-overage
+            // checkout rather than a subscription. Looked up second, not first, deliberately - a
+            // subscription payment is by far the common case, and this query only runs for the ids
+            // that were not one. Sharing the one ledger and the one transaction with the subscription
+            // path is the whole reason this lives here rather than in a second webhook applier: a
+            // redelivered `payment.succeeded` for an overage purchase must be caught by exactly the
+            // same `(payment_id, event_type)` unique index, not by a parallel mechanism that could
+            // disagree with it.
+            var overage = await db.DownloadOverageCharges.FirstOrDefaultAsync(
+                c => c.YooKassaPaymentId == request.YooKassaPaymentId, cancellationToken);
+            if (overage is not null)
+            {
+                return await ApplyToOverageChargeAsync(overage, request, transaction, cancellationToken);
+            }
+
             // The ledger row above still commits - a real redelivery of this exact event is still
             // caught as Duplicate next time, even though there is no subscription to act on now.
             await transaction.CommitAsync(cancellationToken);
@@ -119,6 +134,39 @@ public sealed class BillingWebhookApplier(AgoChatDbContext db, IOutboxWriter out
             default:
                 // A new, first-seen event of a type this item has no handling for - the ledger row
                 // above already committed as this method's own record of having seen it.
+                await transaction.CommitAsync(cancellationToken);
+                return new BillingWebhookApplyResult.Ignored();
+        }
+    }
+
+    /// <summary>`25-84`: the download-overage half of this applier's own terminal-state step, in the
+    /// transaction the ledger insert already opened. Raises no domain event and stages no outbox row -
+    /// unlike a subscription activation, nothing downstream reacts to an overage settlement; the only
+    /// consumer is <c>GetAttachmentDownloadUrlHandler</c>, which reads the row live on the next request
+    /// rather than being told. That is what makes the unblock immediate with no publish/consume hop in
+    /// between, and it is the same "read live, never cached" discipline `25-83` already applies to
+    /// every other fact that gate depends on.</summary>
+    private async Task<BillingWebhookApplyResult> ApplyToOverageChargeAsync(
+        DownloadOverageCharge overage,
+        BillingWebhookApplyRequest request,
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        switch (request.EventType)
+        {
+            case PaymentSucceededEvent:
+                overage.MarkSucceeded(request.Now);
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return new BillingWebhookApplyResult.DownloadOverageSettled(overage.SiteId, overage.AmountRub);
+
+            case PaymentCanceledEvent:
+                overage.MarkFailed(request.Now);
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return new BillingWebhookApplyResult.Canceled();
+
+            default:
                 await transaction.CommitAsync(cancellationToken);
                 return new BillingWebhookApplyResult.Ignored();
         }

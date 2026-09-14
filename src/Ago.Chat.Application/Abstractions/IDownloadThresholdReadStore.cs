@@ -32,10 +32,39 @@ public interface IDownloadThresholdReadStore
 /// non-dismissable console banner), never a refusal.</param>
 /// <param name="HardThresholdBytes">Crossing this refuses every presigned GET, operator and visitor
 /// alike, unless the site carries <see cref="Domain.Site.DownloadBlockExempt"/>.</param>
-public sealed record DownloadThresholds(string Tier, long SoftThresholdBytes, long HardThresholdBytes)
+/// <param name="AutoBillCapRub">
+/// `25-84`'s own second open question, answered: <b>yes, auto-bill gets a secondary ceiling, and it is
+/// owner-configurable per tier rather than a constant.</b> The most a site on this tier may accrue in
+/// download-overage charges within one calendar month before the `25-83` block returns despite
+/// <see cref="Domain.DownloadOverageBillingMode.AutoBill"/>. <see langword="null"/> means uncapped -
+/// the platform owner's own explicit choice to let it run, available but not the shipped default.
+///
+/// <para><b>Why a cap at all.</b> Every other charge this product makes is initiated by the tenant -
+/// they pick a seat count, they buy an Administrator slot. This one is driven by *third parties*: the
+/// tenant's own visitors clicking download links. An unbounded charge produced by somebody else's
+/// behaviour is the shape that ends in a chargeback and a refund rather than revenue, and the tenant
+/// who "did nothing" is factually right. The cost of being wrong in the other direction is also
+/// asymmetric: with no cap, the ceiling on a month's damage is whatever a script can fetch; with a cap,
+/// the worst case is a tenant blocked at a number the owner chose, which is a state this product
+/// already handles end to end (`25-83` built exactly it) and which the owner can lift in one write.
+///
+/// <para><b>Per tier, not deployment-wide - unlike the price itself.</b> `docs/backlog/25-84-*.md`
+/// settles the *price* as deployment-wide ("this price is deployment-wide rather than per-tier unless
+/// the owner says otherwise"), and that is right: a gigabyte costs what a gigabyte costs, regardless of
+/// who downloaded it. A *cap* is the opposite kind of number - it is a judgement about how much
+/// exposure a particular kind of customer should be allowed, and a free-tier tenant who has never paid
+/// anything and a Business tenant on a real subscription are not the same judgement. So it lives here,
+/// in the per-tier table `25-83` already built for exactly this kind of per-tier download policy, and
+/// the runbook that already edits that table (`docs/runbooks/download-threshold-tuning.md`) edits this
+/// column too.</para></para>
+/// </param>
+public sealed record DownloadThresholds(string Tier, long SoftThresholdBytes, long HardThresholdBytes, decimal? AutoBillCapRub)
 {
     /// <summary>See this type's own remarks: what a tier with no configured row resolves to - large
     /// enough that no real tenant's own monthly egress will ever reach it, so a missing configuration
-    /// row never blocks a download, only ever fails to warn about one.</summary>
-    public static DownloadThresholds Unbounded(string tier) => new(tier, long.MaxValue, long.MaxValue);
+    /// row never blocks a download, only ever fails to warn about one. <see cref="AutoBillCapRub"/> is
+    /// <c>0</c>, not <see langword="null"/>: a tier nobody configured has no hard threshold to be over
+    /// in the first place, so the cap is unreachable either way - and <c>0</c> is the safe reading of
+    /// the two if the thresholds are ever made finite without this column being set.</summary>
+    public static DownloadThresholds Unbounded(string tier) => new(tier, long.MaxValue, long.MaxValue, 0m);
 }

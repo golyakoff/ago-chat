@@ -74,7 +74,9 @@ using Ago.Chat.Application.UseCases.ExtendSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.LiftSuspensionAsOwner;
 using Ago.Chat.Application.UseCases.ListSuspensionsForOwner;
 using Ago.Chat.Application.UseCases.GetSuspensionStatusForSite;
+using Ago.Chat.Application.UseCases.PurchaseDownloadOverage;
 using Ago.Chat.Application.UseCases.SetDownloadBlockExemptionAsOwner;
+using Ago.Chat.Application.UseCases.SetDownloadOverageBillingModeAsOwner;
 using Ago.Chat.Application.UseCases.GetDownloadUsageForSite;
 using Ago.Chat.Application.UseCases.GetCannedResponses;
 using Ago.Chat.Application.UseCases.GetConversationById;
@@ -794,6 +796,8 @@ public sealed class ChatModule : IProductModule
         // console-banner read, registered here on arrival rather than repeating `25-07`'s own found
         // gap (an endpoint mapped before its handler was ever registered).
         services.AddScoped<SetDownloadBlockExemptionAsOwnerHandler>();
+        // `25-84`
+        services.AddScoped<SetDownloadOverageBillingModeAsOwnerHandler>();
         services.AddScoped<GetDownloadUsageForSiteHandler>();
         // `20-07`: resolved once per MessageAccepted delivery by Ago.Chat.Worker's own ModuleTaskConsumer
         // - the identical shape SendOfflineAutoReplyHandler is registered and resolved with.
@@ -878,6 +882,8 @@ public sealed class ChatModule : IProductModule
         services.AddSingleton<IYooKassaWebhookSignatureVerifier>(sp =>
             new YooKassaWebhookSignatureVerifier(sp.GetRequiredService<IOptions<YooKassaOptions>>().Value));
         services.AddScoped<CreateCheckoutSessionHandler>();
+        // `25-84`
+        services.AddScoped<PurchaseDownloadOverageHandler>();
         services.AddScoped<ProcessYooKassaWebhookHandler>();
         // `23-86`/`adr/0159`: the option-to-entitlement mapping, the identical generic-keyed-lookup
         // shape IModuleEntryPointProvider/IModulePermissionsProvider already use just above - see

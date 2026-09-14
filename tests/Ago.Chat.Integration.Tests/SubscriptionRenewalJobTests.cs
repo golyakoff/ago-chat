@@ -209,7 +209,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var applier = BuildApplier(db, new Dictionary<string, string?> { ["channel-telegram"] = "channel" });
 
-        await applier.ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
+        await applier.ApplyRenewalSuccessAsync(optionId, Now, 0, 0, [], CancellationToken.None);
 
         await using var verify = fixture.CreateDbContext();
         var option = await verify.BillingSubscriptions.SingleAsync(s => s.Id == optionId);
@@ -243,7 +243,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         {
             // First renewal grants it - a lapse must find something real to take away, not merely
             // exercise the revoke path against a row that was never granted.
-            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, [], CancellationToken.None);
         }
 
         await MarkPastDueAsync(optionId, Now);
@@ -297,7 +297,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         {
             // A real payment renews the option first - the grant a lapse is about to threaten has to
             // be real, not merely the flag alone.
-            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, [], CancellationToken.None);
         }
 
         await using (var db = fixture.CreateDbContext())
@@ -367,7 +367,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
 
         await using (var db = fixture.CreateDbContext())
         {
-            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None);
+            await BuildApplier(db, mappings).ApplyRenewalSuccessAsync(optionId, Now, 0, 0, [], CancellationToken.None);
         }
 
         await using var db2 = fixture.CreateDbContext();
@@ -393,7 +393,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         var applier = BuildApplier(db, new Dictionary<string, string?>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => applier.ApplyRenewalSuccessAsync(optionId, Now, 0, 0, CancellationToken.None));
+            () => applier.ApplyRenewalSuccessAsync(optionId, Now, 0, 0, [], CancellationToken.None));
     }
 
     [Fact]
@@ -431,6 +431,67 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
 
         var baseOnly = await subscriptions.GetBaseForSiteAsync(siteId, CancellationToken.None);
         Assert.Equal(baseId, baseOnly!.Id);
+    }
+
+    /// <summary>`25-84`: the auto-bill path's own settlement actually reaching Postgres - the half
+    /// `ProcessSubscriptionRenewalHandlerTests` cannot prove, because it stops at handing the applier a
+    /// list. `docs/backlog/25-84-*.md` asks that the accrued charge appear "as a line item on their next
+    /// regular invoice"; this codebase has no invoice aggregate, so the durable half of that promise is
+    /// a `download_overage_charges` row written in the same transaction as the renewal itself, carrying
+    /// the month, the bytes and the price version the amount was computed from. Read back through a
+    /// second, independent context - never the one that wrote it.</summary>
+    [Fact]
+    public async Task ApplyRenewalSuccessAsync_WritesTheDownloadOverageLedgerRows_InTheSameTransaction()
+    {
+        var (siteId, subscriptionId) = await SeedSucceededSubscriptionAsync(
+            seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now);
+        var periodMonth = new DateOnly(Now.Year, Now.Month, 1);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await BuildApplier(db, new Dictionary<string, string?>()).ApplyRenewalSuccessAsync(
+                subscriptionId, Now, 1, 1,
+                [new DownloadOverageInvoiceLine(periodMonth, OutstandingBytes: 2147483648, AmountRub: 200m, PriceVersion: 1)],
+                CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        var charge = await verify.DownloadOverageCharges.SingleAsync(c => c.SiteId == siteId);
+
+        Assert.Equal(DownloadOverageChargeSource.Invoice, charge.Source);
+        // Born Succeeded - the money already moved by the time this row is written, which is the whole
+        // "charge first, commit the verified outcome second" ordering `13-03` established.
+        Assert.Equal(DownloadOverageChargeStatus.Succeeded, charge.Status);
+        Assert.Equal(periodMonth, charge.PeriodMonth);
+        Assert.Equal(2147483648, charge.BytesOver);
+        Assert.Equal(200m, charge.AmountRub);
+        Assert.Equal(1, charge.PriceVersion);
+        // No payment of its own - the money moved as part of the renewal charge.
+        Assert.Null(charge.YooKassaPaymentId);
+        Assert.Equal(Now, charge.SettledAt);
+
+        // And the renewal it rode along with really did commit, in the same transaction.
+        var subscription = await verify.BillingSubscriptions.SingleAsync(sub => sub.Id == subscriptionId);
+        Assert.Equal(BillingSubscriptionStatus.Succeeded, subscription.Status);
+    }
+
+    /// <summary>The overwhelmingly common case: an ordinary renewal with nothing outstanding writes no
+    /// ledger row at all. The control that proves the test above is writing a row because it was handed
+    /// a line, not because every renewal writes one.</summary>
+    [Fact]
+    public async Task ApplyRenewalSuccessAsync_WithNoOverageLines_WritesNoLedgerRowAtAll()
+    {
+        var (siteId, subscriptionId) = await SeedSucceededSubscriptionAsync(
+            seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            await BuildApplier(db, new Dictionary<string, string?>()).ApplyRenewalSuccessAsync(
+                subscriptionId, Now, 1, 1, [], CancellationToken.None);
+        }
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.False(await verify.DownloadOverageCharges.AnyAsync(c => c.SiteId == siteId));
     }
 
     private static SubscriptionRenewalApplier BuildApplier(AgoChatDbContext db, IReadOnlyDictionary<string, string?> entitlementMappings)
@@ -642,7 +703,14 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
             var yooKassa = new YooKassaPaymentsApiClient(httpClient);
 
             var prices = new PriceCatalogRepository(db);
-            var handler = new ProcessSubscriptionRenewalHandler(subscriptions, yooKassa, prices, applier, clock);
+            // `25-84`: real stores throughout - the renewal now reads the site's own billing mode and
+            // its tier's own thresholds before deciding whether to sweep any download overage onto the
+            // charge, so a fake here would prove nothing about what the job actually does.
+            var handler = new ProcessSubscriptionRenewalHandler(
+                subscriptions, new SiteRepository(db), yooKassa, prices,
+                new DownloadThresholdReadStore(fixture.DataSource),
+                new DownloadOverageReadStore(fixture.DataSource),
+                applier, clock);
 
             var services = new Dictionary<Type, object>
             {

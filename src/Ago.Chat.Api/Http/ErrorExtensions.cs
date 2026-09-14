@@ -240,7 +240,13 @@ public static class ErrorExtensions
                 // (`OwnerDownloadBlockExemptionEndpointTests.OwnerToken_WithNoReason_IsRefused_AndGrantsNothing`) -
                 // the same pre-existing unmapped-code gap `Attachment.DownloadBlocked`'s own remarks
                 // describe a few lines up, for the write side rather than the read side.
-                or "Site.DownloadBlockExemptionReasonRequired" => StatusCodes.Status400BadRequest,
+                or "Site.DownloadBlockExemptionReasonRequired"
+                // `25-84`: the same two shapes one item later - the owner's own billing-mode toggle
+                // with a blank or over-length reason, and a tenant asking to pay for an overage that
+                // does not exist. Mapped in the change that introduces them, rather than discovered
+                // later as a bare `500` the way `25-83`'s own first defect was.
+                or "Site.DownloadOverageBillingModeReasonRequired"
+                or "Attachment.DownloadOverageNothingToPay" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

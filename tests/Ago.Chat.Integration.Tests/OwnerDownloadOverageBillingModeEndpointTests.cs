@@ -5,12 +5,11 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetAttachmentDownloadUrl;
-using Ago.Chat.Application.UseCases.SetDownloadBlockExemptionAsOwner;
+using Ago.Chat.Application.UseCases.SetDownloadOverageBillingModeAsOwner;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Kernel;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
@@ -25,87 +24,74 @@ using Npgsql;
 namespace Ago.Chat.Integration.Tests;
 
 /// <summary>
-/// `25-83`'s own owner-only override, over a real HTTP pipeline, a real Postgres and real
-/// Keycloak-signed tokens (<see cref="OperatorOidcFixture"/>) - the identical "proven end to end, not
-/// only at the handler" posture <see cref="OwnerModuleEndpointsTests"/> already holds itself to for a
-/// different owner-only write. `OwnerDownloadBlockExemptionEndpointTests_GrantsAndRevokes...` below is
-/// this item's own explicit demand: "proven to actually bypass the hard block once granted" - checked
-/// by calling the real <see cref="GetAttachmentDownloadUrlHandler"/> gate (against the same real
-/// Postgres row the HTTP write just changed) before and after each toggle, not by re-reading the flag
-/// the write itself just set.
+/// `25-84`'s own platform-owner-only, per-tenant billing-mode toggle, over a real HTTP pipeline, a real
+/// Postgres and real Keycloak-signed tokens - the identical shape
+/// <see cref="OwnerDownloadBlockExemptionEndpointTests"/> already holds itself to for `25-83`'s own
+/// sibling override, and for the identical reason: what matters is not that a handler flipped a field
+/// but that the *real download gate* follows, checked by calling
+/// <see cref="GetAttachmentDownloadUrlHandler"/> against the same real row the HTTP write just changed.
 ///
-/// <para><b>Only <see cref="OwnerDownloadBlockExemptionEndpoints"/> is mapped on this host</b> - the
-/// download gate itself is exercised by constructing <see cref="GetAttachmentDownloadUrlHandler"/>
-/// directly against `fixture`'s real Postgres, the identical shape
-/// <see cref="SiteAttachmentStorageHandlersTests"/> already uses for every one of its own
-/// real-Postgres proofs of that handler, rather than by also mapping the real
-/// `GET /api/v1/attachments/{attachmentId}` route (`Ago.Chat.Api.Attachments.AttachmentEndpoints`'s
-/// own `HandleDownloadAsync` - it does exist, and does call this exact handler; an earlier draft of
-/// this remark said otherwise and was wrong). This file's own job is proving the *owner's write* is
-/// real end to end and that its *effect* on the gate is real, not re-proving that route's own HTTP
-/// wiring - which nothing in this codebase does yet, for any of its failure codes, not only this
-/// item's own <c>Attachment.DownloadBlocked</c>; standing up that route's own host needs
-/// `CreateAttachmentHandler`/`ConfirmAttachmentHandler`/`DeleteAttachmentHandler` registered
-/// alongside it too (`AttachmentEndpoints.MapAttachmentEndpoints` maps all four on one group), which
-/// is a real, separate gap this item's own report flags rather than silently papers over by building
-/// it here under a different item's name.</para>
+/// <para><b>This file is also where `25-84`'s own Out of scope is proven structurally</b> - "any
+/// tenant-facing self-service control over the auto-bill/manual toggle stays the platform owner's." A
+/// site-wide `"Admin"` holding every permission their own tenant has is refused here exactly as they
+/// are on `25-83`'s route, which is what makes that sentence a property of the system rather than of a
+/// console that happens not to render a button.</para>
 /// </summary>
 [Collection(OperatorOidcCollection.Name)]
-public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture fixture)
+public sealed class OwnerDownloadOverageBillingModeEndpointTests(OperatorOidcFixture fixture)
 {
+    private const long OneGibibyte = 1024L * 1024L * 1024L;
+
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
-    private static string OwnerRoute(SiteId siteId) => $"/api/v1/owner/sites/{siteId.Value}/download-block-exemption";
+    private static string OwnerRoute(SiteId siteId) =>
+        $"/api/v1/owner/sites/{siteId.Value}/download-overage-billing-mode";
 
-    /// <summary>
-    /// The item's own headline claim, both directions, over the real route and a real download gate:
-    /// a site sitting at its hard threshold is genuinely blocked, the owner's real `POST` genuinely
-    /// lifts it, and a second real `POST` genuinely re-imposes it - each transition checked against
-    /// <see cref="GetAttachmentDownloadUrlHandler"/>, not against the write's own `200`.
-    /// </summary>
+    /// <summary>The item's own headline claim for this half: the owner sets the toggle, and the real
+    /// gate follows - both directions. A blocked tenant moved onto auto-bill starts downloading again
+    /// with no action of their own whatsoever; moved back to manual, they block again.</summary>
     [Fact]
-    public async Task OwnerToken_GrantsThenRevokesTheExemption_AndTheRealDownloadGateFollowsBothTimes()
+    public async Task OwnerToken_SetsAutoBillThenManual_AndTheRealDownloadGateFollowsBothTimes()
     {
-        var (siteId, conversationId, visitorId, attachmentId) = await SeedBlockedSiteAsync();
+        var (siteId, visitorId, attachmentId) = await SeedBlockedSiteAsync();
         await using var host = await BuildTestHostAsync();
         var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
 
-        // Before: the real gate refuses.
-        Assert.Equal("Attachment.DownloadBlocked", (await TryDownloadAsync(visitorId, attachmentId)).Error!.Value.Code);
+        // Before: manual by default, nothing paid, so the real gate refuses.
+        Assert.Equal("Attachment.DownloadBlocked", (await TryDownloadAsync()).Error!.Value.Code);
 
-        var grantResponse = await ownerClient.PostAsJsonAsync(
-            OwnerRoute(siteId), new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(
-                Exempt: true, Reason: "goodwill exception while the tenant sorts out their usage"));
-        Assert.Equal(HttpStatusCode.OK, grantResponse.StatusCode);
+        var toAutoBill = await ownerClient.PostAsJsonAsync(
+            OwnerRoute(siteId),
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                Mode: nameof(DownloadOverageBillingMode.AutoBill), Reason: "tenant prefers a planned invoice line to a surprise block"));
+        Assert.Equal(HttpStatusCode.OK, toAutoBill.StatusCode);
 
-        // After the grant: the real gate now lets it through.
-        Assert.True((await TryDownloadAsync(visitorId, attachmentId)).IsSuccess);
+        // After: unblocked, with zero tenant action - the whole point of auto-bill.
+        Assert.True((await TryDownloadAsync()).IsSuccess);
 
-        var revokeResponse = await ownerClient.PostAsJsonAsync(
-            OwnerRoute(siteId), new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(
-                Exempt: false, Reason: "exception period ended"));
-        Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
+        var backToManual = await ownerClient.PostAsJsonAsync(
+            OwnerRoute(siteId),
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                Mode: nameof(DownloadOverageBillingMode.Manual), Reason: "tenant asked to approve each charge"));
+        Assert.Equal(HttpStatusCode.OK, backToManual.StatusCode);
 
-        // After the revoke: blocked again - the override is a live toggle, not a one-time escape.
-        Assert.Equal("Attachment.DownloadBlocked", (await TryDownloadAsync(visitorId, attachmentId)).Error!.Value.Code);
+        // Blocked again - a live toggle, not a one-time escape.
+        Assert.Equal("Attachment.DownloadBlocked", (await TryDownloadAsync()).Error!.Value.Code);
 
-        async Task<Result<AttachmentDownload>> TryDownloadAsync(VisitorId forVisitor, AttachmentId forAttachment)
+        async Task<Result<AttachmentDownload>> TryDownloadAsync()
         {
-            // `await using`, and awaited to completion before the context is disposed - a bare
-            // `using` on a non-`async` local function disposes the context the moment the (still
-            // unfinished) `Task` is returned, not once that task actually completes, which is exactly
-            // the `ObjectDisposedException` this test's own fails-before run hit.
+            // `await using` on an `async` local function - the same disposal hazard
+            // OwnerDownloadBlockExemptionEndpointTests' own equivalent helper documents in full.
             await using var db = fixture.CreateDbContext();
-            var handler = CreateDownloadHandler(db);
-            return await handler.HandleAsVisitorAsync(new GetAttachmentDownloadUrlAsVisitor(forAttachment, forVisitor), CancellationToken.None);
+            return await CreateDownloadHandler(db).HandleAsVisitorAsync(
+                new GetAttachmentDownloadUrlAsVisitor(attachmentId, visitorId), CancellationToken.None);
         }
     }
 
-    /// <summary>The audit trail the owner's own write leaves on the aggregate itself -
-    /// <see cref="Site.DownloadBlockExemptionChangedBy"/>/<see cref="Site.DownloadBlockExemptionReason"/>,
-    /// read back off the real row, not merely accepted from the response.</summary>
+    /// <summary>The audit trail the owner's write leaves on the real row - who, why, when. Read back
+    /// off Postgres, never accepted from the response.</summary>
     [Fact]
-    public async Task OwnerToken_GrantsTheExemption_RecordsWhoAndWhy_OnTheRealRow()
+    public async Task OwnerToken_SetsTheMode_RecordsWhoAndWhy_OnTheRealRow()
     {
         var siteId = new SiteId(Guid.NewGuid());
         await using (var db = fixture.CreateDbContext())
@@ -119,22 +105,22 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
         var ownerClient = CreateClient(host, token);
         var ownerSubject = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().ReadJwtToken(token).Subject;
 
-        const string reason = "Tenant is a known pilot customer, exempted while their real ceiling is negotiated.";
+        const string reason = "Agreed on the onboarding call - they would rather see it on the invoice.";
         var response = await ownerClient.PostAsJsonAsync(
-            OwnerRoute(siteId), new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(Exempt: true, Reason: reason));
+            OwnerRoute(siteId),
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                nameof(DownloadOverageBillingMode.AutoBill), reason));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         await using var verifyDb = fixture.CreateDbContext();
         var site = await new SiteRepository(verifyDb).GetByIdAsync(siteId, CancellationToken.None);
-        Assert.True(site!.DownloadBlockExempt);
-        Assert.Equal(ownerSubject, site.DownloadBlockExemptionChangedBy);
-        Assert.Equal(reason, site.DownloadBlockExemptionReason);
+        Assert.Equal(DownloadOverageBillingMode.AutoBill, site!.DownloadOverageBillingMode);
+        Assert.Equal(ownerSubject, site.DownloadOverageBillingModeChangedBy);
+        Assert.Equal(reason, site.DownloadOverageBillingModeReason);
     }
 
-    /// <summary>`SetDownloadBlockExemptionAsOwnerHandler`'s own guard, reached this time through the
-    /// real HTTP body - a blank reason is refused before the flag is ever touched.</summary>
     [Fact]
-    public async Task OwnerToken_WithNoReason_IsRefused_AndGrantsNothing()
+    public async Task OwnerToken_WithNoReason_IsRefused_AndChangesNothing()
     {
         var siteId = new SiteId(Guid.NewGuid());
         await using (var db = fixture.CreateDbContext())
@@ -147,18 +133,44 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
         var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
 
         var response = await ownerClient.PostAsJsonAsync(
-            OwnerRoute(siteId), new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(Exempt: true, Reason: "   "));
+            OwnerRoute(siteId),
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                nameof(DownloadOverageBillingMode.AutoBill), "   "));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         await using var verifyDb = fixture.CreateDbContext();
         var site = await new SiteRepository(verifyDb).GetByIdAsync(siteId, CancellationToken.None);
-        Assert.False(site!.DownloadBlockExempt);
+        Assert.Equal(DownloadOverageBillingMode.Manual, site!.DownloadOverageBillingMode);
+    }
+
+    /// <summary>An unrecognised mode is a `400`, never a silent default - a typo in an owner's request
+    /// must not quietly pick a billing arrangement for somebody else's account.</summary>
+    [Fact]
+    public async Task OwnerToken_WithAnUnknownMode_IsRefused_AndChangesNothing()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PostAsJsonAsync(
+            OwnerRoute(siteId),
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest("autobill", "typo"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var verifyDb = fixture.CreateDbContext();
+        var site = await new SiteRepository(verifyDb).GetByIdAsync(siteId, CancellationToken.None);
+        Assert.Equal(DownloadOverageBillingMode.Manual, site!.DownloadOverageBillingMode);
     }
 
     // ------------------------------------------------------------------------------------------
-    // The authorization boundary: this route is RequirePlatformOwner and nothing weaker - the
-    // identical three cases OwnerModuleEndpointsTests/OwnerTenantIsolationEndpointTests already prove
-    // for their own owner-only routes.
+    // The authorization boundary - `25-84`'s own Out of scope, enforced by the route rather than by a
+    // console that happens not to show a button.
     // ------------------------------------------------------------------------------------------
 
     [Fact]
@@ -169,14 +181,14 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
 
         var response = await client.PostAsJsonAsync(
             OwnerRoute(new SiteId(Guid.NewGuid())),
-            new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(Exempt: true, Reason: "attempted"));
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                nameof(DownloadOverageBillingMode.AutoBill), "attempted"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    /// <summary>The case that matters most, the identical lesson every other owner-only route in this
-    /// codebase proves for itself: a site-wide `"Admin"`, holding every permission that exists for
-    /// their own tenant, is still not the platform owner.</summary>
+    /// <summary>A site-wide `"Admin"` holding every permission their own tenant has is still not the
+    /// platform owner - the case `25-84`'s own Out of scope actually turns on.</summary>
     [Fact]
     public async Task SiteConfigureHoldingAdminToken_IsRejected()
     {
@@ -185,7 +197,8 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
 
         var response = await client.PostAsJsonAsync(
             OwnerRoute(new SiteId(Guid.NewGuid())),
-            new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(Exempt: true, Reason: "attempted"));
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                nameof(DownloadOverageBillingMode.AutoBill), "attempted"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -198,17 +211,17 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
 
         var response = await client.PostAsJsonAsync(
             OwnerRoute(new SiteId(Guid.NewGuid())),
-            new OwnerDownloadBlockExemptionEndpoints.SetDownloadBlockExemptionRequest(Exempt: true, Reason: "attempted"));
+            new OwnerDownloadOverageBillingModeEndpoints.SetDownloadOverageBillingModeRequest(
+                nameof(DownloadOverageBillingMode.AutoBill), "attempted"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    /// <summary>A fresh site, tier and egress row, seeded so the real
-    /// <see cref="GetAttachmentDownloadUrlHandler"/> gate genuinely refuses before any exemption is
-    /// granted - the same real-Postgres setup shape
-    /// <see cref="SiteAttachmentStorageHandlersTests"/>'s own hard-threshold tests use, restated here
-    /// because this file needs the gate to already be tripped before its own HTTP writes begin.</summary>
-    private async Task<(SiteId SiteId, ConversationId ConversationId, VisitorId VisitorId, AttachmentId AttachmentId)> SeedBlockedSiteAsync()
+    /// <summary>A site sitting two gibibytes past a one-gibibyte hard threshold, on a tier of its own -
+    /// the same real-Postgres setup <see cref="OwnerDownloadBlockExemptionEndpointTests"/> uses, sized
+    /// in gibibytes because this item's own charge is priced per gigabyte and a 200-byte fixture would
+    /// round to nothing.</summary>
+    private async Task<(SiteId SiteId, VisitorId VisitorId, AttachmentId AttachmentId)> SeedBlockedSiteAsync()
     {
         var tier = $"test_{Guid.NewGuid():N}";
         await using (var connection = await fixture.DataSource.OpenConnectionAsync())
@@ -216,12 +229,12 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
             await using var command = new NpgsqlCommand(
                 """
                 INSERT INTO tier_download_thresholds (tier, soft_threshold_bytes, hard_threshold_bytes, updated_at, updated_by)
-                VALUES (@tier, @soft, @hard, now(), 'OwnerDownloadBlockExemptionEndpointTests')
+                VALUES (@tier, @soft, @hard, now(), 'OwnerDownloadOverageBillingModeEndpointTests')
                 """,
                 connection);
             command.Parameters.AddWithValue("tier", tier);
-            command.Parameters.AddWithValue("soft", 100L);
-            command.Parameters.AddWithValue("hard", 200L);
+            command.Parameters.AddWithValue("soft", OneGibibyte / 2);
+            command.Parameters.AddWithValue("hard", OneGibibyte);
             await command.ExecuteNonQueryAsync();
         }
 
@@ -243,9 +256,9 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
         }
 
         await new AttachmentEgressMeterStore(fixture.DataSource).RecordAsync(
-            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 200, CancellationToken.None);
+            siteId, new DateOnly(Now.Year, Now.Month, 1), bytes: 3 * OneGibibyte, CancellationToken.None);
 
-        return (siteId, conversationId, visitorId, attachmentId);
+        return (siteId, visitorId, attachmentId);
     }
 
     private GetAttachmentDownloadUrlHandler CreateDownloadHandler(AgoChatDbContext db) => new(
@@ -281,10 +294,9 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
         return client;
     }
 
-    /// <summary>The production wiring for this one owner-only route - the same "registered one by one
-    /// against the fixture's own already-built data source" shape
-    /// <see cref="CrossTenantRouteIsolationTests"/>'s own remarks give in full for the identical
-    /// reason (<c>NpgsqlDataSource.ConnectionString</c> redacts the password).</summary>
+    /// <summary>The production wiring for this one owner-only route - the same registered-one-by-one
+    /// shape <see cref="OwnerDownloadBlockExemptionEndpointTests.BuildTestHostAsync"/> uses and for the
+    /// same reason (<c>NpgsqlDataSource.ConnectionString</c> redacts the password).</summary>
     private async Task<WebApplication> BuildTestHostAsync()
     {
         var builder = WebApplication.CreateBuilder();
@@ -295,7 +307,7 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
-        builder.Services.AddScoped<SetDownloadBlockExemptionAsOwnerHandler>();
+        builder.Services.AddScoped<SetDownloadOverageBillingModeAsOwnerHandler>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
 
         builder.Services.AddAuthentication()
@@ -322,7 +334,7 @@ public sealed class OwnerDownloadBlockExemptionEndpointTests(OperatorOidcFixture
         var app = builder.Build();
         app.UseAuthentication();
         app.UseAuthorization();
-        app.MapOwnerDownloadBlockExemptionEndpoints();
+        app.MapOwnerDownloadOverageBillingModeEndpoints();
 
         await app.StartAsync();
         return app;

@@ -1132,4 +1132,21 @@ public static class ConversationErrors
     /// reasons exist to leave a trail for.</summary>
     public static Error DownloadBlockExemptionReasonRequired(string reason) =>
         new("Site.DownloadBlockExemptionReasonRequired", reason);
+
+    /// <summary>`25-84`: <c>PurchaseDownloadOverageHandler</c>'s own "there is nothing to buy" refusal -
+    /// the tenant is not past their hard threshold, or every byte they are past it by has already been
+    /// charged for. A `400`, not a `404` or a `409`: the request is well-formed and the site is real,
+    /// the caller has simply asked to pay for something that does not exist right now. Mapped in
+    /// <c>ErrorExtensions</c> in this same change - `25-83`'s own first found defect was exactly an
+    /// unmapped new code answering a bare `500`, and that is not being repeated.</summary>
+    public static Error DownloadOverageNothingToPay(Guid siteId) =>
+        new("Attachment.DownloadOverageNothingToPay",
+            $"Site {siteId} has no unsettled attachment-download overage to pay for this month.");
+
+    /// <summary>`25-84`: <c>SetDownloadOverageBillingModeAsOwnerHandler</c>'s own guard - the identical
+    /// "an owner-only act that changes what somebody is charged needs a stated reason" shape
+    /// <see cref="DownloadBlockExemptionReasonRequired"/> already requires, joined to the same `400`
+    /// group in <c>ErrorExtensions</c>.</summary>
+    public static Error DownloadOverageBillingModeReasonRequired(string reason) =>
+        new("Site.DownloadOverageBillingModeReasonRequired", reason);
 }

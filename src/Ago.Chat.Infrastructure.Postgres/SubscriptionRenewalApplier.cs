@@ -100,11 +100,29 @@ public sealed class SubscriptionRenewalApplier(
 
     public async Task ApplyRenewalSuccessAsync(
         BillingSubscriptionId id, DateTimeOffset now, int baseSeatPriceVersion, int extraSeatPriceVersion,
+        IReadOnlyList<DownloadOverageInvoiceLine> overageSettlements,
         CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         var subscription = await LoadOrThrowAsync(id, cancellationToken);
+
+        // `25-84`: the ledger rows for whatever download overage this renewal's own charge carried,
+        // staged in the same transaction as the renewal itself - "the money moved" and "the ledger says
+        // what for" commit together or not at all. Staged before the option branch returns, because an
+        // option subscription's renewal charge is as capable of carrying an overage line as a seat
+        // subscription's is: the sweep is decided by the *site*, not by what kind of row is renewing.
+        foreach (var line in overageSettlements)
+        {
+            db.DownloadOverageCharges.Add(DownloadOverageCharge.SettledOnInvoice(
+                new DownloadOverageChargeId(idGenerator.NewId(now)),
+                subscription.SiteId,
+                line.PeriodMonth,
+                line.OutstandingBytes,
+                line.AmountRub,
+                line.PriceVersion,
+                now));
+        }
 
         if (subscription.OptionKey is { } optionKey)
         {

@@ -51,6 +51,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAttachmentEgressReadStore, AttachmentEgressReadStore>();
         // `25-83`: the tier grid this egress figure is now enforced against.
         services.AddScoped<IDownloadThresholdReadStore, DownloadThresholdReadStore>();
+        // `25-84`
+        services.AddScoped<IDownloadOverageReadStore, DownloadOverageReadStore>();
+        services.AddScoped<IDownloadOverageChargeRepository, DownloadOverageChargeRepository>();
         services.AddScoped<IAttachmentBudgetReadStore, AttachmentBudgetReadStore>();
         services.AddScoped<ISiteAttachmentListReadStore, SiteAttachmentListReadStore>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();

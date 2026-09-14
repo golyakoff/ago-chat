@@ -740,5 +740,18 @@ public static class TenantScopeExemptions
             + "tenant-facing sibling exists at all for this one, by design - docs/backlog/25-83-*.md's own Out "
             + "of scope: 'any tenant-facing self-service control over either threshold or the override - both "
             + "stay the platform owner's alone'.",
+
+        // `25-84`: the same shape one item later - the platform owner deciding *how* a tenant pays for
+        // download overage, rather than whether they are charged at all.
+        ["Ago.Chat.Application.UseCases.SetDownloadOverageBillingModeAsOwner.SetDownloadOverageBillingModeAsOwnerHandler.HandleAsync"] =
+            "`25-84`, the platform owner's own per-tenant auto-bill/manual toggle for the metered download-"
+            + "overage charge - the identical category as SetDownloadBlockExemptionAsOwnerHandler directly "
+            + "above, and a deliberate sibling of it rather than a fold into it: SiteId names the tenant whose "
+            + "billing arrangement is being decided, chosen by the owner, not a resource the caller already "
+            + "owns, and RequirePlatformOwner on OwnerDownloadOverageBillingModeEndpoints is the entire access-"
+            + "control story. No tenant-facing sibling exists, by design - docs/backlog/25-84-*.md's own Out of "
+            + "scope: 'any tenant-facing self-service control over the auto-bill/manual toggle - stays the "
+            + "platform owner's'. The tenant-facing half of this item, PurchaseDownloadOverageHandler, is "
+            + "ordinarily RBAC-gated on Permission.SiteConfigure and is deliberately not listed here.",
     };
 }
