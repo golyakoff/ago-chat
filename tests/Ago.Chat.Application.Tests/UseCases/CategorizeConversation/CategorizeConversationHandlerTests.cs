@@ -39,7 +39,8 @@ public class CategorizeConversationHandlerTests
         seed?.Invoke(tags, conversation);
 
         var handler = new CategorizeConversationHandler(
-            readStore, tags, categorizer, new CategorizationOptions(), Microsoft.Extensions.Logging.Abstractions.NullLogger<CategorizeConversationHandler>.Instance);
+            readStore, tags, new Lazy<IConversationCategorizer>(() => categorizer), AiGates.Allowing(SiteId),
+            new CategorizationOptions(), Microsoft.Extensions.Logging.Abstractions.NullLogger<CategorizeConversationHandler>.Instance);
 
         return new Fixture(handler, tags, categorizer, conversation);
     }

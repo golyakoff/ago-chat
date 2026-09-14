@@ -258,6 +258,13 @@ public static class ServiceCollectionExtensions
         // `23-88`: the identical shape, for the async impact-preview question rather than the grant
         // itself - IModuleQuantityImpactPreviewStore's own remarks.
         services.AddScoped<IModuleQuantityImpactPreviewStore, ModuleQuantityImpactPreviewStore>();
+        // `25-04`: the AI add-on's own three ports - an EF write repository for the enablement, an
+        // insert-only repository for the tenant's basis declaration (deliberately a second table, never
+        // a column on the first - AiProcessingBasisDeclaration's own remarks), and a raw-SQL read store
+        // the gate uses per conversation without a change tracker (adr/0004).
+        services.AddScoped<IAiAddOnEnablementRepository, AiAddOnEnablementRepository>();
+        services.AddScoped<IAiProcessingBasisDeclarationRepository, AiProcessingBasisDeclarationRepository>();
+        services.AddScoped<IAiAddOnReadStore, AiAddOnReadStore>();
         // `22-08`: the account-wide freeze's own live read (never cached, CLAUDE.md rule 8) and its
         // write-only audit trail - see each interface's own remarks.
         services.AddScoped<ISiteSuspensionReadStore, SiteSuspensionReadStore>();

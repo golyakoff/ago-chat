@@ -80,6 +80,14 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `24-01`: AcceptanceRecord's own table - see AcceptanceRecordConfiguration's own remarks for why
     // it carries no foreign key to any subject's own table.
     public DbSet<AcceptanceRecord> AcceptanceRecords => Set<AcceptanceRecord>();
+
+    /// <summary>`25-04`: per-site AI add-on enablement, carrying the cut-off instant both AI paths
+    /// compare a conversation's own creation against.</summary>
+    public DbSet<AiAddOnEnablement> AiAddOnEnablements => Set<AiAddOnEnablement>();
+
+    /// <summary>`25-04`: the tenant's own declaration that it holds a lawful basis for its visitors'
+    /// data reaching the provider - a separate fact from the acceptance above it, deliberately.</summary>
+    public DbSet<AiProcessingBasisDeclaration> AiProcessingBasisDeclarations => Set<AiProcessingBasisDeclaration>();
     // `24-02`: Document is the aggregate root (DocumentRepository's own write path);
     // PublishedDocumentVersions is a real DbSet too, unlike Conversation's own Messages, because
     // IDocumentRepository's public read path (FindVersionAsync/FindCurrentAsync) queries it directly

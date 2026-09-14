@@ -1,10 +1,12 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.AiAddOn;
 using Ago.Chat.Application.UseCases.CategorizeConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -133,9 +135,158 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
         Assert.Empty(await verify.ConversationTags.Where(t => t.ConversationId == conversationId).ToListAsync());
     }
 
-    private ConversationCategorizationJob CreateJob(RecordingCategorizer categorizer, TimeSpan? lookbackWindow = null) => new(
+    // ---------------------------------------------------------------------------------------------
+    // `25-04`: the AI add-on gate, proven here - against the real job, the real query and real rows -
+    // rather than against CategorizeConversationHandler called directly. The item's own Done-when asks
+    // for exactly that distinction, because the hazard it names is a background sweep walking backwards
+    // through an archive the tenant never agreed to have sent anywhere.
+
+    /// <summary>`25-04`'s first Done-when, against the real job: with the add-on disabled - which is
+    /// every tenant until they act - nothing reaches the vendor, and the categorizer is <b>never
+    /// constructed</b>. The factory below throws, so this test fails if construction happens at all,
+    /// even if the constructed client were then left unused.</summary>
+    [Fact]
+    public async Task RunOnceAsync_WithTheAiAddOnDisabled_NeverEvenConstructsACategorizer()
+    {
+        var (siteId, conversationId) = await SeedClosedConversationAsync(closedAt: Now - TimeSpan.FromHours(1));
+        await SeedTagAsync(siteId, "Billing");
+        // Bought, but never enabled - the state a tenant is in between paying and accepting.
+        await SeedModuleGrantAsync(siteId);
+
+        await CreateJob(ThrowingCategorizerFactory, gate: RealGate()).RunOnceAsync(CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.Empty(await verify.ConversationTags.Where(t => t.ConversationId == conversationId).ToListAsync());
+
+        await RetireCandidateAsync(conversationId);
+    }
+
+    /// <summary>`25-04`'s fourth Done-when, against the real job: a conversation that was already closed
+    /// before the tenant enabled the add-on is never categorised - the cut-off read back out of a real
+    /// `ai_add_on_enablements` row by the real read store, and the categorizer again never
+    /// constructed.</summary>
+    [Fact]
+    public async Task RunOnceAsync_WithAConversationClosedBeforeTheCutOff_NeverEvenConstructsACategorizer()
+    {
+        var closedAt = Now - TimeSpan.FromHours(2);
+        var (siteId, conversationId) = await SeedClosedConversationAsync(closedAt);
+        await SeedTagAsync(siteId, "Billing");
+        await SeedModuleGrantAsync(siteId);
+        // Enabled after that conversation had already closed - decision 6's own "the archive is not
+        // re-processed".
+        await SeedEnablementAsync(siteId, enabledAt: closedAt + TimeSpan.FromMinutes(30));
+
+        await CreateJob(ThrowingCategorizerFactory, gate: RealGate()).RunOnceAsync(CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.Empty(await verify.ConversationTags.Where(t => t.ConversationId == conversationId).ToListAsync());
+
+        await RetireCandidateAsync(conversationId);
+    }
+
+    /// <summary>The other side of the same boundary, so the two tests above cannot both pass by the gate
+    /// simply always refusing: a conversation created after the cut-off, for a tenant who bought and
+    /// enabled the add-on, is categorised exactly as `19-02` always did.</summary>
+    [Fact]
+    public async Task RunOnceAsync_WithAConversationCreatedAfterTheCutOff_StillCategorisesIt()
+    {
+        var closedAt = Now - TimeSpan.FromHours(1);
+        var (siteId, conversationId) = await SeedClosedConversationAsync(closedAt);
+        var billingTagId = await SeedTagAsync(siteId, "Billing");
+        await SeedModuleGrantAsync(siteId);
+        // Well before the conversation was created (SeedClosedConversationAsync creates it ten minutes
+        // before it closes).
+        await SeedEnablementAsync(siteId, enabledAt: closedAt - TimeSpan.FromDays(1));
+
+        var categorizer = new RecordingCategorizer(new CategorizationResult.Success([billingTagId]));
+        await CreateJob(categorizer, gate: RealGate()).RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, categorizer.CallCount);
+        await using var verify = fixture.CreateDbContext();
+        var only = Assert.Single(await verify.ConversationTags.Where(t => t.ConversationId == conversationId).ToListAsync());
+        Assert.Equal(billingTagId, only.TagId);
+        Assert.Equal(TagSource.Ai, only.Source);
+    }
+
+    /// <summary>`25-04`: enabled and past the cut-off, but the subscription lapsed - the entitlement is
+    /// re-read every call rather than captured at enable time, so transmission stops.</summary>
+    [Fact]
+    public async Task RunOnceAsync_WithTheAddOnEnabledButNoModuleQuantity_NeverEvenConstructsACategorizer()
+    {
+        var closedAt = Now - TimeSpan.FromHours(1);
+        var (siteId, conversationId) = await SeedClosedConversationAsync(closedAt);
+        await SeedTagAsync(siteId, "Billing");
+        await SeedEnablementAsync(siteId, enabledAt: closedAt - TimeSpan.FromDays(1));
+        // No SeedModuleGrantAsync at all - nothing bought, or a lapsed subscription written back to zero.
+
+        await CreateJob(ThrowingCategorizerFactory, gate: RealGate()).RunOnceAsync(CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.Empty(await verify.ConversationTags.Where(t => t.ConversationId == conversationId).ToListAsync());
+
+        await RetireCandidateAsync(conversationId);
+    }
+
+    /// <summary>The real gate over real Postgres - the real read store and the real grant store, not a
+    /// stand-in, because "the cut-off stops the background job" is only proven when the cut-off makes the
+    /// round trip through a row.</summary>
+    private AiProcessingGate RealGate()
+    {
+        var db = fixture.CreateDbContext();
+        return new AiProcessingGate(
+            new AiAddOnReadStore(fixture.DataSource),
+            new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
+            AiGateFixtures.Options);
+    }
+
+    /// <summary>A categorizer factory that throws the moment it is invoked - the whole point of
+    /// `Lazy&lt;IConversationCategorizer&gt;`. A test using this fails if the client is constructed at
+    /// all, which a call-count assertion on an already-built fake can never show.</summary>
+    private static IConversationCategorizer ThrowingCategorizerFactory() =>
+        throw new InvalidOperationException(
+            "The conversation categorizer must never be constructed for a site the AI add-on gate refuses.");
+
+    /// <summary>`ConversationCategorizationQuery` is not site-scoped - it sweeps the whole table - and
+    /// this class's tests share one database. A conversation these gate tests deliberately leave
+    /// *untagged* therefore stays an eligible candidate for every later test in the collection, which is
+    /// exactly what made three pre-existing tests start counting three provider calls instead of zero.
+    /// Ageing it out of any plausible lookback window after the assertions restores the isolation those
+    /// tests were written under, without weakening what this one proved.</summary>
+    private async Task RetireCandidateAsync(ConversationId conversationId)
+    {
+        await using var connection = await fixture.DataSource.OpenConnectionAsync(CancellationToken.None);
+        await using var command = new Npgsql.NpgsqlCommand(
+            "UPDATE conversations SET closed_at = @agedOut WHERE id = @id", connection);
+        command.Parameters.AddWithValue("agedOut", Now - TimeSpan.FromDays(400));
+        command.Parameters.AddWithValue("id", conversationId.Value);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private async Task SeedModuleGrantAsync(SiteId siteId)
+    {
+        await using var db = fixture.CreateDbContext();
+        var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+        await store.GrantAsync(siteId, new ModuleKey(AiGateFixtures.ModuleKey), 1, Now, CancellationToken.None);
+    }
+
+    private async Task SeedEnablementAsync(SiteId siteId, DateTimeOffset enabledAt)
+    {
+        await using var db = fixture.CreateDbContext();
+        var enablement = AiAddOnEnablement.ForSite(siteId);
+        enablement.Enable(new OperatorId(Guid.NewGuid()), "ai-processing-addendum", "v1", enabledAt);
+        await new AiAddOnEnablementRepository(db).SaveAsync(enablement, CancellationToken.None);
+    }
+
+    private ConversationCategorizationJob CreateJob(
+        RecordingCategorizer categorizer, TimeSpan? lookbackWindow = null, AiProcessingGate? gate = null) =>
+        CreateJob(() => categorizer, lookbackWindow, gate);
+
+    /// <summary>`25-04`: the factory overload - a test that must prove the categorizer is never
+    /// *constructed* passes a factory that throws, which no already-instantiated fake could express.</summary>
+    private ConversationCategorizationJob CreateJob(
+        Func<IConversationCategorizer> categorizerFactory, TimeSpan? lookbackWindow = null, AiProcessingGate? gate = null) => new(
         fixture.DataSource,
-        new DirectScopeFactory(fixture, categorizer),
+        new DirectScopeFactory(fixture, categorizerFactory, gate ?? AiGateFixtures.Allowing()),
         new FixedClock(Now),
         Options.Create(new ConversationCategorizationJobOptions
         {
@@ -206,7 +357,8 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
     /// full ASP.NET Core DI container" shape <see cref="AutoCloseInactiveConversationsJobTests.DirectScopeFactory"/>'s
     /// own remarks describe, reused here for <see cref="CategorizeConversationHandler"/>'s own
     /// dependency graph.</summary>
-    private sealed class DirectScopeFactory(PostgresFixture fixture, RecordingCategorizer categorizer) : IServiceScopeFactory
+    private sealed class DirectScopeFactory(
+        PostgresFixture fixture, Func<IConversationCategorizer> categorizerFactory, AiProcessingGate gate) : IServiceScopeFactory
     {
         public IServiceScope CreateScope()
         {
@@ -214,7 +366,10 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
             var handler = new CategorizeConversationHandler(
                 new ConversationReadStore(fixture.DataSource),
                 new TagRepository(db),
-                categorizer,
+                // `25-04`: lazily, so a refused candidate provably never constructs a categorizer at all -
+                // `categorizerFactory` throws in the tests that assert exactly that.
+                new Lazy<IConversationCategorizer>(categorizerFactory),
+                gate,
                 new CategorizationOptions(),
                 NullLogger<CategorizeConversationHandler>.Instance);
             return new DirectScope(db, handler);

@@ -16,6 +16,7 @@ using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
 using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
+using Ago.Chat.Application.UseCases.AiAddOn;
 using Ago.Chat.Application.UseCases.CategorizeConversation;
 using Ago.Chat.Application.UseCases.ChangeOperatorRole;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
@@ -951,6 +952,12 @@ public sealed class ChatModule : IProductModule
         {
             services.AddScoped<IReplyDraftGenerator, UnconfiguredReplyDraftGenerator>();
         }
+        // `25-04`: the handler takes `Lazy<IReplyDraftGenerator>`, so the branch above decides *what*
+        // would be constructed while this decides *whether* it ever is. .NET's own container does not
+        // resolve `Lazy<T>` out of the box; this factory is the one line that makes "a tenant who has
+        // not bought the add-on never causes the vendor client to be constructed" a property rather
+        // than a hope - and `Ago.Chat.Application.Tests` asserts it through `IsValueCreated`.
+        services.AddScoped(sp => new Lazy<IReplyDraftGenerator>(sp.GetRequiredService<IReplyDraftGenerator>));
         services.AddScoped<GenerateReplyDraftHandler>();
 
         // `19-02`: registered here too - CategorizeConversationHandler is reached only from
@@ -1000,7 +1007,26 @@ public sealed class ChatModule : IProductModule
         {
             services.AddScoped<IConversationCategorizer, UnconfiguredConversationCategorizer>();
         }
+        // `25-04`: the identical deferral for the background path - see the ReplyDraft block above.
+        services.AddScoped(sp => new Lazy<IConversationCategorizer>(sp.GetRequiredService<IConversationCategorizer>));
         services.AddScoped<CategorizeConversationHandler>();
+
+        // `25-04`: the AI add-on itself - which module key this deployment sells it under, the gate both
+        // AI paths consult, and the four tenant-facing handlers behind `/api/v1/sites/{id}/ai-add-on`.
+        // No `.Validate()`: a deployment that does not sell the add-on leaves the key blank, and
+        // AiProcessingGate reads a blank key as "nobody can have bought it" - the same "optional
+        // capability, decided by configuration" posture the two blocks above take, except that here the
+        // safe direction is refusal rather than a degraded stand-in.
+        services
+            .AddOptions<AiAddOnOptions>()
+            .Bind(configuration.GetSection(AiAddOnOptions.SectionName));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<AiAddOnOptions>>().Value);
+        services.AddScoped<AiProcessingGate>();
+        services.AddScoped<GetAiAddOnStatusHandler>();
+        services.AddScoped<AcceptAiAddOnAgreementHandler>();
+        services.AddScoped<DeclareAiProcessingBasisHandler>();
+        services.AddScoped<EnableAiAddOnHandler>();
+        services.AddScoped<DisableAiAddOnHandler>();
 
         services.AddScoped<StartConversationHandler>();
         services.AddScoped<SendVisitorMessageHandler>();

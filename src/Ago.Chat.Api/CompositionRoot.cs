@@ -31,6 +31,7 @@ using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.Modules;
 using Ago.Chat.Api.AssignmentPenalty;
 using Ago.Chat.Api.ContactVisibility;
+using Ago.Chat.Api.AiAddOn;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Api.WidgetActivity;
@@ -470,6 +471,9 @@ public static class CompositionRoot
         app.MapModuleEndpoints();
         // `14-04`
         app.MapOfflineAutoReplyEndpoints();
+
+        // `25-04`: the tenant's own AI add-on surface - accept, declare, enable, disable, read.
+        app.MapAiAddOnEndpoints();
         app.MapAssignmentPenaltyEndpoints();
         // `23-11`: the account-wide contact-visibility rung's own settings-screen read/write.
         app.MapContactVisibilityEndpoints();
