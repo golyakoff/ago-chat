@@ -21,6 +21,23 @@ public class SchemaVersionGuardTests
         PollInterval = TimeSpan.FromMilliseconds(20),
     };
 
+    /// <summary>`25-102`: the same 20ms `PollInterval` as <see cref="Impatient"/>, but a `WaitTimeout`
+    /// two orders of magnitude larger - margin against real scheduling delay, not a different
+    /// behaviour under test. Only <see cref="WhenTheSchemaCatchesUpWhileWaiting_ItProceeds"/> uses
+    /// this: that test's own three-poll count is driven entirely by the fake delegate's own call
+    /// count, never by wall-clock time, so a generous timeout changes nothing about what a passing run
+    /// proves - it only removes the possibility that a slow scheduler (this suite runs immediately
+    /// after `Concurrency.Tests`, on a Docker host that also runs this project's own live k8s cluster)
+    /// starves the loop of its third poll before <see cref="Impatient"/>'s own 300ms budget expires.
+    /// The other three tests using <see cref="Impatient"/> either never enter the wait loop at all or
+    /// are themselves testing that a short timeout is respected, so widening their own timeout would
+    /// change what they demonstrate rather than only removing flakiness - left alone, deliberately.</summary>
+    private static readonly SchemaGuardOptions PatientlyWaiting = new()
+    {
+        WaitTimeout = TimeSpan.FromSeconds(30),
+        PollInterval = TimeSpan.FromMilliseconds(20),
+    };
+
     private static SchemaStatus Current() => new(["A", "B"], [], ["A", "B"]);
 
     private static SchemaStatus Behind() => new(["A"], ["B"], ["A", "B"]);
@@ -56,7 +73,7 @@ public class SchemaVersionGuardTests
                 looks++;
                 return Task.FromResult(looks < 3 ? Behind() : Current());
             },
-            Impatient, NullLogger.Instance, CancellationToken.None);
+            PatientlyWaiting, NullLogger.Instance, CancellationToken.None);
 
         Assert.True(status.IsCurrent);
         Assert.Equal(3, looks);
