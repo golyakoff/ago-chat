@@ -35,11 +35,19 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(AttachmentCollection.Name)]
 public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixture)
 {
-    // Dapper has no built-in DateOnly handler (unlike raw Npgsql, which every production repository in
-    // this codebase uses instead - MessageArchiveRepository's own AddWithValue calls never hit this).
-    // This test's own CountAsync helper is the one place in this file that goes through Dapper with a
-    // DateOnly parameter, so it is the one place that needs this registered.
-    static MessageRetentionArchiveEndToEndTests() => SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+    // `25-99`: this class used to carry its own DateOnlyTypeHandler, whose Parse unconditionally cast
+    // to DateTime - correct for what this file needed (a DateOnly *parameter*, the same Dapper gap
+    // WidgetActivityReadStore's own remarks describe), but wrong the moment it ran first in the shared
+    // xUnit process and then received a genuinely-DateOnly value from a *different* test's read
+    // (SiteAttachmentStorageHandlersTests.DownloadOverageReadStore_ComputesOutstandingPerMonth_
+    // NetOfSettledCharges, over DownloadOverageReadStore's own native DateOnly column), because
+    // AddTypeHandler is global and process-wide with no per-scope variant. The fix is not a narrower
+    // registration - Dapper offers no such thing - but the already-hardened DapperDateOnlyTypeHandler
+    // this codebase built for exactly this gap (Ago.Chat.Infrastructure.Postgres, `23-07`): its own
+    // Parse passes a native DateOnly through unchanged and only converts when the value truly isn't
+    // one, so registering it first no longer matters - it is correct for every caller, not just this
+    // file's.
+    static MessageRetentionArchiveEndToEndTests() => SqlMapper.AddTypeHandler(DapperDateOnlyTypeHandler.Instance);
 
     private static readonly DateTimeOffset ReferenceNow = new(2010, 6, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly HttpClient Http = new();
@@ -82,7 +90,11 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
             var archived = await archiveJob.ArchiveAsync(CancellationToken.None);
             Assert.Equal(1, archived);
 
-            // The manifest row exists, and the object it points at is real.
+            // The manifest row exists, and the object it points at is real. `@periodStart` needs
+            // DapperDateOnlyTypeHandler registered (this class's own static constructor, below) -
+            // Dapper 2.1.79 has no DbType for DateOnly and throws NotSupportedException at its own
+            // parameter generator the moment one is bound (confirmed directly: removing the
+            // registration reproduces that exception here).
             Assert.Equal(1, await CountAsync(
                 "select count(*) from message_archives where site_id = @siteId and retention_class = @class and period_start = @periodStart",
                 new { siteId = siteId.Value, @class = retentionClass.Value, periodStart }));
@@ -349,14 +361,6 @@ public sealed class MessageRetentionArchiveEndToEndTests(AttachmentFixture fixtu
     private sealed class SettableClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; set; } = now;
-    }
-
-    private sealed class DateOnlyTypeHandler : SqlMapper.TypeHandler<DateOnly>
-    {
-        public override void SetValue(System.Data.IDbDataParameter parameter, DateOnly value) =>
-            parameter.Value = value.ToDateTime(TimeOnly.MinValue);
-
-        public override DateOnly Parse(object value) => DateOnly.FromDateTime((DateTime)value);
     }
 
     /// <summary>Wraps the real, MinIO-backed <see cref="IFileStorage"/> and fails only

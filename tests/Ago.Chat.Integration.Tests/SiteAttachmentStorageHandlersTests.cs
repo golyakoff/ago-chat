@@ -885,10 +885,7 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
     /// <summary>The real Dapper outstanding query - the one a renewal sweeps from. Two months of real
     /// `site_attachment_egress` rows and one real settled charge, and the store computes the same
     /// arithmetic the fake does, against the real `SUM`/`bool_or` group.</summary>
-    [Fact(Skip = "25-99: order-dependent on a stray static Dapper type-handler registration " +
-        "elsewhere in this assembly (MessageRetentionArchiveEndToEndTests), not a defect in this " +
-        "store's own mapping - confirmed failing twice in a row on real CI (main, run 34887361545). " +
-        "Unskip once 25-99's fix lands.")]
+    [Fact]
     public async Task DownloadOverageReadStore_ComputesOutstandingPerMonth_NetOfSettledCharges()
     {
         var (siteId, _) = await SeedSiteWithConversationReadPermissionAndThresholdAsync(
