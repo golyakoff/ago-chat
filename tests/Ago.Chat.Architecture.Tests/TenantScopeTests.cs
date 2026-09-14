@@ -1,4 +1,5 @@
-﻿using Mono.Cecil;
+﻿using Ago.Chat.Infrastructure.TenantScopeDiagnostics;
+using Mono.Cecil;
 
 namespace Ago.Chat.Architecture.Tests;
 
@@ -11,6 +12,11 @@ namespace Ago.Chat.Architecture.Tests;
 /// <see cref="TenantScopeExemptions"/> with a stated reason. Full classification, including which
 /// route supplies each <c>SiteId</c> and what protects the exempt ones:
 /// `ago-root/docs/architecture/tenant-isolation.md`.</para>
+///
+/// <para>`24-17`: <see cref="TenantScopeRule"/> and <see cref="TenantScopeExemptions"/> themselves now
+/// live in <c>Ago.Chat.Infrastructure.TenantScopeDiagnostics</c>, not this project - see that
+/// project's own remarks for why. This class is unchanged otherwise: same assertions, same fixtures,
+/// reading the identical fact from its new address.</para>
 /// </summary>
 public class TenantScopeTests
 {

@@ -16,6 +16,7 @@ using Ago.Chat.Api.Demo;
 using Ago.Chat.Api.Documents;
 using Ago.Chat.Application.UseCases.MintDemoTenant;
 using Ago.Chat.Infrastructure.Keycloak;
+using Ago.Chat.Infrastructure.TenantScopeDiagnostics;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Microsoft.Extensions.Options;
 using Ago.Chat.Api.Hubs;
@@ -60,6 +61,13 @@ var builder = WebApplication.CreateBuilder(args);
 // `7-01`: one call per host, this host's own name - AddPlatformObservability's own remarks on why
 // the name is a parameter, not a fourth near-identical appsettings.json.
 builder.Services.AddPlatformObservability(builder.Configuration, "Ago.Chat.Api");
+
+// `24-17`: registered here rather than in Ago.Chat.Module - the same "explicit when actually used"
+// reasoning Ago.Chat.Api.csproj's own remarks give for referencing Keycloak/MaxBot/etc. directly.
+// Only this host's owner-only endpoint (OwnerTenantIsolationEndpoints) ever resolves
+// ITenantScopeInspector; Ago.Chat.Worker and Ago.Chat.Webhooks have no route that would, and Module
+// composes services every host shares.
+builder.Services.AddTenantScopeDiagnostics();
 
 // 3-06: readiness now means "can do the job" - Postgres (conversations), RabbitMQ (outbox/fan-out
 // consumers), Redis (cache, connection registry) - matching Ago.Chat.Worker's own
@@ -560,6 +568,10 @@ app.MapOwnerDocumentEndpoints();
 // registration" discipline every owner surface above already follows (OwnerPricingEndpoints' own
 // remarks).
 app.MapOwnerPricingEndpoint();
+// `24-17`: the platform owner's own read of this deployment's live tenant-isolation figures - its own
+// Map call, the same "own file, own registration" discipline every owner surface above already
+// follows (OwnerTenantIsolationEndpoints' own remarks).
+app.MapOwnerTenantIsolationEndpoint();
 // `13-02`: checkout-session creation (operator-authenticated) and the ЮKassa webhook receiver
 // (signature-authenticated, no RequireAuthorization policy) - see BillingEndpoints' own remarks for
 // why the webhook receiver lives on this host rather than Ago.Chat.Webhooks.

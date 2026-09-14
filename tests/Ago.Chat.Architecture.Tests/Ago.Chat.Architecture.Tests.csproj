@@ -33,6 +33,12 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Application\Ago.Chat.Application.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Contracts\Ago.Chat.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <!-- `24-17`: TenantScopeRule/TenantScopeExemptions moved here, out of this project, so
+         `Ago.Chat.Api`'s runtime endpoint could read the identical fact instead of a second copy -
+         see that project's own remarks. This test project references it back rather than keeping its
+         own copy, the same "one fact, two readers" shape `Ago.Chat.Infrastructure.Modules` already has
+         below for MessageOpacityTests. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.TenantScopeDiagnostics\Ago.Chat.Infrastructure.TenantScopeDiagnostics.csproj" />
     <!-- `20-07`: MessageOpacityTests' own EveryChatAssembly needs to reach this project's compiled
          output too - it is the one project that translates untrusted wire bytes into this system's own
          value objects, which makes it the most likely place a module's domain vocabulary would leak in
