@@ -283,6 +283,8 @@ public sealed class AttachmentDownloadEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IAttachmentEgressMeter, AttachmentEgressMeterStore>();
         builder.Services.AddScoped<IAttachmentEgressReadStore, AttachmentEgressReadStore>();
         builder.Services.AddScoped<IDownloadThresholdReadStore, DownloadThresholdReadStore>();
+        builder.Services.AddScoped<IDownloadOverageReadStore, DownloadOverageReadStore>();
+        builder.Services.AddScoped<IPriceCatalogRepository, PriceCatalogRepository>();
 
         builder.Services.AddSingleton<IFileStorage, FakeFileStorage>();
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
