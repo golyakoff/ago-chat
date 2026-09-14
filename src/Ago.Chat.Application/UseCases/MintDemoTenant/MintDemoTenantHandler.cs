@@ -79,6 +79,10 @@ public sealed class MintDemoTenantHandler(
             // class's own remarks already accept - see RegisterSiteHandler's own array for why this
             // permission is Operator- rather than Admin-scoped.
             Permission.ConversationMarkSpam.Value,
+            // `25-69`: ConversationClose joins the Operator set here too, the same restatement this
+            // class's own remarks already accept - see RegisterSiteHandler's own array for why this
+            // permission is Operator- rather than Admin-scoped.
+            Permission.ConversationClose.Value,
         ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too, the same restatement this

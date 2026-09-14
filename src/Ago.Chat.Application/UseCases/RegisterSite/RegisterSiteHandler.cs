@@ -91,6 +91,13 @@ public sealed class RegisterSiteHandler(
             // `23-69`: ConversationMarkSpam joins the Operator set - see Permission's own remarks on
             // why this, unlike ConversationBlock, is Operator- rather than Admin-scoped.
             Permission.ConversationMarkSpam.Value,
+            // `25-69`: ConversationClose joins the Operator set - found granted by no seeded role at
+            // all. Operator-scoped for the same reason ConversationMarkSpam is just above: ending a
+            // conversation is the ordinary, in-the-moment action an operator takes dozens of times a
+            // shift, not a configuration or compliance act - Permission.ConversationClose's own
+            // remarks already draw this permission apart from ConversationAssign, but nothing had
+            // ever actually granted it to either seeded role until now.
+            Permission.ConversationClose.Value,
         ];
 
     // `16-02`: SiteErase/ConversationErase join the Admin set here too - see Permission's own remarks

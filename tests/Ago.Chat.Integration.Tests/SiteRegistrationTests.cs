@@ -95,6 +95,9 @@ public sealed class SiteRegistrationTests(OperatorOidcFixture fixture)
                 Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
                 // `23-69`: ConversationMarkSpam, joined here unchanged.
                 Permission.ConversationMarkSpam.Value,
+                // `25-69`: ConversationClose, joined here unchanged - found granted by no seeded
+                // role at all.
+                Permission.ConversationClose.Value,
             ],
             operatorRole.Permissions);
         var adminRole = Assert.Single(roles, r => r.Name == "Admin");
