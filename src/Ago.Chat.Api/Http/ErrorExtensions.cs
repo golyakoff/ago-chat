@@ -634,18 +634,11 @@ public static class ErrorExtensions
             // `SendOperatorMessageHandler`/`RemoveTeamMessageHandler` and their siblings have no `Api`
             // caller outside `Hubs/`.
             //
-            // `TenantSuspension.SessionRefused` - has no caller anywhere in this codebase, not even a
-            // test. Its own doc comment claims `Api.Auth.AuthEndpoints.HandleVisitorSessionAsync`'s own
-            // refusal, but that method refuses a suspended tenant by hand-building `Results.Problem`
-            // directly (`title`/`type: "tenant-suspended"`/`403`), the same pre-`Result<T>`/`Error`
-            // pattern this file's own top-of-file remarks already name `AuthEndpoints` for. This factory
-            // method was written for a wiring that was never made, or was made and then replaced by the
-            // hand-rolled version without the dead code being noticed - either way, mapping it here would
-            // not make it reachable, and a status chosen for code nothing ever constructs cannot be
-            // "wrong" or "right" in any way a test could show biting. Left unmapped, not mapped to a
-            // guess; a real follow-up (either wire `AuthEndpoints` onto this vocabulary, or delete the
-            // dead factory method) is outside this item's own one-thing scope (rule 15) and is named in
-            // this item's own report rather than folded in here.
+            // `TenantSuspension.SessionRefused` - `25-100` deleted this factory method entirely (it had
+            // no caller anywhere in this codebase, not even a test; `AuthEndpoints.HandleVisitorSessionAsync`
+            // already hand-builds its own `Results.Problem` for this refusal, the same pre-`Result<T>`/
+            // `Error` pattern this file's own top-of-file remarks already name `AuthEndpoints` for), so
+            // there is no code left to exempt or map here at all.
             _ => StatusCodes.Status500InternalServerError,
         };
 

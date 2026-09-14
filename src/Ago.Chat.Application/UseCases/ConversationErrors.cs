@@ -1052,14 +1052,6 @@ public static class ConversationErrors
     public static Error TenantNotSuspended(Guid siteId) =>
         new("TenantSuspension.NotSuspended", $"Site {siteId} is not currently suspended.");
 
-    /// <summary>`Api.Auth.AuthEndpoints.HandleVisitorSessionAsync`'s own refusal - collapsed into the
-    /// widget's ordinary "degrade to no widget" failure style
-    /// (<c>ago-widget/src/errors.ts</c>'s own remarks), never a distinguishing message a stranger
-    /// probing a suspended tenant's public key could read as confirmation the account exists and is in
-    /// trouble.</summary>
-    public static Error TenantSuspendedSessionRefused() =>
-        new("TenantSuspension.SessionRefused", "This account is currently suspended.");
-
     /// <summary><see cref="Application.UseCases.SendMessage.SendOperatorMessageHandler"/>'s own
     /// refusal - an operator may still read every conversation on a suspended site (this item's own
     /// Scope: "operators can read but not send"), only sending is gated.</summary>
