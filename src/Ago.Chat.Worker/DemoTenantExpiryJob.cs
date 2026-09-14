@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Worker;
@@ -21,11 +22,18 @@ namespace Ago.Chat.Worker;
 /// (`concurrency.md`). Retrying is safe because every step is idempotent - a site row already gone
 /// deletes zero rows, a storage object already gone is a no-op (`5-02`), and a Keycloak user already
 /// gone is a success by this port's contract.</para>
+///
+/// <para><b>`25-82`: <see cref="IServiceScopeFactory"/> is new here</b>, for exactly one call in
+/// <see cref="RemoveAsync"/> - resolving <see cref="ISiteErasurePublisher"/> fresh, once per tenant
+/// removed, because its implementation holds an <c>AgoChatDbContext</c> that must never be captured for
+/// this job's own singleton lifetime (that port's own remarks explain why). Every other dependency here
+/// is unchanged and stays directly injected, because none of them carry that constraint.</para>
 /// </summary>
 public sealed class DemoTenantExpiryJob(
     IDemoTenantRepository demoTenants,
     IDemoIdentityProvisioner identities,
     IFileStorage fileStorage,
+    IServiceScopeFactory scopeFactory,
     IClock clock,
     IOptions<DemoTenantExpiryJobOptions> options,
     ILogger<DemoTenantExpiryJob> logger) : BackgroundService
@@ -84,7 +92,8 @@ public sealed class DemoTenantExpiryJob(
     }
 
     /// <summary>
-    /// <b>The order is the design.</b> Object store, then Postgres, then Keycloak - and each step is
+    /// <b>The order is the design.</b> Object store, then Postgres (now, `25-82`, together with the
+    /// <see cref="Ago.Chat.Contracts.SiteErased"/> outbox row), then Keycloak - and each step is
     /// chosen so an interruption leaves something a later cycle can still finish:
     /// <list type="bullet">
     /// <item><b>Objects first</b>, because the rows that name them are about to be deleted. After the
@@ -92,7 +101,9 @@ public sealed class DemoTenantExpiryJob(
     /// which is the gap `personal-data.md` already records for conversation deletion, and the one thing
     /// this job must not reproduce.</item>
     /// <item><b>Postgres second.</b> Once it commits, the tenant is gone from every read path in the
-    /// product, so a viewer can no longer reach anything even if the last step has not run.</item>
+    /// product, so a viewer can no longer reach anything even if the last step has not run - and, as of
+    /// `25-82`, every other product holding a copy of something about this tenant now has a fact to
+    /// eventually learn from too, staged in the identical commit (rule 4).</item>
     /// <item><b>Keycloak last</b>, because it is the step most likely to fail (a network hop to another
     /// process) and the least harmful to leave undone for a cycle: a user whose site no longer exists
     /// can log in and see nothing at all - `ResolveOperatorIdentityHandler` finds no operator row.
@@ -111,7 +122,16 @@ public sealed class DemoTenantExpiryJob(
             await fileStorage.DeleteAsync(new ObjectKey(key), cancellationToken);
         }
 
-        await demoTenants.DeleteSiteAsync(tenant.SiteId, cancellationToken);
+        // `25-82`: a fresh scope for this one call, never captured beyond it - ISiteErasurePublisher's
+        // own remarks explain why its AgoChatDbContext must not live as long as this job does. The
+        // returned bool (false only when the site was already gone - a retry after a previous crash, or
+        // a racing replica) is not branched on here: identity cleanup below has always run regardless of
+        // whether the site row was already gone, and that is unchanged.
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var erasure = scope.ServiceProvider.GetRequiredService<ISiteErasurePublisher>();
+            await erasure.EraseAndPublishAsync(tenant.SiteId, clock.UtcNow, cancellationToken);
+        }
 
         foreach (var subjectId in tenant.ExternalSubjectIds)
         {

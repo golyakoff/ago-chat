@@ -9,6 +9,7 @@ using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Dapper;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -156,6 +157,12 @@ public class DemoTenantLifecycleTests(DemoTenantFixture fixture)
         // site's id, which is the claim that matters and the one that is independent of neighbours.
         Assert.True(removed >= 1, "The sweep removed nothing.");
 
+        // `25-82`: the fact that this tenant is gone was staged for every other product to eventually
+        // learn - proven here rather than only in SiteErasedOutboxTests, because this is the one place
+        // that drives it through the real job rather than the port directly.
+        Assert.Equal(1, await CountAsync(
+            "select count(*) from outbox where type = 'SiteErased' and partition_key = @siteId::text", siteId));
+
         // Postgres: every table that can hold this tenant's data.
         Assert.Equal(0, await CountAsync("select count(*) from sites where id = @siteId", siteId));
         Assert.Equal(0, await CountAsync("select count(*) from visitors where site_id = @siteId", siteId));
@@ -287,9 +294,29 @@ public class DemoTenantLifecycleTests(DemoTenantFixture fixture)
             new DemoTenantRepository(fixture.DataSource),
             identities,
             storage,
+            CreateErasureScopeFactory(),
             clock,
             Options.Create(new DemoTenantExpiryJobOptions()),
             NullLogger<DemoTenantExpiryJob>.Instance);
+
+    /// <summary>
+    /// `25-82`: <see cref="DemoTenantExpiryJob"/> now resolves <see cref="ISiteErasurePublisher"/> from
+    /// a fresh <see cref="IServiceScopeFactory"/>-created scope per tenant removed - the identical
+    /// "a small DI container, only for the one dependency that needs scope-fresh resolution" shape
+    /// <c>SiteErasureIntegrationTests.CreateModuleScopeFactory</c> already establishes in this same
+    /// test project. <c>AgoChatDbContext</c> is resolved against <see cref="fixture"/>'s own
+    /// <see cref="DemoTenantFixture.CreateDbContext"/> so every scope talks to the identical test
+    /// database every other call in this file uses.
+    /// </summary>
+    private IServiceScopeFactory CreateErasureScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => fixture.CreateDbContext());
+        services.AddScoped<IOutboxWriter>(sp => new EfOutboxWriter<AgoChatDbContext>(sp.GetRequiredService<AgoChatDbContext>()));
+        services.AddSingleton<IIdGenerator, UuidV7Generator>();
+        services.AddScoped<ISiteErasurePublisher, SiteErasurePublisher>();
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
 
     private async Task<SiteId> SiteIdOfAsync(string publicKey)
     {
