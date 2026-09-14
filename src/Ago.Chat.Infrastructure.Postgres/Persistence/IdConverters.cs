@@ -34,6 +34,11 @@ internal static class IdConverters
 
     // `24-01`
     public static readonly ValueConverter<AcceptanceRecordId, Guid> AcceptanceRecord = new(id => id.Value, value => new AcceptanceRecordId(value));
+
+    /// <summary>`25-04`: the declaration's own id - see <see cref="Domain.AiProcessingBasisDeclaration"/>
+    /// for why the declaration is its own insert-only row rather than a column on the enablement.</summary>
+    public static readonly ValueConverter<AiProcessingBasisDeclarationId, Guid> AiProcessingBasisDeclaration =
+        new(id => id.Value, value => new AiProcessingBasisDeclarationId(value));
     // `24-02`
     public static readonly ValueConverter<DocumentId, Guid> Document = new(id => id.Value, value => new DocumentId(value));
     public static readonly ValueConverter<PublishedDocumentVersionId, Guid> PublishedDocumentVersion = new(

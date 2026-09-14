@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.AiAddOn;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Logging;
@@ -33,11 +34,24 @@ namespace Ago.Chat.Application.UseCases.CategorizeConversation;
 /// would fit. <see cref="ConversationCategorizationJob"/> only needs to know whether to count this
 /// candidate toward its own "tagged" log line, which <see cref="CategorizationOutcome"/> answers
 /// directly.</para>
+///
+/// <para><b>`25-04`: the add-on gate runs first, and the categorizer is a <see cref="Lazy{T}"/> because
+/// of it.</b> This is the background half of "nothing reaches the vendor until a tenant has bought the
+/// add-on and turned it on" - and a background sweep is the place where "off" alone is not enough, since
+/// a job that already ran must not walk backwards through the archive once a tenant enables it. Injecting
+/// <see cref="IConversationCategorizer"/> directly would have meant the container resolved the real
+/// YandexGPT-backed implementation - its typed <c>HttpClient</c> and all - on every single candidate of
+/// every tenant, including the overwhelming majority who never bought the add-on; the gate would still
+/// have refused, but the claim "nothing is even constructed" would have been false, and untestable. A
+/// <see cref="Lazy{T}"/> makes the claim structural: <c>Ago.Chat.Application.Tests</c> asserts
+/// <see cref="Lazy{T}.IsValueCreated"/> is still <see langword="false"/> after a refused call, which no
+/// call-count assertion on an already-constructed fake could ever prove.</para>
 /// </summary>
 public sealed class CategorizeConversationHandler(
     IConversationReadStore readStore,
     ITagRepository tags,
-    IConversationCategorizer categorizer,
+    Lazy<IConversationCategorizer> categorizer,
+    AiProcessingGate aiGate,
     CategorizationOptions options,
     ILogger<CategorizeConversationHandler> logger)
 {
@@ -48,6 +62,15 @@ public sealed class CategorizeConversationHandler(
         if (conversation is null)
         {
             return ConversationErrors.NotFound(command.ConversationId.Value);
+        }
+
+        // `25-04`: before anything else, and specifically before `categorizer.Value` is ever touched.
+        // The conversation's own CreatedAt is what the cut-off is compared against - not ClosedAt - see
+        // AiAddOnEnablement's own remarks for why the stricter of the two tests is the correct one.
+        var decision = await aiGate.EvaluateAsync(command.SiteId, conversation.CreatedAt, cancellationToken);
+        if (decision != AiProcessingDecision.Allowed)
+        {
+            return CategorizationOutcome.NotPermitted;
         }
 
         // Scope's own hard constraint: an operator (or an earlier cycle of this same job) already
@@ -83,7 +106,7 @@ public sealed class CategorizeConversationHandler(
 
         var candidates = vocabulary.Select(t => new CategorizationCandidateTag(t.Id, t.Name)).ToList();
 
-        var result = await categorizer.CategorizeAsync(
+        var result = await categorizer.Value.CategorizeAsync(
             new CategorizationRequest(recentMessages, candidates), cancellationToken);
 
         return result switch
@@ -140,6 +163,11 @@ public enum CategorizationOutcome
 
     /// <summary>Skipped: this site has no tag vocabulary at all.</summary>
     NoTagsConfigured,
+
+    /// <summary>`25-04`: skipped because this site has not bought the AI add-on, has not enabled it, or
+    /// this conversation was created before the tenant's own cut-off. The only outcome on which
+    /// <see cref="IConversationCategorizer"/> is never even constructed, let alone called.</summary>
+    NotPermitted,
 
     /// <summary>The provider was unreachable or degraded this cycle - left untouched for the job's own
     /// next cycle to retry, while the conversation is still within its lookback window.</summary>

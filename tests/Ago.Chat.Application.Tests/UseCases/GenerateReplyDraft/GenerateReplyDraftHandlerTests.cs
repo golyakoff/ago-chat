@@ -57,7 +57,8 @@ public class GenerateReplyDraftHandlerTests
             readStore,
             permissions,
             rateLimiter ?? new FakeRateLimiter(),
-            generator,
+            new Lazy<IReplyDraftGenerator>(() => generator),
+            AiGates.Allowing(SiteId),
             new ReplyDraftOptions(),
             new ReplyDraftRateLimitOptions());
 
@@ -207,7 +208,8 @@ public class GenerateReplyDraftHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.ConversationSend);
 
         var handler = new GenerateReplyDraftHandler(
-            conversations, readStore, permissions, new FakeRateLimiter(), generator, new ReplyDraftOptions(), new ReplyDraftRateLimitOptions());
+            conversations, readStore, permissions, new FakeRateLimiter(), new Lazy<IReplyDraftGenerator>(() => generator),
+            AiGates.Allowing(SiteId), new ReplyDraftOptions(), new ReplyDraftRateLimitOptions());
 
         await handler.HandleAsync(new GenerateReplyDraftAsOperator(target.Id, OperatorId, SiteId), CancellationToken.None);
 

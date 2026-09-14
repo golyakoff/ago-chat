@@ -23,5 +23,12 @@ internal static class KnownModuleKeys
         // report for the honest finding on whether guard 2 (ModuleKeyLiteralRule) actually catches an
         // opaque, non-English module key the way guard 1 (the IL word-list scan) cannot.
         "faq",
+
+        // `25-04`: the AI add-on, sold through the identical `22-07` module-quantity machinery. Unlike
+        // the two above it is not an external module with an entry point - it is AGO Chat's own feature,
+        // priced separately - but its *key* lives in the same registry and is resolved the same way
+        // (`AiAddOnOptions.ModuleKey`, deployment configuration), so a literal of it inside `src/` would
+        // be the same shortcut this guard exists to catch.
+        "ai",
     };
 }

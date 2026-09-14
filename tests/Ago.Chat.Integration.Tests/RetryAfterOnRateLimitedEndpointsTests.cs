@@ -205,7 +205,11 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             new NeverCalledConversationReadStore(),
             new AllowAllPermissionChecker(),
             new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(359)),
-            new NeverCalledReplyDraftGenerator(),
+            // `25-04`: the generator arrives lazily now, and this test's own point is that it is never
+            // reached - the rate limiter refuses first. The gate is permissive here so the refusal under
+            // test is the rate limiter's, not the add-on's.
+            new Lazy<IReplyDraftGenerator>(() => new NeverCalledReplyDraftGenerator()),
+            AiGateFixtures.Allowing(),
             new ReplyDraftOptions(),
             rateLimitOptions);
 

@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.AiAddOn;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -28,13 +29,24 @@ namespace Ago.Chat.Application.UseCases.GenerateReplyDraft;
 /// this method can do with a successful draft is return it to the caller, who is `ReplyDraftEndpoints`,
 /// whose own response body is read by a browser, not by anything capable of sending a message on the
 /// operator's behalf.</para>
+///
+/// <para><b>`25-04`: the add-on gate, and why <see cref="IReplyDraftGenerator"/> arrives as a
+/// <see cref="Lazy{T}"/>.</b> The operator-facing half of "nothing reaches the vendor until a tenant has
+/// bought the add-on and turned it on". The gate is checked *after* the permission and assignment checks
+/// (an operator with no business touching this conversation should be told that, not told about the
+/// tenant's billing) and *before* the rate limiter, because a refused request must not consume a bucket
+/// it was never going to spend. Holding the generator lazily is what makes "the real client is not even
+/// constructed for a tenant who has not bought this" a property a test can assert
+/// (<see cref="Lazy{T}.IsValueCreated"/>) rather than a claim in a comment - the identical shape and the
+/// identical reasoning <c>CategorizeConversationHandler</c>'s own remarks give.</para>
 /// </summary>
 public sealed class GenerateReplyDraftHandler(
     IConversationRepository conversations,
     IConversationReadStore readStore,
     IPermissionChecker permissions,
     IRateLimiter rateLimiter,
-    IReplyDraftGenerator generator,
+    Lazy<IReplyDraftGenerator> generator,
+    AiProcessingGate aiGate,
     ReplyDraftOptions options,
     ReplyDraftRateLimitOptions rateLimitOptions)
 {
@@ -57,6 +69,15 @@ public sealed class GenerateReplyDraftHandler(
         if (conversation.OperatorId != command.RequestedBy)
         {
             return ConversationErrors.Forbidden("This operator is not assigned to this conversation.");
+        }
+
+        // `25-04`: before the rate limiter and before `generator.Value` is ever touched. The cut-off is
+        // compared against the conversation's own CreatedAt, the same test the background categoriser
+        // applies - AiAddOnEnablement's own remarks for why creation and not close.
+        var decision = await aiGate.EvaluateAsync(command.SiteId, conversation.CreatedAt, cancellationToken);
+        if (decision != AiProcessingDecision.Allowed)
+        {
+            return ConversationErrors.ReplyDraftUnavailable(ReplyDraftRefusalReason(decision));
         }
 
         // Per-operator first, then per-site - `ReplyDraftRateLimitOptions`'s own remarks on why this
@@ -102,7 +123,7 @@ public sealed class GenerateReplyDraftHandler(
                 m.Body))
             .ToList();
 
-        var result = await generator.GenerateDraftAsync(
+        var result = await generator.Value.GenerateDraftAsync(
             new ReplyDraftGenerationRequest(recentMessages), cancellationToken);
 
         return result switch
@@ -112,6 +133,21 @@ public sealed class GenerateReplyDraftHandler(
             _ => throw new InvalidOperationException($"Unhandled {nameof(ReplyDraftGenerationResult)} case: {result.GetType()}."),
         };
     }
+
+    /// <summary>`25-04`: the operator-facing wording for each refusal - three distinct sentences, because
+    /// "your company has not bought this", "nobody has switched it on yet" and "this conversation started
+    /// before it was switched on" send an operator to three different people. Reusing
+    /// <c>ConversationErrors.ReplyDraftUnavailable</c> rather than minting a new error code is deliberate:
+    /// from the console's point of view a draft that cannot be produced is one outcome with one place to
+    /// render it, and `19-01` already built that path for a degraded provider.</summary>
+    private static string ReplyDraftRefusalReason(AiProcessingDecision decision) => decision switch
+    {
+        AiProcessingDecision.NotPurchased => "The AI add-on is not part of this workspace's subscription.",
+        AiProcessingDecision.NotEnabled => "The AI add-on has not been enabled for this workspace.",
+        AiProcessingDecision.BeforeCutOff =>
+            "This conversation started before the AI add-on was enabled, so its text is never sent to the provider.",
+        _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, "Unhandled AI processing decision."),
+    };
 }
 
 /// <summary>The one thing a caller gets back - deliberately just the text, nothing that could be
