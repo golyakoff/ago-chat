@@ -32,6 +32,12 @@ internal sealed class AttachmentConfiguration : IEntityTypeConfiguration<Attachm
         // before its writer does" shape `ThumbnailKey` above already established for `5-04`.
         builder.Property(a => a.ContentHash).HasColumnName("content_hash");
 
+        // `23-82`/`23-80`: see Attachment.DownloadCount's own remarks. A plain default-0 counter and
+        // a nullable timestamp, the same shape `attachment_bytes_reserved` (sites) already uses for a
+        // maintained running total.
+        builder.Property(a => a.DownloadCount).HasColumnName("download_count").HasDefaultValue(0L);
+        builder.Property(a => a.LastDownloadedAt).HasColumnName("last_downloaded_at");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(a => a.SiteId);
         builder.HasOne<Conversation>().WithMany().HasForeignKey(a => a.ConversationId);
 
@@ -49,9 +55,27 @@ internal sealed class AttachmentConfiguration : IEntityTypeConfiguration<Attachm
             .HasDatabaseName("ix_attachments_site_content_hash")
             .HasFilter("state = 'Ready' AND content_hash IS NOT NULL");
 
-        // No index on (state, created_at) yet - `5-03` has no query that filters attachments by
-        // state (GetByIdAsync is a PK lookup). `5-04`'s orphan sweep gets one when it gets a real
-        // reader (db-migration skill: "every new query path gets its index decided consciously"),
-        // not speculatively ahead of one.
+        // `23-80`: the storage screen's own two real readers - `ListSiteAttachmentsHandler` filters
+        // every query to this tenant's `Ready` rows and defaults to "by size, descending" (the
+        // backlog item's own words: "somebody clearing space wants the top of that list"), so that is
+        // the index built for the default path, not a speculative one ahead of a real reader (the
+        // `5-04` comment this replaces named exactly that discipline - this is the reader arriving).
+        // The type/conversation/sender sort orders reuse the base `(site_id, state)` prefix below and
+        // sort the already-narrowed row set without their own index - a tenant's own attachment count
+        // is not the platform-wide row count `5-04`'s orphan sweep was reasoning about, and a second
+        // and third single-purpose index for every remaining sort order was not judged worth its own
+        // write cost without a measured case that the base-filtered sort is actually slow (CLAUDE.md
+        // rule 7).
+        builder.HasIndex(a => new { a.SiteId, a.State, a.SizeBytes })
+            .HasDatabaseName("ix_attachments_site_state_size")
+            .HasFilter("state = 'Ready'");
+
+        // The age sort - "what most cleanups are actually keyed on" (23-80's own words) - and the
+        // never-downloaded filter both key off a second, equally cheap prefix; combined into one
+        // index rather than two because `created_at` and `download_count` are both narrow columns a
+        // single btree carries without meaningfully growing over the size-sorted index above.
+        builder.HasIndex(a => new { a.SiteId, a.State, a.CreatedAt, a.DownloadCount })
+            .HasDatabaseName("ix_attachments_site_state_created_download")
+            .HasFilter("state = 'Ready'");
     }
 }

@@ -48,7 +48,11 @@ using Ago.Chat.Application.UseCases.ListTags;
 using Ago.Chat.Application.UseCases.RenameTag;
 using Ago.Chat.Application.UseCases.TagConversation;
 using Ago.Chat.Application.UseCases.UntagConversation;
+using Ago.Chat.Application.UseCases.BulkDeleteSiteAttachments;
 using Ago.Chat.Application.UseCases.DeleteAttachment;
+using Ago.Chat.Application.UseCases.GetSiteAttachmentEgress;
+using Ago.Chat.Application.UseCases.GetSiteAttachmentStorageSummary;
+using Ago.Chat.Application.UseCases.ListSiteAttachments;
 using Ago.Chat.Application.UseCases.DeliverChannelMessage;
 using Ago.Chat.Application.UseCases.GetChannelDeliveriesForConversation;
 using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
@@ -1054,6 +1058,12 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<UpdateContactVisibilityHandler>();
         services.AddScoped<GetContactRevealsForSiteHandler>();
         services.AddScoped<DeleteAttachmentHandler>();
+        // `23-80`/`23-82`: "Администрирование -> Хранилище" - see each handler's own remarks.
+        services.AddScoped<ListSiteAttachmentsHandler>();
+        services.AddScoped<GetLargestConversationsForSiteHandler>();
+        services.AddScoped<GetSiteAttachmentStorageSummaryHandler>();
+        services.AddScoped<GetSiteAttachmentEgressHandler>();
+        services.AddScoped<BulkDeleteSiteAttachmentsHandler>();
         services.AddScoped<GetMyPermissionsHandler>();
         // `6-02`: the first real caller of Conversation.Close() - see the handler's own remarks.
         services.AddScoped<CloseConversationHandler>();

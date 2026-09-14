@@ -71,6 +71,32 @@ public sealed class Attachment
 
     public DateTimeOffset CreatedAt { get; }
 
+    /// <summary>`23-82`/`23-80`: the per-attachment half of "count downloads... at the point a
+    /// presigned GET is issued" - the other half is <c>site_attachment_egress</c>, the maintained
+    /// per-tenant-per-month aggregate `23-82`'s own port writes. This one lives on the aggregate
+    /// itself, not a side table, because "has this ever been downloaded" (`23-80`'s own filter) and
+    /// "how many times" are facts about *this* attachment, the same ownership `ThumbnailKey`/
+    /// <see cref="ContentHash"/> already have. Nullable and unpopulated for every attachment that
+    /// predates this column - the same "the column exists before its writer does" shape those two
+    /// established; a `null` here is an honest "never downloaded," not a lie about a bound this
+    /// system never watched.
+    ///
+    /// <para><b>Counted once per fresh presign, not once per byte actually served.</b>
+    /// <see cref="RecordDownload"/>'s only caller (<c>GetAttachmentDownloadUrlHandler</c>) runs it
+    /// only when a *new* presigned URL is minted - a cache hit within that URL's own TTL (`file-storage.md`)
+    /// returns the same link again without calling back here. That is a second, larger undercount on
+    /// top of the one `23-82`'s own backlog item already names for the browser-cache case: two calls to
+    /// this handler inside one cache window register as one recorded download, not two. Still the
+    /// correct proxy to keep - the alternative (recording on every call, cache hit or miss) would count
+    /// polling/prefetching behaviour this codebase does not control either, and would not be closer to
+    /// the storage provider's own egress figure, which remains the one true count either way.</para>
+    /// </summary>
+    public long DownloadCount { get; private set; }
+
+    /// <summary>See <see cref="DownloadCount"/>'s own remarks. `null` until the first recorded
+    /// download; <see cref="IClock"/>-sourced (rule 11), never a database default.</summary>
+    public DateTimeOffset? LastDownloadedAt { get; private set; }
+
     /// <summary>`5-03` had no consumer for this yet, so <see cref="Attachment"/> raised nothing;
     /// `5-04`'s thumbnail consumer is the first real one - same "no domain-event plumbing ahead of a
     /// real subscriber" discipline as `ConfirmReady`'s own original remarks.</summary>
@@ -188,6 +214,19 @@ public sealed class Attachment
     /// is what actually prevents a redelivered `AttachmentReady` from generating a second thumbnail -
     /// this method only guards the invariant a caller that skipped that check would otherwise violate.
     /// </summary>
+    /// <summary>`23-82`/`23-80`: called by <c>GetAttachmentDownloadUrlHandler</c> exactly when it
+    /// mints a fresh presigned GET - see <see cref="DownloadCount"/>'s own remarks for why that is a
+    /// cache-miss-only count, not a per-request one. Allowed from any state, deliberately unlike every
+    /// other mutator on this type: a <see cref="AttachmentState.Deleted"/> attachment cannot reach this
+    /// call (the handler refuses the download itself before ever calling here), but nothing about
+    /// *this* method's own contract should depend on that caller-side ordering staying true forever -
+    /// counting a download is never itself a state transition this type needs to protect.</summary>
+    public void RecordDownload(DateTimeOffset now)
+    {
+        DownloadCount++;
+        LastDownloadedAt = now;
+    }
+
     public void SetThumbnail(string thumbnailKey)
     {
         if (State != AttachmentState.Ready)
