@@ -38,6 +38,21 @@ namespace Ago.Chat.Application.UseCases.StartConversation;
 /// so the loser simply returns it, exactly as if <c>existing is not null</c> had been true from the
 /// start. Not a retry-and-reapply like `MarkConversationReadHandler`'s own shape: there is nothing
 /// to reapply, "start a conversation" has no decision left to make once one already exists.</para>
+///
+/// <para><b>`25-67`: the identical shape, one step earlier - two concurrent callers for the same
+/// brand-new <c>visitor_id</c> (the exact race the paragraph above names, one microsecond before it,
+/// since it needs a <see cref="Visitor"/> row to exist before it can even race on a
+/// <see cref="Domain.Conversation"/>) both see <see cref="IVisitorRepository.GetByIdAsync"/> answer
+/// null and both construct a <see cref="Visitor"/>.</b> The read cannot see a row that has not been
+/// saved yet, for the same reason the conversation read above cannot - the fix is `PK_visitors` itself
+/// (no new index needed, unlike the conversation half: a primary key already rejects a second row for
+/// the same id, unconditionally, with no migration to write). `VisitorRepository.SaveAsync` translates
+/// the loser's insert into <see cref="VisitorConcurrencyConflictException"/> (its own remarks); caught
+/// here, once, the loser discards its local copy and re-reads - there is no field on
+/// <see cref="Visitor"/> worth reconciling between two racing inserts built from the same
+/// <c>visitor_id</c>/<c>site_id</c> (only the emoji pair could differ, and nothing downstream reads
+/// "this visitor's own pair" as a decision worth serializing on), so this is a plain re-read, never a
+/// retry-and-reapply.</para>
 /// </summary>
 public sealed class StartConversationHandler(
     IVisitorRepository visitors,
@@ -70,7 +85,26 @@ public sealed class StartConversationHandler(
             visitor.Touch(now);
         }
 
-        await visitors.SaveAsync(visitor, cancellationToken);
+        try
+        {
+            await visitors.SaveAsync(visitor, cancellationToken);
+        }
+        catch (VisitorConcurrencyConflictException)
+        {
+            // Lost the race - see this class's own remarks. The winner committed first, so it is
+            // there to be read now.
+            var winner = await visitors.GetByIdAsync(command.VisitorId, cancellationToken);
+            if (winner is null)
+            {
+                // Unreachable by construction: the constraint that produced this exception only fires
+                // when a matching row already exists. Rethrown rather than silently treated as "no
+                // visitor" - the same "do not paper over a broken invariant" choice this handler's own
+                // conversation-race catch below makes for a null it cannot explain either.
+                throw;
+            }
+
+            visitor = winner;
+        }
 
         var existing = await conversations.GetActiveForVisitorAsync(command.VisitorId, cancellationToken);
         if (existing is not null)
