@@ -34,6 +34,7 @@ using Ago.Chat.Api.ContactVisibility;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.WidgetConfig;
 using Ago.Chat.Api.WidgetActivity;
+using Ago.Chat.Api.Storage;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Postgres;
@@ -429,6 +430,9 @@ app.MapPrometheusScrapingEndpoint();
 app.MapAuthEndpoints();
 app.MapWidgetActivityEndpoints();
 app.MapAttachmentEndpoints();
+// `23-80`/`23-82`: own Map call - "Администрирование -> Хранилище"'s own read/bulk-delete surface,
+// entirely separate from the per-attachment create/confirm/download/delete routes above it.
+app.MapSiteAttachmentStorageEndpoints();
 app.MapConversationsEndpoints();
 // `23-69`/`23-77`: own Map call, the identical "a test host mapping only MapConversationsEndpoints
 // must never be made to resolve GetVisitorRestrictionsForSiteHandler/LiftVisitorRestrictionHandler

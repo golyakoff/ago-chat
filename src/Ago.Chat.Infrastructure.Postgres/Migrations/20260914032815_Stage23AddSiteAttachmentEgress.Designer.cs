@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914032815_Stage23AddSiteAttachmentEgress")]
+    partial class Stage23AddSiteAttachmentEgress
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -139,14 +142,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.HasIndex("SiteId", "ContentHash")
                         .HasDatabaseName("ix_attachments_site_content_hash")
                         .HasFilter("state = 'Ready' AND content_hash IS NOT NULL");
-
-                    b.HasIndex("SiteId", "State", "SizeBytes")
-                        .HasDatabaseName("ix_attachments_site_state_size")
-                        .HasFilter("state = 'Ready'");
-
-                    b.HasIndex("SiteId", "State", "CreatedAt", "DownloadCount")
-                        .HasDatabaseName("ix_attachments_site_state_created_download")
-                        .HasFilter("state = 'Ready'");
 
                     b.ToTable("attachments", (string)null);
                 });

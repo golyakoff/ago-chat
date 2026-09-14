@@ -124,6 +124,25 @@ public static class ConversationErrors
     public static Error AttachmentNotReady(string reason) =>
         new("Attachment.NotReady", reason);
 
+    /// <summary>`23-80`: distinct from <see cref="AttachmentNotReady"/> above on purpose - that code
+    /// covers a `Pending` attachment still waiting on its own confirm, which is transient and worth
+    /// retrying; this one is <see cref="Domain.AttachmentState.Deleted"/>, which is permanent and never
+    /// worth retrying. A client that cannot tell the two apart has no way to render "this file was
+    /// removed" instead of quietly retrying a download that will never succeed - the exact "broken link
+    /// or missing image" `23-80`'s own Scope asks this codebase not to produce. The conversation's own
+    /// message row is untouched by a delete (`Domain.Attachment.MarkDeleted` never rewrites
+    /// <c>Message.AttachmentId</c>), so this is the one place a client learns the reference it already
+    /// has now points at nothing recoverable.</summary>
+    public static Error AttachmentRemoved(Guid attachmentId) =>
+        new("Attachment.Removed", $"Attachment {attachmentId} was removed and is no longer available.");
+
+    /// <summary>`23-80`'s own bulk-delete - a request-size ceiling this codebase already applies
+    /// elsewhere (<c>GetAccessRecordsForSiteHandler.MaxLimit</c>) for the same reason: an unbounded
+    /// list from an HTTP body is a caller mistake to catch early, not a limit worth discovering by
+    /// timeout.</summary>
+    public static Error AttachmentBulkDeleteTooMany(int requested, int max) =>
+        new("Attachment.BulkDeleteTooMany", $"Requested {requested} attachments; at most {max} may be deleted in one call.");
+
     // `6-03`: same shared vocabulary, same reason - one place a client branching on `type` looks,
     // regardless of which use case raised it.
     public static Error WebhookEndpointNotFound(Guid webhookEndpointId) =>

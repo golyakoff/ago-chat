@@ -6,14 +6,21 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Consent;
 using Ago.Chat.Api.OfflineAutoReply;
 using Ago.Chat.Api.Sites;
+using Ago.Chat.Api.Storage;
 using Ago.Chat.Api.Webhooks;
 using Ago.Chat.Api.WidgetConfig;
+using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.BulkDeleteSiteAttachments;
+using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
+using Ago.Chat.Application.UseCases.GetSiteAttachmentEgress;
+using Ago.Chat.Application.UseCases.GetSiteAttachmentStorageSummary;
 using Ago.Chat.Application.UseCases.GetSiteConsentAcceptances;
 using Ago.Chat.Application.UseCases.GetSiteConsentDocuments;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
+using Ago.Chat.Application.UseCases.ListSiteAttachments;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.PublishDocumentVersion;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
@@ -82,9 +89,12 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
     /// all.</param>
     /// <param name="VictimEndpointId">A webhook endpoint belonging to the victim, so the
     /// belongs-to-site branch can be reached with a real id rather than a made-up one.</param>
+    /// <param name="VictimAttachmentId">`23-80`: a real, <c>Ready</c> attachment belonging to the
+    /// victim's own conversation - so <see cref="SiteAttachmentStorageRoutes_RefuseAnotherTenantsSite_AndDeleteNothing"/>
+    /// can prove the bulk-delete route refuses a real id, not only an empty selection.</param>
     private sealed record Scenario(
         string AccessToken, OperatorId CallerOperatorId, SiteId CallerSiteId, SiteId VictimSiteId,
-        WebhookEndpointId VictimEndpointId);
+        WebhookEndpointId VictimEndpointId, AttachmentId VictimAttachmentId);
 
     [Fact]
     public async Task TheCallerReallyHoldsBothPermissions_OnTheirOwnSite()
@@ -327,6 +337,50 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         Assert.True(stored!.Active, "the victim's endpoint must not have been revoked");
     }
 
+    /// <summary>
+    /// `23-80`: the fifth client-supplied-`siteId` route group - "Администрирование -> Хранилище"'s
+    /// own five routes (list, largest-conversations, storage-summary, egress, bulk-delete), all gated
+    /// by <see cref="Permission.SiteConfigure"/>, the identical permission the widget-config and
+    /// consent-document groups above already exercise for this same caller. Proves both halves of the
+    /// item's own "tenant-scoped, proven by fault injection rather than by inspection" requirement:
+    /// every `GET` refuses the victim's site outright, and the bulk-delete `POST` - given the victim's
+    /// own real attachment id, under the victim's own siteId in the route - is refused and deletes
+    /// nothing, checked against the row rather than trusted from the status code.
+    /// </summary>
+    [Fact]
+    public async Task SiteAttachmentStorageRoutes_RefuseAnotherTenantsSite_AndDeleteNothing()
+    {
+        var scenario = await SetUpAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, scenario.AccessToken);
+
+        var own = $"/api/v1/sites/{scenario.CallerSiteId.Value}/attachments";
+        var victim = $"/api/v1/sites/{scenario.VictimSiteId.Value}/attachments";
+
+        // Positive control first, the same reasoning every route group above states: a 403 on the
+        // victim route means "this site, not you" only if the identical caller's own site really does
+        // answer 200.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(own)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"{own}/largest-conversations")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"{own}/storage-summary")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"{own}/egress")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(victim)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync($"{victim}/largest-conversations")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync($"{victim}/storage-summary")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync($"{victim}/egress")).StatusCode);
+
+        var bulkDelete = await client.PostAsJsonAsync(
+            $"{victim}/bulk-delete", new { attachmentIds = new[] { scenario.VictimAttachmentId.Value } });
+        Assert.Equal(HttpStatusCode.Forbidden, bulkDelete.StatusCode);
+
+        // The refused bulk-delete really did not touch the victim's own attachment - the same "check
+        // the row, not only the status code" discipline every write route above already applies.
+        await using var db = fixture.CreateDbContext();
+        var victimAttachment = await new AttachmentRepository(db).GetByIdAsync(scenario.VictimAttachmentId, CancellationToken.None);
+        Assert.Equal(AttachmentState.Ready, victimAttachment!.State);
+    }
+
     private const string VictimColorHex = "#0000ff";
 
     /// <summary>
@@ -390,7 +444,22 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
             await new WebhookEndpointRepository(db).SaveAsync(endpoint, CancellationToken.None);
         }
 
-        return new Scenario(accessToken, callerOperatorId, callerSiteId, victimSiteId, victimEndpointId);
+        var victimAttachmentId = new AttachmentId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            var victimVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(victimVisitorId, victimSiteId, Now));
+            var victimConversationId = new ConversationId(Guid.NewGuid());
+            db.Conversations.Add(Conversation.Start(victimConversationId, victimSiteId, victimVisitorId, Now));
+            var victimAttachment = Attachment.CreatePending(
+                victimAttachmentId, victimSiteId, victimConversationId, $"site/{victimSiteId.Value:N}/z.png",
+                "image/png", 1024, Now);
+            victimAttachment.ConfirmReady(1024, "image/png", Now);
+            db.Attachments.Add(victimAttachment);
+            await db.SaveChangesAsync();
+        }
+
+        return new Scenario(accessToken, callerOperatorId, callerSiteId, victimSiteId, victimEndpointId, victimAttachmentId);
     }
 
     private static HttpClient CreateClient(WebApplication host, string token)
@@ -465,6 +534,23 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<PublishDocumentVersionHandler>();
         builder.Services.AddScoped<GetSiteConsentDocumentsHandler>();
         builder.Services.AddScoped<GetSiteConsentAcceptancesHandler>();
+        // `23-80`/`23-82`: the fifth client-supplied-`siteId` route group -
+        // `SiteAttachmentStorageEndpoints`'s own five routes.
+        builder.Services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+        builder.Services.AddScoped<ISiteAttachmentStorageBudget, SiteAttachmentStorageBudgetStore>();
+        builder.Services.AddScoped<IAttachmentEgressMeter, AttachmentEgressMeterStore>();
+        builder.Services.AddScoped<IAttachmentEgressReadStore, AttachmentEgressReadStore>();
+        builder.Services.AddScoped<IAttachmentBudgetReadStore, AttachmentBudgetReadStore>();
+        builder.Services.AddScoped<ISiteAttachmentListReadStore, SiteAttachmentListReadStore>();
+        builder.Services.AddScoped<IBillingSubscriptionRepository, BillingSubscriptionRepository>();
+        builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        builder.Services.AddSingleton<Ago.Platform.Abstractions.IFileStorage, FakeFileStorage>();
+        builder.Services.AddSingleton(new AttachmentStorageQuotaOptions());
+        builder.Services.AddScoped<ListSiteAttachmentsHandler>();
+        builder.Services.AddScoped<GetLargestConversationsForSiteHandler>();
+        builder.Services.AddScoped<GetSiteAttachmentStorageSummaryHandler>();
+        builder.Services.AddScoped<GetSiteAttachmentEgressHandler>();
+        builder.Services.AddScoped<BulkDeleteSiteAttachmentsHandler>();
 
         builder.Services.AddAuthentication()
             .AddJwtBearer(JwtSchemes.Operator, options =>
@@ -495,6 +581,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         app.MapSiteInstallationEndpoints();
         // `23-37`
         app.MapSiteConsentDocumentEndpoints();
+        // `23-80`/`23-82`
+        app.MapSiteAttachmentStorageEndpoints();
 
         await app.StartAsync();
         return app;

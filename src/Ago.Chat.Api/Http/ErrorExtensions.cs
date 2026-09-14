@@ -209,7 +209,12 @@ public static class ErrorExtensions
                 // `25-77`: the removal direction's own mistake to fix - a blank/missing/over-length
                 // reason, required unconditionally on every removal (never conditional on a force flag
                 // the way Module.RevokeReasonRequired is).
-                or "Role.PermissionRemovalReasonRequired" => StatusCodes.Status400BadRequest,
+                or "Role.PermissionRemovalReasonRequired"
+                // `23-80`: the caller's own mistake to fix - more attachment ids in one bulk-delete
+                // call than BulkDeleteSiteAttachmentsHandler.MaxBatchSize allows. The identical
+                // "brand-new code this item's own new route can actually produce" reasoning every
+                // other 400 in this group already states for itself.
+                or "Attachment.BulkDeleteTooMany" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -301,7 +306,10 @@ public static class ErrorExtensions
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
             // PhoneVerificationExpired's own remarks.
-            "OperatorInvite.Expired" or "PhoneVerification.Expired" => StatusCodes.Status410Gone,
+            // `23-80`: the identical shape for a deliberately-deleted attachment - ConversationErrors.
+            // AttachmentRemoved's own remarks on why this is a distinct code from Attachment.NotReady
+            // (400-shaped, retryable) rather than folded into it.
+            "OperatorInvite.Expired" or "PhoneVerification.Expired" or "Attachment.Removed" => StatusCodes.Status410Gone,
             // `13-01`'s own reasoned choice: `402 Payment Required`, not a generic `409` - the actual
             // remedy for a site at its seat limit is "upgrade", not "retry", which `402` signals
             // honestly and `409` does not (ConversationErrors.OperatorInviteSeatLimitReached's own

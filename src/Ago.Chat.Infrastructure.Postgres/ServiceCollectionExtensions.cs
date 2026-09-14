@@ -45,6 +45,12 @@ public static class ServiceCollectionExtensions
         // port rather than a method on IAttachmentRepository/IConversationRepository.
         services.AddScoped<IConversationAttachmentBudget, ConversationAttachmentBudgetStore>();
         services.AddScoped<ISiteAttachmentStorageBudget, SiteAttachmentStorageBudgetStore>();
+        // `23-82`/`23-80`: the download-tracking and storage-visibility ports - see each one's own
+        // remarks for why none of the three widens ISiteAttachmentStorageBudget itself.
+        services.AddScoped<IAttachmentEgressMeter, AttachmentEgressMeterStore>();
+        services.AddScoped<IAttachmentEgressReadStore, AttachmentEgressReadStore>();
+        services.AddScoped<IAttachmentBudgetReadStore, AttachmentBudgetReadStore>();
+        services.AddScoped<ISiteAttachmentListReadStore, SiteAttachmentListReadStore>();
         services.AddScoped<IOperatorRepository, OperatorRepository>();
         services.AddScoped<IVisitorRepository, VisitorRepository>();
         // `25-56`: singleton, the same "holds no state beyond the platform's own CSPRNG" shape
