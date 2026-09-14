@@ -532,6 +532,9 @@ app.MapTenantAgreementsEndpoint();
 // `10-06`: own file, own Map call - see SiteInstallationEndpoints' own remarks on why it is not
 // folded into MapSitesEndpoints above.
 app.MapSiteInstallationEndpoints();
+// `25-70`: own file, own Map call - see SiteSuspensionEndpoints' own remarks; the tenant's own read of
+// its own account's suspension state.
+app.MapSiteSuspensionEndpoints();
 // `13-01`
 app.MapOperatorInviteEndpoints();
 // `8-07`: the anonymous demo-credential route. Registered unconditionally; the handler refuses when

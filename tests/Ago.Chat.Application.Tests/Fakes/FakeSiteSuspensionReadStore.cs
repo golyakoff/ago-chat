@@ -11,7 +11,20 @@ public sealed class FakeSiteSuspensionReadStore : ISiteSuspensionReadStore
 {
     private readonly Dictionary<SiteId, DateTimeOffset> _suspendedUntil = [];
 
+    // `25-70`: when a site suspended through the plain `Suspend(siteId, until)` overload every other
+    // test already calls, this fake has no real "since" to report - real suspend/extend go through
+    // separate `site_suspensions` rows the production adapter reads, which a two-field dictionary
+    // cannot model faithfully. Tests that care about `GetForTenantAsync`'s own `Since` value call
+    // `Suspend(siteId, until, since)` instead.
+    private readonly Dictionary<SiteId, DateTimeOffset> _suspendedSince = [];
+
     public void Suspend(SiteId siteId, DateTimeOffset until) => _suspendedUntil[siteId] = until;
+
+    public void Suspend(SiteId siteId, DateTimeOffset until, DateTimeOffset since)
+    {
+        _suspendedUntil[siteId] = until;
+        _suspendedSince[siteId] = since;
+    }
 
     public Task<bool> IsSuspendedAsync(SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken) =>
         Task.FromResult(_suspendedUntil.TryGetValue(siteId, out var until) && until > now);
@@ -26,4 +39,16 @@ public sealed class FakeSiteSuspensionReadStore : ISiteSuspensionReadStore
             _suspendedUntil.Where(kv => kv.Value > now)
                 .Select(kv => new OwnerSuspensionSummary(kv.Key, "site", kv.Value, "owner", "reason", now))
                 .ToList());
+
+    public Task<TenantSuspensionStatus> GetForTenantAsync(
+        SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (!_suspendedUntil.TryGetValue(siteId, out var until) || until <= now)
+        {
+            return Task.FromResult(new TenantSuspensionStatus(IsSuspended: false, Since: null, Until: null));
+        }
+
+        var since = _suspendedSince.TryGetValue(siteId, out var recordedSince) ? recordedSince : (DateTimeOffset?)null;
+        return Task.FromResult(new TenantSuspensionStatus(IsSuspended: true, since, until));
+    }
 }
