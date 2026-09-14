@@ -11,9 +11,16 @@ public class RevokeChannelCredentialHandlerTests
 
     private sealed record Fixture(
         Application.UseCases.RevokeChannelCredential.RevokeChannelCredentialHandler Handler,
-        FakeChannelCredentialRepository Credentials, ChannelCredential Credential);
+        FakeChannelCredentialRepository Credentials, ChannelCredential Credential,
+        FakeBillingOptionEntitlementProvider Entitlements, FakeModuleQuantityGrantStore Grants);
 
-    private static Fixture CreateFixture(bool grantPermission = true, SiteId? credentialSiteId = null)
+    /// <summary>`23-85`: <paramref name="grantEntitlement"/> defaults to <see langword="true"/> -
+    /// every pre-existing test here predates the entitlement gate and exercises something else
+    /// entirely (idempotency, the not-found paths, cross-site scoping). The gate's own tests opt out
+    /// explicitly below.</summary>
+    private static Fixture CreateFixture(
+        bool grantPermission = true, bool grantEntitlement = true, SiteId? credentialSiteId = null,
+        ChannelKind kind = ChannelKind.Max)
     {
         var credentials = new FakeChannelCredentialRepository();
         var permissions = new FakePermissionChecker();
@@ -22,14 +29,25 @@ public class RevokeChannelCredentialHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ChannelManage);
         }
 
+        var entitlements = new FakeBillingOptionEntitlementProvider();
+        var grants = new FakeModuleQuantityGrantStore();
+        if (grantEntitlement)
+        {
+            var optionKey = ChannelEntitlementOptionKeys.For(kind);
+            var moduleKey = new ModuleKey(optionKey.Value);
+            entitlements.Map(optionKey, moduleKey);
+            _ = grants.GrantAsync(credentialSiteId ?? SiteId, moduleKey, 1, Now, CancellationToken.None);
+        }
+
         var credential = ChannelCredential.Register(
-            new ChannelCredentialId(Guid.NewGuid()), credentialSiteId ?? SiteId, ChannelKind.Max,
+            new ChannelCredentialId(Guid.NewGuid()), credentialSiteId ?? SiteId, kind,
             [1, 2, 3], [4, 5, 6], Now);
         credentials.Seed(credential);
 
         return new Fixture(
-            new Application.UseCases.RevokeChannelCredential.RevokeChannelCredentialHandler(credentials, permissions),
-            credentials, credential);
+            new Application.UseCases.RevokeChannelCredential.RevokeChannelCredentialHandler(
+                credentials, permissions, entitlements, grants),
+            credentials, credential, entitlements, grants);
     }
 
     [Fact]
@@ -70,6 +88,26 @@ public class RevokeChannelCredentialHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    /// <summary>`23-85`/`adr/0151`'s own literal Scope text: "connecting, rotating or revoking a
+    /// channel credential requires a channel entitlement." Implemented literally here even though the
+    /// worker report that shipped this test flags a tension with it - see
+    /// <c>RevokeChannelCredentialHandler</c>'s own remarks. Fails-before: reverting the entitlement
+    /// check makes this test fail with the credential actually revoked instead of refused.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheAccountHasNoChannelEntitlement_ReturnsChannelNotEntitled()
+    {
+        var fixture = CreateFixture(grantEntitlement: false);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RevokeChannelCredential.RevokeChannelCredential(fixture.Credential.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.NotEntitled", result.Error!.Value.Code);
+        var stored = await fixture.Credentials.GetByIdAsync(fixture.Credential.Id, CancellationToken.None);
+        Assert.True(stored!.Active);
     }
 
     [Fact]

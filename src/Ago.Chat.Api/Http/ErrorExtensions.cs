@@ -312,7 +312,14 @@ public static class ErrorExtensions
             // Operator.SeatLimitReached would if it had ever been mapped - see this file's own remarks
             // a few lines up (`23-72`) on that pre-existing, out-of-scope gap, left exactly as found.
             "OperatorInvite.SeatLimitReached" or "OperatorInvite.AdminLimitReached" or "Operator.AdminLimitReached"
-                => StatusCodes.Status402PaymentRequired,
+                // `23-85`/`adr/0151`: the identical reasoning, applied to a channel entitlement rather
+                // than a seat - the actual remedy for "this account has no channel entitlement" is
+                // "buy the option," not "retry" (a generic `403`, the group above, would say "you may
+                // never do this," which is false the moment the account pays) and not "fix the
+                // request" (`400`, ConversationErrors.ChannelInvalidToken's own group - the token the
+                // caller sent may be perfectly valid; the account just has not bought the right to use
+                // it).
+                or "ChannelCredential.NotEntitled" => StatusCodes.Status402PaymentRequired,
             // `ago-root#352`: a deployment that has not turned demo tenants on genuinely lacks this
             // capability - not "there is nothing at this path" (`404`, explicitly rejected by
             // MintDemoTenantHandler's own remarks: "not a 404 dressed as a feature flag") and not "an

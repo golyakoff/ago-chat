@@ -11,9 +11,18 @@ public class RegisterChannelCredentialHandlerTests
 
     private sealed record Fixture(
         Application.UseCases.RegisterChannelCredential.RegisterChannelCredentialHandler Handler,
-        FakeChannelCredentialRepository Credentials);
+        FakeChannelCredentialRepository Credentials,
+        FakeBillingOptionEntitlementProvider Entitlements,
+        FakeModuleQuantityGrantStore Grants);
 
-    private static Fixture CreateFixture(bool grantPermission = true, string webhookSecret = "wh_secret_abc")
+    /// <summary>`23-85`: <paramref name="grantEntitlement"/> defaults to <see langword="true"/> and
+    /// covers every <see cref="ChannelKind"/> this suite exercises (<see cref="GrantEveryChannelKind"/>)
+    /// - every existing test here predates the entitlement gate and asserts something else entirely
+    /// (token validation, the webhook secret, `ProviderAccountId`...), so defaulting to entitled keeps
+    /// them proving what they always proved. The gate itself gets its own dedicated tests below, each
+    /// of which opts out explicitly.</summary>
+    private static Fixture CreateFixture(
+        bool grantPermission = true, bool grantEntitlement = true, string webhookSecret = "wh_secret_abc")
     {
         var credentials = new FakeChannelCredentialRepository();
         var permissions = new FakePermissionChecker();
@@ -22,11 +31,29 @@ public class RegisterChannelCredentialHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ChannelManage);
         }
 
-        var handler = new Application.UseCases.RegisterChannelCredential.RegisterChannelCredentialHandler(
-            credentials, permissions, new FakeChannelCredentialCipher(), new FakeWebhookSecretGenerator(webhookSecret),
-            new FakeIdGenerator(), new FakeClock(Now));
+        var entitlements = new FakeBillingOptionEntitlementProvider();
+        var grants = new FakeModuleQuantityGrantStore();
+        if (grantEntitlement)
+        {
+            GrantEveryChannelKind(entitlements, grants);
+        }
 
-        return new Fixture(handler, credentials);
+        var handler = new Application.UseCases.RegisterChannelCredential.RegisterChannelCredentialHandler(
+            credentials, permissions, entitlements, grants, new FakeChannelCredentialCipher(),
+            new FakeWebhookSecretGenerator(webhookSecret), new FakeIdGenerator(), new FakeClock(Now));
+
+        return new Fixture(handler, credentials, entitlements, grants);
+    }
+
+    private static void GrantEveryChannelKind(FakeBillingOptionEntitlementProvider entitlements, FakeModuleQuantityGrantStore grants)
+    {
+        foreach (var kind in Enum.GetValues<ChannelKind>())
+        {
+            var optionKey = ChannelEntitlementOptionKeys.For(kind);
+            var moduleKey = new ModuleKey(optionKey.Value);
+            entitlements.Map(optionKey, moduleKey);
+            _ = grants.GrantAsync(SiteId, moduleKey, 1, Now, CancellationToken.None);
+        }
     }
 
     [Fact]
@@ -94,6 +121,64 @@ public class RegisterChannelCredentialHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    /// <summary>`23-85`/`adr/0151`: the item's own Done-when box, first bullet - "connecting a channel
+    /// without an entitlement is refused, in the handler." Fails-before: reverting the entitlement
+    /// check in <c>RegisterChannelCredentialHandler</c> (or granting the permission alone, as this
+    /// fixture's own default used to) makes this test fail with the credential registered instead of
+    /// refused - proven by <see cref="HandleAsync_WhenPermitted_RegistersAnActiveCredential"/> still
+    /// passing under the pre-`23-85` handler shape.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheAccountHasNoChannelEntitlement_ReturnsChannelNotEntitled()
+    {
+        var fixture = CreateFixture(grantEntitlement: false);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Telegram, "shop-bot-token"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.NotEntitled", result.Error!.Value.Code);
+        Assert.Contains("Telegram", result.Error!.Value.Message);
+        Assert.Empty(await fixture.Credentials.GetAllActiveAsync(ChannelKind.Telegram, CancellationToken.None));
+    }
+
+    /// <summary>An operator with no permission at all learns nothing about entitlement - `Forbidden`
+    /// wins over `NotEntitled` when both would apply, the same "the permission gate runs first" order
+    /// <c>RegisterChannelCredentialHandler</c>'s own remarks state.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenNeitherPermittedNorEntitled_ReturnsForbidden_NotNotEntitled()
+    {
+        var fixture = CreateFixture(grantPermission: false, grantEntitlement: false);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Telegram, "shop-bot-token"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    /// <summary>`23-85`'s own decision: one entitlement per channel kind, not one class-wide. An
+    /// account entitled for Telegram is not thereby entitled for WhatsApp.</summary>
+    [Fact]
+    public async Task HandleAsync_EntitledForOneChannelKind_DoesNotGrantAnotherKind()
+    {
+        var fixture = CreateFixture(grantEntitlement: false);
+        var telegramOption = ChannelEntitlementOptionKeys.For(ChannelKind.Telegram);
+        fixture.Entitlements.Map(telegramOption, new ModuleKey(telegramOption.Value));
+        await fixture.Grants.GrantAsync(SiteId, new ModuleKey(telegramOption.Value), 1, Now, CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.WhatsApp, "shop-bot-token"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.NotEntitled", result.Error!.Value.Code);
     }
 
     [Fact]

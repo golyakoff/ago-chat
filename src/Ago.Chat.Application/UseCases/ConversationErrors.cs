@@ -268,6 +268,17 @@ public static class ConversationErrors
     public static Error ChannelInvalidToken(string reason) =>
         new("ChannelCredential.InvalidToken", reason);
 
+    /// <summary>`23-85`/`adr/0151`: the account may hold `Permission.ChannelManage` - it is allowed to
+    /// act on this site's channels - and still have nothing to act with, because a permission answers
+    /// "who may" and an entitlement answers "has this account bought it," and the two are never the
+    /// same check (`adr/0151`'s own "Why this line and not another"). Deliberately not
+    /// <see cref="Forbidden"/>: that code teaches nothing actionable ("Forbidden" for an unpaid
+    /// capability produces a support ticket, per this item's own Scope), where this one's message names
+    /// the missing entitlement by channel kind - a sentence somebody can act on by buying the
+    /// option.</summary>
+    public static Error ChannelNotEntitled(string reason) =>
+        new("ChannelCredential.NotEntitled", reason);
+
     /// <summary>`14-08`: this deployment has not configured the public URL VK's Callback API would need
     /// to reach it - unlike MAX (which degrades to a local long-poll loop when unconfigured) or Telegram
     /// (which never needed a public URL at all), VK's webhook is this channel's only inbound mechanism,
