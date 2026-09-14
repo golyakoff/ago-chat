@@ -19,10 +19,28 @@ namespace Ago.Chat.Application.UseCases.DeleteAttachment;
 /// `Deleted` one) - accepted here the same way file-storage.md already accepts it for a confirm that
 /// never links to a message: a rare, storage-side-only leak, not a correctness bug, and a second sweep
 /// query for it is not justified by anything this item's own scope asks for.
+///
+/// <para><b>`25-79`: also releases <see cref="ISiteAttachmentStorageBudget"/>'s reservation for the
+/// attachment's own <c>SizeBytes</c>, in the same transaction as <see cref="Domain.Attachment.MarkDeleted"/>
+/// - this handler never did, from `5-08` on, so every attachment this route ever deleted stayed
+/// counted against the tenant's quota forever (a one-directional leak: reserved bytes can only grow
+/// from this path, never shrink). `BulkDeleteSiteAttachmentsHandler` (`23-80`) got this right when it
+/// was built and its own remarks name the gap; this is that same shape applied here, not a new one -
+/// <see cref="IUnitOfWork"/> wraps <see cref="Domain.Attachment.MarkDeleted"/>,
+/// <see cref="IAttachmentRepository.SaveAsync"/> and <see cref="ISiteAttachmentStorageBudget.ReleaseAsync"/>
+/// as one commit, the identical three-step block that handler already uses, for the identical reason:
+/// a crash between "row flipped to Deleted" and "budget released" must not leave the tenant either
+/// still charged for bytes that are gone or credited for bytes that never left. Only reached on the
+/// branch that actually transitions <see cref="AttachmentState.Ready"/> to
+/// <see cref="AttachmentState.Deleted"/> - the idempotent early-return just above for an
+/// already-<see cref="AttachmentState.Deleted"/> attachment runs before this and releases nothing, so
+/// a retried delete cannot double-release a budget it already released once.</para>
 /// </summary>
 public sealed class DeleteAttachmentHandler(
     IAttachmentRepository attachments,
     IFileStorage fileStorage,
+    ISiteAttachmentStorageBudget siteBudget,
+    IUnitOfWork unitOfWork,
     IPermissionChecker permissions,
     ILogger<DeleteAttachmentHandler> logger)
 {
@@ -54,8 +72,15 @@ public sealed class DeleteAttachmentHandler(
             return Result.Success();
         }
 
-        attachment.MarkDeleted();
-        await attachments.SaveAsync(attachment, cancellationToken);
+        var sizeBytes = attachment.SizeBytes;
+
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
+        {
+            attachment.MarkDeleted();
+            await attachments.SaveAsync(attachment, cancellationToken);
+            await siteBudget.ReleaseAsync(command.SiteId, sizeBytes, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
 
         await TryDeleteObjectAsync(attachment.Id, attachment.ObjectKey, cancellationToken);
 

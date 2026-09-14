@@ -21,6 +21,11 @@ public sealed class FakeSiteAttachmentStorageBudget : ISiteAttachmentStorageBudg
 
     public void SeedReserved(SiteId siteId, long bytes) => _reserved[siteId] = bytes;
 
+    /// <summary>`25-79`: lets a test assert on the reservation itself, not only on the shape of the
+    /// call that changed it - "shrinks by exactly the attachment's own size" is a claim about this
+    /// number, not just about how many times <see cref="ReleaseAsync"/> was invoked.</summary>
+    public long ReservedFor(SiteId siteId) => _reserved.GetValueOrDefault(siteId);
+
     public Task<AttachmentBudgetResult> TryReserveAsync(
         SiteId siteId, long bytes, long budgetBytes, CancellationToken cancellationToken)
     {
