@@ -21,6 +21,17 @@ namespace Ago.Chat.Concurrency.Tests;
 /// <para>Arranged, not hoped for - the identical "real concurrent write, injected at the exact moment
 /// of the loser's own <c>SaveAsync</c>" shape <c>MarkConversationReadConcurrencyTests</c>'s own
 /// <c>RacingConversationRepository</c> already established, reused here rather than duplicated.</para>
+///
+/// <para>`25-67`: the identical race, one step earlier - two concurrent first contacts for the same
+/// brand-new <c>visitor_id</c> both see <see cref="IVisitorRepository.GetByIdAsync"/> answer null and
+/// both insert, hitting <c>PK_visitors</c> rather than any conversation-scoped index. This is what
+/// originally crashed <see cref="ManyConcurrentStartsForTheSameVisitor_AllAgreeOnExactlyOneConversation"/>
+/// before that test was rewritten, out of `25-68`'s own scope, to seed the visitor ahead of time -
+/// restored to its original brand-new-visitor shape below now that this fix exists, and joined by a
+/// deterministic two-way race (<see cref="RacingVisitorRepository"/>) proving the exact mechanism, the
+/// same pairing <see cref="TwoConcurrentStartsForTheSameVisitor_RacedMidSave_TheLoserReturnsTheWinnersConversation"/>
+/// and <see cref="ManyConcurrentStartsForTheSameVisitor_AllAgreeOnExactlyOneConversation"/> already
+/// form for the conversation half.</para>
 /// </summary>
 [Collection(ConcurrencyCollection.Name)]
 public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fixture)
@@ -83,24 +94,80 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
         Assert.Equal(winnerId!.Value, single);
     }
 
+    /// <summary>`25-67`: the exact live shape for the visitor half - the winner's `StartConversation`
+    /// call is injected to run, and fully commit on its own connection, right as the loser's own
+    /// handler is about to insert its own brand-new <see cref="Visitor"/> row for the identical
+    /// visitor_id. Before this fix this raised a raw, unhandled `Npgsql.PostgresException 23505` on
+    /// `PK_visitors`; after it, the loser's own `SaveAsync` is translated to
+    /// <see cref="VisitorConcurrencyConflictException"/>, and the handler re-reads and proceeds with
+    /// the winner's own visitor rather than failing the whole call.</summary>
+    [Fact]
+    public async Task TwoConcurrentFirstContactsForTheSameNewVisitor_RacedMidSave_TheLoserAgreesOnTheWinnersVisitor()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+
+        await using (var seedDb = fixture.CreateDbContext())
+        {
+            seedDb.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            await seedDb.SaveChangesAsync(CancellationToken.None);
+        }
+
+        ConversationId? winnerId = null;
+        await using var db = fixture.CreateDbContext();
+        var racing = new RacingVisitorRepository(
+            new VisitorRepository(db),
+            maxInjections: 1,
+            async () =>
+            {
+                var winner = await StartAsync(siteId, visitorId);
+                Assert.True(winner.IsSuccess);
+                Assert.True(winner.Value.IsNew);
+                winnerId = winner.Value.ConversationId;
+            });
+
+        var handler = new StartConversationHandler(
+            racing, new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource),
+            new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
+            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
+
+        var loserResult = await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
+
+        Assert.True(loserResult.IsSuccess, loserResult.IsFailure ? loserResult.Error!.Value.Message : string.Empty);
+        Assert.NotNull(winnerId);
+        // The loser did not create a second conversation of its own either - having lost the visitor
+        // race, it re-read the winner's visitor and then found the winner's own conversation already
+        // active for it via the ordinary GetActiveForVisitorAsync check just below.
+        Assert.Equal(winnerId!.Value, loserResult.Value.ConversationId);
+        Assert.False(loserResult.Value.IsNew);
+        // Exactly one attempt on the loser's own repository: the first (and only) SaveAsync call lost
+        // the unique-violation race on PK_visitors - there is no second SaveAsync, only a re-read.
+        Assert.Equal(1, racing.SaveAttempts);
+
+        var visitorRows = await db.Visitors.AsNoTracking()
+            .Where(v => v.Id == visitorId)
+            .ToListAsync(CancellationToken.None);
+        Assert.Single(visitorRows);
+    }
+
     /// <summary>The mirror of the item's own live evidence: many concurrent starts for one visitor -
     /// what several tabs, or a flapping connection retrying, would produce - must all agree on exactly
-    /// one conversation, never a scattering of new ones. The visitor is seeded ahead of time,
-    /// deliberately - the live incident this item fixes was a *returning* visitor
-    /// (<c>Visitor.Touch</c>'s own branch, not <c>new Visitor(...)</c>'s), and a brand-new visitor
-    /// racing on its own first-contact insert is a second, different unique-key race
-    /// (<c>PK_visitors</c>) this item does not scope in - filed separately.</summary>
+    /// one conversation, never a scattering of new ones. Restored to its original brand-new-visitor
+    /// shape (`25-67`'s own item text) - this test originally raised the unpatched `PK_visitors`
+    /// crash and was rewritten, out of `25-68`'s own scope, to seed the visitor ahead of time; now that
+    /// this item fixes that race too, the visitor is left unseeded again, exercising both races (the
+    /// visitor's own first-contact insert, then the conversation's) in the same eight-way stress
+    /// shape.</summary>
     [Fact]
     public async Task ManyConcurrentStartsForTheSameVisitor_AllAgreeOnExactlyOneConversation()
     {
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
-        var now = DateTimeOffset.UtcNow;
 
         await using (var seedDb = fixture.CreateDbContext())
         {
             seedDb.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-            seedDb.Visitors.Add(new Visitor(visitorId, siteId, now));
             await seedDb.SaveChangesAsync(CancellationToken.None);
         }
 
@@ -125,6 +192,10 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
         await using var db = fixture.CreateDbContext();
         var count = await db.Conversations.AsNoTracking().CountAsync(c => c.VisitorId == visitorId, CancellationToken.None);
         Assert.Equal(1, count);
+        // The visitor race settled on one row too, not just the conversation race - all eight callers
+        // shared one Visitor by the time any of them got as far as GetActiveForVisitorAsync.
+        var visitorCount = await db.Visitors.AsNoTracking().CountAsync(v => v.Id == visitorId, CancellationToken.None);
+        Assert.Equal(1, visitorCount);
     }
 
     /// <summary>Never a source of confusion between two different visitors - the index is scoped to
@@ -161,6 +232,33 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
     private sealed class FixedVisitorEmojiPairGenerator : IVisitorEmojiPairGenerator
     {
         public (string Creature, string Food) NextPair() => ("🐳", "🍇");
+    }
+
+    /// <summary>`25-67`'s own mirror of <see cref="RacingConversationRepository"/> below, one aggregate
+    /// earlier - every read goes to the real repository untouched, and each of the first
+    /// <paramref name="maxInjections"/> saves runs a real, fully-committed concurrent write first.</summary>
+    private sealed class RacingVisitorRepository(
+        IVisitorRepository inner, int maxInjections, Func<Task> injectConcurrentWriteAsync) : IVisitorRepository
+    {
+        public int SaveAttempts { get; private set; }
+
+        public Task<Visitor?> GetByIdAsync(VisitorId id, CancellationToken cancellationToken) =>
+            inner.GetByIdAsync(id, cancellationToken);
+
+        public Task<IReadOnlyDictionary<VisitorId, Visitor>> GetManyByIdsAsync(
+            IReadOnlyCollection<VisitorId> ids, CancellationToken cancellationToken) =>
+            inner.GetManyByIdsAsync(ids, cancellationToken);
+
+        public async Task SaveAsync(Visitor visitor, CancellationToken cancellationToken)
+        {
+            SaveAttempts++;
+            if (SaveAttempts <= maxInjections)
+            {
+                await injectConcurrentWriteAsync();
+            }
+
+            await inner.SaveAsync(visitor, cancellationToken);
+        }
     }
 
     /// <summary>`6-08`'s seam, reused verbatim from <c>MarkConversationReadConcurrencyTests</c> - every
