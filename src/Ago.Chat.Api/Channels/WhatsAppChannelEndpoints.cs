@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
@@ -42,6 +43,14 @@ namespace Ago.Chat.Api.Channels;
 /// applies.</b> Without either, no inbound WhatsApp delivery to this deployment could ever be
 /// authenticated and accepted, so accepting a token now would silently promise a channel that can send
 /// but never receive.</para>
+///
+/// <para><b>`25-65`: <see cref="HandleStatusAsync"/> never asks WhatsApp anything live, the same
+/// posture <see cref="VkChannelEndpoints.HandleStatusAsync"/>/<see cref="MaxChannelEndpoints.HandleStatusAsync"/>
+/// already take, for the identical reason.</b> Meta's own Graph API has no cheap, side-effect-free
+/// per-request check comparable to Telegram's own <c>getMe</c> that this endpoint could call on every
+/// status read - <c>GetPhoneNumberAsync</c> is validated once, at connect time, above. This endpoint
+/// reports only what <see cref="GetChannelCredentialStatusHandler"/> already answers for every channel.
+/// </para>
 /// </summary>
 public static class WhatsAppChannelEndpoints
 {
@@ -50,8 +59,30 @@ public static class WhatsAppChannelEndpoints
         var group = app.MapGroup("/api/v1/sites/{siteId:guid}/channels/whatsapp")
             .RequireAuthorization("RequireOperatorIdentity");
 
+        group.MapGet("", HandleStatusAsync);
         group.MapPost("", HandleConnectAsync);
         group.MapDelete("/{channelCredentialId:guid}", HandleDisconnectAsync);
+    }
+
+    private static async Task<IResult> HandleStatusAsync(
+        Guid siteId,
+        GetChannelCredentialStatusHandler statusHandler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var site = new SiteId(siteId);
+
+        var status = await statusHandler.HandleAsync(
+            new GetChannelCredentialStatus(user.GetOperatorId(), site, ChannelKind.WhatsApp), cancellationToken);
+        if (status.IsFailure)
+        {
+            return status.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
+            ? new WhatsAppChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
+            : WhatsAppChannelStatusResponse.NotConnected);
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -121,4 +152,12 @@ public static class WhatsAppChannelEndpoints
     public sealed record ConnectWhatsAppChannelRequest(string Token, string PhoneNumberId);
 
     public sealed record ConnectWhatsAppChannelResponse(Guid ChannelCredentialId, DateTimeOffset CreatedAt);
+
+    /// <summary>`25-65`: <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>'s own shape
+    /// verbatim - see <see cref="HandleStatusAsync"/>'s own remarks for why this endpoint never asks
+    /// WhatsApp anything live.</summary>
+    public sealed record WhatsAppChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    {
+        public static readonly WhatsAppChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+    }
 }

@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
@@ -13,6 +14,18 @@ namespace Ago.Chat.Api.Channels;
 /// `14-08`/`adr/0069`: the console's own VK connection flow - the same
 /// <c>"RequireOperatorIdentity"</c> policy <see cref="MaxChannelEndpoints"/>/<see cref="TelegramChannelEndpoints"/>
 /// already use.
+///
+/// <para><b>`25-65`: <see cref="HandleStatusAsync"/> is MAX's own shape, not Telegram's.</b> VK's public
+/// API has no side-effect-free equivalent of Telegram's own <c>getMe</c> that this endpoint could call on
+/// every status read without mutating anything or racing another caller - <c>groups.getById</c> (used
+/// only at connect time, above) is the closest analogue, and calling it here on every console page load
+/// would mean a tenant merely looking at this screen keeps making live calls to VK on their behalf, for
+/// a live-check richness this item was never asked to add (backlog item's own "resist the temptation to
+/// special-case… if VK genuinely needs a different status shape, that is worth naming explicitly rather
+/// than assumed away" - named here, not built). So this endpoint reports only what
+/// <see cref="GetChannelCredentialStatusHandler"/> already answers for every channel: whether an active
+/// credential row exists, and since when - <see cref="MaxChannelEndpoints.HandleStatusAsync"/>'s own
+/// remarks give the fuller version of this same reasoning.</para>
 ///
 /// <para><b>Why this endpoint validates the token, and discovers VK's own community id, <em>before</em>
 /// ever writing a <see cref="ChannelCredential"/> row - unlike both precedents, which must create the
@@ -43,8 +56,30 @@ public static class VkChannelEndpoints
         var group = app.MapGroup("/api/v1/sites/{siteId:guid}/channels/vk")
             .RequireAuthorization("RequireOperatorIdentity");
 
+        group.MapGet("", HandleStatusAsync);
         group.MapPost("", HandleConnectAsync);
         group.MapDelete("/{channelCredentialId:guid}", HandleDisconnectAsync);
+    }
+
+    private static async Task<IResult> HandleStatusAsync(
+        Guid siteId,
+        GetChannelCredentialStatusHandler statusHandler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var site = new SiteId(siteId);
+
+        var status = await statusHandler.HandleAsync(
+            new GetChannelCredentialStatus(user.GetOperatorId(), site, ChannelKind.Vk), cancellationToken);
+        if (status.IsFailure)
+        {
+            return status.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
+            ? new VkChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
+            : VkChannelStatusResponse.NotConnected);
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -118,4 +153,16 @@ public static class VkChannelEndpoints
     /// response, unlike MAX's/Telegram's, carries them at all.</summary>
     public sealed record ConnectVkChannelResponse(
         Guid ChannelCredentialId, DateTimeOffset CreatedAt, string CallbackUrl, string WebhookSecret);
+
+    /// <summary>
+    /// `25-65`: <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>'s own shape verbatim, not
+    /// <see cref="TelegramChannelEndpoints.TelegramChannelStatusResponse"/>'s seven-field one - see
+    /// <see cref="HandleStatusAsync"/>'s own remarks for why this endpoint never asks VK anything live.
+    /// No field is shaped like a secret, the same guarantee <see cref="ConnectVkChannelResponse"/>
+    /// already makes for the connect response.
+    /// </summary>
+    public sealed record VkChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    {
+        public static readonly VkChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+    }
 }
