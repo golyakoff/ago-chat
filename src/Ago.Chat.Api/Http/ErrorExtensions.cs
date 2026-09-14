@@ -28,6 +28,11 @@ public static class ErrorExtensions
         {
             "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound"
                 or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" or "Export.NotFound"
+                // `25-85`: the same 404 group as OperatorInvite.NotFound right above, deliberately -
+                // ConversationErrors.OperatorInviteNoAutoRedeemablePendingInvite's own remarks: "nothing
+                // to auto-redeem" is not a caller mistake worth a scarier status than a code that does
+                // not exist.
+                or "OperatorInvite.NoAutoRedeemablePendingInvite"
                 // `18-02`: deliberately the same 404 group as Conversation.NotFound, not its own
                 // bucket - ConversationErrors.TransferTargetNotEligible's own remarks on why a
                 // wrong-tenant or ineligible operator must read exactly like one that does not exist.

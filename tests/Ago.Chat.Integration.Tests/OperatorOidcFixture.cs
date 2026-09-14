@@ -197,6 +197,32 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
         return (await GetAccessTokenAsync(KeycloakAuthority, username, FreshUserPassword), username);
     }
 
+    /// <summary>`25-85`: a fresh Keycloak user carrying the exact `requiredActions`
+    /// <c>OperatorInviteEmailProvisioner.CreateOrFindUserAsync</c> sets on a real operator-invite user
+    /// (`UPDATE_PASSWORD`, `UPDATE_PROFILE`) - built for this item's own investigation into why the
+    /// real walkthrough's `?inviteCode=...` query string did not survive Keycloak's own required-actions
+    /// completion. Unlike <see cref="CreateFreshUserAccessTokenAsync"/>'s own *permanent* password
+    /// (which lets that method finish sign-in with a plain password grant, no required actions ever
+    /// triggered), this one is deliberately <c>temporary: true</c> - the same "credential exists but
+    /// must be replaced before anything else" shape a real invitee's Keycloak-created identity carries,
+    /// forcing the same browser-shaped login-then-required-actions chain a real email link's own action
+    /// token drives, rather than a shortcut around it.</summary>
+    public async Task<string> CreateUserPendingRequiredActionsAsync(string username, string temporaryPassword)
+    {
+        var adminToken = await GetAdminTokenAsync();
+        await PostAdminApiAsync(adminToken, $"/admin/realms/{RealmName}/users", new
+        {
+            username,
+            email = $"{username}@example.test",
+            enabled = true,
+            emailVerified = false,
+            requiredActions = new[] { "UPDATE_PASSWORD", "UPDATE_PROFILE" },
+            credentials = new[] { new { type = "password", value = temporaryPassword, temporary = true } },
+        });
+
+        return $"{username}@example.test";
+    }
+
     /// <summary>`12-05`: a brand-new Keycloak user that *also* holds the `platform-owner` realm role -
     /// the identity nobody on this deployment had ever been until now, and the only kind of identity
     /// that can prove the two axes `adr/0063` calls orthogonal really are.

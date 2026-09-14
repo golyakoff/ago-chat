@@ -84,11 +84,58 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
             return new OperatorInviteRedemptionResult.EmailMismatch();
         }
 
+        return await RedeemLoadedInviteAsync(invite, attempt.ExternalSubjectId, attempt.Now, attempt.Name, attempt.Email, cancellationToken);
+    }
+
+    /// <summary>`25-85`: the "activate it here" card's own redemption path - see
+    /// <see cref="IOperatorInviteRedemptionRepository.RedeemPendingForEmailAsync"/>'s own remarks for
+    /// the full security reasoning. No code, no hash lookup: the email itself is the only key, so this
+    /// method's own first job is establishing that exactly one live invite answers to it before any of
+    /// <see cref="RedeemLoadedInviteAsync"/>'s shared terminal-fact checks run.</summary>
+    public async Task<OperatorInviteRedemptionResult> RedeemPendingForEmailAsync(
+        RedeemPendingOperatorInviteByEmailAttempt attempt, CancellationToken cancellationToken)
+    {
+        // The identical "pending" shape `PendingOperatorInviteByEmailReadStore` already queries for
+        // `OnboardingPage`'s own steer-away alert (unexpired, unredeemed, unrevoked) - loaded here as
+        // full rows rather than an `exists()`, because this call needs to know not just *whether* one
+        // exists but *which one*, and whether there is exactly one.
+        var candidates = await db.OperatorInvites
+            .Where(i => i.Email == attempt.Email && i.RedeemedAt == null && i.RevokedAt == null && i.ExpiresAt > attempt.Now)
+            .ToListAsync(cancellationToken);
+
+        if (candidates.Count == 0)
+        {
+            return new OperatorInviteRedemptionResult.NotFound();
+        }
+
+        if (candidates.Count > 1)
+        {
+            // `25-85`: a real, if rare, case (`OperatorInvite.Email`'s own remarks: "one email can
+            // legitimately hold invites to more than one site at once") - refused rather than guessed,
+            // the identical "does not have any legal recourse to a guess" posture this class's own
+            // `LockSiteAndReadCapacityAsync` throw takes for a different genuinely-ambiguous situation.
+            return new OperatorInviteRedemptionResult.Ambiguous();
+        }
+
+        return await RedeemLoadedInviteAsync(candidates[0], attempt.ExternalSubjectId, attempt.Now, attempt.Name, attempt.Email, cancellationToken);
+    }
+
+    /// <summary>The shared core both <see cref="RedeemAsync"/> and <see cref="RedeemPendingForEmailAsync"/>
+    /// reduce to once they have each found their own single candidate invite by their own different
+    /// means (code hash vs. email) and, for <see cref="RedeemAsync"/>, already checked that the presented
+    /// email agrees with it - everything from here on (the same-site operator check, the row lock, the
+    /// seat/admin capacity check, and the actual `Operator`/`operator_roles` write) is one identical
+    /// transaction regardless of how the invite was found, and duplicating it would be exactly the risk
+    /// of drift `RedeemOperatorInviteHandler`'s own class-level remarks warn against for a parallel
+    /// implementation of a redemption path.</summary>
+    private async Task<OperatorInviteRedemptionResult> RedeemLoadedInviteAsync(
+        OperatorInvite invite, string externalSubjectId, DateTimeOffset now, string? name, string? email, CancellationToken cancellationToken)
+    {
         // `13-07`/`adr/0068`'s own adjustment: only this invite's own site, never "anywhere" - the
         // older, superseded rule `13-01`'s own backlog note was corrected away from once `13-07`
         // shipped (composite `(external_subject_id, site_id)` uniqueness, not global).
         var alreadyOperatorHere = await db.Operators.AnyAsync(
-            o => o.ExternalSubjectId == attempt.ExternalSubjectId && o.SiteId == invite.SiteId, cancellationToken);
+            o => o.ExternalSubjectId == externalSubjectId && o.SiteId == invite.SiteId, cancellationToken);
         if (alreadyOperatorHere)
         {
             return new OperatorInviteRedemptionResult.AlreadyOperatorOnSite();
@@ -157,7 +204,6 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
             }
         }
 
-        var now = attempt.Now;
         var newOperatorId = new OperatorId(idGenerator.NewId(now));
         // Capacity 5, Offline - the identical starting shape `RegisterSiteHandler` gives a freshly
         // bootstrapped site's own first operator; an invited operator is not structurally different
@@ -171,8 +217,8 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
         // existing row for anything to leave untouched. An ordinary Operator invite keeps the exact
         // default it always had.
         db.Operators.Add(new Operator(
-            newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, attempt.ExternalSubjectId,
-            displayName: attempt.Name, email: attempt.Email, holdsSeat: !isAdminInvite));
+            newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, externalSubjectId,
+            displayName: name, email: email, holdsSeat: !isAdminInvite));
         db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = newOperatorId, RoleId = invite.RoleId });
         invite.Redeem(newOperatorId, now);
 
@@ -183,7 +229,7 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
         // this method is itself in the middle of writing.
         var rolePermissions = await db.Roles.Where(r => r.Id == invite.RoleId).Select(r => r.Permissions).SingleAsync(cancellationToken);
         outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
-            attempt.ExternalSubjectId, invite.SiteId.Value, rolePermissions, now, idGenerator));
+            externalSubjectId, invite.SiteId.Value, rolePermissions, now, idGenerator));
 
         try
         {

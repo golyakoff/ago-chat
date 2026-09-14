@@ -15,9 +15,22 @@ public sealed class FakeOperatorInviteRedemptionRepository(OperatorInviteRedempt
 {
     public RedeemOperatorInviteAttempt? LastAttempt { get; private set; }
 
+    /// <summary>`25-85`: the identical canned-result/last-attempt shape <see cref="LastAttempt"/>
+    /// already gives <see cref="RedeemAsync"/>, for <see cref="RedeemPendingOperatorInviteForCallerHandlerTests"/>
+    /// to prove its own mapping the same way <see cref="LastAttempt"/> lets the sibling tests prove
+    /// theirs.</summary>
+    public RedeemPendingOperatorInviteByEmailAttempt? LastPendingAttempt { get; private set; }
+
     public Task<OperatorInviteRedemptionResult> RedeemAsync(RedeemOperatorInviteAttempt attempt, CancellationToken cancellationToken)
     {
         LastAttempt = attempt;
+        return Task.FromResult(result);
+    }
+
+    public Task<OperatorInviteRedemptionResult> RedeemPendingForEmailAsync(
+        RedeemPendingOperatorInviteByEmailAttempt attempt, CancellationToken cancellationToken)
+    {
+        LastPendingAttempt = attempt;
         return Task.FromResult(result);
     }
 }

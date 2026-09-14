@@ -2,11 +2,13 @@
 using System.Security.Claims;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.HasPendingOperatorInvite;
 using Ago.Chat.Application.UseCases.ListOperatorInvites;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
+using Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller;
 using Ago.Chat.Application.UseCases.RevokeOperatorInvite;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
@@ -58,6 +60,13 @@ public static class OperatorInviteEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         app.MapPost("/api/v1/operator-invites/redeem", HandleRedeemAsync)
+            .RequireAuthorization("RequireKeycloakIdentity");
+
+        // `25-85`: the "activate it here" card's own no-code redemption - RequireKeycloakIdentity, the
+        // identical policy the code-based redeem route above uses and for the identical reason: this
+        // caller has no `operators` row yet either. See `RedeemPendingOperatorInviteForCallerHandler`'s
+        // own remarks for why an authenticated caller with no code in hand can still redeem safely.
+        app.MapPost("/api/v1/operator-invites/redeem-pending-for-me", HandleRedeemPendingForCallerAsync)
             .RequireAuthorization("RequireKeycloakIdentity");
 
         // `25-73`: OnboardingPage's own registration-collision steer - RequireKeycloakIdentity, the
@@ -177,6 +186,41 @@ public static class OperatorInviteEndpoints
 
         var result = await handler.HandleAsync(
             new RedeemOperatorInvite(externalSubjectId, request.Code, name, email), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return result.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(new RedeemOperatorInviteResponse(result.Value.OperatorId.Value, result.Value.SiteId.Value));
+    }
+
+    /// <summary>`25-85`: the "activate it here" card's own destination - no request body at all, unlike
+    /// <see cref="HandleRedeemAsync"/>, because there is no code for a caller to carry. Every value this
+    /// call needs already lives on the validated token, the identical claims-reading shape
+    /// <see cref="HandleRedeemAsync"/> already uses right above.</summary>
+    private static async Task<IResult> HandleRedeemPendingForCallerAsync(
+        RedeemPendingOperatorInviteForCallerHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var externalSubjectId = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        if (string.IsNullOrEmpty(externalSubjectId))
+        {
+            return Results.Problem(statusCode: StatusCodes.Status500InternalServerError, title: "Token carries no subject claim.");
+        }
+
+        var email = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Email);
+        if (string.IsNullOrEmpty(email))
+        {
+            // No email claim at all reads as "nothing to auto-redeem" - the identical "cannot agree
+            // with anything" reading `HandleHasPendingInviteAsync` already gives a missing email above,
+            // never a 500: this caller may simply hold an identity whose token carries no email at all.
+            return ConversationErrors.OperatorInviteNoAutoRedeemablePendingInvite().ToProblem(httpContext);
+        }
+
+        var name = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Name);
+
+        var result = await handler.HandleAsync(
+            new RedeemPendingOperatorInviteForCaller(externalSubjectId, email, name), cancellationToken);
 
         if (result.IsFailure)
         {

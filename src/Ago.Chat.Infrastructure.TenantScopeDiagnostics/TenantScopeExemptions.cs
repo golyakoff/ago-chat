@@ -129,6 +129,24 @@ public static class TenantScopeExemptions
             + "only against that same caller-supplied email, so the row set this query can ever answer true for "
             + "is already restricted to invites addressed to the caller's own address before any site is joined "
             + "in - the identical 'not an enumeration risk' argument that port's own remarks make.",
+        ["Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller.RedeemPendingOperatorInviteForCallerHandler.HandleAsync"] =
+            "`25-85`. OnboardingPage's own 'activate it here' card, reached with no code at all - "
+            + "HasPendingOperatorInviteHandler's own entry above already explains why widening that query to "
+            + "return a code was impossible (OperatorInvite.CodeHash is a one-way hash), so this redeems "
+            + "directly instead, keyed by the caller's own authenticated token email rather than a presented "
+            + "code. Same category and the same reason as RedeemOperatorInviteHandler's own entry above - the "
+            + "caller has no SiteId claim yet, by definition, and the whole point of this call is to acquire "
+            + "one - gated by RequireKeycloakIdentity, not RequireOperatorIdentity. What scopes the write is "
+            + "not a caller-supplied value at all: OperatorInviteRedemptionRepository.RedeemPendingForEmailAsync "
+            + "looks up only invites whose own email column matches this caller's own validated JWT email "
+            + "(OperatorInviteEndpoints.HandleRedeemPendingForCallerAsync reads it off the token, never the "
+            + "request), the identical 'the row set this query can ever answer true for is already restricted "
+            + "to invites addressed to the caller's own address' argument HasPendingOperatorInviteHandler's own "
+            + "entry above makes for the identical email-scoped lookup - never a second site, and refused "
+            + "outright (Ambiguous) rather than guessed when more than one invite matches. Once exactly one "
+            + "invite is found, everything past that point is the identical RedeemLoadedInviteAsync transaction "
+            + "RedeemOperatorInviteHandler's own entry above already covers, acting on invite.SiteId, not a "
+            + "caller-supplied one.",
         ["Ago.Chat.Application.UseCases.PreviewOperatorInvite.PreviewOperatorInviteHandler.HandleAsync"] =
             "`23-70`, the landing page a colleague reaches by opening the invite link before signing in at all - "
             + "carries no SiteId and no RequestedBy at all, one step earlier in the same flow "

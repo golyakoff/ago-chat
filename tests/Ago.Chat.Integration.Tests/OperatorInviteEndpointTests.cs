@@ -13,6 +13,7 @@ using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.ListOperatorInvites;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
+using Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.RevokeOperatorInvite;
@@ -250,6 +251,132 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         await using var db = fixture.CreateDbContext();
         var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
         Assert.False(inviteRow.IsRedeemed);
+    }
+
+    /// <summary>
+    /// `25-85`'s own Done-when: "the 'activate it here' link... arrives with the code pre-filled, for
+    /// an authenticated caller whose email matches a pending invite - proven end to end." This item's
+    /// own worker report explains why "pre-filled" became "redeemed directly, no code ever leaves the
+    /// server" instead - the code is a one-way hash server-side, so there is nothing to pre-fill - and
+    /// this is the end-to-end proof of that alternative: a real invite, a real authenticated caller
+    /// whose own token email matches it, no code presented anywhere in this call.
+    /// Fails-before: before this item, `/api/v1/operator-invites/redeem-pending-for-me` did not exist -
+    /// this call 404s against `main`.
+    /// </summary>
+    [Fact]
+    public async Task RedeemPendingForMe_ARealInviteAddressedToTheCallersOwnEmail_Succeeds()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsync("/api/v1/operator-invites/redeem-pending-for-me", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, redeemResponse.StatusCode);
+        var redeemed = await redeemResponse.Content.ReadFromJsonAsync<OperatorInviteEndpoints.RedeemOperatorInviteResponse>();
+        Assert.NotNull(redeemed);
+        Assert.Equal(adminSite, redeemed.SiteId);
+
+        // Queried directly, not just asserted from the 200 - the same "proven, not asserted from the
+        // handler's logic alone" discipline this file's own class-level remarks describe.
+        await using var db = fixture.CreateDbContext();
+        var inviteRow = await db.OperatorInvites.SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
+        Assert.True(inviteRow.IsRedeemed);
+
+        var operatorRow = await db.Operators.SingleAsync(o => o.Id == new OperatorId(redeemed.OperatorId));
+        Assert.Equal(new SiteId(adminSite), operatorRow.SiteId);
+        Assert.Equal(inviteRow.RedeemedByOperatorId, operatorRow.Id);
+    }
+
+    /// <summary>
+    /// `25-85`'s own security-boundary proof, the other half: this route takes no code at all, so the
+    /// only thing standing between an authenticated caller and someone else's pending invite is that the
+    /// lookup is always scoped to the caller's *own* token email - proven with a real invite addressed
+    /// to a different, real email that a real (different) caller never held. This is the by-construction
+    /// analogue of `Redeem_WithAnEmailThatDoesNotMatchTheInvite_IsRejectedForbidden` above: that test
+    /// proves the code-based path refuses a wrong email presented *alongside* a right code; this one
+    /// proves the no-code path never even considers an invite that is not addressed to the caller,
+    /// because there is no code parameter through which a caller could ever name a different invite.
+    /// Fails-before: a naive implementation that redeemed the *first* pending invite in the table
+    /// regardless of its own email would make this test fail - the invite would come back redeemed by
+    /// the wrong identity instead of the whole call being rejected.
+    /// </summary>
+    [Fact]
+    public async Task RedeemPendingForMe_WithNoPendingInviteForTheCallersOwnEmail_IsRejectedAndLeavesAnotherIdentitysInviteUntouched()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+
+        // A real, live, unredeemed invite - addressed to somebody else entirely.
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", "somebody-else@example.test");
+
+        // The caller redeeming has no pending invite of their own.
+        var (redeemerToken, _) = await fixture.CreateFreshUserAccessTokenAsync();
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var response = await redeemClient.PostAsync("/api/v1/operator-invites/redeem-pending-for-me", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.NoAutoRedeemablePendingInvite", problem.Title);
+
+        // The other identity's own invite is untouched - this call must never have redeemed it on this
+        // caller's behalf.
+        await using var db = fixture.CreateDbContext();
+        var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
+        Assert.False(inviteRow.IsRedeemed);
+    }
+
+    /// <summary>
+    /// `25-85`'s own `Ambiguous` case, proven end to end: the same email holds two live, unredeemed
+    /// invites (`OperatorInvite.Email`'s own remarks - "an agency operator invited to several shops" -
+    /// this is that scenario) - this route refuses to guess which one rather than silently redeeming
+    /// one of the two, and neither invite is consumed by the refusal.
+    /// </summary>
+    [Fact]
+    public async Task RedeemPendingForMe_WithTwoPendingInvitesForTheSameEmail_IsRejectedAndNeitherIsConsumed()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (firstSite, _, firstAdminToken, _) = await RegisterFreshSiteAsync(client);
+        await RaiseSeatLimitAsync(firstSite, seatLimit: 2);
+        using var secondSiteClient = host.GetTestClient();
+        var (secondSite, _, secondAdminToken, _) = await RegisterFreshSiteAsync(secondSiteClient);
+        await RaiseSeatLimitAsync(secondSite, seatLimit: 2);
+
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var email = $"{redeemerUsername}@example.test";
+        using var firstInviteClient = host.GetTestClient();
+        var firstInvite = await CreateInviteAsync(firstInviteClient, firstAdminToken, firstSite, "Operator", email);
+        using var secondInviteClient = host.GetTestClient();
+        var secondInvite = await CreateInviteAsync(secondInviteClient, secondAdminToken, secondSite, "Operator", email);
+
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var response = await redeemClient.PostAsync("/api/v1/operator-invites/redeem-pending-for-me", content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.NoAutoRedeemablePendingInvite", problem.Title);
+
+        await using var db = fixture.CreateDbContext();
+        var firstRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(firstInvite.OperatorInviteId));
+        var secondRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(secondInvite.OperatorInviteId));
+        Assert.False(firstRow.IsRedeemed);
+        Assert.False(secondRow.IsRedeemed);
     }
 
     /// <summary>
@@ -857,6 +984,11 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<CreateOperatorInviteHandler>();
         builder.Services.AddScoped<RedeemOperatorInviteHandler>();
+        // `25-85`: the "activate it here" card's own no-code redemption route -
+        // `MapOperatorInviteEndpoints` maps it unconditionally, the same "resolvable from this
+        // container at host build time regardless of which single test method is running" reasoning
+        // this file's own remarks already give the two routes registered right below.
+        builder.Services.AddScoped<RedeemPendingOperatorInviteForCallerHandler>();
         // `25-73`: the console's own invite-list screen and its "отозвать" button -
         // `MapOperatorInviteEndpoints` maps both routes unconditionally, so RequestDelegateFactory's
         // own metadata inference needs both handlers resolvable from this container at host build time

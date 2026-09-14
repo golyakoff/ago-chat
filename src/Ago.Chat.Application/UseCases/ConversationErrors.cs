@@ -321,6 +321,16 @@ public static class ConversationErrors
     public static Error OperatorInviteNotFound() =>
         new("OperatorInvite.NotFound", "No operator invite matches this code.");
 
+    /// <summary>`25-85`: the "activate it here" card's own no-code redemption attempt found either no
+    /// live invite for the caller's own authenticated email, or more than one and declined to guess
+    /// which (<c>OperatorInviteRedemptionResult.NotFound</c>/<c>.Ambiguous</c>, folded into one code
+    /// here because both leave the console with the identical, non-alarming next step: fall back to the
+    /// ordinary manual code field, rather than show an error for a caller who did nothing wrong).
+    /// Grouped with <see cref="OperatorInviteNotFound"/>'s own `404` in `ErrorExtensions` for the same
+    /// reason - "nothing to auto-redeem" is not a caller mistake worth a scarier status.</summary>
+    public static Error OperatorInviteNoAutoRedeemablePendingInvite() =>
+        new("OperatorInvite.NoAutoRedeemablePendingInvite", "No single pending operator invite could be found for this account automatically.");
+
     /// <summary>A real invite that once existed, past its own `expires_at` - `410 Gone`, not `404`,
     /// because the distinction is genuinely useful to a caller: a mistyped code should be tried again
     /// carefully, an expired one should be asked for a fresh invite instead.</summary>
