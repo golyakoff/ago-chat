@@ -42,7 +42,7 @@ exported in your shell. The script never logs, stores, or echoes it.
 ## What it does, and what it deliberately leaves to you
 
 1. Reads every key in `priced_resources` that has at least one published version (a key with none —
-   `PricedResourceKeys.All` lists three today, `25-43`'s own "not yet for sale" state — is correctly
+   `PricedResourceKeys.All` lists five today, `25-43`'s own "not yet for sale" state — is correctly
    absent from the output, not an error) and formats them into `prices.json`.
 2. If nothing changed since the last snapshot, it says so and stops — no empty PR.
 3. If something changed, it branches, commits, pushes, and opens a pull request against
@@ -64,6 +64,14 @@ whole point — nothing here needs to run on a schedule.
 
 ## What `ago-landing` does with `prices.json`
 
-Nothing yet — the pricing section that would read this file has not been built. This procedure exists
-ahead of that page, deliberately: the data path is real and provable (run it, look at the PR) before
-any markup depends on it, rather than the two being built and wired together at once.
+`agoRenderPrices` (`ago-landing/i18n.js`) reads it at page load, on both `index.html` and
+`pricing.html` - this section used to say "nothing yet - the pricing section that would read this file
+has not been built", which was already stale by the time `25-101` found it: `pricing.html` and its
+rendering had shipped, this doc's own closing paragraph just never followed. `agoRenderPrices` fills
+every element carrying a `data-price="<key>"` attribute with that key's `amount_rub` formatted for the
+reader's own language, a `data-price-seats="<n>"` element with the seat-ladder total computed from
+`seat-base`/`seat-extra`, and toggles a `data-price-row`/`data-price-only` group so a "from"/"/mo"
+decoration only appears around a real figure. A key absent from the file - either because nothing has
+been published for it yet, or because `prices.json` itself is absent (this repository's own starting
+state, and every `file://` open of it - see `ago-landing/README.md`'s "Prices" section) - renders as an
+honest "no published price" in the reader's own language, never a fabricated zero.
