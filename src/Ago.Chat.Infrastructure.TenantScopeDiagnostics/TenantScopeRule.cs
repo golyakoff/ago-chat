@@ -1,19 +1,30 @@
 ﻿using Mono.Cecil;
 
-namespace Ago.Chat.Architecture.Tests;
+namespace Ago.Chat.Infrastructure.TenantScopeDiagnostics;
 
 /// <summary>
 /// `17-01`: the mechanical half of the tenant-isolation guard - given an assembly, work out which of
-/// its use-case entry points are RBAC-gated and which are not, so <see cref="TenantScopeTests"/> can
-/// insist that every "not" is an argued entry in <see cref="TenantScopeExemptions"/> rather than an
-/// omission nobody noticed.
+/// its use-case entry points are RBAC-gated and which are not, so
+/// <c>Ago.Chat.Architecture.Tests.TenantScopeTests</c> can insist that every "not" is an argued entry
+/// in <see cref="TenantScopeExemptions"/> rather than an omission nobody noticed.
 ///
-/// <para>Extracted from the test that uses it for one reason only: the rule has to be runnable
-/// against a second assembly - this test project's own - so that its ability to <em>fail</em> can be
-/// demonstrated by a handler deliberately written to violate it
-/// (<see cref="Fixtures.ForgetfulTenantScopedHandler"/>), the same way `0-02` demonstrated its
-/// layering rules by violating them. A rule that has only ever been observed passing is not
-/// evidence.</para>
+/// <para><b>`24-17`: moved here, out of the test project, so a second caller could exist without
+/// copying it.</b> This class and <see cref="TenantScopeExemptions"/> used to live in
+/// <c>Ago.Chat.Architecture.Tests</c> alone, reachable only at build time. `24-17` needed the identical
+/// fact reachable at runtime too - a platform-owner endpoint that answers from the assembly that is
+/// actually deployed, not from a checkout somebody may not have open - and the only way for both
+/// callers to be reading the *same* fact, rather than two copies free to drift, was to give the logic
+/// one home neither of them owns exclusively. <c>Ago.Chat.Infrastructure.TenantScopeDiagnostics</c> is
+/// that home: an <c>Infrastructure.*</c> project (CLAUDE.md rule 2 - "every external resource sits
+/// behind a port... implemented in an Infrastructure.* project") because what this class actually does
+/// is read a concrete external resource, a `.dll` on disk, with Mono.Cecil; the alternative - leaving
+/// it in the test project and having `Ago.Chat.Api` reference a test assembly at runtime, or inlining
+/// Mono.Cecil into `Ago.Chat.Application` itself - either ships test code in production or puts an
+/// IL-reading library inside the layer the dependency rule keeps free of exactly that. The test project
+/// now references this one instead of holding its own copy (see its own `.csproj` remarks), and
+/// <see cref="Ago.Chat.Application.Abstractions.ITenantScopeInspector"/> is the port that lets
+/// `Ago.Chat.Api`'s owner-only endpoint reach it without `Ago.Chat.Application` ever knowing Mono.Cecil
+/// exists.</para>
 ///
 /// <para><b>Per public method, not per type.</b> Several handlers carry a visitor entry point and an
 /// operator entry point side by side (<c>ConfirmAttachmentHandler</c>,
@@ -26,18 +37,17 @@ namespace Ago.Chat.Architecture.Tests;
 /// moved wholesale into a compiler-generated state machine, so the call to
 /// <c>HasPermissionAsync</c> is not in the method a scanner naively looks at - it is in
 /// <c>&lt;HandleAsync&gt;d__N.MoveNext</c>. <see cref="BodiesOf"/> follows
-/// <c>AsyncStateMachineAttribute</c> to find it; scanning the assembly wholesale (as
-/// <see cref="IlMemberScanner"/> does for its own rules) would find the call but could not say which
-/// entry point made it.</para>
+/// <c>AsyncStateMachineAttribute</c> to find it; scanning the assembly wholesale would find the call
+/// but could not say which entry point made it.</para>
 /// </summary>
-internal static class TenantScopeRule
+public static class TenantScopeRule
 {
     private const string PermissionCheckerInterface = "Ago.Chat.Application.Abstractions.IPermissionChecker";
 
     private const string SiteIdType = "Ago.Chat.Domain.SiteId";
 
     /// <summary>One public entry point of one handler, and the two facts the rule turns on.</summary>
-    internal sealed record EntryPoint(string Key, bool CarriesSiteId, bool ChecksPermission)
+    public sealed record EntryPoint(string Key, bool CarriesSiteId, bool ChecksPermission)
     {
         /// <summary>The shape the rule is built to require: a tenant-scoped input, gated by the one
         /// port that can answer "may this operator act on this site".</summary>

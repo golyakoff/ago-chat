@@ -51,6 +51,10 @@
          same "explicit when actually used" reasoning the MAX/Telegram references above already
          follow. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.YooKassa\Ago.Chat.Infrastructure.YooKassa.csproj" />
+    <!-- `24-17`: OwnerTenantIsolationEndpoints calls AddTenantScopeDiagnostics/ITenantScopeInspector
+         directly - the same "explicit when actually used" reasoning every other Infrastructure
+         reference in this file already follows. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.TenantScopeDiagnostics\Ago.Chat.Infrastructure.TenantScopeDiagnostics.csproj" />
   </ItemGroup>
 
 

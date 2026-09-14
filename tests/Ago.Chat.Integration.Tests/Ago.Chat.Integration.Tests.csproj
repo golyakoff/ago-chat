@@ -109,6 +109,8 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.YooKassa\Ago.Chat.Infrastructure.YooKassa.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.YandexGpt\Ago.Chat.Infrastructure.YandexGpt.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
+    <!-- `24-17`: OwnerTenantIsolationEndpointTests calls AddTenantScopeDiagnostics directly. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.TenantScopeDiagnostics\Ago.Chat.Infrastructure.TenantScopeDiagnostics.csproj" />
   </ItemGroup>
 
 

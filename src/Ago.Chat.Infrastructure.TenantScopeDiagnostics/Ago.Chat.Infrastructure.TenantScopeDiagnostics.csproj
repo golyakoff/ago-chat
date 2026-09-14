@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- `24-17`: the same IL-reading library `Ago.Chat.Architecture.Tests` already depends on
+         (TestAssemblies.cs/TenantScopeRule.cs) - moved here rather than added fresh, so this project's
+         one new dependency is the one the build-time guard already carries, not a second technology
+         doing the identical job. -->
+    <PackageReference Include="Mono.Cecil" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+</Project>

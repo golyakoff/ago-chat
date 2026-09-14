@@ -1,12 +1,12 @@
-﻿namespace Ago.Chat.Architecture.Tests;
+﻿namespace Ago.Chat.Infrastructure.TenantScopeDiagnostics;
 
 /// <summary>
 /// `17-01`: <b>the deliverable, not the scaffolding.</b> Every use-case entry point in
 /// <c>Ago.Chat.Application</c> that does not take a <c>SiteId</c> and gate it through
 /// <c>IPermissionChecker</c> is listed here with the reason it is safe anyway. Anything not listed
-/// and not gated fails <see cref="TenantScopeTests"/>, so the thirtieth handler cannot quietly omit
-/// what the first twenty-nine do - it either checks, or it argues its case here where a reviewer
-/// reads it.
+/// and not gated fails <c>Ago.Chat.Architecture.Tests.TenantScopeTests</c>, so the thirtieth handler
+/// cannot quietly omit what the first twenty-nine do - it either checks, or it argues its case here
+/// where a reviewer reads it.
 ///
 /// <para>The list is deliberately total in both directions. An entry for something that <em>is</em>
 /// gated fails just as loudly as a missing entry, and so does an entry naming a method that no
@@ -19,8 +19,16 @@
 /// deliberately deciding a caller may see every tenant. The four categories are set out in
 /// `ago-root/docs/architecture/tenant-isolation.md`, which classifies every one of these alongside
 /// the gated ones.</para>
+///
+/// <para><b>`24-17`: moved here from <c>Ago.Chat.Architecture.Tests</c></b>, beside
+/// <see cref="TenantScopeRule"/> - see that class's own remarks for why both now live in an
+/// <c>Infrastructure.*</c> project rather than the test project alone: a platform-owner runtime
+/// endpoint needed the identical fact this file already gave the build-time guard, and the only way
+/// for both to read the *same* list rather than two that can drift apart was to give it one home. The
+/// exemption *decisions* below are unchanged by the move - not one reason was reconsidered, only where
+/// the file that states them lives.</para>
 /// </summary>
-internal static class TenantScopeExemptions
+public static class TenantScopeExemptions
 {
     public static readonly IReadOnlyDictionary<string, string> ByEntryPoint = new Dictionary<string, string>
     {
