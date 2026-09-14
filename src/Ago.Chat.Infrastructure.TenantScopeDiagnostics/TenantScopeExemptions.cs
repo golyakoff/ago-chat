@@ -726,5 +726,19 @@ public static class TenantScopeExemptions
             + "transaction committed), the same \"an integration event this system itself published\" category "
             + "ResolveTeamMessageDeliveryTargetsHandler's own precedent establishes right above. SiteId comes off "
             + "that event, never a caller.",
+
+        // `25-83`: the platform owner's own per-tenant download-block exemption - the identical category
+        // SetUnconditionalModuleGrantAsOwnerHandler's own entry above already establishes for the same shape
+        // of thing: a second, unrelated owner-only override that happens to share the platform-owner gate.
+        ["Ago.Chat.Application.UseCases.SetDownloadBlockExemptionAsOwner.SetDownloadBlockExemptionAsOwnerHandler.HandleAsync"] =
+            "`25-83`, the platform owner's own free, indefinite bypass of a tenant's hard download-block "
+            + "threshold - the identical category as SetUnconditionalModuleGrantAsOwnerHandler above: SiteId "
+            + "names the tenant whose account is being exempted, chosen by the owner, not a resource the caller "
+            + "already owns, and RequirePlatformOwner on OwnerDownloadBlockExemptionEndpoints is the entire "
+            + "access-control story - the same 'no IPermissionChecker call, for the identical reason every other "
+            + "owner surface in this codebase gives' this handler's own class remarks state in full. No "
+            + "tenant-facing sibling exists at all for this one, by design - docs/backlog/25-83-*.md's own Out "
+            + "of scope: 'any tenant-facing self-service control over either threshold or the override - both "
+            + "stay the platform owner's alone'.",
     };
 }

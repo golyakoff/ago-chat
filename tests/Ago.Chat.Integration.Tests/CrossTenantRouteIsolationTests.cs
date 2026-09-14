@@ -15,6 +15,7 @@ using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.GetOfflineAutoReply;
 using Ago.Chat.Application.UseCases.GetSiteAttachmentEgress;
 using Ago.Chat.Application.UseCases.GetSiteAttachmentStorageSummary;
+using Ago.Chat.Application.UseCases.GetDownloadUsageForSite;
 using Ago.Chat.Application.UseCases.GetSiteConsentAcceptances;
 using Ago.Chat.Application.UseCases.GetSiteConsentDocuments;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
@@ -381,6 +382,33 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         Assert.Equal(AttachmentState.Ready, victimAttachment!.State);
     }
 
+    /// <summary>
+    /// `25-83`: the sixth client-supplied-`siteId` route group - `DownloadUsageEndpoints`'s own single
+    /// read, gated by <see cref="Permission.SiteConfigure"/>, the identical permission the
+    /// widget-config/consent-document/attachment-storage groups above already exercise for this same
+    /// caller. Read-only, so there is no "and changed nothing" half - the same reasoning
+    /// <see cref="InstallationRoute_RefusesAnotherTenantsSite"/> gives for its own read-only route: a
+    /// leaked usage figure is already the whole bug, with nothing left to additionally verify in the
+    /// database.
+    /// </summary>
+    [Fact]
+    public async Task DownloadUsageRoute_RefusesAnotherTenantsSite()
+    {
+        var scenario = await SetUpAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, scenario.AccessToken);
+
+        var own = $"/api/v1/sites/{scenario.CallerSiteId.Value}/download-usage";
+        var victim = $"/api/v1/sites/{scenario.VictimSiteId.Value}/download-usage";
+
+        // Positive control first, the same reasoning every route group above states: a 403 on the
+        // victim route means "this site, not you" only if the identical caller's own site really does
+        // answer 200.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(own)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(victim)).StatusCode);
+    }
+
     private const string VictimColorHex = "#0000ff";
 
     /// <summary>
@@ -551,6 +579,11 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<GetSiteAttachmentStorageSummaryHandler>();
         builder.Services.AddScoped<GetSiteAttachmentEgressHandler>();
         builder.Services.AddScoped<BulkDeleteSiteAttachmentsHandler>();
+        // `25-83`: the sixth client-supplied-`siteId` route group - `DownloadUsageEndpoints`'s own
+        // single route. `IAttachmentEgressReadStore` is already registered just above for `23-82`'s
+        // own group.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IDownloadThresholdReadStore, DownloadThresholdReadStore>();
+        builder.Services.AddScoped<GetDownloadUsageForSiteHandler>();
 
         builder.Services.AddAuthentication()
             .AddJwtBearer(JwtSchemes.Operator, options =>
@@ -583,6 +616,8 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         app.MapSiteConsentDocumentEndpoints();
         // `23-80`/`23-82`
         app.MapSiteAttachmentStorageEndpoints();
+        // `25-83`
+        app.MapDownloadUsageEndpoints();
 
         await app.StartAsync();
         return app;

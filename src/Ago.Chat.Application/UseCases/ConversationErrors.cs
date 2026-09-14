@@ -1109,4 +1109,27 @@ public static class ConversationErrors
     /// rather than a conversation.</summary>
     public static Error VisitorNotRestricted(Guid visitorId) =>
         new("Visitor.NotRestricted", $"Visitor {visitorId} has no active restriction to lift.");
+
+    /// <summary>`25-83`: the hard-threshold refusal - every presigned GET refuses once a tenant's own
+    /// current-month egress reaches its tier's own hard threshold, for operator and visitor alike
+    /// (`GetAttachmentDownloadUrlHandler`'s own remarks state the deliberate "no carve-out" reading of
+    /// `23-82`'s own "refusing a download is worse than refusing an upload" instinct). Its own code,
+    /// not <see cref="AttachmentNotReady"/> or <see cref="Forbidden"/>: the file is ready and the
+    /// caller is a genuine participant - this is neither state nor permission, and a client needs to
+    /// tell "this specific attachment is not ready yet" and "you may not see this conversation at all"
+    /// apart from "this tenant's whole account is over its download allowance right now," which is the
+    /// one code a console/widget can use to render "contact your account owner" rather than a generic
+    /// error.</summary>
+    public static Error AttachmentDownloadBlocked(Guid siteId) =>
+        new("Attachment.DownloadBlocked", $"Site {siteId} has reached its monthly download limit; downloads are blocked until an operator lifts it or the next month begins.");
+
+    /// <summary>`25-83`: `SetDownloadBlockExemptionAsOwnerHandler`'s own guard - the identical
+    /// "taking something away, or granting an exception, needs a stated reason" shape
+    /// <see cref="ModuleQuantityUnconditionalGrantReasonRequired"/> and
+    /// <see cref="TenantSuspensionReasonRequired"/> already require for their own owner-only acts,
+    /// restated here for a third one: an unconditional, free, indefinite bypass of a tenant's own
+    /// download block is exactly the kind of consequential, easy-to-forget-why act those two other
+    /// reasons exist to leave a trail for.</summary>
+    public static Error DownloadBlockExemptionReasonRequired(string reason) =>
+        new("Site.DownloadBlockExemptionReasonRequired", reason);
 }
