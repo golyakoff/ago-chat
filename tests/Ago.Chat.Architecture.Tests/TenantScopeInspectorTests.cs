@@ -13,6 +13,12 @@ namespace Ago.Chat.Architecture.Tests;
 /// <see cref="TenantScopeRule.Scan"/> against the same assembly), which is the point: this test is what
 /// makes that "cannot drift" claim checked rather than assumed.
 /// </summary>
+/// <remarks>`25-81`: shares <see cref="MonoCecilSharedResolverCollection"/> with
+/// <see cref="TenantScopeTests"/> - see that collection's own remarks for why: this class's first
+/// <c>[Fact]</c> also calls <c>TenantScopeRule.Scan</c> against the same statically-shared
+/// <c>TestAssemblies.Application.Cecil</c>, whose implicit Mono.Cecil resolver is not safe for two
+/// threads to write to at once.</remarks>
+[Collection(MonoCecilSharedResolverCollection.Name)]
 public class TenantScopeInspectorTests(ITestOutputHelper output)
 {
     [Fact]

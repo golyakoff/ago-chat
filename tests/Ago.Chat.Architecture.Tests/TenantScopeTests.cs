@@ -18,6 +18,12 @@ namespace Ago.Chat.Architecture.Tests;
 /// project's own remarks for why. This class is unchanged otherwise: same assertions, same fixtures,
 /// reading the identical fact from its new address.</para>
 /// </summary>
+/// <remarks>`25-81`: shares <see cref="MonoCecilSharedResolverCollection"/> with
+/// <see cref="TenantScopeInspectorTests"/> - see that collection's own remarks for why: both classes
+/// call <c>TenantScopeRule.Scan</c> against the same statically-shared
+/// <c>TestAssemblies.Application.Cecil</c>, whose implicit Mono.Cecil resolver is not safe for two
+/// threads to write to at once.</remarks>
+[Collection(MonoCecilSharedResolverCollection.Name)]
 public class TenantScopeTests
 {
     [Fact]
