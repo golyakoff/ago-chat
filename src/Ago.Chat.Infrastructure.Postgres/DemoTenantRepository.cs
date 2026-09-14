@@ -6,13 +6,14 @@ using Npgsql;
 namespace Ago.Chat.Infrastructure.Postgres;
 
 /// <summary>
-/// `8-07`/`adr/0058`: the demo tenant lifecycle's data access, and - in <see cref="DeleteSiteAsync"/> -
-/// the narrow erasure this item builds because `16-02` is scoped and not built.
+/// `8-07`/`adr/0058`: the demo tenant lifecycle's read side - how many are alive, and which have
+/// expired. The removal itself moved to <c>Ago.Chat.Infrastructure.Postgres.SiteErasurePublisher</c>
+/// (`25-82`), which needs <c>AgoChatDbContext</c> to commit the site delete and an outbox row together;
+/// this class stays on Dapper over a bare <c>NpgsqlDataSource</c> connection, safe to capture for the
+/// whole lifetime of the singleton <c>DemoTenantExpiryJob</c> because neither read here carries any
+/// per-operation state.
 ///
-/// <para>Dapper rather than EF, matching `adr/0004`'s split: <see cref="CountLiveAsync"/> and
-/// <see cref="ListExpiredAsync"/> are reads that return no aggregate, and the delete is one statement
-/// that deliberately reaches rows belonging to several aggregates - which is the one thing an EF
-/// change-tracked save must never do.</para>
+/// <para>Dapper rather than EF, matching `adr/0004`'s split: both reads return no aggregate.</para>
 /// </summary>
 public sealed class DemoTenantRepository(NpgsqlDataSource dataSource) : IDemoTenantRepository
 {
@@ -76,36 +77,6 @@ public sealed class DemoTenantRepository(NpgsqlDataSource dataSource) : IDemoTen
             new { siteId = siteId.Value }, cancellationToken: cancellationToken));
 
         return [.. keys.Where(k => !string.IsNullOrEmpty(k)).Select(k => k!)];
-    }
-
-    /// <summary>
-    /// <b>One statement, and what it reaches is a property of the schema rather than of this method.</b>
-    /// Every table that holds a demo tenant's data carries a foreign key to `sites` with
-    /// `ON DELETE CASCADE` (EF's default for a required relationship, which is what every one of these
-    /// is): `visitors`, `conversations` - and `messages` through it - `attachments`,
-    /// `channel_identities`, `operators`, `operator_roles` through them, `roles`, `webhook_endpoints`
-    /// and `webhook_deliveries` through them.
-    ///
-    /// <para>That is why this is one line and not a hand-ordered sequence of deletes: a list written
-    /// here would be a second, weaker copy of the schema, and it would silently stop being complete the
-    /// first time somebody adds a table - which is exactly how erasure becomes partial. The integration
-    /// test asserts emptiness table by table against `personal-data.md`'s own list rather than trusting
-    /// this comment.</para>
-    ///
-    /// <para><b>What it does not reach</b>, stated here because a deletion that quietly misses
-    /// something is worse than one that says what it misses (`adr/0058` has the full account): the
-    /// object store and the identity provider, both handled by the caller because neither can join this
-    /// transaction; `outbox` rows, which are body-free by contract but do carry this site's ids;
-    /// backups, until `15-02`'s retention window ages them out; and any node queue, trace or log line.
-    /// None of those is reachable from a `DELETE`, and pretending otherwise is the failure mode this
-    /// paragraph exists to prevent.</para>
-    /// </summary>
-    public async Task DeleteSiteAsync(SiteId siteId, CancellationToken cancellationToken)
-    {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await connection.ExecuteAsync(new CommandDefinition(
-            "delete from sites where id = @siteId",
-            new { siteId = siteId.Value }, cancellationToken: cancellationToken));
     }
 
     // Dapper materialises into this rather than straight into the record: Guid[] needs a settable

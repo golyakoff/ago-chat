@@ -78,6 +78,10 @@ public static class ServiceCollectionExtensions
         // generator is a singleton because it holds no state and its only dependency is the platform's
         // own CSPRNG (the same shape WebhookSecretGenerator is registered with).
         services.AddScoped<IDemoTenantRepository, DemoTenantRepository>();
+        // `25-82`: resolved fresh per tenant removed, from DemoTenantExpiryJob's own
+        // IServiceScopeFactory.CreateAsyncScope() call - ISiteErasurePublisher's own remarks explain why
+        // it is a separate, Scoped registration rather than a method on IDemoTenantRepository above.
+        services.AddScoped<ISiteErasurePublisher, SiteErasurePublisher>();
         services.AddSingleton<IDemoCredentialGenerator, DemoCredentialGenerator>();
         services.AddScoped<IConversationReadStore, ConversationReadStore>();
         // `18-01`: its own port - IConversationSearchStore's own remarks on why it is not a method on

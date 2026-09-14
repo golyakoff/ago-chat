@@ -3,11 +3,17 @@
 namespace Ago.Chat.Application.Abstractions;
 
 /// <summary>
-/// `8-07`: the three questions a demo tenant's lifecycle asks that no existing port answers - how many
-/// are alive, which have expired, and remove one completely.
+/// `8-07`: the two questions a demo tenant's lifecycle asks that no existing port answers - how many
+/// are alive, and which have expired. The third - removing one completely - lived here as
+/// <c>DeleteSiteAsync</c> until `25-82` replaced it with
+/// <see cref="Ago.Chat.Application.Abstractions.ISiteErasurePublisher"/>: that removal now has to
+/// commit atomically with an outbox row (rule 4), which needs <c>AgoChatDbContext</c> rather than the
+/// bare <c>NpgsqlDataSource</c> connection this port's own implementation deliberately stays on - see
+/// <see cref="ISiteErasurePublisher"/>'s own remarks for why that made it a separate port rather than a
+/// method here.
 ///
 /// <para>Its own port rather than methods on <see cref="ISiteRepository"/>, for the reason
-/// <see cref="ISiteRegistrationRepository"/> gives for existing at all: <see cref="DeleteAsync"/>
+/// <see cref="ISiteRegistrationRepository"/> gives for existing at all: a demo tenant's removal
 /// deliberately reaches rows belonging to other aggregates, and a port that does that should say so in
 /// its name rather than widening a single-aggregate port's contract.</para>
 /// </summary>
@@ -29,18 +35,10 @@ public interface IDemoTenantRepository
     Task<IReadOnlyList<ExpiredDemoTenant>> ListExpiredAsync(
         DateTimeOffset now, int limit, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Deletes the site row. <b>What that reaches, and what it does not, is the whole of
-    /// `8-07`'s Done-when #3</b> - see the implementation's own remarks, and `adr/0058`. This method
-    /// removes Postgres rows only; the caller is responsible for the object store and the identity
-    /// provider, because both can fail independently and neither can join this transaction.
-    /// </summary>
-    Task DeleteSiteAsync(SiteId siteId, CancellationToken cancellationToken);
-
     /// <summary>Every attachment object key belonging to this site, so the caller can remove the bytes
     /// before the rows that point at them disappear. Ordering matters: after
-    /// <see cref="DeleteSiteAsync"/> there is nothing left to enumerate, and the objects would be
-    /// orphaned in MinIO forever.</summary>
+    /// <see cref="ISiteErasurePublisher.EraseAndPublishAsync"/> there is nothing left to enumerate, and
+    /// the objects would be orphaned in MinIO forever.</summary>
     Task<IReadOnlyList<string>> ListAttachmentObjectKeysAsync(SiteId siteId, CancellationToken cancellationToken);
 }
 
