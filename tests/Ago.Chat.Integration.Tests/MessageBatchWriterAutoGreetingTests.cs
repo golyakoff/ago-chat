@@ -148,21 +148,32 @@ public sealed class MessageBatchWriterAutoGreetingTests(PostgresFixture fixture)
 
     // The literal statement of this item's own Done-when box: an empty batch (the shape a timer that
     // never enqueues anything would produce) writes nothing at all - not a transaction, not a row.
+    //
+    // `25-92`: this used to count every row in the whole database stamped `CreatedAt == Now`, and
+    // `Now` is a hardcoded literal dozens of other classes in this project also use - in
+    // `PostgresFixture`'s own never-truncated, one-container-per-collection database (its own
+    // remarks: "every test isolates itself with fresh ids instead"). This test didn't. Whichever
+    // sibling test happened to run first in the shared collection could leave rows this test then
+    // counted as if they were its own, so the assertion's truth depended on execution order - CI hit
+    // it as a real, reproducible failure, not a hypothetical one. Seeding a conversation this test
+    // owns and scoping the count to its own `ConversationId` (the same isolation key every other
+    // assertion in this file already uses) makes the assertion true regardless of what else in the
+    // shared database happens to share the same timestamp.
     [Fact]
     public async Task FlushAsync_WithNoPendingMessageAtAll_WritesNothing()
     {
+        var (_, _, conversationId) = await SeedWaitingConversationAsync(autoOpenEnabled: false, greetingText: null);
         var writer = CreateWriter();
 
         await writer.FlushAsync([], CancellationToken.None);
 
-        // Nothing to assert against a specific conversation - there is no conversation, because
-        // nothing in this test ever created one. The assertion is the absence of a throw and the
-        // absence of any row this test's own fixture did not itself seed elsewhere; every other test
-        // in this file establishes that a real flush *does* write rows, which is what makes "this one
-        // writes none" meaningful rather than vacuous.
+        // Scoped to this test's own conversation - not every row in the shared database stamped
+        // `CreatedAt == Now` (`25-92`'s own remarks above). Every other test in this file establishes
+        // that a real flush *does* write rows, which is what makes "this one writes none" meaningful
+        // rather than vacuous.
         await using var verify = fixture.CreateDbContext();
-        var messageCountForThisRun = await verify.Set<Message>().CountAsync(m => m.CreatedAt == Now);
-        Assert.Equal(0, messageCountForThisRun);
+        var messageCountForThisConversation = await verify.Set<Message>().CountAsync(m => m.ConversationId == conversationId);
+        Assert.Equal(0, messageCountForThisConversation);
     }
 
     private MessageBatchWriter CreateWriter() =>
