@@ -63,11 +63,21 @@ public sealed class RouteConversationToModuleHandler(
 {
     public const string ConsumerName = "module-task-routing";
 
-    private const string ModuleUnavailableText =
-        "Sorry, that's not available right now - a team member will help you shortly.";
+    /// <summary>`25-66`: the second of this class's four visitor-facing system-message texts to gain
+    /// a <paramref name="locale"/> parameter - `PhoneVerificationRequiredText`'s own remarks record why
+    /// it, alone, was fixed first (`25-64`'s own narrower scope) and why the other three were deferred
+    /// here rather than folded into that change. Same shape: `Locale.Ru` gets natural Russian wording,
+    /// every other locale keeps the original English.</summary>
+    private static string ModuleUnavailableText(string locale) => locale == nameof(Locale.Ru)
+        ? "Извините, сейчас это недоступно — скоро с вами свяжется сотрудник."
+        : "Sorry, that's not available right now - a team member will help you shortly.";
 
-    private const string ModuleBecameUnreachableText =
-        "Sorry, something went wrong on our end - a person will take over from here.";
+    /// <summary>`25-66`: see <see cref="ModuleUnavailableText"/>'s own remarks - identical shape, the
+    /// text shown when a task that was active becomes unreachable (the module was disabled mid-task, or
+    /// a live call to it failed) rather than when starting a new one fails.</summary>
+    private static string ModuleBecameUnreachableText(string locale) => locale == nameof(Locale.Ru)
+        ? "Извините, что-то пошло не так с нашей стороны — дальше вам поможет сотрудник."
+        : "Sorry, something went wrong on our end - a person will take over from here.";
 
     /// <summary>`20-09`/`25-64`: what a visitor sees when a <see cref="PrimitiveKinds.VerifiedPhoneForm"/>
     /// reply names a phone number this system has not yet proven they can be reached on, on a tenant
@@ -76,13 +86,14 @@ public sealed class RouteConversationToModuleHandler(
     /// means operationally today (no widget popup exists yet; `14-15`'s own HTTP endpoints are the real
     /// mechanism, driven directly until one does).
     ///
-    /// <para><b>Localized, unlike this class's other three system-message texts.</b> Found live
+    /// <para><b>Localized first, ahead of this class's other three system-message texts.</b> Found live
     /// 2026-09-12: a real tenant's operator watched their own Russian booking conversation hit this one
     /// English sentence mid-flow. `ModuleUnavailableText`/`ModuleBecameUnreachableText`/
-    /// `ModuleEscalatedFallbackText` share the identical gap and are not fixed here - this text is the
-    /// one actually exercised by the live report that found it, and generalizing the fix to all four
-    /// text constants in this class in the same change would be scope this item never asked for;
-    /// `25-66` (filed alongside this fix) is where the other three go.</para>
+    /// `ModuleEscalatedFallbackText` shared the identical gap and were deliberately not fixed in the same
+    /// change - this text was the one actually exercised by the live report that found it, and
+    /// generalizing the fix to all four text constants in this class in the same change would have been
+    /// scope that item never asked for (CLAUDE.md rule 15). `25-66` is where the other three were fixed,
+    /// the identical shape, once it had its own number.</para>
     ///
     /// <para><b>Worded to avoid "book".</b> The original text's "Before I can book that" is the word
     /// `MessageOpacityTests.NoProductAssembly_NamesAnotherProductsDomain` exists to flag - not because
@@ -98,13 +109,16 @@ public sealed class RouteConversationToModuleHandler(
         ? "Прежде чем оформить запись, нужно подтвердить этот номер телефона — мы отправим код по SMS или позвоним."
         : "Before I can complete that, please verify this phone number - we'll send you a code by SMS or call.";
 
-    /// <summary>`19-03`: the fallback <see cref="PrimitiveTextRenderer.Render"/> falls back to when a
-    /// module's own escalate step carries no <c>payload.prompt</c> of its own. Deliberately not the
-    /// visitor's own trigger/reply text (which is what every other kind's fallback is) - showing a
+    /// <summary>`19-03`/`25-66`: the fallback <see cref="PrimitiveTextRenderer.Render"/> falls back to
+    /// when a module's own escalate step carries no <c>payload.prompt</c> of its own. Deliberately not
+    /// the visitor's own trigger/reply text (which is what every other kind's fallback is) - showing a
     /// visitor their own last message back at them as the "reason" for handing off reads as a bug, not
-    /// as an apology.</summary>
-    private const string ModuleEscalatedFallbackText =
-        "Let me get a team member to help with that.";
+    /// as an apology. `25-66`: localized the same way its three siblings above now are, threaded through
+    /// <see cref="FinishStepAsync"/> since this is the one text both <see cref="TryStartTaskAsync"/> and
+    /// <see cref="ContinueActiveTaskAsync"/> can reach, by way of that shared method.</summary>
+    private static string ModuleEscalatedFallbackText(string locale) => locale == nameof(Locale.Ru)
+        ? "Сейчас подключу сотрудника, чтобы помочь с этим."
+        : "Let me get a team member to help with that.";
 
     public async Task<Result<RouteConversationToModuleOutcome>> HandleAsync(
         RouteConversationToModule command, CancellationToken cancellationToken)
@@ -174,7 +188,7 @@ public sealed class RouteConversationToModuleHandler(
             var messageId = new MessageId(idGenerator.NewId(now));
             return await AddSystemMessageAndSaveAsync(
                 conversation, command, RouteConversationToModuleOutcome.ModuleUnavailableAtTrigger,
-                c => c.AddSystemMessage(messageId, new MessageBody(ModuleUnavailableText), now, content: null),
+                c => c.AddSystemMessage(messageId, new MessageBody(ModuleUnavailableText(locale)), now, content: null),
                 cancellationToken);
         }
 
@@ -192,7 +206,7 @@ public sealed class RouteConversationToModuleHandler(
         // started and immediately had to be handed off", which is why it still gets its own outcome.
         return await FinishStepAsync(
             conversation, trigger, startResult.Step, startResult.Complete, RouteConversationToModuleOutcome.TaskStarted,
-            now, command,
+            now, command, locale,
             c => c.StartModuleTask(
                 new ModuleTaskId(chatTaskId), key, startResult.ExternalTaskId, now,
                 startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions),
@@ -203,6 +217,29 @@ public sealed class RouteConversationToModuleHandler(
         Conversation conversation, ModuleTask active, Message trigger, IReadOnlyList<EnabledModuleSummary> modulesForSite,
         DateTimeOffset now, RouteConversationToModule command, CancellationToken cancellationToken)
     {
+        // `25-37`/`25-38`/`25-39`: three more facts a module may need to answer this reply, resolved
+        // fresh on every call rather than remembered anywhere - see SubmitModuleReplyRequest.Locale's
+        // own remarks for why this item spends no migration on persisting them. Read unconditionally
+        // (not gated to a particular step kind): none of the three reads is expensive - a single-row
+        // Site lookup and a visitor's own small, bounded contact-detail list
+        // (VisitorContactDetail's own remarks) - and gating on step kind would make this handler's own
+        // behaviour depend on knowledge of which primitive kind a booking module happens to use its
+        // phone step for, which is exactly the "no special-casing per primitive kind" constraint this
+        // handler's own type remarks already hold ResolveReplyValue to.
+        //
+        // `25-64`: moved ahead of the `VerifiedPhoneForm` gate below, deliberately - `acceptUnverifiedPhone`
+        // is what that gate now reads before it can refuse a reply, so it has to exist before the gate
+        // runs rather than after it.
+        //
+        // `25-66`: moved ahead of the `enabledModule` check right below, a second time - `locale` is now
+        // also what `ModuleBecameUnreachableText` reads for that branch's own refusal, so it has to exist
+        // before that check can return early, not only before the phone gate further down. The one cost
+        // this second move accepts: the `ReplyNotResolved` early return just past the `enabledModule`
+        // check now also pays for this read, where before `25-66` it did not - an ordinary Site lookup,
+        // not a new kind of read, and the identical trade `PhoneVerificationRequiredText`'s own
+        // resolution already made once, `25-64`'s own remarks record it there.
+        var (locale, acceptUnverifiedPhone) = await ResolveModuleContextAsync(conversation.SiteId, cancellationToken);
+
         var enabledModule = modulesForSite.FirstOrDefault(m => m.ModuleKey == active.ModuleKey);
         if (enabledModule is null)
         {
@@ -218,7 +255,7 @@ public sealed class RouteConversationToModuleHandler(
                 c =>
                 {
                     c.CloseModuleTask(now);
-                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText), now, content: null);
+                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText(locale)), now, content: null);
                 },
                 cancellationToken);
         }
@@ -232,20 +269,6 @@ public sealed class RouteConversationToModuleHandler(
             return RouteConversationToModuleOutcome.ReplyNotResolved;
         }
 
-        // `25-37`/`25-38`/`25-39`: three more facts a module may need to answer this reply, resolved
-        // fresh on every call rather than remembered anywhere - see SubmitModuleReplyRequest.Locale's
-        // own remarks for why this item spends no migration on persisting them. Read unconditionally
-        // (not gated to a particular step kind): none of the three reads is expensive - a single-row
-        // Site lookup and a visitor's own small, bounded contact-detail list
-        // (VisitorContactDetail's own remarks) - and gating on step kind would make this handler's own
-        // behaviour depend on knowledge of which primitive kind a booking module happens to use its
-        // phone step for, which is exactly the "no special-casing per primitive kind" constraint this
-        // handler's own type remarks already hold ResolveReplyValue to.
-        //
-        // `25-64`: moved ahead of the `VerifiedPhoneForm` gate below, deliberately - `acceptUnverifiedPhone`
-        // is what that gate now reads before it can refuse a reply, so it has to exist before the gate
-        // runs rather than after it.
-        var (locale, acceptUnverifiedPhone) = await ResolveModuleContextAsync(conversation.SiteId, cancellationToken);
         var knownPhone = await ResolveKnownPhoneAsync(conversation.VisitorId, cancellationToken);
 
         // `20-09`/`25-64`: the structural gate. A reply against a step this vocabulary marks as needing
@@ -346,7 +369,7 @@ public sealed class RouteConversationToModuleHandler(
                 c =>
                 {
                     c.CloseModuleTask(now);
-                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText), now, content: null);
+                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText(locale)), now, content: null);
                 },
                 cancellationToken);
         }
@@ -357,7 +380,7 @@ public sealed class RouteConversationToModuleHandler(
                 ? RouteConversationToModuleOutcome.TaskCompleted
                 : RouteConversationToModuleOutcome.StepAdvanced;
             return await FinishStepAsync(
-                conversation, trigger, step, replyResult.Complete, nonEscalationOutcome, now, command,
+                conversation, trigger, step, replyResult.Complete, nonEscalationOutcome, now, command, locale,
                 c => c.RecordModuleStep(step.Kind, step.Payload, step.Actions),
                 cancellationToken);
         }
@@ -406,10 +429,14 @@ public sealed class RouteConversationToModuleHandler(
     private async Task<Result<RouteConversationToModuleOutcome>> FinishStepAsync(
         Conversation conversation, Message trigger, ModuleStep step, bool moduleSaysComplete,
         RouteConversationToModuleOutcome nonEscalationOutcome, DateTimeOffset now, RouteConversationToModule command,
-        Action<Conversation> applyStep, CancellationToken cancellationToken)
+        string locale, Action<Conversation> applyStep, CancellationToken cancellationToken)
     {
         var isEscalation = step.Kind.Value == PrimitiveKinds.Escalate;
-        var fallback = isEscalation ? ModuleEscalatedFallbackText : trigger.Body.Value;
+        // `25-66`: `locale` - already resolved once by each of this method's two callers
+        // (`TryStartTaskAsync`'s own `ResolveLocaleAsync`, `ContinueActiveTaskAsync`'s own
+        // `ResolveModuleContextAsync`) - reaches `ModuleEscalatedFallbackText` only here, the one place
+        // both call paths converge, rather than each caller localizing its own copy of this fallback.
+        var fallback = isEscalation ? ModuleEscalatedFallbackText(locale) : trigger.Body.Value;
         var body = PrimitiveTextRenderer.Render(fallback, step.Kind.Value, step.Payload, step.Actions);
         var content = MessageContent.Create(step.Kind, step.Payload, step.Actions);
         var outcome = isEscalation ? RouteConversationToModuleOutcome.Escalated : nonEscalationOutcome;

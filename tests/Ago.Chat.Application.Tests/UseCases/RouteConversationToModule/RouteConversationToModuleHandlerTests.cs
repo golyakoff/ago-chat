@@ -208,6 +208,27 @@ public class RouteConversationToModuleHandlerTests
         Assert.Null(reply.Content);
     }
 
+    /// <summary>`25-66`: the same refusal as the test right above, on a Russian-locale site - before
+    /// this item, `ModuleUnavailableText` was a hardcoded English `const string`, so this would have
+    /// read in English regardless of the site's own configured language, the identical gap `25-64`
+    /// found live for `PhoneVerificationRequiredText`.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleIsUnreachableAtTrigger_OnARussianSite_TellsTheVisitor_InRussian()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(site: site);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.UnreachableOnStart = true;
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.ModuleUnavailableAtTrigger, result.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("team member", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("сотрудник", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>`19-03`'s own Done-when: "a visitor asking something the knowledge base does not cover
     /// gets the low-confidence escape to an operator, proven by a test." The module signals this on its
     /// very first answer - no active task ever exists to close, but the fresh one this call just
@@ -245,6 +266,27 @@ public class RouteConversationToModuleHandlerTests
         var reply = fixture.Conversation.Messages.Last();
         Assert.DoesNotContain("Mars", reply.Body.Value);
         Assert.Equal("Let me get a team member to help with that.", reply.Body.Value);
+    }
+
+    /// <summary>`25-66`: the same generic escalate fallback as the test right above, on a
+    /// Russian-locale site - before this item, `ModuleEscalatedFallbackText` was a hardcoded English
+    /// `const string`, so a Russian-configured tenant's visitor would have seen this apology in English
+    /// mid-conversation, the identical gap `25-64` found live for `PhoneVerificationRequiredText`.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheEscalateStepCarriesNoPromptOfItsOwn_OnARussianSite_UsesTheGenericFallback_InRussian()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(site: site);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking is the shop open on Mars"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", EscalateStep(), true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("Mars", reply.Body.Value);
+        Assert.DoesNotContain("team member", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("сотрудник", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -606,6 +648,54 @@ public class RouteConversationToModuleHandlerTests
         Assert.Null(fixture.Conversation.ActiveModuleTask);
         var reply = fixture.Conversation.Messages.Last();
         Assert.Equal(MessageAuthorKind.System, reply.AuthorKind);
+    }
+
+    /// <summary>`25-66`: the same mid-task escalation as the test right above, on a Russian-locale
+    /// site - before this item, `ModuleBecameUnreachableText` was a hardcoded English `const string`,
+    /// so this apology would have read in English regardless of the site's own configured language, the
+    /// identical gap `25-64` found live for `PhoneVerificationRequiredText`.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleBecomesUnreachableMidTask_OnARussianSite_ClosesTheTask_AndEscalates_InRussian()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(site: site, arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.UnreachableOnReply = true;
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.Escalated, result.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("person", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("сотрудник", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>`25-66`: the "module was disabled while this task was open" branch of
+    /// `ModuleBecameUnreachableText` - a different call site from the mid-reply-unreachable test above
+    /// (the `enabledModule is null` check in <c>ContinueActiveTaskAsync</c>, not the
+    /// `ModuleUnreachableException` catch), reached without ever calling the gateway at all. Proven
+    /// separately because `25-66`'s own fix moved this call site's own locale resolution earlier in the
+    /// method (ahead of this check, not only ahead of the phone gate) - a regression here would mean
+    /// that move broke rather than merely relocated it.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleIsDisabledMidTask_OnARussianSite_ClosesTheTask_AndEscalates_InRussian()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(
+            moduleEnabled: false, site: site,
+            arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.Escalated, result.Value);
+        Assert.Null(fixture.Conversation.ActiveModuleTask);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("person", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("сотрудник", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
     }
 
     // ------------------------------------------------------------------------------------------
