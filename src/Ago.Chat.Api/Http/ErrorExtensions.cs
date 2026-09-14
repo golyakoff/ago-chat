@@ -69,7 +69,26 @@ public static class ErrorExtensions
                 // this item's own concern, not a drive-by fix of the older two handlers - see this
                 // item's own report for the two adjacent codes (`Operator.AlreadyRemoved`,
                 // `Operator.SeatLimitReached`) left exactly as found.
-                or "Operator.NotFound" => StatusCodes.Status404NotFound,
+                or "Operator.NotFound"
+                // `25-98`: this whole switch case audited end to end - four more codes reached a real
+                // HTTP endpoint's `ToProblem` and had never been given a line here, all falling
+                // through to the `500` default below.
+                //
+                // `Billing.SubscriptionNotFound` - the same plain "no row" shape every other code in
+                // this group already has (ConversationErrors.BillingSubscriptionNotFound's own remarks).
+                or "Billing.SubscriptionNotFound"
+                // `Document.NotFound` - "no version - specific or current - exists under the requested
+                // key", PublishedDocumentErrors.NotFound's own remarks; the same plain "no row" shape.
+                or "Document.NotFound"
+                // `MessageArchive.NotFound` - ConversationErrors.MessageArchiveNotFound's own remarks
+                // name it "the identical wrong-tenant-reads-like-no-such-row cross-tenant guard
+                // ExportNotFound already establishes", so it belongs in this exact group, not a new one.
+                or "MessageArchive.NotFound"
+                // `ModuleTaskChannelPriority.ChannelNotEligible` - ConversationErrors.ModuleTaskChannelNotEligible's
+                // own remarks name it "the same never-an-arbitrary-id invariant ChannelIdentityNotEligibleForPreference
+                // already enforces" - and that code sits in this identical info-hiding group two lines up
+                // in this same case, for the identical reason.
+                or "ModuleTaskChannelPriority.ChannelNotEligible" => StatusCodes.Status404NotFound,
             // `23-71`: the identical shape as Conversation.Forbidden right above - a real permission
             // holder refused for a second, orthogonal reason (holding no seat), not a malformed
             // request or a conflict with anything concurrent. ConversationErrors.OperatorHasNoSeat's
@@ -98,10 +117,24 @@ public static class ErrorExtensions
             // exercises `GET /api/v1/attachments/{id}` over real HTTP yet, for any outcome - a
             // follow-up item, not this one, closes that), exactly the `Operator.NotFound` gap `23-72`'s
             // own remarks above describe for a different code.
+            // `25-98`: `AiAddOn.Forbidden` - AiAddOnErrors' own remarks give it no shape of its own; it
+            // is the same "Permission.SiteConfigure holder refused" real permission failure this whole
+            // group already carries for every other resource (the identical check EnableAiAddOnHandler/
+            // AcceptAiAddOnAgreementHandler/DeclareAiProcessingBasisHandler/DisableAiAddOnHandler each run
+            // first, before any of this item's own four new gaps below). Reached a real `ToProblem` call
+            // (`AiAddOnEndpoints`) and had never been given a line here, falling through to the `500`
+            // default below - the same shape `23-72`'s own `Operator.NotFound` entry above describes.
             "Conversation.Forbidden" or "Conversation.OperatorHasNoSeat" or "Attachment.UploadNotGranted"
                 or "TenantSuspension.CannotSend" or "OperatorInvite.EmailMismatch"
-                or "Attachment.DownloadBlocked" => StatusCodes.Status403Forbidden,
-            "Attachment.TooLarge" => StatusCodes.Status413PayloadTooLarge,
+                or "Attachment.DownloadBlocked" or "AiAddOn.Forbidden" => StatusCodes.Status403Forbidden,
+            // `25-98`: `Attachment.ConversationBudgetExceeded`/`Attachment.SiteBudgetExceeded` join
+            // `Attachment.TooLarge` here - both codes' own remarks call themselves "distinct from
+            // `AttachmentTooLarge` ... even though the shape is identical": a declared size that will
+            // not fit, just measured against a running total instead of the one file's own ceiling.
+            // Reached a real `ToProblem` call (`AttachmentEndpoints`/`CreateAttachmentHandler`) and had
+            // never been given a line here.
+            "Attachment.TooLarge" or "Attachment.ConversationBudgetExceeded" or "Attachment.SiteBudgetExceeded"
+                => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
                 or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken"
@@ -246,7 +279,48 @@ public static class ErrorExtensions
                 // does not exist. Mapped in the change that introduces them, rather than discovered
                 // later as a bare `500` the way `25-83`'s own first defect was.
                 or "Site.DownloadOverageBillingModeReasonRequired"
-                or "Attachment.DownloadOverageNothingToPay" => StatusCodes.Status400BadRequest,
+                or "Attachment.DownloadOverageNothingToPay"
+                // `25-98`: the rest of this item's own audit findings that belong in this exact
+                // "caller's own mistake to fix" group - each reached a real `ToProblem` call and had
+                // never been given a line here, all falling through to the `500` default below.
+                //
+                // `Acceptance.Invalid`/`Document.Invalid` - AcceptanceErrors.Invalid/
+                // PublishedDocumentErrors.Invalid both wrap a domain validation exception's own message,
+                // the identical "validate the value, translate the throw at the Application boundary"
+                // split every other `*.Invalid` code in this group already uses.
+                or "Acceptance.Invalid" or "Document.Invalid"
+                // `AssignmentPenalty.Invalid`/`ContactVisibility.InvalidRung`/`OfflineAutoReply.Invalid`/
+                // `WidgetConfig.InvalidAutoOpenDelay`/`WidgetConfig.InvalidAutoOpenGreetingText`/
+                // `WidgetConfig.InvalidLocale`/`WidgetConfig.InvalidNoticeText`/
+                // `WidgetConfig.InvalidNoticeUrl` - the identical "validate the value or enum, translate
+                // the throw at the Application boundary" split `WidgetConfig.InvalidColor`/
+                // `WidgetConfig.InvalidPosition` already draw a few lines up, restated for each field
+                // ConversationErrors' own remarks name for it.
+                or "AssignmentPenalty.Invalid" or "ContactVisibility.InvalidRung" or "OfflineAutoReply.Invalid"
+                or "WidgetConfig.InvalidAutoOpenDelay" or "WidgetConfig.InvalidAutoOpenGreetingText"
+                or "WidgetConfig.InvalidLocale" or "WidgetConfig.InvalidNoticeText" or "WidgetConfig.InvalidNoticeUrl"
+                // `Billing.InvalidSeatCount` - "the requested seat count falls outside
+                // SubscriptionTierBands.MinSeats-MaxSeats ... never a purchasable band"
+                // (ConversationErrors.BillingInvalidSeatCount's own remarks) - the caller's own mistake
+                // to fix, not a conflict with anything concurrent.
+                or "Billing.InvalidSeatCount"
+                // `Billing.SeatCountUnchanged` - the identical shape `Conversation.TransferTargetIsCurrentOperator`
+                // already gives a few lines up: "a real client mistake (naming the state that already
+                // holds)", not a conflict with anything concurrent - the caller asked to change to what
+                // is already true, so there is nothing to retry and nothing else to act on first.
+                or "Billing.SeatCountUnchanged"
+                // `Module.TriggerWordReserved` - "collides with Chat's own closed, product-level command
+                // vocabulary ... refused regardless of what any other module has registered"
+                // (ConversationErrors.ModuleTriggerWordReserved's own remarks) - the same "caller named a
+                // value outside the allowed set" shape `Role.PermissionUnknown` already gives a few lines
+                // up, not a conflict with another module's own registration (that shape is
+                // `Module.TriggerWordAlreadyRegistered`, mapped separately below, in the 409 group).
+                or "Module.TriggerWordReserved"
+                // `ModuleTaskChannelPriority.DuplicateEntry` - "the same channel identity named twice in
+                // one submitted priority order ... a caller submitting a genuine duplicate has almost
+                // certainly made a mistake" (ConversationErrors.ModuleTaskChannelPriorityDuplicateEntry's
+                // own remarks) - a malformed request body, not a conflict with anything concurrent.
+                or "ModuleTaskChannelPriority.DuplicateEntry" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -333,7 +407,50 @@ public static class ErrorExtensions
                 // with the row's own current state, resolved by nothing the caller can do (a fresh
                 // invite from the admin, not a retry), the identical shape `OperatorInvite.AlreadyRedeemed`
                 // right above already gives its own sibling conflict.
-                or "OperatorInvite.Revoked" => StatusCodes.Status409Conflict,
+                or "OperatorInvite.Revoked"
+                // `25-98`: the rest of this item's own audit findings that belong in this exact "real
+                // conflict with the row's own current state, resolved by a different act, not a retry
+                // and not fixing the request body" group - each reached a real `ToProblem` call and had
+                // never been given a line here.
+                //
+                // `AiAddOn.AgreementNotAccepted`/`AiAddOn.BasisNotDeclared` - two of the add-on's own
+                // three distinct missing-fact refusals (AiAddOnErrors' own remarks on why there are
+                // three, not one `AiAddOn.NotReady`) - a real precondition not yet met, resolved by a
+                // separate act (accept the agreement; declare the basis) before enabling, the identical
+                // shape `VisitorContactDetail.ConsentRequired` already gives a few lines up.
+                or "AiAddOn.AgreementNotAccepted" or "AiAddOn.BasisNotDeclared"
+                // `AiAddOn.AgreementVersionStale` - "the version the caller says they read is not the
+                // one currently published" (AiAddOnErrors' own remarks) - the identical "confirmed
+                // against a stale answer; ask again, look at the fresh one, confirm again" shape
+                // `Module.QuantityImpactStale` already gives a few lines up.
+                or "AiAddOn.AgreementVersionStale"
+                // `Billing.SubscriptionNotActive` - "the subscription named is not currently active
+                // (Pending, already Failed/Lapsed) - there is nothing for a cancel or a seat change to
+                // act on" (ConversationErrors.BillingSubscriptionNotActive's own remarks) - a real
+                // conflict with the row's own current state, the identical shape
+                // `TenantSuspension.NotSuspended` already gives a few lines up.
+                or "Billing.SubscriptionNotActive"
+                // `Document.PublishConflict` - PublishedDocumentErrors.PublishConflict's own remarks
+                // name it "`409`, not the caller's mistake to fix and not a transient dependency failure
+                // either" in as many words.
+                or "Document.PublishConflict"
+                // `Module.TriggerWordAlreadyRegistered` - "a trigger word registered here already opens
+                // a different module" (ConversationErrors.ModuleTriggerWordAlreadyRegistered's own
+                // remarks) - a real conflict with another module's own existing registration, the
+                // identical shape `Tag.AlreadyExists` already gives a few lines up (not the caller
+                // naming an off-limits value outright - that shape is `Module.TriggerWordReserved`,
+                // mapped separately above, in the 400 group).
+                or "Module.TriggerWordAlreadyRegistered"
+                // `ModuleTaskChannelPriority.NoActiveTask` - "there is no Conversation.ActiveModuleTask
+                // to scope a priority list to ... nothing for this call to attach to"
+                // (ConversationErrors.ModuleTaskChannelPriorityNoActiveTask's own remarks) - the
+                // identical "nothing to act on" shape `TenantSuspension.NotSuspended` already gives a
+                // few lines up.
+                or "ModuleTaskChannelPriority.NoActiveTask"
+                // `Visitor.NotRestricted` - ConversationErrors.VisitorNotRestricted's own remarks name it
+                // "the same `409`-shaped ... group `ConversationNotBlocked` already establishes, restated
+                // for a visitor" in as many words.
+                or "Visitor.NotRestricted" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
@@ -359,7 +476,30 @@ public static class ErrorExtensions
                 // request" (`400`, ConversationErrors.ChannelInvalidToken's own group - the token the
                 // caller sent may be perfectly valid; the account just has not bought the right to use
                 // it).
-                or "ChannelCredential.NotEntitled" => StatusCodes.Status402PaymentRequired,
+                or "ChannelCredential.NotEntitled"
+                // `25-98`: three more codes in this exact "the actual remedy is to pay, not retry and
+                // not fix the request" group - each reached a real `ToProblem` call and had never been
+                // given a line here.
+                //
+                // `AiAddOn.NotPurchased` - "the site has no effective quantity of the add-on module -
+                // nothing to enable" (AiAddOnErrors' own remarks) - the identical entitlement shape
+                // `ChannelCredential.NotEntitled` right above already gives for a different resource.
+                or "AiAddOn.NotPurchased"
+                // `Billing.PaymentProviderRefused` - "ЮKassa answered but refused the payment-creation
+                // request ... a terminal, provider-confirmed refusal a retry of the identical request
+                // would not fix" (ConversationErrors.BillingPaymentProviderRefused's own remarks,
+                // explicitly distinguishing this from the unhandled-transient-failure `5xx` case the
+                // same handler lets propagate) - the actual remedy is a different payment method, the
+                // same "this is a payment problem, not a malformed request" reasoning `402` exists for.
+                or "Billing.PaymentProviderRefused"
+                // `Operator.SeatLimitReached` - ConversationErrors.OperatorSeatLimitReached's own
+                // remarks state the status in as many words: "`402 Payment Required`, the identical
+                // reasoning `OperatorInviteSeatLimitReached` already gives for the same underlying
+                // constraint on a different write path" - this is `23-72`'s own second pre-existing gap,
+                // named and deliberately left as found at the time (see this file's own `Operator.NotFound`
+                // remarks above); closed now that this item's own audit needs a real reason for every
+                // absence rather than an inherited one.
+                or "Operator.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
             // `ago-root#352`: a deployment that has not turned demo tenants on genuinely lacks this
             // capability - not "there is nothing at this path" (`404`, explicitly rejected by
             // MintDemoTenantHandler's own remarks: "not a 404 dressed as a feature flag") and not "an
@@ -457,7 +597,14 @@ public static class ErrorExtensions
                 // refuse cleanly rather than crash or charge zero (PriceCatalogErrors.PriceNotConfigured's
                 // own remarks) - the identical "a dependency of this request is missing, not
                 // anything the caller supplied being wrong" shape this whole block already uses.
-                or "Billing.PriceNotConfigured" => StatusCodes.Status503ServiceUnavailable,
+                or "Billing.PriceNotConfigured"
+                // `25-98`: `AiAddOn.AgreementNotPublished` - AiAddOnErrors' own remarks call it "a
+                // deployment fault, surfaced rather than swallowed": no published agreement exists yet,
+                // so nothing can be accepted and nothing can be enabled - the identical "a dependency of
+                // this request is missing, not anything the caller supplied being wrong" shape this
+                // whole group already uses. Reached a real `ToProblem` call (`AiAddOnEndpoints`) and had
+                // never been given a line here.
+                or "AiAddOn.AgreementNotPublished" => StatusCodes.Status503ServiceUnavailable,
             // `ago-root#352`: demo.unavailable is deliberately left here rather than given its own status.
             // MintDemoTenantHandler returns it only after ISiteRegistrationRepository.TryRegisterAsync's
             // five-row insert hits its own unique-index violation - a race that port's own remarks call
@@ -468,6 +615,37 @@ public static class ErrorExtensions
             // itself flagged, and 500 is the honest status for "something we did not expect happened while
             // trying to do this."
             "demo.unavailable" => StatusCodes.Status500InternalServerError,
+            // `25-98`: this item's own audit read every `*Errors`-shaped factory method in `ago-chat`
+            // (165 codes total, cross-checked against this switch and each one's own callers) rather
+            // than trust the handful this file's own comments already named as debt. Every code found
+            // unmapped either got a line above, in this change, or belongs on this list instead -
+            // deliberately absent for a real, checked reason, not by omission:
+            //
+            // `Message.InvalidBody`/`Message.InvalidContent`/`Message.Unavailable`/
+            // `Conversation.CreateRateLimited`/`TeamChat.Forbidden`/`TeamChat.InvalidBody`/
+            // `TeamChat.NotFound` - never reach this method at all. `VisitorHub`/`OperatorHub` translate
+            // every `Result` failure through `HubException(error.Message)` directly (see each hub's own
+            // send/start-conversation/team-message handlers) - SignalR has no `IResult`/`ToProblem`
+            // pipeline to run through, the same "free text, not RFC 7807" split this file's own
+            // `RetryAfter` doc comment already draws for the one code (`*.RateLimited`) that crosses
+            // both. A line for any of these seven here would be dead code: nothing in this codebase ever
+            // calls `ToProblem` with one. Confirmed by reading every caller of each factory method, not
+            // assumed from the naming - `StartConversationHandler`/`SendVisitorMessageHandler`/
+            // `SendOperatorMessageHandler`/`RemoveTeamMessageHandler` and their siblings have no `Api`
+            // caller outside `Hubs/`.
+            //
+            // `TenantSuspension.SessionRefused` - has no caller anywhere in this codebase, not even a
+            // test. Its own doc comment claims `Api.Auth.AuthEndpoints.HandleVisitorSessionAsync`'s own
+            // refusal, but that method refuses a suspended tenant by hand-building `Results.Problem`
+            // directly (`title`/`type: "tenant-suspended"`/`403`), the same pre-`Result<T>`/`Error`
+            // pattern this file's own top-of-file remarks already name `AuthEndpoints` for. This factory
+            // method was written for a wiring that was never made, or was made and then replaced by the
+            // hand-rolled version without the dead code being noticed - either way, mapping it here would
+            // not make it reachable, and a status chosen for code nothing ever constructs cannot be
+            // "wrong" or "right" in any way a test could show biting. Left unmapped, not mapped to a
+            // guess; a real follow-up (either wire `AuthEndpoints` onto this vocabulary, or delete the
+            // dead factory method) is outside this item's own one-thing scope (rule 15) and is named in
+            // this item's own report rather than folded in here.
             _ => StatusCodes.Status500InternalServerError,
         };
 
