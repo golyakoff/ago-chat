@@ -178,14 +178,17 @@ public static class ErasureRecordQuery
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    /// <summary>The finishing call for a site erasure - both counts are set outright because
+    /// <summary>The finishing call for a site erasure - every count is set outright because
     /// <c>SiteErasureJob.ProcessSiteAsync</c> only ever calls this once, immediately before it reads
     /// and deletes the site row (this file's own remarks on why it runs there and not after: the
     /// identity-provider deletions that follow are already the one step this job's own comments accept
-    /// as unretryable once the site row is gone, and this record should not be the second one).</summary>
+    /// as unretryable once the site row is gone, and this record should not be the second one).
+    /// <paramref name="visitorRestrictionsDeleted"/> is `25-78`'s own addition - see
+    /// <c>SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync</c>'s own remarks for why this is a
+    /// site-scope count only, never a conversation-scope one.</summary>
     public static async Task CompleteSiteErasureAsync(
         NpgsqlConnection connection, Guid? recordId, int storageObjectsDeleted, int identitiesDeleted,
-        DateTimeOffset completedAt, CancellationToken cancellationToken)
+        int visitorRestrictionsDeleted, DateTimeOffset completedAt, CancellationToken cancellationToken)
     {
         if (recordId is null)
         {
@@ -199,7 +202,8 @@ public static class ErasureRecordQuery
                 completed_at = @completedAt,
                 failure_reason = null,
                 storage_objects_deleted = @objects,
-                identities_deleted = @identities
+                identities_deleted = @identities,
+                visitor_restrictions_deleted = @visitorRestrictions
             where id = @id and status <> 'Completed'
             """,
             connection);
@@ -207,6 +211,7 @@ public static class ErasureRecordQuery
         command.Parameters.AddWithValue("completedAt", completedAt);
         command.Parameters.AddWithValue("objects", storageObjectsDeleted);
         command.Parameters.AddWithValue("identities", identitiesDeleted);
+        command.Parameters.AddWithValue("visitorRestrictions", visitorRestrictionsDeleted);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

@@ -194,6 +194,18 @@ public static class ConversationErasureQuery
     /// shape <see cref="DeleteNotesForConversationAsync"/>/<see cref="DeleteTagsForConversationAsync"/>
     /// already use, so the removal is a step this job's own sequence performs and its caller can count,
     /// not a side effect of the later `visitors` cascade that a reader would have to go looking for.
+    ///
+    /// <para><b>`25-78`: `visitor_restrictions` deliberately does not get this same visitor-wide
+    /// treatment here, even though it is also keyed to the visitor rather than the conversation.</b> A
+    /// contact detail is inert data; widening its erasure to every conversation of the visitor costs
+    /// nothing still in effect. A restriction is not inert - it is the visitor's own current standing on
+    /// this site, gating every one of their <i>future</i> conversations
+    /// (<c>Ago.Chat.Infrastructure.Postgres.VisitorRestrictionRepository.IsActiveAsync</c>) - so deleting
+    /// it as a side effect of erasing one conversation, on the same reasoning that widens this method,
+    /// would silently lift an active spam mute or block the erasure request never asked about. See
+    /// <c>SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync</c>'s own remarks for the fuller
+    /// argument and for where a restriction is correctly drained instead - only once the whole site
+    /// (and, with it, every future conversation it could have gated) is itself being erased.</para>
     /// </summary>
     public static async Task<int> DeleteContactDetailsForVisitorAsync(
         NpgsqlConnection connection, Guid visitorId, CancellationToken cancellationToken)

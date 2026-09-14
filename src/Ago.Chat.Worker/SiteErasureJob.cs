@@ -206,6 +206,7 @@ public sealed class SiteErasureJob(
 
             string? publicKey;
             IReadOnlyList<string> subjectIds;
+            int visitorRestrictionsDeleted;
             await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
             {
                 // Read before the delete: `14-04`'s own two-key shape (ForPublicKey for the widget
@@ -216,6 +217,14 @@ public sealed class SiteErasureJob(
                 // bytes unreachable.
                 publicKey = await SiteErasureQuery.GetPublicKeyAsync(connection, siteId, cancellationToken);
                 subjectIds = await SiteErasureQuery.ListOperatorSubjectIdsAsync(connection, siteId, cancellationToken);
+                // `25-78`: this visitor's own restriction history (spam mutes, blocks), drained
+                // explicitly and counted here - before it disappears silently into DeleteSiteAsync's own
+                // cascade below - the same "explicit primary mechanism, cascade as defence in depth"
+                // shape ConversationErasureJob already gives conversation_notes/visitor_contact_details.
+                // See SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync's own remarks for why this
+                // belongs here (site scope) and deliberately not in ConversationErasureJob.
+                visitorRestrictionsDeleted = await SiteErasureQuery.DeleteVisitorRestrictionsForSiteAsync(
+                    connection, siteId, cancellationToken);
                 // `24-13`: the receipt, before the row - identities below are collected already
                 // (subjectIds) but not yet deleted, and this job's own remarks already accept that a
                 // failure deleting them cannot be retried once the site row is gone (nothing left for
@@ -223,7 +232,8 @@ public sealed class SiteErasureJob(
                 // be attempted, the same optimism this method's own closing log line already carried
                 // before this item existed.
                 await ErasureRecordQuery.CompleteSiteErasureAsync(
-                    connection, erasureRecordId, archiveObjectsDeleted, subjectIds.Count, now, cancellationToken);
+                    connection, erasureRecordId, archiveObjectsDeleted, subjectIds.Count,
+                    visitorRestrictionsDeleted, now, cancellationToken);
                 await SiteErasureQuery.DeleteSiteAsync(connection, siteId, cancellationToken);
             }
 
@@ -243,8 +253,9 @@ public sealed class SiteErasureJob(
             }
 
             logger.LogInformation(
-                "Site {SiteId} erased: the site subtree and {IdentityCount} identity-provider user(s).",
-                siteId, subjectIds.Count);
+                "Site {SiteId} erased: the site subtree ({RestrictionCount} visitor restriction(s) among it) " +
+                "and {IdentityCount} identity-provider user(s).",
+                siteId, visitorRestrictionsDeleted, subjectIds.Count);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
