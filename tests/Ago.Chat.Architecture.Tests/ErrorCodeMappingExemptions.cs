@@ -40,16 +40,6 @@ internal static class ErrorCodeMappingExemptions
             ["TeamChat.Forbidden"] = HubOnly + " (OperatorHub only.)",
             ["TeamChat.InvalidBody"] = HubOnly + " (OperatorHub only.)",
             ["TeamChat.NotFound"] = HubOnly + " (OperatorHub only.)",
-
-            ["TenantSuspension.SessionRefused"] =
-                "Dead code - ConversationErrors.TenantSuspendedSessionRefused() has no caller anywhere in this "
-                + "codebase, not even a test. Its own doc comment claims Api.Auth.AuthEndpoints.HandleVisitorSessionAsync's "
-                + "own refusal, but that method hand-builds Results.Problem directly (title/type: "
-                + "\"tenant-suspended\"/403) rather than going through this vocabulary at all - the same "
-                + "pre-Result<T>/Error pattern ErrorExtensions.cs's own top-of-file remarks already name "
-                + "AuthEndpoints for. Left unmapped rather than mapped to a guess, because a status chosen for "
-                + "a call nothing ever makes cannot be right or wrong. A real follow-up (wire AuthEndpoints onto "
-                + "this vocabulary, or delete the dead factory method) is this item's own report, not this file.",
         };
 
     public static bool IsExempt(string code) => ByCode.ContainsKey(code);

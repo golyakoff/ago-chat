@@ -95,6 +95,10 @@ public static class AuthEndpoints
         // with a conversation already open... sees no error, and their message is still stored").
         if (await suspensions.IsSuspendedAsync(new SiteId(site.SiteId), clock.UtcNow, cancellationToken))
         {
+            // Collapsed into the widget's ordinary "degrade to no widget" failure style
+            // (`ago-widget/src/errors.ts`'s own remarks) rather than a distinguishing message - a
+            // stranger probing a suspended tenant's public key must not be able to read this response
+            // as confirmation the account exists and is in trouble.
             return Results.Problem(
                 title: "This account is currently suspended.",
                 statusCode: StatusCodes.Status403Forbidden,
