@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
@@ -35,6 +36,14 @@ namespace Ago.Chat.Api.Channels;
 /// the shop completes Avito's own OAuth consent flow once, outside AGO (the same way a MAX bot token or a
 /// VK community token is obtained from each provider's own console today), and an operator pastes both
 /// resulting values in.</para>
+///
+/// <para><b>`25-65`: <see cref="HandleStatusAsync"/> never asks Avito anything live, the same posture
+/// <see cref="VkChannelEndpoints.HandleStatusAsync"/>/<see cref="WhatsAppChannelEndpoints.HandleStatusAsync"/>/
+/// <see cref="MaxChannelEndpoints.HandleStatusAsync"/> already take. Avito's own <c>GetSelfAsync</c> is
+/// validated once, at connect time, above - re-asking it on every status read would cost a tenant a live
+/// Avito call just for looking at this screen, for a richness this item was never asked to add. This
+/// endpoint reports only what <see cref="GetChannelCredentialStatusHandler"/> already answers for every
+/// channel.</para>
 /// </summary>
 public static class AvitoChannelEndpoints
 {
@@ -43,8 +52,30 @@ public static class AvitoChannelEndpoints
         var group = app.MapGroup("/api/v1/sites/{siteId:guid}/channels/avito")
             .RequireAuthorization("RequireOperatorIdentity");
 
+        group.MapGet("", HandleStatusAsync);
         group.MapPost("", HandleConnectAsync);
         group.MapDelete("/{channelCredentialId:guid}", HandleDisconnectAsync);
+    }
+
+    private static async Task<IResult> HandleStatusAsync(
+        Guid siteId,
+        GetChannelCredentialStatusHandler statusHandler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var site = new SiteId(siteId);
+
+        var status = await statusHandler.HandleAsync(
+            new GetChannelCredentialStatus(user.GetOperatorId(), site, ChannelKind.Avito), cancellationToken);
+        if (status.IsFailure)
+        {
+            return status.Error!.Value.ToProblem(httpContext);
+        }
+
+        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
+            ? new AvitoChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
+            : AvitoChannelStatusResponse.NotConnected);
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -134,4 +165,12 @@ public static class AvitoChannelEndpoints
     /// webhook, like MAX's, is registered programmatically by this endpoint, so there is nothing a human
     /// needs to paste anywhere.</summary>
     public sealed record ConnectAvitoChannelResponse(Guid ChannelCredentialId, DateTimeOffset CreatedAt);
+
+    /// <summary>`25-65`: <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>'s own shape
+    /// verbatim - see <see cref="HandleStatusAsync"/>'s own remarks for why this endpoint never asks
+    /// Avito anything live.</summary>
+    public sealed record AvitoChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    {
+        public static readonly AvitoChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+    }
 }
