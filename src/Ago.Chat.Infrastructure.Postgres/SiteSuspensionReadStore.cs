@@ -38,6 +38,24 @@ public sealed class SiteSuspensionReadStore(NpgsqlDataSource dataSource) : ISite
         order by s.suspended_until asc
         """;
 
+    // `GetForTenantAsync`'s own "since when" - the most recent `'Suspended'` row for this site, never
+    // the most recent row of any kind (`ISiteSuspensionReadStore.GetForTenantAsync`'s own remarks state
+    // why an `'Extended'` row must not move this date). The outer `where` limits the whole query to a
+    // site that is currently suspended, so a `null` result means simply "not suspended" - nothing this
+    // method returns distinguishes "never suspended" from "suspended once, then lifted".
+    private const string ForTenantSql =
+        """
+        select s.suspended_until as "Until",
+               (
+                   select performed_at from site_suspensions
+                   where site_id = s.id and action = 'Suspended'
+                   order by performed_at desc
+                   limit 1
+               ) as "Since"
+        from sites s
+        where s.id = @SiteId and s.suspended_until is not null and s.suspended_until > @Now
+        """;
+
     public async Task<bool> IsSuspendedAsync(SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
@@ -66,6 +84,18 @@ public sealed class SiteSuspensionReadStore(NpgsqlDataSource dataSource) : ISite
             .ToList();
     }
 
+    public async Task<TenantSuspensionStatus> GetForTenantAsync(
+        SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var row = await connection.QuerySingleOrDefaultAsync<TenantSuspensionRow>(new CommandDefinition(
+            ForTenantSql, new { SiteId = siteId.Value, Now = now }, cancellationToken: cancellationToken));
+
+        return row is null
+            ? new TenantSuspensionStatus(IsSuspended: false, Since: null, Until: null)
+            : new TenantSuspensionStatus(IsSuspended: true, row.Since, row.Until);
+    }
+
     private sealed class OwnerSuspensionRow
     {
         public Guid SiteId { get; init; }
@@ -79,5 +109,12 @@ public sealed class SiteSuspensionReadStore(NpgsqlDataSource dataSource) : ISite
         public string LastActionReason { get; init; } = string.Empty;
 
         public DateTimeOffset LastActionAt { get; init; }
+    }
+
+    private sealed class TenantSuspensionRow
+    {
+        public DateTimeOffset Until { get; init; }
+
+        public DateTimeOffset? Since { get; init; }
     }
 }

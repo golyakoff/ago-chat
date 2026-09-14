@@ -40,6 +40,23 @@ public interface ISiteSuspensionReadStore
     /// join <see cref="ListActiveSuspensionsAsync"/> would otherwise pay for on every renewal tick.
     /// </summary>
     Task<IReadOnlyList<OwnerSuspensionSummary>> ListForOwnerAsync(DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-70`: the tenant's own read of its own account's suspension state -
+    /// <see cref="ListForOwnerAsync"/>'s sibling, scoped to one site instead of every currently-suspended
+    /// one, and carrying the one fact that screen has no use for either: <em>since</em> when the
+    /// suspension currently in effect began. "Since" is not <c>site_suspensions</c>' own most recent row
+    /// (that can be an <c>"Extended"</c> act, which pushes <see cref="Domain.Site.SuspendedUntil"/>
+    /// further out without starting a new suspension) - it is the most recent <c>"Suspended"</c> row,
+    /// because between two such rows for the same site only <c>"Extended"</c> rows can occur: a
+    /// <c>"Lifted"</c> row clears <see cref="Domain.Site.SuspendedUntil"/> to <see langword="null"/>, so
+    /// resuming suspension after one always writes a fresh <c>"Suspended"</c> row rather than another
+    /// <c>"Extended"</c> one. Returns a non-suspended <see cref="TenantSuspensionStatus"/> - never
+    /// <see langword="null"/> - for a site that is not currently suspended, the same "absent means simply
+    /// not currently true" shape <see cref="ListActiveSuspensionsAsync"/> already gives an expired
+    /// suspension.
+    /// </summary>
+    Task<TenantSuspensionStatus> GetForTenantAsync(SiteId siteId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
 /// <summary>One row of <see cref="ISiteSuspensionReadStore.ListForOwnerAsync"/> - a currently-suspended
@@ -53,3 +70,12 @@ public sealed record OwnerSuspensionSummary(
     string LastActionBy,
     string LastActionReason,
     DateTimeOffset LastActionAt);
+
+/// <summary>The result of <see cref="ISiteSuspensionReadStore.GetForTenantAsync"/> -
+/// `docs/backlog/22-08-*.md`'s own "what the tenant sees" restated as data: suspended or not, and if so
+/// since when and until when. <paramref name="Since"/> and <paramref name="Until"/> are both
+/// <see langword="null"/> exactly when <paramref name="IsSuspended"/> is <see langword="false"/> - there
+/// is no "was suspended, is not any more" fact this type carries, deliberately: a lifted or expired
+/// suspension leaves nothing for the tenant's own console to show, the same "read-only, present-tense
+/// only" scope `25-70`'s own backlog item states.</summary>
+public sealed record TenantSuspensionStatus(bool IsSuspended, DateTimeOffset? Since, DateTimeOffset? Until);
