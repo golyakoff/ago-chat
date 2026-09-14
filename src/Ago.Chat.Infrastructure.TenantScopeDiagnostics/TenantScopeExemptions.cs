@@ -566,6 +566,26 @@ public static class TenantScopeExemptions
             + "RequirePlatformOwner on GET /api/v1/owner/suspensions is the entire access-control story. "
             + "Read-only; no write happens here.",
 
+        // `23-85`/`adr/0151`: the platform owner's own review-then-disconnect walkthrough for channel
+        // credentials connected without an entitlement - the identical "no SiteId, whole point is
+        // spanning every tenant, RequirePlatformOwner on the route is the entire story" shape
+        // ListSitesForOwnerHandler/ListSuspensionsForOwnerHandler already establish above.
+        ["Ago.Chat.Application.UseCases.ListNonEntitledChannelCredentialsAsOwner.ListNonEntitledChannelCredentialsAsOwnerHandler.HandleAsync"] =
+            "`23-85`, the owner's own \"which accounts are connected without a channel entitlement\" read - the "
+            + "same shape as ListSuspensionsForOwnerHandler above: no SiteId at all, because the whole point is "
+            + "every affected tenant across the deployment, the first step of the author's own required "
+            + "walkthrough before the disconnect below ever runs. RequirePlatformOwner on "
+            + "GET /api/v1/owner/channel-entitlements/non-entitled-credentials is the entire access-control "
+            + "story. Read-only; no write happens here.",
+        ["Ago.Chat.Application.UseCases.DisconnectNonEntitledChannelCredentialsAsOwner.DisconnectNonEntitledChannelCredentialsAsOwnerHandler.HandleAsync"] =
+            "`23-85`, the write half of the same walkthrough - takes a list of ChannelCredentialIds, each "
+            + "scoped to its own SiteId once loaded (re-checked against that credential's own site, never the "
+            + "caller's), not a single SiteId the command could carry up front: the whole reason this route "
+            + "exists is a platform owner acting across more than one tenant's own already-reviewed rows in one "
+            + "call. RequirePlatformOwner on POST /api/v1/owner/channel-entitlements/disconnect is the entire "
+            + "access-control story - the identical shape RevokeModuleForSiteAsOwnerHandler's own SiteId-per-"
+            + "target reasoning would give if that handler ever took more than one target per call.",
+
         // ---------------------------------------------------------------------------------------
         // `24-01`: the acceptance record's own two handlers. Neither carries a SiteId at all - not
         // an omission, a deliberate consequence of what an acceptance is. Recording your own

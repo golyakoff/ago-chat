@@ -143,4 +143,85 @@ public class ChannelCredentialTests
 
         Assert.Throws<InvalidChannelCredentialStateException>(() => credential.RotateOAuthTokens([7, 7, 7], [8, 8, 8]));
     }
+
+    /// <summary>`23-85`/`adr/0151`: the system's own disconnect of a lapsed-entitlement account -
+    /// <see cref="ChannelCredential.RevokeForLapsedEntitlement"/>'s own remarks on why "cleaned up"
+    /// means more than <see cref="ChannelCredential.Revoke"/>'s own "flips Active to false."</summary>
+    [Fact]
+    public void RevokeForLapsedEntitlement_FlipsActiveToFalse()
+    {
+        var credential = Register();
+
+        credential.RevokeForLapsedEntitlement();
+
+        Assert.False(credential.Active);
+    }
+
+    [Fact]
+    public void RevokeForLapsedEntitlement_ClearsTheTokenCiphertext()
+    {
+        var credential = Register();
+
+        credential.RevokeForLapsedEntitlement();
+
+        Assert.Empty(credential.TokenCiphertext);
+    }
+
+    /// <summary>Unlike <see cref="ChannelCredential.Revoke"/>, which leaves
+    /// <see cref="ChannelCredential.TokenCiphertext"/> sitting in the row - the ordinary tenant-
+    /// initiated path never had a reason to wipe it, and this test's own sibling
+    /// (<see cref="Revoke_FlipsActiveToFalse"/>'s neighbours) never asserts otherwise.</summary>
+    [Fact]
+    public void Revoke_LeavesTheTokenCiphertextInPlace()
+    {
+        var credential = Register();
+
+        credential.Revoke();
+
+        Assert.Equal(new byte[] { 1, 2, 3 }, credential.TokenCiphertext);
+    }
+
+    [Fact]
+    public void RevokeForLapsedEntitlement_WithARefreshToken_ClearsItToo()
+    {
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), SiteId, ChannelKind.Avito, [1, 2, 3], Hash("s"), Now,
+            providerAccountId: "94235311", refreshTokenCiphertext: [9, 9, 9]);
+
+        credential.RevokeForLapsedEntitlement();
+
+        Assert.NotNull(credential.RefreshTokenCiphertext);
+        Assert.Empty(credential.RefreshTokenCiphertext);
+    }
+
+    /// <summary>No refresh token to clear for every channel but Avito - clearing must not turn a
+    /// <see langword="null"/> (never had one) into an empty array (had one, now cleared), the two
+    /// being materially different facts about this credential's own history.</summary>
+    [Fact]
+    public void RevokeForLapsedEntitlement_WithNoRefreshToken_LeavesItNull()
+    {
+        var credential = Register();
+
+        credential.RevokeForLapsedEntitlement();
+
+        Assert.Null(credential.RefreshTokenCiphertext);
+    }
+
+    [Fact]
+    public void RevokeForLapsedEntitlement_WhenAlreadyRevoked_Throws()
+    {
+        var credential = Register();
+        credential.RevokeForLapsedEntitlement();
+
+        Assert.Throws<InvalidChannelCredentialStateException>(() => credential.RevokeForLapsedEntitlement());
+    }
+
+    [Fact]
+    public void RevokeForLapsedEntitlement_WhenAlreadyRevokedByTheTenant_Throws()
+    {
+        var credential = Register();
+        credential.Revoke();
+
+        Assert.Throws<InvalidChannelCredentialStateException>(() => credential.RevokeForLapsedEntitlement());
+    }
 }

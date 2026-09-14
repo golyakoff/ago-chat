@@ -25,6 +25,8 @@ namespace Ago.Chat.Application.UseCases.RegisterChannelCredential;
 public sealed class RegisterChannelCredentialHandler(
     IChannelCredentialRepository credentials,
     IPermissionChecker permissions,
+    IBillingOptionEntitlementProvider entitlements,
+    IModuleQuantityGrantStore grants,
     IChannelCredentialCipher cipher,
     IWebhookSecretGenerator secretGenerator,
     IIdGenerator idGenerator,
@@ -38,6 +40,15 @@ public sealed class RegisterChannelCredentialHandler(
         if (!allowed)
         {
             return ConversationErrors.Forbidden("Operator does not have permission to manage channels for this site.");
+        }
+
+        // `23-85`/`adr/0151`: `channel:manage` answers "may this operator act for this account" -
+        // never "has this account bought this channel." Checked second, after the permission gate
+        // above, so an operator with no permission at all for this site learns nothing about whether
+        // the account is entitled either.
+        if (!await ChannelEntitlement.IsEntitledAsync(entitlements, grants, command.SiteId, command.Kind, cancellationToken))
+        {
+            return ChannelEntitlement.Refusal(command.Kind);
         }
 
         var validationFailure = ChannelCredentialTokenValidator.Validate(command.Token);

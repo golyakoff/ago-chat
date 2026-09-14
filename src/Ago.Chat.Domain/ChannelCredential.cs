@@ -213,4 +213,49 @@ public sealed class ChannelCredential
 
         Active = false;
     }
+
+    /// <summary>
+    /// `23-85`/`adr/0151`: the system's own disconnect of an account that has no channel entitlement -
+    /// a tenant who connected legitimately (`channel:manage` was all the code checked before this item)
+    /// and then never bought the option, or whose option lapsed. The backlog item's own "Answered,
+    /// 2026-09-09" wording is deliberately stronger than <see cref="Revoke"/>'s own: "their stored
+    /// channel credentials/keys are cleaned up - not left dangling in a half-connected state," and
+    /// `ago-business`'s own `0012` section 7 makes the same promise concrete ("удаляются, а не просто
+    /// помечаются неактивными"/"deleted, not just marked inactive"). So this clears
+    /// <see cref="TokenCiphertext"/> (and <see cref="RefreshTokenCiphertext"/> when this channel has
+    /// one) in the same call that flips <see cref="Active"/>, rather than leaving the ciphertext sitting
+    /// in the row the way an ordinary tenant-initiated <see cref="Revoke"/> does - the shop's own secret
+    /// has no further reason to exist once nobody is entitled to use it, and "reconnectable once
+    /// entitled" (the item's own words) means typing the token in again, never silently resurrecting
+    /// the old one.
+    ///
+    /// <para><b>Still not a hard delete.</b> The row itself, <see cref="Id"/>, <see cref="SiteId"/>,
+    /// <see cref="Kind"/>, <see cref="CreatedAt"/> and <see cref="WebhookSecretHash"/> (already a
+    /// one-way hash - nothing live to wipe) survive, unchanged from <see cref="Revoke"/>'s own
+    /// reasoning: a support agent asking "was this tenant ever connected, and why did it stop" needs an
+    /// answer, and <c>16-02</c>'s full erasure is still a separate, later concern this method does not
+    /// reach into.</para>
+    ///
+    /// <para><b>A distinct method from <see cref="Revoke"/>, not a parameter on it.</b> The two are
+    /// called from different callers for different reasons - a tenant's own deliberate act
+    /// (<c>RevokeChannelCredentialHandler</c>) versus the platform's own reconciliation
+    /// (the owner-triggered disconnect use case this item ships) - and giving <see cref="Revoke"/> a
+    /// <c>bool wipeCiphertext</c> parameter would let a future caller flip it by accident. A second,
+    /// distinctly-named method makes which behaviour a call site gets a compile-time-visible choice
+    /// instead of a boolean a reviewer has to chase to its call site.</para>
+    /// </summary>
+    public void RevokeForLapsedEntitlement()
+    {
+        if (!Active)
+        {
+            throw new InvalidChannelCredentialStateException($"Channel credential {Id.Value} is already revoked.");
+        }
+
+        Active = false;
+        TokenCiphertext = [];
+        if (RefreshTokenCiphertext is not null)
+        {
+            RefreshTokenCiphertext = [];
+        }
+    }
 }

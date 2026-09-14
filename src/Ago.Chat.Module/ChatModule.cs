@@ -116,6 +116,8 @@ using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
+using Ago.Chat.Application.UseCases.ListNonEntitledChannelCredentialsAsOwner;
+using Ago.Chat.Application.UseCases.DisconnectNonEntitledChannelCredentialsAsOwner;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.RemoveOperator;
@@ -476,6 +478,13 @@ public sealed class ChatModule : IProductModule
         // `23-36`: the read-side sibling, registered here next to the two writes it shares a repository
         // and a permission with.
         services.AddScoped<GetChannelCredentialStatusHandler>();
+        // `23-85`/`adr/0151`: the platform owner's own walkthrough pair - list, then (with the
+        // reviewed ids) disconnect. Registered here, next to the tenant-facing channel credential
+        // handlers above, since both resolve the identical IChannelCredentialRepository/
+        // IBillingOptionEntitlementProvider/IModuleQuantityGrantStore ports this item's own
+        // ChannelEntitlement helper composes.
+        services.AddScoped<ListNonEntitledChannelCredentialsAsOwnerHandler>();
+        services.AddScoped<DisconnectNonEntitledChannelCredentialsAsOwnerHandler>();
 
         // `14-02`: MAX's own outbound client and adapter - registered here, for every host, the same
         // "registered everywhere, resolved where it matters" shape as everything else on this page.

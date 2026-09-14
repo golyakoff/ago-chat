@@ -12,14 +12,35 @@ public class GetChannelCredentialStatusHandlerTests
     private static readonly OperatorId OperatorId = new(Guid.NewGuid());
     private static readonly DateTimeOffset RegisteredAt = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
-    private sealed record Fixture(GetChannelCredentialStatusHandler Handler, FakeChannelCredentialRepository Credentials, FakePermissionChecker Permissions);
+    private sealed record Fixture(
+        GetChannelCredentialStatusHandler Handler, FakeChannelCredentialRepository Credentials,
+        FakePermissionChecker Permissions, FakeBillingOptionEntitlementProvider Entitlements,
+        FakeModuleQuantityGrantStore Grants);
 
-    private static Fixture CreateFixture()
+    /// <summary>`23-85`: <paramref name="grantEntitlement"/> defaults to <see langword="true"/>, for
+    /// <paramref name="entitledSite"/> (defaulting to <see cref="SiteA"/>) and every
+    /// <see cref="ChannelKind"/> - every pre-existing test here predates the entitlement gate. The
+    /// gate's own tests opt out, or grant a different site, explicitly below.</summary>
+    private static Fixture CreateFixture(bool grantEntitlement = true, SiteId? entitledSite = null)
     {
         var credentials = new FakeChannelCredentialRepository();
         var permissions = new FakePermissionChecker();
-        var handler = new GetChannelCredentialStatusHandler(credentials, permissions);
-        return new Fixture(handler, credentials, permissions);
+        var entitlements = new FakeBillingOptionEntitlementProvider();
+        var grants = new FakeModuleQuantityGrantStore();
+        if (grantEntitlement)
+        {
+            var site = entitledSite ?? SiteA;
+            foreach (var kind in Enum.GetValues<ChannelKind>())
+            {
+                var optionKey = ChannelEntitlementOptionKeys.For(kind);
+                var moduleKey = new ModuleKey(optionKey.Value);
+                entitlements.Map(optionKey, moduleKey);
+                _ = grants.GrantAsync(site, moduleKey, 1, RegisteredAt, CancellationToken.None);
+            }
+        }
+
+        var handler = new GetChannelCredentialStatusHandler(credentials, permissions, entitlements, grants);
+        return new Fixture(handler, credentials, permissions, entitlements, grants);
     }
 
     private static ChannelCredential ActiveCredential(SiteId siteId, ChannelKind kind, DateTimeOffset now) =>
@@ -72,6 +93,27 @@ public class GetChannelCredentialStatusHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    /// <summary>`23-85`/`adr/0151`'s own Scope, point 5: "23-36's live status read stops for a lapsed
+    /// entitlement." This handler returning the refusal is what actually stops it - see this handler's
+    /// own remarks: <c>TelegramChannelEndpoints.HandleStatusAsync</c> calls this handler first and
+    /// returns its error immediately, never reaching Telegram's own <c>getMe</c>. Fails-before:
+    /// reverting the entitlement check here makes this test fail with a successful (connected) status
+    /// instead of a refusal, which would leave the live check running for a lapsed account.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheAccountHasNoChannelEntitlement_ReturnsChannelNotEntitled()
+    {
+        var fixture = CreateFixture(grantEntitlement: false);
+        fixture.Permissions.Grant(OperatorId, SiteA, Permission.ChannelManage);
+        fixture.Credentials.Seed(ActiveCredential(SiteA, ChannelKind.Telegram, RegisteredAt));
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.GetChannelCredentialStatus.GetChannelCredentialStatus(OperatorId, SiteA, ChannelKind.Telegram),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.NotEntitled", result.Error!.Value.Code);
     }
 
     /// <summary>
