@@ -10,48 +10,56 @@ public class RecordUnreadMessageHandlerTests
     private static readonly VisitorId VisitorId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
-    private static (RecordUnreadMessageHandler Handler, FakeConversationRepository Conversations, Conversation Conversation)
-        CreateHandlerWithConversation()
+    private sealed record Fixture(
+        RecordUnreadMessageHandler Handler, FakeConversationRepository Conversations,
+        FakeUnreadCounterStore UnreadCounter, FakeUnitOfWork UnitOfWork, Conversation Conversation);
+
+    private static Fixture CreateHandlerWithConversation()
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(conversation);
-        var handler = new RecordUnreadMessageHandler(conversations, new FakeInboxChecker());
-        return (handler, conversations, conversation);
+        var unreadCounter = new FakeUnreadCounterStore();
+        var unitOfWork = new FakeUnitOfWork();
+        var handler = new RecordUnreadMessageHandler(conversations, unreadCounter, unitOfWork, new FakeInboxChecker());
+        return new Fixture(handler, conversations, unreadCounter, unitOfWork, conversation);
     }
 
     [Fact]
-    public async Task HandleAsync_VisitorAuthoredMessage_IncrementsTheOperatorsUnreadCount()
+    public async Task HandleAsync_VisitorAuthoredMessage_AsksTheStoreToIncrementTheOperatorsCount()
     {
-        var (handler, _, conversation) = CreateHandlerWithConversation();
+        var fixture = CreateHandlerWithConversation();
 
-        var result = await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor, Sequence: 1),
+        var result = await fixture.Handler.HandleAsync(
+            new RecordUnreadMessage(Guid.NewGuid(), fixture.Conversation.Id, MessageAuthorKind.Visitor, Sequence: 1),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal(1, conversation.OperatorUnreadCount);
-        Assert.Equal(0, conversation.VisitorUnreadCount);
+        var call = Assert.Single(fixture.UnreadCounter.Calls);
+        Assert.Equal(fixture.Conversation.Id, call.ConversationId);
+        Assert.Equal(MessageAuthorKind.Visitor, call.AuthorKind);
+        Assert.Equal(1, call.Sequence);
     }
 
     [Fact]
-    public async Task HandleAsync_OperatorAuthoredMessage_IncrementsTheVisitorsUnreadCount()
+    public async Task HandleAsync_OperatorAuthoredMessage_AsksTheStoreToIncrementTheVisitorsCount()
     {
-        var (handler, _, conversation) = CreateHandlerWithConversation();
+        var fixture = CreateHandlerWithConversation();
 
-        await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Operator, Sequence: 1),
+        await fixture.Handler.HandleAsync(
+            new RecordUnreadMessage(Guid.NewGuid(), fixture.Conversation.Id, MessageAuthorKind.Operator, Sequence: 1),
             CancellationToken.None);
 
-        Assert.Equal(1, conversation.VisitorUnreadCount);
-        Assert.Equal(0, conversation.OperatorUnreadCount);
+        var call = Assert.Single(fixture.UnreadCounter.Calls);
+        Assert.Equal(MessageAuthorKind.Operator, call.AuthorKind);
     }
 
     [Fact]
     public async Task HandleAsync_WhenConversationDoesNotExist_ReturnsNotFound()
     {
         var conversations = new FakeConversationRepository();
-        var handler = new RecordUnreadMessageHandler(conversations, new FakeInboxChecker());
+        var handler = new RecordUnreadMessageHandler(
+            conversations, new FakeUnreadCounterStore(), new FakeUnitOfWork(), new FakeInboxChecker());
 
         var result = await handler.HandleAsync(
             new RecordUnreadMessage(Guid.NewGuid(), new ConversationId(Guid.NewGuid()), MessageAuthorKind.Visitor, Sequence: 1),
@@ -62,33 +70,56 @@ public class RecordUnreadMessageHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_FirstDelivery_ReturnsTrue()
+    public async Task HandleAsync_WhenConversationDoesNotExist_NeverOpensATransaction()
     {
-        var (handler, _, conversation) = CreateHandlerWithConversation();
+        // No transaction to commit or roll back when there is nothing to increment and no inbox row
+        // to stage - the existence check short-circuits before IUnitOfWork.BeginTransactionAsync.
+        var conversations = new FakeConversationRepository();
+        var unitOfWork = new FakeUnitOfWork();
+        var handler = new RecordUnreadMessageHandler(
+            conversations, new FakeUnreadCounterStore(), unitOfWork, new FakeInboxChecker());
 
-        var result = await handler.HandleAsync(
-            new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor, Sequence: 1),
+        await handler.HandleAsync(
+            new RecordUnreadMessage(Guid.NewGuid(), new ConversationId(Guid.NewGuid()), MessageAuthorKind.Visitor, Sequence: 1),
+            CancellationToken.None);
+
+        Assert.Equal(0, unitOfWork.TransactionsBegun);
+    }
+
+    [Fact]
+    public async Task HandleAsync_FirstDelivery_ReturnsTrueAndCommitsTheTransaction()
+    {
+        var fixture = CreateHandlerWithConversation();
+
+        var result = await fixture.Handler.HandleAsync(
+            new RecordUnreadMessage(Guid.NewGuid(), fixture.Conversation.Id, MessageAuthorKind.Visitor, Sequence: 1),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.True(result.Value);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsBegun);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsCommitted);
     }
 
     [Fact]
-    public async Task HandleAsync_SameMessageIdTwice_SecondCallReturnsFalse()
+    public async Task HandleAsync_SameMessageIdTwice_SecondCallReturnsFalseAndDoesNotCommit()
     {
-        // What this proves: the handler asks IInboxChecker the right (messageId, consumer)
-        // question and returns its verdict. What it does NOT prove: that a real duplicate leaves
-        // the counter untouched - FakeInboxChecker has no transaction to roll back the increment
-        // this handler already staged, unlike EfInboxChecker against real Postgres (adr/0017). That
-        // guarantee is Ago.Chat.Concurrency.Tests' and Ago.Chat.Integration.Tests' job.
-        var (handler, _, conversation) = CreateHandlerWithConversation();
-        var command = new RecordUnreadMessage(Guid.NewGuid(), conversation.Id, MessageAuthorKind.Visitor, Sequence: 1);
+        // What this proves: the handler asks IInboxChecker the right (messageId, consumer) question,
+        // returns its verdict, and only commits the transaction that carries the raw-SQL increment
+        // when the inbox row was actually new. What it does NOT prove: that a real duplicate leaves
+        // the counter genuinely untouched in Postgres - FakeUnitOfWork tracks the commit decision, not
+        // a real rollback (its own remarks). That guarantee is Ago.Chat.Integration.Tests' job,
+        // against real Postgres, exactly as FakeInboxChecker's own remarks already say for the inbox
+        // half of this same commit.
+        var fixture = CreateHandlerWithConversation();
+        var command = new RecordUnreadMessage(Guid.NewGuid(), fixture.Conversation.Id, MessageAuthorKind.Visitor, Sequence: 1);
 
-        var first = await handler.HandleAsync(command, CancellationToken.None);
-        var second = await handler.HandleAsync(command, CancellationToken.None);
+        var first = await fixture.Handler.HandleAsync(command, CancellationToken.None);
+        var second = await fixture.Handler.HandleAsync(command, CancellationToken.None);
 
         Assert.True(first.Value);
         Assert.False(second.Value);
+        Assert.Equal(2, fixture.UnitOfWork.TransactionsBegun);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsCommitted);
     }
 }

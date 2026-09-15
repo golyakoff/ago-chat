@@ -130,6 +130,11 @@ public static class ServiceCollectionExtensions
         // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks
         // for why it exists at all.
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        // `25-109`: RecordUnreadMessageHandler's own raw-SQL writer, the identical "atomic
+        // compare-and-set beside IConversationRepository, not a method on it" shape IOperatorCapacity
+        // right above already uses - see IUnreadCounterStore's own remarks for why this column moved
+        // off the aggregate.
+        services.AddScoped<IUnreadCounterStore, UnreadCounterStore>();
         // `6-03`
         services.AddScoped<IWebhookEndpointRepository, WebhookEndpointRepository>();
         services.AddScoped<IWebhookDeliveryRepository, WebhookDeliveryRepository>();

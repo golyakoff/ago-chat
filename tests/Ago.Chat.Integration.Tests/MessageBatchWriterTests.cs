@@ -268,6 +268,106 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         Assert.Null(outboxRow.PublishedAt);
     }
 
+    /// <summary>
+    /// `25-109`'s own regression test - the root-cause race, reproduced deterministically against real
+    /// Postgres with no new production-code test seam. `FlushBatchAsync` already takes `IClock` and
+    /// calls `clock.UtcNow` once per message, after that message's own conversation is loaded and
+    /// before `SaveChangesAsync` - <see cref="RacingClock"/>'s first call rides that existing seam to
+    /// run an independent `UPDATE` against the *first* conversation this flush loads, on a second
+    /// connection that commits immediately, simulating exactly what `Ago.Chat.Worker`'s
+    /// `UnreadCounterConsumer` used to do concurrently under load (before `25-109`'s other change moved
+    /// it off the aggregate) - some other cross-process writer of `conversations` (`ConversationAssignmentJob`
+    /// and friends, per this item's own Scope) still can, which is exactly what this test stands in for.
+    ///
+    /// <para><b>Fails-before</b> (verified by temporarily reverting <c>MessageBatchWriter</c>'s retry
+    /// loop to the pre-`25-109` single `try`/catch-and-fail-everything shape): every ack in this
+    /// four-message, three-conversation batch returns <c>Conversation.Unavailable</c> - the one raced
+    /// row's lost optimistic-concurrency check fails the whole `SaveChangesAsync`, and the old catch-all
+    /// fails every pending ack in the batch, including the two conversations that were never touched by
+    /// the race at all.</para>
+    ///
+    /// <para><b>After</b>: the race only ever fires once (<see cref="RacingClock"/>'s own guard), so the
+    /// first attempt is the only one that can lose it - the retry loop's second attempt reloads every
+    /// conversation fresh, finds nothing contending any more, and commits cleanly. All four acks
+    /// succeed, and the raced conversation's own two messages land as sequence 1 then 2 - gap-free
+    /// ascending even though the aggregate that produced them was loaded and reloaded across two
+    /// separate attempts.</para>
+    /// </summary>
+    [Fact]
+    public async Task FlushAsync_AConcurrentWriterBumpsAConversationsXminMidFlush_RetriesAndEveryMessageEventuallySucceeds()
+    {
+        var (racedVisitorId, racedConversationId) = await SeedWaitingConversationAsync();
+        var (otherVisitorId1, otherConversationId1) = await SeedWaitingConversationAsync();
+        var (otherVisitorId2, otherConversationId2) = await SeedWaitingConversationAsync();
+
+        var acks = Enumerable.Range(0, 4)
+            .Select(_ => new TaskCompletionSource<Result<int>>(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToList();
+        // The raced conversation's two messages come first in the list - GroupBy preserves
+        // first-encounter order for its groups, so this is what makes it the group RacingClock's own
+        // first UtcNow call fires during, matching "the first conversation this flush loads" above.
+        var items = new List<InboundMessage>
+        {
+            new(new PendingMessage(racedConversationId, MessageAuthorKind.Visitor, racedVisitorId, new MessageBody("first")), acks[0], Stopwatch.GetTimestamp()),
+            new(new PendingMessage(racedConversationId, MessageAuthorKind.Visitor, racedVisitorId, new MessageBody("second")), acks[1], Stopwatch.GetTimestamp()),
+            new(new PendingMessage(otherConversationId1, MessageAuthorKind.Visitor, otherVisitorId1, new MessageBody("unrelated 1")), acks[2], Stopwatch.GetTimestamp()),
+            new(new PendingMessage(otherConversationId2, MessageAuthorKind.Visitor, otherVisitorId2, new MessageBody("unrelated 2")), acks[3], Stopwatch.GetTimestamp()),
+        };
+
+        var writer = new MessageBatchWriter(
+            fixture.DataSource, new RacingClock(fixture, racedConversationId.Value), new UuidV7Generator(), new NoOpCache(),
+            Options.Create(new SiteActivityWatchdogOptions()), NullLogger<MessageBatchWriter>.Instance);
+
+        await writer.FlushAsync(items, CancellationToken.None);
+
+        var results = new List<Result<int>>();
+        foreach (var ack in acks)
+        {
+            results.Add(await ack.Task);
+        }
+
+        Assert.All(results, r => Assert.True(r.IsSuccess, r.IsFailure ? r.Error!.Value.Code : null));
+        Assert.Equal(1, results[0].Value);
+        Assert.Equal(2, results[1].Value);
+        Assert.Equal(1, results[2].Value);
+        Assert.Equal(1, results[3].Value);
+    }
+
+    /// <summary>See <see cref="FlushAsync_AConcurrentWriterBumpsAConversationsXminMidFlush_RetriesAndEveryMessageEventuallySucceeds"/>'s
+    /// own remarks. Fires the race exactly once, on its first call ever - a real concurrent writer
+    /// (`UnreadCounterConsumer`, or the item's own secondary candidate) does not keep re-touching the
+    /// same row forever either, so a single, one-shot conflict is the faithful shape to reproduce, not
+    /// a permanently-contended row.</summary>
+    private sealed class RacingClock(PostgresFixture fixture, Guid conversationIdToRace) : IClock
+    {
+        private bool _hasRaced;
+
+        public DateTimeOffset UtcNow
+        {
+            get
+            {
+                if (!_hasRaced)
+                {
+                    _hasRaced = true;
+                    RaceAsync().GetAwaiter().GetResult();
+                }
+
+                return DateTimeOffset.UtcNow;
+            }
+        }
+
+        private async Task RaceAsync()
+        {
+            // A second, independent connection - not fixture.CreateDbContext()'s own transaction, and
+            // not MessageBatchWriter's: this simulates a genuinely separate process/connection
+            // committing its own UPDATE to the same row while MessageBatchWriter's own flush is still
+            // mid-load, exactly `25-109`'s own root-cause window.
+            await using var db = fixture.CreateDbContext();
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE conversations SET operator_unread_count = operator_unread_count + 1 WHERE id = {conversationIdToRace}");
+        }
+    }
+
     private MessageBatchWriter CreateWriter() =>
         new(fixture.DataSource, new SystemClock(), new UuidV7Generator(), new NoOpCache(), Options.Create(new SiteActivityWatchdogOptions()), NullLogger<MessageBatchWriter>.Instance);
 
