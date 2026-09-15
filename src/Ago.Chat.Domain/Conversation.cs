@@ -777,6 +777,14 @@ public sealed class Conversation
     /// `14-04`: <see cref="MessageAuthorKind.System"/> lands in that same visitor-side branch, and
     /// that is correct rather than incidental - an auto-reply is something the visitor has not read
     /// yet, and it is emphatically not something the operator needs a badge for.
+    ///
+    /// `25-109`: no longer the live production write path - <c>RecordUnreadMessageHandler</c> now
+    /// applies this exact branching as a standalone raw `UPDATE`
+    /// (<c>Ago.Chat.Application.Abstractions.IUnreadCounterStore</c>) instead of loading, mutating and
+    /// saving this aggregate, so the increment stops contending for this row's own `xmin` against
+    /// every unrelated concurrent writer. This method stays as the domain's own canonical statement of
+    /// the rule the SQL mirrors - exercised directly by <c>Ago.Chat.Domain.Tests</c> - and is still
+    /// reachable for a caller that already holds the aggregate for other reasons.
     /// </summary>
     public void IncrementUnreadCount(MessageAuthorKind authorKind, int sequence)
     {

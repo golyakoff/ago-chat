@@ -173,6 +173,15 @@ public sealed class UnreadCounterEndToEndTests
         services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddScoped<IConversationRepository, ConversationRepository>();
+        // `25-109`: RecordUnreadMessageHandler's own two new dependencies - the raw-SQL increment and
+        // the transaction it now commits atomically with the inbox-dedup row (IUnreadCounterStore's
+        // own remarks). This hand-rolled container predates that change and otherwise leaves the
+        // handler's constructor unresolvable, which fails silently from this test's own point of
+        // view: DI resolution throws inside UnreadCounterConsumer's per-message scope, which nacks
+        // and retries rather than propagating here, so the only visible symptom is the final
+        // OperatorUnreadCount assertion timing out at 0.
+        services.AddScoped<IUnreadCounterStore, UnreadCounterStore>();
+        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
         services.AddOutboxInbox<AgoChatDbContext>();
         services.AddSingleton<IClock, SystemClock>();
         services.AddScoped<RecordUnreadMessageHandler>();
