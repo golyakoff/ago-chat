@@ -128,6 +128,20 @@ public sealed class VisitorHub(
 
         var started = await startConversation.HandleAsync(
             new StartConversation(siteId, visitorId, source), Context.ConnectionAborted);
+        if (started.IsFailure)
+        {
+            // `25-107`: `StartConversationHandler.HandleAsync` has exactly one failure shape today -
+            // `ConversationErrors.ConversationCreateRateLimited`, returned from its own per-visitor and
+            // per-site buckets alike, both carrying the same `Conversation.CreateRateLimited` code and
+            // a human `RetryAfter` message. `started.Value` on a failed `Result<T>` throws
+            // `InvalidOperationException` by that type's own contract - unhandled here until this fix,
+            // surfacing to the widget as a raw `500`/hub-invocation failure with no rate-limit
+            // information at all. `SendAsync`'s own `sent.IsFailure` check right below in this same
+            // file is the established, correct shape for a rate-limited write on this hub; this join
+            // path is where that same check had been missed.
+            throw new HubException(started.Error!.Value.Message);
+        }
+
         var conversationId = started.Value.ConversationId;
 
         // `23-07`: the funnel's third count, from the existing write path above - never a second
