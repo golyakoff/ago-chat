@@ -27,7 +27,7 @@ CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 var scenario = Environment.GetEnvironmentVariable("LOADDRIVER_SCENARIO")
     ?? throw new InvalidOperationException(
         "LOADDRIVER_SCENARIO is required: webhook-isolation | steady-ingest | burst-ingest | " +
-        "connection-storm | reconnect-storm | assignment-contention | attachment-presign");
+        "connection-storm | capacity-ramp | reconnect-storm | assignment-contention | attachment-presign");
 
 var apiVisitorBase = Environment.GetEnvironmentVariable("LOADDRIVER_VISITOR_API") ?? "http://localhost:5110";
 var apiOperatorBase = Environment.GetEnvironmentVariable("LOADDRIVER_OPERATOR_API") ?? "http://localhost:5109";
@@ -54,6 +54,9 @@ switch (scenario)
         break;
     case "connection-storm":
         await RunConnectionStormAsync();
+        break;
+    case "capacity-ramp":
+        await RunCapacityRampAsync();
         break;
     case "reconnect-storm":
         await RunReconnectStormAsync();
@@ -339,7 +342,238 @@ async Task RunConnectionStormAsync()
 }
 
 // ============================================================================================
-// Scenario 4: reconnect storm - steady traffic through an external rolling restart of the
+// Scenario 4: capacity ramp - escalating step ramp of concurrently open conversations, each held
+// open with light, realistic activity (an occasional visitor message - what an operator's own
+// "waiting for messages" open dialog actually looks like, not the silent idle socket
+// connection-storm above deliberately holds). connection-storm isolates pure connection-count
+// effects from the ingest pipeline on purpose; this scenario asks the question this item actually
+// needs answered - how many simultaneously open conversations the deployment can carry before
+// something breaks, and what breaks first, with connection-scale and a steady trickle of message
+// traffic present together, the way a real day of visitor traffic looks. Connections accumulate
+// step over step and are never torn down early - each step's target is cumulative, not a fresh
+// batch - so a later step's numbers reflect every earlier step's connections still doing their own
+// light messaging, not just the newest ones. Each step's own error rate (connect failures,
+// message-send failures, both measured against that step's own hold window) is checked once the
+// hold completes; crossing LOADDRIVER_MAX_ERROR_RATE stops the ramp from escalating further but
+// never aborts the step already in progress - the point is to find the ceiling unattended and
+// safely, not to leave a human watching a dashboard through every step in real time by hand. The
+// same reasoning nfr.md already applies to production alerting applies to a driver aimed at a
+// deployment someone else may be relying on: the stop condition has to be mechanical, because a
+// person is not guaranteed to be watching the console at the exact moment a step goes bad.
+// Deliberately does not assign these conversations to an operator - that is assignment-
+// contention's own separate concern, kept apart the same way connection-storm keeps
+// connection-scale apart from ingest-scale.
+// ============================================================================================
+async Task RunCapacityRampAsync()
+{
+    var stepSize = IntEnv("LOADDRIVER_STEP_SIZE", 500);
+    var stepCount = IntEnv("LOADDRIVER_STEP_COUNT", 10);
+    var stepHoldSeconds = IntEnv("LOADDRIVER_STEP_HOLD_SECONDS", 60);
+    var rampConcurrency = IntEnv("LOADDRIVER_RAMP_CONCURRENCY", 10);
+    var messageIntervalSeconds = IntEnv("LOADDRIVER_MESSAGE_INTERVAL_SECONDS", 45);
+    var maxErrorRate = DoubleEnv("LOADDRIVER_MAX_ERROR_RATE", 0.05);
+
+    Console.WriteLine($"[capacity-ramp] stepSize={stepSize} stepCount={stepCount} holdSeconds={stepHoldSeconds} " +
+        $"rampConcurrency={rampConcurrency} messageInterval~={messageIntervalSeconds}s " +
+        $"maxErrorRate={maxErrorRate:F2} maxTarget={stepSize * stepCount}");
+
+    var runStart = DateTimeOffset.UtcNow;
+    File.WriteAllText(markerPath,
+        $"run_start_utc={runStart:O}\nstep_size={stepSize}\nstep_count={stepCount}\nstep_hold_seconds={stepHoldSeconds}\n" +
+        $"max_error_rate={maxErrorRate:F2}\n");
+
+    using var cts = new CancellationTokenSource();
+    var gate = new SemaphoreSlim(rampConcurrency);
+    var connections = new ConcurrentBag<VisitorSession>();
+    var messageLoopTasks = new ConcurrentBag<Task>();
+    var connectRecords = new ConcurrentQueue<(double Ms, int Step)>();
+    var connectErrorRecords = new ConcurrentQueue<(string Msg, int Step)>();
+    var acks = new ConcurrentQueue<AckRecord>();
+    var messageErrorRecords = new ConcurrentQueue<(string Msg, int Step)>();
+
+    // Read by every open connection's own message loop to label the ack (or error) it is about to
+    // record. Plain `int`, not `Interlocked`/`Volatile` - reads and writes of a word-sized field
+    // are already atomic on every platform this runs on, and the only thing this variable drives
+    // is a human-readable step label on a sample, not a control-flow decision, so a few
+    // milliseconds of cross-thread staleness around a step boundary is harmless.
+    var currentStep = 0;
+
+    async Task MessageLoopAsync(VisitorSession visitor, string messageTag)
+    {
+        // Jittered so thousands of held-open conversations don't all fire on the same clock tick -
+        // that would itself synthesize an artificial burst, exactly what burst-ingest's own
+        // deliberate burst scenario exists to study on purpose, not what this scenario is for.
+        while (!cts.IsCancellationRequested)
+        {
+            var jitter = 0.8 + Random.Shared.NextDouble() * 0.4; // +/-20%
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(messageIntervalSeconds * jitter), cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            var clientMessageId = Guid.NewGuid();
+            var sentAt = DateTimeOffset.UtcNow;
+            var step = currentStep;
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await visitor.Connection.InvokeAsync<int>(
+                    "SendMessageAsync", visitor.ConversationId, messageTag, null, clientMessageId);
+                sw.Stop();
+                acks.Enqueue(new AckRecord(clientMessageId, sentAt, sw.Elapsed, $"step{step}"));
+            }
+            catch (Exception ex)
+            {
+                messageErrorRecords.Enqueue(($"step{step} message send failed: {ex.Message}", step));
+            }
+        }
+    }
+
+    async Task OpenOneAsync(int step, int index)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            VisitorSession visitor;
+            try
+            {
+                visitor = await StartVisitorAsync(apiVisitorBase);
+            }
+            catch (Exception ex)
+            {
+                connectErrorRecords.Enqueue(($"step{step} connection {index} failed: {ex.Message}", step));
+                return;
+            }
+            sw.Stop();
+            connectRecords.Enqueue((sw.Elapsed.TotalMilliseconds, step));
+            connections.Add(visitor);
+            messageLoopTasks.Add(MessageLoopAsync(visitor, $"step{step}-conn{index}-capacity-ping"));
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    var reachedStep = 0;
+    var safetyValveTripped = false;
+    string? safetyValveReason = null;
+
+    for (var n = 1; n <= stepCount; n++)
+    {
+        var cumulativeTarget = n * stepSize;
+        Console.WriteLine($"[capacity-ramp] step {n}/{stepCount}: opening {stepSize} new connections (cumulative target {cumulativeTarget})");
+
+        await Task.WhenAll(Enumerable.Range(0, stepSize).Select(i => OpenOneAsync(n, i)));
+
+        var rampDone = DateTimeOffset.UtcNow;
+        var stepConnects = connectRecords.Where(r => r.Step == n).ToList();
+        var stepConnectErrors = connectErrorRecords.Where(r => r.Step == n).ToList();
+        var connectAttempts = stepConnects.Count + stepConnectErrors.Count;
+        var connectErrorRate = connectAttempts == 0 ? 0.0 : stepConnectErrors.Count / (double)connectAttempts;
+
+        File.AppendAllText(markerPath,
+            $"step{n}_ramp_complete_utc={rampDone:O} cumulative_target={cumulativeTarget} " +
+            $"cumulative_connections={connections.Count} step_connect_errors={stepConnectErrors.Count}\n");
+
+        Console.WriteLine($"[capacity-ramp] step {n} ramp complete at {rampDone:O}: {connections.Count} cumulative connections, " +
+            $"{stepConnectErrors.Count}/{connectAttempts} connect errors this step ({connectErrorRate * 100:F1}%)");
+        ReportPercentiles($"step{n}-connect", stepConnects.Select(r => r.Ms));
+
+        // Only from here does a message loop's own read of `currentStep` attribute an ack (or a
+        // send failure) to this step - so "this step's message stats" below means exactly this
+        // step's hold window, not the ramp that preceded it.
+        currentStep = n;
+
+        Console.WriteLine($"[capacity-ramp] step {n} holding at {connections.Count} connections for {stepHoldSeconds}s");
+        await Task.Delay(TimeSpan.FromSeconds(stepHoldSeconds));
+
+        var holdDone = DateTimeOffset.UtcNow;
+        var stepAcks = acks.Where(r => r.Phase == $"step{n}").ToList();
+        var stepMessageErrors = messageErrorRecords.Where(r => r.Step == n).ToList();
+        var messageAttempts = stepAcks.Count + stepMessageErrors.Count;
+        var messageErrorRate = messageAttempts == 0 ? 0.0 : stepMessageErrors.Count / (double)messageAttempts;
+
+        File.AppendAllText(markerPath,
+            $"step{n}_hold_complete_utc={holdDone:O} cumulative_connections={connections.Count} " +
+            $"step_message_errors={stepMessageErrors.Count} step_message_attempts={messageAttempts}\n");
+
+        Console.WriteLine($"[capacity-ramp] step {n} hold complete at {holdDone:O}: {stepMessageErrors.Count}/{messageAttempts} " +
+            $"message errors this step ({messageErrorRate * 100:F1}%)");
+        ReportPercentiles($"step{n}-ack", stepAcks.Select(r => r.Latency.TotalMilliseconds));
+
+        reachedStep = n;
+
+        if (connectErrorRate > maxErrorRate || messageErrorRate > maxErrorRate)
+        {
+            safetyValveTripped = true;
+            safetyValveReason = $"step {n}: connect error rate {connectErrorRate:F3} or message error rate " +
+                $"{messageErrorRate:F3} exceeded max {maxErrorRate:F3}";
+            Console.WriteLine($"[capacity-ramp] SAFETY VALVE TRIPPED: {safetyValveReason} - holding here, not escalating further");
+            break;
+        }
+    }
+
+    Console.WriteLine("[capacity-ramp] tearing down");
+    cts.Cancel();
+    await Task.WhenAll(messageLoopTasks);
+
+    var stillOpen = 0;
+    foreach (var visitor in connections)
+    {
+        if (visitor.Connection.State == HubConnectionState.Connected) stillOpen++;
+        await visitor.Connection.DisposeAsync();
+    }
+
+    using (var writer = new StreamWriter(outputPath, append: false))
+    {
+        writer.WriteLine("kind,client_message_id,sent_utc,latency_ms,phase");
+        foreach (var (ms, step) in connectRecords)
+        {
+            writer.WriteLine($"connect,,,{ms.ToString("F2", CultureInfo.InvariantCulture)},step{step}");
+        }
+        foreach (var r in acks)
+        {
+            writer.WriteLine($"ack,{r.ClientMessageId},{r.SentAt:O},{r.Latency.TotalMilliseconds.ToString("F2", CultureInfo.InvariantCulture)},{r.Phase}");
+        }
+        foreach (var (msg, _) in connectErrorRecords)
+        {
+            writer.WriteLine($"error,,,,{msg.Replace(',', ';')}");
+        }
+        foreach (var (msg, _) in messageErrorRecords)
+        {
+            writer.WriteLine($"error,,,,{msg.Replace(',', ';')}");
+        }
+    }
+    Console.WriteLine($"[driver] wrote {outputPath}");
+
+    File.AppendAllText(markerPath,
+        $"run_end_utc={DateTimeOffset.UtcNow:O} reached_step={reachedStep} cumulative_connections={connections.Count} " +
+        $"still_open_at_teardown={stillOpen} safety_valve_tripped={safetyValveTripped}\n");
+
+    Console.WriteLine();
+    Console.WriteLine("=== capacity-ramp summary ===");
+    Console.WriteLine($"steps reached: {reachedStep}/{stepCount}, final cumulative connections: {connections.Count} " +
+        $"(still open at teardown: {stillOpen})");
+    Console.WriteLine(safetyValveTripped
+        ? $"safety valve fired: {safetyValveReason}"
+        : "safety valve did not fire - ramp completed all configured steps within the error-rate budget");
+    Console.WriteLine("=== connect time, all steps ===");
+    ReportPercentiles("overall", connectRecords.Select(r => r.Ms));
+    Console.WriteLine("=== send -> ack, all steps ===");
+    ReportPercentiles("overall", acks.Select(r => r.Latency.TotalMilliseconds));
+    Console.WriteLine($"total connect errors: {connectErrorRecords.Count}, total message errors: {messageErrorRecords.Count}");
+    foreach (var (msg, _) in connectErrorRecords.Take(20)) Console.WriteLine($"  {msg}");
+    foreach (var (msg, _) in messageErrorRecords.Take(20)) Console.WriteLine($"  {msg}");
+}
+
+// ============================================================================================
+// Scenario 5: reconnect storm - steady traffic through an external rolling restart of the
 // visitor-node Api process (orchestrated by the caller's shell script, not this process - see
 // this item's report for the exact timing). Uses SignalR's automatic reconnect; at the end,
 // paginates each lane's full history and verifies the sequence set is contiguous with no gaps
@@ -484,7 +718,7 @@ async Task RunReconnectStormAsync()
 }
 
 // ============================================================================================
-// Scenario 5: assignment contention - create a reduced-depth waiting queue by starting many
+// Scenario 6: assignment contention - create a reduced-depth waiting queue by starting many
 // visitor conversations WITHOUT manually assigning them (unlike every other scenario here,
 // which uses OperatorHub.JoinConversationAsync - a manual pick that does not consult
 // IOperatorCapacity at all, confirmed by reading AssignConversationHandler). This scenario
@@ -630,7 +864,7 @@ async Task RunAssignmentContentionAsync()
 }
 
 // ============================================================================================
-// Scenario 6: attachment presign throughput - presign (POST .../attachments) + a real PUT of a
+// Scenario 7: attachment presign throughput - presign (POST .../attachments) + a real PUT of a
 // tiny payload straight to MinIO via the presigned URL (bytes bypass the API, matching
 // file-storage.md) + verify (POST .../confirm, which calls IFileStorage.GetMetadataAsync and
 // genuinely needs the object to exist - a confirm against a URL nothing was PUT to would fail,
@@ -893,6 +1127,12 @@ int IntEnv(string name, int defaultValue)
 {
     var raw = Environment.GetEnvironmentVariable(name);
     return raw is null ? defaultValue : int.Parse(raw, CultureInfo.InvariantCulture);
+}
+
+double DoubleEnv(string name, double defaultValue)
+{
+    var raw = Environment.GetEnvironmentVariable(name);
+    return raw is null ? defaultValue : double.Parse(raw, CultureInfo.InvariantCulture);
 }
 
 void WriteLatencyCsv(string path, IEnumerable<AckRecord> acks, IEnumerable<Record> delivered, IEnumerable<string> errorList)
