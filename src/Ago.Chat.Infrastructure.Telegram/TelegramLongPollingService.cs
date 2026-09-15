@@ -54,7 +54,26 @@ public sealed class TelegramLongPollingService(
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await RefreshPollersAsync(stoppingToken);
+                try
+                {
+                    await RefreshPollersAsync(stoppingToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Found live running `capacity-ramp` (`MaxLongPollingService`'s own identical
+                    // change carries the full account): `RefreshPollersAsync`'s own
+                    // `GetAllActiveAsync` call is a real database round trip, and a transient
+                    // failure there was unhandled - `BackgroundService`'s own contract lets that
+                    // fault `ExecuteTask`, and this host's `BackgroundServiceExceptionBehavior`
+                    // (unset, so .NET's own default `StopHost`) turns one bad refresh tick into
+                    // the entire process exiting. `PollOneCredentialAsync` below already has
+                    // exactly this resilience for its own inner loop - this is that same shape,
+                    // applied to the one call site that was missing it.
+                    logger.LogWarning(
+                        ex, "Refreshing Telegram poll loops failed this tick; retrying after the normal {IntervalSeconds}s refresh interval.",
+                        pollingOptions.Value.CredentialRefreshIntervalSeconds);
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(pollingOptions.Value.CredentialRefreshIntervalSeconds), stoppingToken);
             }
         }

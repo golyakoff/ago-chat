@@ -56,7 +56,27 @@ public sealed class MaxLongPollingService(
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await RefreshPollersAsync(stoppingToken);
+                try
+                {
+                    await RefreshPollersAsync(stoppingToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Found live running `capacity-ramp`: `RefreshPollersAsync`'s own
+                    // `GetAllActiveAsync` call is a real database round trip, and a transient
+                    // failure there (a `PostgresException` under connection pressure, in
+                    // particular) was unhandled - `BackgroundService`'s own contract lets that
+                    // fault `ExecuteTask`, and this host's `BackgroundServiceExceptionBehavior`
+                    // (unset, so .NET's own default `StopHost`) turns one bad refresh tick into
+                    // the entire process exiting, taking every other credential's own poll loop
+                    // down with it. `PollOneCredentialAsync` below already has exactly this
+                    // resilience for its own inner loop (its final `catch (Exception ex)`) - this
+                    // is that same shape, applied to the one call site that was missing it.
+                    logger.LogWarning(
+                        ex, "Refreshing MAX poll loops failed this tick; retrying after the normal {IntervalSeconds}s refresh interval.",
+                        pollingOptions.Value.CredentialRefreshIntervalSeconds);
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(pollingOptions.Value.CredentialRefreshIntervalSeconds), stoppingToken);
             }
         }
