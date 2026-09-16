@@ -28,8 +28,8 @@ public class SetUnconditionalModuleGrantAsOwnerHandlerTests
 
     private static Application.UseCases.SetUnconditionalModuleGrantAsOwner.SetUnconditionalModuleGrantAsOwner Command(
         string moduleKey = "channel", bool unconditionallyGranted = true, string setBy = "owner-sub-123",
-        string reason = "sales trial") =>
-        new(SiteId, moduleKey, unconditionallyGranted, setBy, reason);
+        string reason = "sales trial", DateTimeOffset? expiresAt = null) =>
+        new(SiteId, moduleKey, unconditionallyGranted, setBy, reason, expiresAt);
 
     [Fact]
     public async Task HandleAsync_SettingTheFlag_GrantsEvenWithNoBillingQuantityYet()
@@ -123,5 +123,51 @@ public class SetUnconditionalModuleGrantAsOwnerHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Module.Invalid", result.Error!.Value.Code);
         Assert.Empty(fixture.Grants.UnconditionalGrants);
+    }
+
+    // `25-115`: ExpiresAt - the channel-entitlement table's first real caller of this command with an
+    // expiry to send, threaded straight through to the store rather than a second write use case.
+
+    [Fact]
+    public async Task HandleAsync_SettingTheFlag_WithAFutureExpiry_ThreadsItToTheStore()
+    {
+        var fixture = CreateFixture();
+        var expiresAt = Now.AddDays(30);
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(unconditionallyGranted: true, expiresAt: expiresAt), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(expiresAt, fixture.Grants.UnconditionalGrantExpiresAt[(SiteId, ChannelModuleKey)]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_SettingTheFlag_WithNoExpiry_StoresNull_Indefinite()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(unconditionallyGranted: true), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(fixture.Grants.UnconditionalGrantExpiresAt[(SiteId, ChannelModuleKey)]);
+    }
+
+    /// <summary>The item's own headline scope change, proven at the handler level: a past expiry means
+    /// <see cref="FakeModuleQuantityGrantStore.GetQuantityAsync"/> - which honours expiry the identical
+    /// way the real store's <c>ModuleQuantityGrant.EffectiveQuantity(now)</c> does - reads this grant as
+    /// not entitled.</summary>
+    [Fact]
+    public async Task HandleAsync_SettingTheFlag_WithAPastExpiry_ReadsAsNotEntitled()
+    {
+        var fixture = CreateFixture();
+        var expiresAt = Now.AddDays(-1);
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(unconditionallyGranted: true, expiresAt: expiresAt), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(0, await fixture.Grants.GetQuantityAsync(SiteId, ChannelModuleKey, CancellationToken.None));
+        // The flag itself is still recorded as set - only the effective read has fallen back.
+        Assert.True(fixture.Grants.UnconditionalGrants[(SiteId, ChannelModuleKey)]);
     }
 }

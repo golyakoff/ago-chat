@@ -235,7 +235,7 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
         var db = fixture.CreateDbContext();
         return new AiProcessingGate(
             new AiAddOnReadStore(fixture.DataSource),
-            new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
+            new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock()),
             AiGateFixtures.Options);
     }
 
@@ -265,7 +265,7 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
     private async Task SeedModuleGrantAsync(SiteId siteId)
     {
         await using var db = fixture.CreateDbContext();
-        var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+        var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
         await store.GrantAsync(siteId, new ModuleKey(AiGateFixtures.ModuleKey), 1, Now, CancellationToken.None);
     }
 

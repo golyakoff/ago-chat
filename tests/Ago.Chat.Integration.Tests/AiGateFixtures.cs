@@ -44,13 +44,17 @@ internal static class AiGateFixtures
             SiteId siteId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<ModuleKey, int>>(new Dictionary<ModuleKey, int>());
 
+        public Task<IReadOnlyList<ModuleQuantityGrant>> GetGrantsForSiteAsync(
+            SiteId siteId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ModuleQuantityGrant>>([]);
+
         public Task GrantAsync(
             SiteId siteId, ModuleKey moduleKey, int quantity, DateTimeOffset now, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task SetUnconditionalGrantAsync(
             SiteId siteId, ModuleKey moduleKey, bool unconditionallyGranted, string setBy, string reason,
-            DateTimeOffset now, CancellationToken cancellationToken) =>
+            DateTimeOffset now, CancellationToken cancellationToken, DateTimeOffset? expiresAt = null) =>
             Task.CompletedTask;
     }
 }

@@ -37,6 +37,20 @@ public interface IModuleQuantityGrantStore
     Task<IReadOnlyDictionary<ModuleKey, int>> GetAllForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// `25-115`: every grant row this site has, as the <see cref="ModuleQuantityGrant"/> aggregate
+    /// itself - not <see cref="GetAllForSiteAsync"/> widened, because that method's own "OR'd, not raw"
+    /// answer collapses exactly the distinction the owner's channel-entitlement table needs to show:
+    /// whether a currently-entitled row is entitled because <see cref="ModuleQuantityGrant.UnconditionallyGrantedByOwner"/>
+    /// is set (and, if so, until when - <see cref="ModuleQuantityGrant.UnconditionalGrantExpiresAt"/>),
+    /// or purely off <see cref="ModuleQuantityGrant.Quantity"/> billing wrote. Returning the aggregate
+    /// itself rather than inventing a third DTO is the same "the wire carries values, Application reads
+    /// the aggregate" split <see cref="ISiteRepository.GetByIdAsync"/> already draws for <c>Site</c>:
+    /// <see cref="ModuleQuantityGrant"/> is a <c>Domain</c> type Application already depends on, so no
+    /// boundary is crossed by handing the caller the read-only (<c>AsNoTracking</c>) row directly.
+    /// </summary>
+    Task<IReadOnlyList<ModuleQuantityGrant>> GetGrantsForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Sets the granted quantity to exactly <paramref name="quantity"/> and enqueues
     /// <c>ModuleQuantityGranted</c> in the same transaction as the row it describes - rule 4, and the
     /// reason this is not <see cref="GetQuantityAsync"/> followed by a separate save. A snapshot, not a
@@ -72,7 +86,12 @@ public interface IModuleQuantityGrantStore
     /// string, never <see cref="OperatorId"/>.</param>
     /// <param name="reason">Required, non-blank - <see cref="ModuleQuantityGrant.SetUnconditionalGrant"/>
     /// refuses a blank one.</param>
+    /// <param name="expiresAt">`25-115`: <see langword="null"/> (the default) means indefinite -
+    /// threaded straight through to <see cref="ModuleQuantityGrant.SetUnconditionalGrant"/>, which see
+    /// for why this is stamped even when lifting the flag. Positioned after <paramref name="cancellationToken"/>
+    /// rather than beside <paramref name="reason"/> above it: C# requires every optional parameter to
+    /// trail every required one, and <paramref name="cancellationToken"/> has no default.</param>
     Task SetUnconditionalGrantAsync(
         SiteId siteId, ModuleKey moduleKey, bool unconditionallyGranted, string setBy, string reason,
-        DateTimeOffset now, CancellationToken cancellationToken);
+        DateTimeOffset now, CancellationToken cancellationToken, DateTimeOffset? expiresAt = null);
 }

@@ -123,7 +123,7 @@ public sealed class AdministratorLimitEnforcerTests(PostgresFixture fixture)
             var idGenerator = new UuidV7Generator();
             var applier = new SubscriptionRenewalApplier(
                 db, outbox, idGenerator,
-                new ModuleQuantityGrantStore(db, outbox, idGenerator),
+                new ModuleQuantityGrantStore(db, outbox, idGenerator, new Ago.Platform.Hosting.SystemClock()),
                 new NoOpBillingOptionEntitlementProvider(),
                 CreateEnforcer(db));
             await applier.ApplyLapseAsync(subscriptionId, Now, CancellationToken.None);

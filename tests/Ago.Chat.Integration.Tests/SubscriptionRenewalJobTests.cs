@@ -304,7 +304,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         {
             // `23-86` case 1: the platform owner unconditionally grants the identical entitlement by
             // hand - a support decision independent of the payment that already renewed it.
-            var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
             await grants.SetUnconditionalGrantAsync(
                 siteId, moduleKey, true, "owner-sub-abc", "keeping this on during a support investigation",
                 Now, CancellationToken.None);
@@ -321,7 +321,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
 
         await using (var verify = fixture.CreateDbContext())
         {
-            var grants = new ModuleQuantityGrantStore(verify, new EfOutboxWriter<AgoChatDbContext>(verify), new UuidV7Generator());
+            var grants = new ModuleQuantityGrantStore(verify, new EfOutboxWriter<AgoChatDbContext>(verify), new UuidV7Generator(), new SystemClock());
             // The billing lapse happened - Quantity itself really did go to zero, proving this is not
             // a test where the lapse silently no-ops.
             var row = await verify.ModuleQuantityGrants.AsNoTracking().SingleAsync(g => g.SiteId == siteId && g.ModuleKey == moduleKey);
@@ -344,14 +344,14 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         // already lapsed, so the entitlement now genuinely goes off.
         await using (var db = fixture.CreateDbContext())
         {
-            var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
             await grants.SetUnconditionalGrantAsync(
                 siteId, moduleKey, false, "owner-sub-abc", "support investigation concluded, billing lapsed",
                 Now + BillingSubscription.PastDueRetryWindow, CancellationToken.None);
         }
 
         await using var finalVerify = fixture.CreateDbContext();
-        var finalGrants = new ModuleQuantityGrantStore(finalVerify, new EfOutboxWriter<AgoChatDbContext>(finalVerify), new UuidV7Generator());
+        var finalGrants = new ModuleQuantityGrantStore(finalVerify, new EfOutboxWriter<AgoChatDbContext>(finalVerify), new UuidV7Generator(), new SystemClock());
         Assert.Equal(0, await finalGrants.GetQuantityAsync(siteId, moduleKey, CancellationToken.None));
     }
 
@@ -498,7 +498,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
     {
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
         var idGenerator = new UuidV7Generator();
-        var entitlementGrants = new ModuleQuantityGrantStore(db, outbox, idGenerator);
+        var entitlementGrants = new ModuleQuantityGrantStore(db, outbox, idGenerator, new SystemClock());
         var config = new ConfigurationBuilder().AddInMemoryCollection(
             entitlementMappings.ToDictionary(kv => $"{ConfiguredBillingOptionEntitlementProvider.SectionName}:{kv.Key}", kv => kv.Value)).Build();
         var optionEntitlements = new ConfiguredBillingOptionEntitlementProvider(config);
@@ -683,7 +683,7 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
             var subscriptions = new BillingSubscriptionRepository(db);
             var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
             var idGenerator = new UuidV7Generator();
-            var entitlementGrants = new ModuleQuantityGrantStore(db, outbox, idGenerator);
+            var entitlementGrants = new ModuleQuantityGrantStore(db, outbox, idGenerator, new SystemClock());
             // `23-86`: the real ConfiguredBillingOptionEntitlementProvider, backed by an in-memory
             // configuration rather than a fake - proves the actual `BillingOptionEntitlements:<key>`
             // lookup this deployment will configure, not a stand-in for it. Empty for every test that

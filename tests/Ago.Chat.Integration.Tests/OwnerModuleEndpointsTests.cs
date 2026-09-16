@@ -434,6 +434,98 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     }
 
     // ------------------------------------------------------------------------------------------
+    // `23-86`/`25-115`: the platform owner's own unconditional-grant flag, end to end over the real
+    // route pair - `PUT .../modules/{moduleKey}/unconditional-grant`. `25-115` is this route's first
+    // real caller with an expiry to send: the owner's channel-entitlement table reuses this generic,
+    // module-key-agnostic route rather than a second, channel-specific write use case, since the only
+    // thing that changed is one more optional field on an already-generic command.
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task OwnerToken_GrantsUnconditionally_WithAReason_AndAnExpiry_ChatsOwnRowReflectsIt()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/unconditional-grant",
+            new OwnerModuleEndpoints.SetUnconditionalGrantRequest(
+                UnconditionallyGranted: true, Reason: "sales trial", ExpiresAt: expiresAt));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.SetUnconditionalGrantResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(moduleKey, body.ModuleKey);
+        Assert.True(body.UnconditionallyGranted);
+        Assert.NotNull(body.ExpiresAt);
+        Assert.True((body.ExpiresAt.Value - expiresAt).Duration() < TimeSpan.FromMilliseconds(1));
+
+        // The real row, not just the echoed response - EffectiveQuantity(now) reads granted while the
+        // expiry has not passed yet.
+        var stored = await GetStoredQuantityAsync(moduleKey);
+        Assert.Equal(1, stored);
+    }
+
+    /// <summary>`бессрочно` - the author's own word for it: omitting `ExpiresAt` (`null`) grants
+    /// indefinitely, the ordinary case this route's own default parameter exists for.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsUnconditionally_WithNoExpiry_GrantsIndefinitely()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/unconditional-grant",
+            new OwnerModuleEndpoints.SetUnconditionalGrantRequest(UnconditionallyGranted: true, Reason: "sales trial"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<OwnerModuleEndpoints.SetUnconditionalGrantResponse>();
+        Assert.NotNull(body);
+        Assert.Null(body.ExpiresAt);
+    }
+
+    /// <summary>`SetUnconditionalGrantAsync` already refuses a blank reason (`Domain.ModuleQuantityGrant.
+    /// SetUnconditionalGrant`'s own guard) - proven here at the wire as a `400`, not a `500`, the
+    /// identical "reject the caller's input before touching another system" shape this route's own
+    /// handler remarks describe.</summary>
+    [Fact]
+    public async Task OwnerToken_GrantsUnconditionally_WithABlankReason_IsRejectedCleanly_NotA500()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/unconditional-grant",
+            new OwnerModuleEndpoints.SetUnconditionalGrantRequest(UnconditionallyGranted: true, Reason: "   "));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OwnerToken_RevokesAnUnconditionalGrant_WithAReason_TurnsTheEntitlementOff()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using var host = await BuildTestHostAsync();
+        var ownerClient = CreateClient(host, await fixture.GetPlatformOwnerAccessTokenAsync());
+        await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/unconditional-grant",
+            new OwnerModuleEndpoints.SetUnconditionalGrantRequest(UnconditionallyGranted: true, Reason: "sales trial"));
+
+        var response = await ownerClient.PutAsJsonAsync(
+            $"{OwnerRoute}/{moduleKey}/unconditional-grant",
+            new OwnerModuleEndpoints.SetUnconditionalGrantRequest(
+                UnconditionallyGranted: false, Reason: "trial ended, no payment followed"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var stored = await GetStoredQuantityAsync(moduleKey);
+        Assert.Equal(0, stored);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // `23-88`: the async "how many would this exceed" preview, end to end over the real route pair.
     // ------------------------------------------------------------------------------------------
 
@@ -1061,7 +1153,7 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
     private async Task<int> GetStoredQuantityAsync(string moduleKey)
     {
         await using var db = fixture.CreateDbContext();
-        return await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator())
+        return await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
             .GetQuantityAsync(fixture.SeededSiteId, new ModuleKey(moduleKey), CancellationToken.None);
     }
 

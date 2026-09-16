@@ -73,6 +73,15 @@ public sealed class ModuleQuantityGrant
     /// unrelated <see cref="Quantity"/> writes billing and the owner's quantity handlers make).</summary>
     public DateTimeOffset? UnconditionalGrantSetAt { get; private set; }
 
+    /// <summary>`25-115`: <see langword="null"/> means the unconditional grant does not expire on its
+    /// own ("бессрочно" - the author's own word for it) - the identical "absent, not a sentinel" shape
+    /// <see cref="EnabledModule.ExpiresAt"/> already uses for its own indefinite case, restated here for
+    /// the second, independent grant this type carries. Set only through <see cref="SetUnconditionalGrant"/>,
+    /// alongside the other <c>UnconditionalGrant*</c> fields - never touched by <see cref="SetQuantity"/>,
+    /// the identical "never a second, competing write" discipline this type's own remarks already state
+    /// for why the flag and the quantity stay independent.</summary>
+    public DateTimeOffset? UnconditionalGrantExpiresAt { get; private set; }
+
     private ModuleQuantityGrant(SiteId siteId, ModuleKey moduleKey, int quantity, DateTimeOffset grantedAt)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(quantity);
@@ -103,7 +112,15 @@ public sealed class ModuleQuantityGrant
     /// <see cref="UnconditionallyGrantedByOwner"/>, always with who and why. Never touches
     /// <see cref="Quantity"/>/<see cref="GrantedAt"/>: this type's own remarks state why the two
     /// inputs stay independent rather than one overwriting the other.</summary>
-    public void SetUnconditionalGrant(bool unconditionallyGranted, string setBy, string reason, DateTimeOffset now)
+    /// <param name="expiresAt">`25-115`: <see langword="null"/> (the default) means indefinite -
+    /// "бессрочно", the author's own request. Stamped unconditionally alongside the other
+    /// <c>UnconditionalGrant*</c> fields even when lifting the flag (<paramref name="unconditionallyGranted"/>
+    /// <see langword="false"/>): a lifted grant's own expiry is no longer read by
+    /// <see cref="EffectiveQuantity"/> either way, but leaving a stale expiry on a lifted row would be a
+    /// second, silently wrong fact for a reader who inspects the row directly rather than through
+    /// <see cref="EffectiveQuantity"/>.</param>
+    public void SetUnconditionalGrant(
+        bool unconditionallyGranted, string setBy, string reason, DateTimeOffset now, DateTimeOffset? expiresAt = null)
     {
         if (string.IsNullOrWhiteSpace(setBy))
         {
@@ -120,6 +137,7 @@ public sealed class ModuleQuantityGrant
         UnconditionalGrantSetBy = setBy;
         UnconditionalGrantReason = reason.Trim();
         UnconditionalGrantSetAt = now;
+        UnconditionalGrantExpiresAt = expiresAt;
     }
 
     /// <summary>`23-86`: what this (site, module) grant actually is right now - <see cref="Quantity"/>
@@ -131,6 +149,24 @@ public sealed class ModuleQuantityGrant
     /// <see cref="Math.Max(int,int)"/> against <c>1</c>, not a hardcoded <c>1</c>: a genuinely
     /// quantity-valued grant (the calendar add-on's own "N masters") already carries a real number the
     /// flag must never shrink, so the flag only ever raises a floor, never lowers a real quantity
-    /// already above it.</summary>
-    public int EffectiveQuantity => UnconditionallyGrantedByOwner ? Math.Max(Quantity, 1) : Quantity;
+    /// already above it.
+    ///
+    /// <para><b>`25-115`: a method, not a property, because an expiry check needs a clock.</b> The
+    /// identical "no <see cref="DateTime.Now"/>/<see cref="DateTimeOffset.UtcNow"/> inside Domain" rule
+    /// (CLAUDE.md rule 2 and rule 11) that keeps every other "is this still valid" decision in this
+    /// codebase caller-supplied rather than self-timed - <paramref name="now"/> is the caller's
+    /// <c>IClock.UtcNow</c>, read once per call site, the same discipline <see cref="EnabledModule"/>'s
+    /// own <c>IsActive</c>/status computations already follow for the identical kind of check. An
+    /// unconditional grant whose <see cref="UnconditionalGrantExpiresAt"/> has passed
+    /// (<c>expiresAt &lt;= now</c>, the same non-strict boundary <c>EnabledModuleReadStore</c>'s own
+    /// `expires_at &lt;= @Now` "Expired" case already uses) is treated as though
+    /// <see cref="UnconditionallyGrantedByOwner"/> were never set - the read falls back to
+    /// <see cref="Quantity"/> alone, exactly the "flag lifted" case this method already handles, not a
+    /// third outcome.</para></summary>
+    public int EffectiveQuantity(DateTimeOffset now)
+    {
+        var unconditionalGrantIsLive = UnconditionallyGrantedByOwner
+            && (UnconditionalGrantExpiresAt is not { } expiresAt || expiresAt > now);
+        return unconditionalGrantIsLive ? Math.Max(Quantity, 1) : Quantity;
+    }
 }

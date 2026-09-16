@@ -34,7 +34,7 @@ public sealed class ModuleQuantityGrantedOutboxTests(PostgresFixture fixture)
 
         await using (var db = fixture.CreateDbContext())
         {
-            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
             await store.GrantAsync(siteId, new ModuleKey("calendar"), 5, Now, CancellationToken.None);
         }
 
@@ -66,13 +66,13 @@ public sealed class ModuleQuantityGrantedOutboxTests(PostgresFixture fixture)
 
         await using (var db = fixture.CreateDbContext())
         {
-            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
             await store.GrantAsync(siteId, new ModuleKey("calendar"), 5, Now, CancellationToken.None);
         }
 
         await using (var db = fixture.CreateDbContext())
         {
-            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
             await store.GrantAsync(siteId, new ModuleKey("calendar"), 2, Now.AddSeconds(1), CancellationToken.None);
         }
 
@@ -115,7 +115,7 @@ public sealed class ModuleQuantityGrantedOutboxTests(PostgresFixture fixture)
 
         await using (var db = fixture.CreateDbContext())
         {
-            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
             await store.GrantAsync(siteId, new ModuleKey("calendar"), 5, Now, CancellationToken.None);
         }
 
@@ -123,7 +123,7 @@ public sealed class ModuleQuantityGrantedOutboxTests(PostgresFixture fixture)
         // support-call retry produces. No exception is itself part of what "safe" means here.
         await using (var db = fixture.CreateDbContext())
         {
-            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+            var store = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
             await store.GrantAsync(siteId, new ModuleKey("calendar"), 5, Now.AddSeconds(1), CancellationToken.None);
         }
 
