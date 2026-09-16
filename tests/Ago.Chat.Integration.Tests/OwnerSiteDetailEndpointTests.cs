@@ -9,6 +9,7 @@ using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Modules;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
@@ -21,6 +22,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 
@@ -349,6 +351,53 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(3, module.Quantity);
     }
 
+    /// <summary>`25-114`'s own reason to exist: every site today has zero `enabled_modules` rows for
+    /// its own channel entitlement, by design (`ChannelEntitlement.cs`'s own remarks - a billing-driven
+    /// grant with no entry point and no credential must not look like a registered module). A bare
+    /// tenant, with no `SeedModuleAsync` call at all, still reports its own granted channel quantity -
+    /// proving the field is sourced from <c>IModuleQuantityGrantStore</c> directly, never from
+    /// <c>Modules</c>' own enrichment path, which has nothing to enrich here.</summary>
+    [Fact]
+    public async Task OwnerToken_ASiteGrantedAChannelQuantity_ReportsIt_WithNoEnabledModulesRowAtAll()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        await SeedBareTenantAsync(siteId, "Channel Quantity Tenant", now);
+        // `ChannelEntitlementOptionKeys.For(ChannelKind.Telegram).Value` - this host's own
+        // configuration (`BuildTestHostAsync`) maps the option key's string to an identical module
+        // key, the same shorthand `ChannelStatusEndpointsTests`' own host builder already uses.
+        await SeedQuantityGrantAsync(siteId, "channel-telegram", quantity: 5, now);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        Assert.Empty(body.Modules);
+        Assert.Equal(5, body.ChannelQuantity);
+    }
+
+    /// <summary>The default, and the one every real site is in today: no channel quantity has ever
+    /// been granted, which must report `null` - distinct from `0` (a channel entitlement explicitly
+    /// granted and then reduced to zero), the identical "absent, not zero" reading
+    /// <see cref="OwnerSiteModuleDto.Quantity"/>'s own remarks already establish for its sibling
+    /// field.</summary>
+    [Fact]
+    public async Task OwnerToken_ASiteWithNoChannelQuantityGrant_ReportsNull_NotZero()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedBareTenantAsync(siteId, "No Channel Quantity Tenant", DateTimeOffset.UtcNow);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        Assert.Null(body.ChannelQuantity);
+    }
+
     [Fact]
     public async Task OwnerToken_ForANonexistentSite_Returns404()
     {
@@ -482,6 +531,20 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+
+        // `25-114`: `GetSiteForOwnerHandler`'s own sixth read - the site's own channel-entitlement
+        // quantity, resolved through the identical `IBillingOptionEntitlementProvider` +
+        // `ChannelEntitlementOptionKeys` pair `ChannelStatusEndpointsTests`' own host builder already
+        // configures this exact way - the option key's own string doubling as the module key it
+        // grants, for every `ChannelKind` at once rather than naming `Telegram` specifically here.
+        builder.Configuration.AddInMemoryCollection(
+            Enum.GetValues<ChannelKind>().Select(kind =>
+            {
+                var optionKey = ChannelEntitlementOptionKeys.For(kind);
+                return new KeyValuePair<string, string?>(
+                    $"{ConfiguredBillingOptionEntitlementProvider.SectionName}:{optionKey.Value}", optionKey.Value);
+            }));
+        builder.Services.AddSingleton<IBillingOptionEntitlementProvider, ConfiguredBillingOptionEntitlementProvider>();
 
         builder.Services.AddRouting();
         builder.Services.AddSingleton(fixture.DataSource);

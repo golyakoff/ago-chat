@@ -61,7 +61,17 @@ public sealed record OwnerSiteDetailResponse(
     // deliberately never sourced from a cache.
     DateTimeOffset? SuspendedUntil,
     IReadOnlyList<OwnerSiteRoleDto> Roles,
-    IReadOnlyList<string> AllKnownPermissions);
+    IReadOnlyList<string> AllKnownPermissions,
+    // `25-114`: the site's own standing channel-entitlement quantity - `IModuleQuantityGrantStore`'s
+    // own read for the `"channel"` pseudo-`ModuleKey` (`ChannelEntitlement.cs`'s own remarks on why
+    // this key deliberately never gets an `enabled_modules` row, which is exactly why it needed its
+    // own field here rather than riding `Modules` above the way a real module's quantity already
+    // does via `OwnerSiteModuleDto.Quantity`). `null` means no grant exists yet, the same "absent,
+    // not zero" reading `OwnerSiteModuleDto.Quantity`'s own doc comment already gives for its sibling
+    // field - not a second query: `GetSiteForOwnerHandler` already loads this site's whole quantities
+    // dictionary for `Modules`' own enrichment, so this is the identical value, read once, surfaced
+    // twice.
+    int? ChannelQuantity);
 
 /// <summary>
 /// `25-76`: one row of <see cref="OwnerSiteDetailResponse.Roles"/> - a role this site actually has,

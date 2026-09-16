@@ -40,7 +40,8 @@ namespace Ago.Chat.Application.UseCases.GetSiteForOwner;
 /// </summary>
 public sealed class GetSiteForOwnerHandler(
     IPlatformOverviewReadStore siteReadStore, IEnabledModuleReadStore moduleReadStore, ISiteRepository siteRepository,
-    IModuleQuantityGrantStore quantityGrants, IOperatorTeamReadStore operatorTeam, IRoleRepository roles, IClock clock)
+    IModuleQuantityGrantStore quantityGrants, IOperatorTeamReadStore operatorTeam, IRoleRepository roles, IClock clock,
+    IBillingOptionEntitlementProvider entitlements)
 {
     public async Task<Result<OwnerSiteDetailResponse>> HandleAsync(
         GetSiteForOwner query, CancellationToken cancellationToken)
@@ -83,6 +84,22 @@ public sealed class GetSiteForOwnerHandler(
         // re-read one).
         var roleRows = await roles.GetAllForSiteAsync(query.SiteId, cancellationToken);
 
+        // `25-114`: the site's own standing channel-entitlement quantity, so the owner's own grant
+        // screen can show what is actually granted rather than only what this browser session just
+        // sent (`OwnerSiteDetailPage.tsx`'s own remarks on why it could not do this from the console
+        // side alone). Resolved through the identical `IBillingOptionEntitlementProvider` +
+        // `ChannelEntitlementOptionKeys` pair `ChannelEntitlement.IsEntitledAsync` already uses to
+        // decide whether a connect attempt is entitled - not a new, second-guessable literal
+        // `ModuleKey` here (`ModuleKeyLiteralRule`'s own reason `"ai"` is deployment-configured, never
+        // a literal in `Ago.Chat.*`, applies identically to this one). Scoped to `Telegram`
+        // specifically: it is the only channel kind this deployment has ever priced an entitlement
+        // for, and this response has one channel-quantity field, not one per kind - a second real
+        // channel option is the trigger to revisit this as a list, not a hunch.
+        var channelModuleKey = entitlements.TryGet(ChannelEntitlementOptionKeys.For(ChannelKind.Telegram));
+        var channelQuantity = channelModuleKey is { } key && quantities.TryGetValue(key, out var quantity)
+            ? quantity
+            : (int?)null;
+
         return new OwnerSiteDetailResponse(
             site.Id.Value,
             site.Name,
@@ -99,7 +116,8 @@ public sealed class GetSiteForOwnerHandler(
             operators.Select(ToOperatorDto).ToList(),
             aggregate?.SuspendedUntil,
             roleRows.Select(ToRoleDto).ToList(),
-            Permission.AllKnownValues);
+            Permission.AllKnownValues,
+            channelQuantity);
     }
 
     private static OwnerSiteOperatorDto ToOperatorDto(OperatorTeamMemberItem item) => new(
