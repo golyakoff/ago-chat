@@ -299,6 +299,12 @@ public class ModuleTaskGatewayIntegrationTests
         public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
             Task.FromResult<Conversation?>(conversation.Id == id ? conversation : null);
 
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<ConversationId, Conversation>>(ids.Contains(conversation.Id)
+                ? new Dictionary<ConversationId, Conversation> { [conversation.Id] = conversation }
+                : new Dictionary<ConversationId, Conversation>());
+
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

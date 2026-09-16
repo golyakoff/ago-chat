@@ -869,6 +869,10 @@ public class RouteConversationToModuleHandlerTests
         public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
             Task.FromResult<Conversation?>(load());
 
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

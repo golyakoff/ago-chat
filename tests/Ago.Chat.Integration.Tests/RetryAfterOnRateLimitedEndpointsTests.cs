@@ -370,6 +370,10 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
             Task.FromResult(id == conversation.Id ? conversation : null);
 
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
 
@@ -386,6 +390,10 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
     private sealed class NeverCalledConversationRepository : IConversationRepository
     {
         public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A phone-bucket-denied caller must never reach the conversation lookup.");
+
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A phone-bucket-denied caller must never reach the conversation lookup.");
 
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>

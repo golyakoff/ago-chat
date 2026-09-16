@@ -10,6 +10,11 @@ public sealed class FakeConversationRepository : IConversationRepository
     public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
         Task.FromResult(_byId.GetValueOrDefault(id));
 
+    public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+        IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<ConversationId, Conversation>>(
+            ids.Where(_byId.ContainsKey).ToDictionary(id => id, id => _byId[id]));
+
     public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
         Task.FromResult(_byId.Values.FirstOrDefault(
             c => c.VisitorId == visitorId && c.State != ConversationState.Closed));

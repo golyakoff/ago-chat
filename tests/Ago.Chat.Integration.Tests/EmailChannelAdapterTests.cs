@@ -124,6 +124,12 @@ public sealed class EmailChannelAdapterTests
                 ? Conversation.Start(id, SiteId, new VisitorId(Guid.NewGuid()), DateTimeOffset.UtcNow)
                 : null);
 
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<ConversationId, Conversation>>(hasConversation
+                ? ids.ToDictionary(id => id, id => Conversation.Start(id, SiteId, new VisitorId(Guid.NewGuid()), DateTimeOffset.UtcNow))
+                : new Dictionary<ConversationId, Conversation>());
+
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

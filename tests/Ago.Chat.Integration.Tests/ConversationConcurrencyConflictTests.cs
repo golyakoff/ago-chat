@@ -183,6 +183,10 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
             inner.GetByIdAsync(id, cancellationToken);
 
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+            inner.GetByIdsAsync(ids, cancellationToken);
+
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             inner.GetActiveForVisitorAsync(visitorId, cancellationToken);
 
