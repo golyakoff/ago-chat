@@ -21,5 +21,11 @@ namespace Ago.Chat.Application.UseCases.SetUnconditionalModuleGrantAsOwner;
 /// on <see cref="UnconditionallyGranted"/> - lifting the flag is exactly as consequential an act as
 /// setting it (this item's own text: "the entitlement goes off" is a real write, not a formality), so
 /// both directions require the identical justification.</param>
+/// <param name="ExpiresAt">`25-115`: <see langword="null"/> means indefinite - "бессрочно", the
+/// author's own request for the owner's channel-entitlement table this command's first real multi-kind
+/// caller adds. Threaded straight through to <see cref="Domain.ModuleQuantityGrant.SetUnconditionalGrant"/>,
+/// which see for why it is stamped on the row even when <see cref="UnconditionallyGranted"/> is
+/// <see langword="false"/>.</param>
 public sealed record SetUnconditionalModuleGrantAsOwner(
-    SiteId SiteId, string ModuleKey, bool UnconditionallyGranted, string SetBy, string Reason);
+    SiteId SiteId, string ModuleKey, bool UnconditionallyGranted, string SetBy, string Reason,
+    DateTimeOffset? ExpiresAt = null);

@@ -26,10 +26,15 @@ internal sealed class ModuleQuantityGrantConfiguration : IEntityTypeConfiguratio
         builder.Property(g => g.UnconditionalGrantSetBy).HasColumnName("unconditional_grant_set_by");
         builder.Property(g => g.UnconditionalGrantReason).HasColumnName("unconditional_grant_reason");
         builder.Property(g => g.UnconditionalGrantSetAt).HasColumnName("unconditional_grant_set_at").HasColumnType("timestamptz");
+        // `25-115`: the unconditional grant's own optional expiry - null means indefinite
+        // ("бессрочно"), the identical "absent, not a sentinel" shape EnabledModuleConfiguration's own
+        // ExpiresAt column already uses.
+        builder.Property(g => g.UnconditionalGrantExpiresAt).HasColumnName("unconditional_grant_expires_at").HasColumnType("timestamptz");
 
-        // EffectiveQuantity is a computed read, never a column - see its own remarks for why storing it
-        // would just be a second place the OR'd answer could drift from its two real inputs.
-        builder.Ignore(g => g.EffectiveQuantity);
+        // `25-115`: EffectiveQuantity became a method (it needs a caller-supplied `now` to decide
+        // whether the expiry above has passed - ModuleQuantityGrant's own remarks), so it is no longer
+        // something EF Core would try to map as a property in the first place; the explicit Ignore this
+        // comment used to justify no longer compiles against a method group and is no longer needed.
 
         builder.HasOne<Site>().WithMany().HasForeignKey(g => g.SiteId);
     }

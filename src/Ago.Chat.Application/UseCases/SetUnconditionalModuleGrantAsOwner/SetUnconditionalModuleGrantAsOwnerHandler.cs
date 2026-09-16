@@ -61,7 +61,7 @@ public sealed class SetUnconditionalModuleGrantAsOwnerHandler(IModuleQuantityGra
 
         await grants.SetUnconditionalGrantAsync(
             command.SiteId, moduleKey, command.UnconditionallyGranted, command.SetBy, command.Reason.Trim(),
-            clock.UtcNow, cancellationToken);
+            clock.UtcNow, cancellationToken, command.ExpiresAt);
 
         return Result.Success();
     }

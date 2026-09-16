@@ -351,12 +351,14 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(3, module.Quantity);
     }
 
-    /// <summary>`25-114`'s own reason to exist: every site today has zero `enabled_modules` rows for
-    /// its own channel entitlement, by design (`ChannelEntitlement.cs`'s own remarks - a billing-driven
-    /// grant with no entry point and no credential must not look like a registered module). A bare
-    /// tenant, with no `SeedModuleAsync` call at all, still reports its own granted channel quantity -
-    /// proving the field is sourced from <c>IModuleQuantityGrantStore</c> directly, never from
-    /// <c>Modules</c>' own enrichment path, which has nothing to enrich here.</summary>
+    /// <summary>`25-114`'s own reason to exist, restated for `25-115`'s list shape: every site today
+    /// has zero `enabled_modules` rows for its own channel entitlements, by design
+    /// (`ChannelEntitlement.cs`'s own remarks - a billing-driven grant with no entry point and no
+    /// credential must not look like a registered module). A bare tenant, with no `SeedModuleAsync`
+    /// call at all, still reports its own granted channel entitlement - proving the row is sourced from
+    /// <c>IModuleQuantityGrantStore</c> directly, never from <c>Modules</c>' own enrichment path, which
+    /// has nothing to enrich here. This particular grant is a plain <c>Quantity</c> write (billing-
+    /// shaped, not the owner's own flag), so it must read as granted, not owner-granted.</summary>
     [Fact]
     public async Task OwnerToken_ASiteGrantedAChannelQuantity_ReportsIt_WithNoEnabledModulesRowAtAll()
     {
@@ -375,19 +377,23 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         var body = await GetDetailAsync(client, siteId.Value);
 
         Assert.Empty(body.Modules);
-        Assert.Equal(5, body.ChannelQuantity);
+        var telegram = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Telegram));
+        Assert.True(telegram.Granted);
+        Assert.False(telegram.GrantedByOwner);
+        Assert.Null(telegram.ExpiresAt);
+        Assert.Equal("channel-telegram", telegram.ModuleKey);
     }
 
-    /// <summary>The default, and the one every real site is in today: no channel quantity has ever
-    /// been granted, which must report `null` - distinct from `0` (a channel entitlement explicitly
-    /// granted and then reduced to zero), the identical "absent, not zero" reading
-    /// <see cref="OwnerSiteModuleDto.Quantity"/>'s own remarks already establish for its sibling
-    /// field.</summary>
+    /// <summary>The default, and the one every real site is in today: no channel entitlement has ever
+    /// been granted, which must report every priced kind as present but not granted - distinct from the
+    /// kind being missing from the list altogether (`OwnerToken_AChannelKindTheDeploymentHasNotConfigured_NeverAppearsInTheList`'s
+    /// own case), the identical "absent is a different fact from present-but-off" reading this item's
+    /// own Scope draws.</summary>
     [Fact]
-    public async Task OwnerToken_ASiteWithNoChannelQuantityGrant_ReportsNull_NotZero()
+    public async Task OwnerToken_ASiteWithNoChannelGrantAtAll_ReportsEveryPricedKindAsNotGranted()
     {
         var siteId = new SiteId(Guid.NewGuid());
-        await SeedBareTenantAsync(siteId, "No Channel Quantity Tenant", DateTimeOffset.UtcNow);
+        await SeedBareTenantAsync(siteId, "No Channel Grant Tenant", DateTimeOffset.UtcNow);
 
         var token = await fixture.GetPlatformOwnerAccessTokenAsync();
         await using var host = await BuildTestHostAsync();
@@ -395,7 +401,115 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
 
         var body = await GetDetailAsync(client, siteId.Value);
 
-        Assert.Null(body.ChannelQuantity);
+        var telegram = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Telegram));
+        Assert.False(telegram.Granted);
+        Assert.False(telegram.GrantedByOwner);
+        Assert.Null(telegram.ExpiresAt);
+    }
+
+    /// <summary>The item's own headline scope: more than one channel kind at once, each independently
+    /// reported - `25-114`'s single-field design could never have shown this.</summary>
+    [Fact]
+    public async Task OwnerToken_WithMultipleChannelKindsConfigured_ReportsEachIndependently()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        await SeedBareTenantAsync(siteId, "Multi Channel Tenant", now);
+        await SeedQuantityGrantAsync(siteId, "channel-telegram", quantity: 3, now);
+        await SeedUnconditionalGrantAsync(siteId, "channel-max", now);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        var telegram = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Telegram));
+        Assert.True(telegram.Granted);
+        Assert.False(telegram.GrantedByOwner);
+
+        var max = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Max));
+        Assert.True(max.Granted);
+        Assert.True(max.GrantedByOwner);
+        Assert.Null(max.ExpiresAt);
+
+        // Vk is priced by this host too (BuildTestHostAsync configures every kind by default) but was
+        // never granted - present, and correctly reported as not granted, not merely absent.
+        var vk = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Vk));
+        Assert.False(vk.Granted);
+    }
+
+    /// <summary>The owner's own indefinite grant, with a future expiry - reported as granted, by the
+    /// owner, with the exact expiry stamped, not silently rounded or omitted.</summary>
+    [Fact]
+    public async Task OwnerToken_AnOwnerGrantedChannelWithAFutureExpiry_ReportsGrantedByOwner_WithTheExpiry()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        await SeedBareTenantAsync(siteId, "Owner Granted Channel Tenant", now);
+        var expiresAt = now.AddDays(30);
+        await SeedUnconditionalGrantAsync(siteId, "channel-vk", now, expiresAt);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        var vk = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Vk));
+        Assert.True(vk.Granted);
+        Assert.True(vk.GrantedByOwner);
+        Assert.NotNull(vk.ExpiresAt);
+        Assert.True((vk.ExpiresAt.Value - expiresAt).Duration() < TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>The item's own Done-when made mechanical: an owner grant whose own expiry has already
+    /// passed reads as not granted - the real read-store path (`ModuleQuantityGrantStore.GetGrantsForSiteAsync`
+    /// through <c>ModuleQuantityGrant.EffectiveQuantity(now)</c>), not merely the domain unit test's own
+    /// claim about the same rule.</summary>
+    [Fact]
+    public async Task OwnerToken_AnOwnerGrantedChannelWithAPastExpiry_ReportsNotGranted()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var now = DateTimeOffset.UtcNow;
+        await SeedBareTenantAsync(siteId, "Lapsed Owner Grant Channel Tenant", now.AddDays(-60));
+        var expiresAt = now.AddDays(-1);
+        await SeedUnconditionalGrantAsync(siteId, "channel-avito", now.AddDays(-30), expiresAt);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        var avito = Assert.Single(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Avito));
+        Assert.False(avito.Granted);
+        Assert.False(avito.GrantedByOwner);
+        Assert.Null(avito.ExpiresAt);
+    }
+
+    /// <summary>The other half of "absent is a different fact from present-but-off": a channel kind
+    /// this deployment's own configuration has never priced (`IBillingOptionEntitlementProvider.TryGet`
+    /// returns <see langword="null"/> for it) does not appear in the list at all - not as a row with
+    /// <c>Granted: false</c>, which would wrongly imply the console has something to offer a grant
+    /// action against.</summary>
+    [Fact]
+    public async Task OwnerToken_AChannelKindTheDeploymentHasNotConfigured_NeverAppearsInTheList()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        await SeedBareTenantAsync(siteId, "Unpriced Channel Tenant", DateTimeOffset.UtcNow);
+
+        var token = await fixture.GetPlatformOwnerAccessTokenAsync();
+        // Only Telegram and Max are priced on this host - Vk, WhatsApp, Avito, Sms, Email are not.
+        await using var host = await BuildTestHostAsync([ChannelKind.Telegram, ChannelKind.Max]);
+        using var client = CreateClient(host, token);
+
+        var body = await GetDetailAsync(client, siteId.Value);
+
+        Assert.Equal(2, body.ChannelEntitlements.Count);
+        Assert.DoesNotContain(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Vk));
+        Assert.DoesNotContain(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.WhatsApp));
+        Assert.DoesNotContain(body.ChannelEntitlements, e => e.Kind == nameof(ChannelKind.Avito));
     }
 
     [Fact]
@@ -479,8 +593,21 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
     private async Task SeedQuantityGrantAsync(SiteId siteId, string moduleKey, int quantity, DateTimeOffset now)
     {
         await using var db = fixture.CreateDbContext();
-        await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator())
+        await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
             .GrantAsync(siteId, new ModuleKey(moduleKey), quantity, now, CancellationToken.None);
+    }
+
+    /// <summary>`25-115`: writes a real unconditional-grant flag through the real store, the identical
+    /// "seed through the mechanism, not around it" posture <see cref="SeedQuantityGrantAsync"/> already
+    /// follows for the plain quantity.</summary>
+    private async Task SeedUnconditionalGrantAsync(
+        SiteId siteId, string moduleKey, DateTimeOffset now, DateTimeOffset? expiresAt = null)
+    {
+        await using var db = fixture.CreateDbContext();
+        await new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
+            .SetUnconditionalGrantAsync(
+                siteId, new ModuleKey(moduleKey), unconditionallyGranted: true, setBy: "owner-sub-test",
+                reason: "25-115 integration test", now, CancellationToken.None, expiresAt);
     }
 
     private async Task SeedModuleAsync(
@@ -527,18 +654,23 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         return client;
     }
 
-    private async Task<WebApplication> BuildTestHostAsync()
+    /// <param name="configuredChannelKinds">`25-115`: which `ChannelKind`s this test host's own
+    /// deployment configuration prices - defaults to every kind (the identical "for every ChannelKind
+    /// at once" shape this host always used), overridable per test so
+    /// <see cref="OwnerToken_AChannelKindTheDeploymentHasNotConfigured_NeverAppearsInTheList"/> can
+    /// prove the opposite case: a kind genuinely absent from configuration, not merely unwanted by a
+    /// test's own assertions.</param>
+    private async Task<WebApplication> BuildTestHostAsync(IEnumerable<ChannelKind>? configuredChannelKinds = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        // `25-114`: `GetSiteForOwnerHandler`'s own sixth read - the site's own channel-entitlement
-        // quantity, resolved through the identical `IBillingOptionEntitlementProvider` +
-        // `ChannelEntitlementOptionKeys` pair `ChannelStatusEndpointsTests`' own host builder already
-        // configures this exact way - the option key's own string doubling as the module key it
-        // grants, for every `ChannelKind` at once rather than naming `Telegram` specifically here.
+        // `25-114`/`25-115`: `GetSiteForOwnerHandler`'s own channel-entitlement read, resolved through
+        // the identical `IBillingOptionEntitlementProvider` + `ChannelEntitlementOptionKeys` pair
+        // `ChannelStatusEndpointsTests`' own host builder already configures this exact way - the
+        // option key's own string doubling as the module key it grants.
         builder.Configuration.AddInMemoryCollection(
-            Enum.GetValues<ChannelKind>().Select(kind =>
+            (configuredChannelKinds ?? Enum.GetValues<ChannelKind>()).Select(kind =>
             {
                 var optionKey = ChannelEntitlementOptionKeys.For(kind);
                 return new KeyValuePair<string, string?>(

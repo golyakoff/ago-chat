@@ -274,7 +274,7 @@ public sealed class ChannelStatusEndpointsTests(OperatorOidcFixture fixture)
     {
         var optionKey = ChannelEntitlementOptionKeys.For(kind);
         await using var db = fixture.CreateDbContext();
-        var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator());
+        var grants = new ModuleQuantityGrantStore(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock());
         await grants.GrantAsync(siteId, new ModuleKey(optionKey.Value), 1, RegisteredAt, CancellationToken.None);
     }
 

@@ -62,16 +62,54 @@ public sealed record OwnerSiteDetailResponse(
     DateTimeOffset? SuspendedUntil,
     IReadOnlyList<OwnerSiteRoleDto> Roles,
     IReadOnlyList<string> AllKnownPermissions,
-    // `25-114`: the site's own standing channel-entitlement quantity - `IModuleQuantityGrantStore`'s
-    // own read for the `"channel"` pseudo-`ModuleKey` (`ChannelEntitlement.cs`'s own remarks on why
-    // this key deliberately never gets an `enabled_modules` row, which is exactly why it needed its
-    // own field here rather than riding `Modules` above the way a real module's quantity already
-    // does via `OwnerSiteModuleDto.Quantity`). `null` means no grant exists yet, the same "absent,
-    // not zero" reading `OwnerSiteModuleDto.Quantity`'s own doc comment already gives for its sibling
-    // field - not a second query: `GetSiteForOwnerHandler` already loads this site's whole quantities
-    // dictionary for `Modules`' own enrichment, so this is the identical value, read once, surfaced
-    // twice.
-    int? ChannelQuantity);
+    // `25-115`: replaces `25-114`'s single `ChannelQuantity: int?` field - that design (a numeric
+    // "quantity" for one hardcoded channel, Telegram) did not match what the author had actually asked
+    // for before `25-114` shipped: a table of every channel kind this deployment prices, with
+    // provenance and an expiry, not a bare number for one of them. One row per `ChannelKind`
+    // `GetSiteForOwnerHandler` finds a deployment-configured `ModuleKey` for
+    // (`ChannelEntitlement.cs`'s own remarks on why a channel entitlement deliberately never gets an
+    // `enabled_modules` row, which is exactly why this rides its own field rather than `Modules`
+    // above). A channel kind this deployment has never priced is simply absent from this list, never
+    // included with a "not available" placeholder row.
+    IReadOnlyList<OwnerSiteChannelEntitlementDto> ChannelEntitlements);
+
+/// <summary>
+/// `25-115`: one row of <see cref="OwnerSiteDetailResponse.ChannelEntitlements"/> - one channel kind
+/// this deployment has priced, and whether this site is currently entitled to use it.
+/// </summary>
+/// <param name="Kind">`Ago.Chat.Domain.ChannelKind.ToString()` - e.g. <c>"Max"</c>, <c>"Telegram"</c>,
+/// <c>"Vk"</c>, <c>"WhatsApp"</c>, <c>"Avito"</c>. A raw string, never a `Domain` enum reference (this
+/// project has none) - the identical "the wire carries values" split every other DTO in this file
+/// already draws, restated here for an enum-shaped value rather than an id or a key.</param>
+/// <param name="ModuleKey">The deployment-configured <c>ModuleKey</c> this channel kind resolves to
+/// (e.g. <c>"channel-telegram"</c>) - opaque here exactly like <see cref="OwnerSiteModuleDto.ModuleKey"/>
+/// itself, echoed back by the console unexamined on its own grant/revoke call against this row. Two
+/// different sites on two differently-configured deployments could see two different strings for the
+/// identical <see cref="Kind"/> - the console must never assume or hardcode this value, only display
+/// and resend it.</param>
+/// <param name="Granted"><see langword="true"/> when this site is entitled to use this channel right
+/// now - <c>Ago.Chat.Domain.ModuleQuantityGrant.EffectiveQuantity(now)</c>'s own answer, greater than
+/// zero, computed server-side against the identical clock every other "is this still valid" decision
+/// in this codebase uses (never re-derived by the console comparing <see cref="ExpiresAt"/> against its
+/// own clock - this item's own "no second source of truth for a decision the server already
+/// made").</param>
+/// <param name="GrantedByOwner"><see langword="true"/> only while the platform owner's own
+/// unconditional-grant flag is live (set, and not past <see cref="ExpiresAt"/>) - never merely "was
+/// set at some point." <see langword="false"/> when <see cref="Granted"/> is <see langword="false"/>
+/// (nothing to attribute), and also <see langword="false"/> when <see cref="Granted"/> is
+/// <see langword="true"/> purely because a real billing-driven <c>Quantity</c> is positive - the
+/// "billing-driven" case this item's own text names as real in principle but not yet reachable (no
+/// self-service channel purchase exists), so this field is never faked to populate it; it is simply
+/// <see langword="false"/> until that path exists.</param>
+/// <param name="ExpiresAt"><see langword="null"/> means either "not entitled at all" or "entitled
+/// indefinitely" (бессрочно) - the two cases the console tells apart using <see cref="Granted"/>, the
+/// same "absent is not itself the answer, read it alongside the sibling field" shape
+/// <see cref="OwnerSiteModuleDto.ExpiresAt"/>'s own remarks already establish. Always
+/// <see langword="null"/> when <see cref="GrantedByOwner"/> is <see langword="false"/> - a
+/// billing-driven grant has no owner-set expiry to report, and this item's own "do not fake data"
+/// warning is exactly why this is never defaulted to something that looks like one.</param>
+public sealed record OwnerSiteChannelEntitlementDto(
+    string Kind, string ModuleKey, bool Granted, bool GrantedByOwner, DateTimeOffset? ExpiresAt);
 
 /// <summary>
 /// `25-76`: one row of <see cref="OwnerSiteDetailResponse.Roles"/> - a role this site actually has,

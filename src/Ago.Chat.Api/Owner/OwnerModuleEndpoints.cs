@@ -279,7 +279,8 @@ public static class OwnerModuleEndpoints
 
         var result = await handler.HandleAsync(
             new SetUnconditionalModuleGrantAsOwner(
-                new SiteId(siteId), moduleKey, request.UnconditionallyGranted, setBy, request.Reason),
+                new SiteId(siteId), moduleKey, request.UnconditionallyGranted, setBy, request.Reason,
+                request.ExpiresAt),
             cancellationToken);
 
         if (result.IsFailure)
@@ -291,7 +292,7 @@ public static class OwnerModuleEndpoints
             httpContext, accessRecords, clock, idGenerator, AccessRecordKind.OwnerModuleQuantityGrant,
             new SiteId(siteId), AccessRecordResourceKind.ModuleQuantityGrant, resourceId: null, cancellationToken);
 
-        return Results.Ok(new SetUnconditionalGrantResponse(moduleKey, request.UnconditionallyGranted));
+        return Results.Ok(new SetUnconditionalGrantResponse(moduleKey, request.UnconditionallyGranted, request.ExpiresAt));
     }
 
     /// <summary>`23-83`/`adr/0151`: mints a fresh credential on the platform owner's own behalf - see
@@ -357,9 +358,16 @@ public static class OwnerModuleEndpoints
     /// before anything else it does - required whenever this route is called, in either direction
     /// (<see cref="SetUnconditionalModuleGrantAsOwner.SetUnconditionalModuleGrantAsOwner"/>'s own
     /// remarks on why lifting the flag is not exempt).</summary>
-    public sealed record SetUnconditionalGrantRequest(bool UnconditionallyGranted, string Reason);
+    /// <param name="ExpiresAt">`25-115`: <see langword="null"/> (the default - a plain optional
+    /// member, not the <see langword="required"/>-nullable trick <see cref="GrantModuleRequest.ExpiresAt"/>
+    /// uses) means indefinite - "бессрочно". A plain optional is enough here, unlike that field: this
+    /// route already treats an *omitted* body member as "not forcing" on other requests in this file
+    /// (<see cref="RevokeModuleAsOwnerRequest.Force"/>'s own remarks), and the owner's channel-entitlement
+    /// table this field first serves defaults its own date picker to "no end date" rather than forcing a
+    /// choice the way registering a brand-new module's own expiry does.</param>
+    public sealed record SetUnconditionalGrantRequest(bool UnconditionallyGranted, string Reason, DateTimeOffset? ExpiresAt = null);
 
-    public sealed record SetUnconditionalGrantResponse(string ModuleKey, bool UnconditionallyGranted);
+    public sealed record SetUnconditionalGrantResponse(string ModuleKey, bool UnconditionallyGranted, DateTimeOffset? ExpiresAt);
 
     /// <summary>`23-88`: the body <c>POST .../modules/{moduleKey}/quantity/impact</c> takes - the
     /// candidate quantity the owner is considering, not yet granted.</summary>

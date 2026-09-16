@@ -69,9 +69,14 @@ public sealed class GetSiteForOwnerHandler(
         var aggregate = await siteRepository.GetByIdAsync(query.SiteId, cancellationToken);
         var allowedOrigins = aggregate?.AllowedOrigins ?? [];
 
-        // `23-66`: one read alongside the modules list above, not one per row - a site enables a
-        // handful of modules at most, so this is a single extra query rather than an N+1.
-        var quantities = await quantityGrants.GetAllForSiteAsync(query.SiteId, cancellationToken);
+        // `23-66`/`25-115`: one read alongside the modules list above, not one per row - a site
+        // enables a handful of modules at most, so this is a single extra query rather than an N+1.
+        // The aggregate itself, not `GetAllForSiteAsync`'s own OR'd int: `25-115`'s channel-entitlement
+        // table needs UnconditionallyGrantedByOwner/UnconditionalGrantExpiresAt to show provenance and
+        // expiry, which the int-only read cannot carry - and building `Modules`' own quantity map off
+        // this same list (below) means this stays the identical one extra query it always was, not two.
+        var grants = await quantityGrants.GetGrantsForSiteAsync(query.SiteId, cancellationToken);
+        var quantities = grants.ToDictionary(g => g.ModuleKey, g => g.EffectiveQuantity(now));
 
         // `23-68`: the identical read GetOperatorTeamHandler already serves a tenant's own team screen
         // (IOperatorTeamReadStore.GetForSiteAsync) - reused unchanged rather than a second query shape,
@@ -84,21 +89,22 @@ public sealed class GetSiteForOwnerHandler(
         // re-read one).
         var roleRows = await roles.GetAllForSiteAsync(query.SiteId, cancellationToken);
 
-        // `25-114`: the site's own standing channel-entitlement quantity, so the owner's own grant
-        // screen can show what is actually granted rather than only what this browser session just
-        // sent (`OwnerSiteDetailPage.tsx`'s own remarks on why it could not do this from the console
-        // side alone). Resolved through the identical `IBillingOptionEntitlementProvider` +
+        // `25-115`: one row per `ChannelKind` this deployment has actually priced - replacing
+        // `25-114`'s single `ChannelQuantity: int?` field, delivered against a design (a numeric
+        // quantity, Telegram only) that did not match what the author had described before `25-114`
+        // shipped. Resolved through the identical `IBillingOptionEntitlementProvider` +
         // `ChannelEntitlementOptionKeys` pair `ChannelEntitlement.IsEntitledAsync` already uses to
         // decide whether a connect attempt is entitled - not a new, second-guessable literal
         // `ModuleKey` here (`ModuleKeyLiteralRule`'s own reason `"ai"` is deployment-configured, never
-        // a literal in `Ago.Chat.*`, applies identically to this one). Scoped to `Telegram`
-        // specifically: it is the only channel kind this deployment has ever priced an entitlement
-        // for, and this response has one channel-quantity field, not one per kind - a second real
-        // channel option is the trigger to revisit this as a list, not a hunch.
-        var channelModuleKey = entitlements.TryGet(ChannelEntitlementOptionKeys.For(ChannelKind.Telegram));
-        var channelQuantity = channelModuleKey is { } key && quantities.TryGetValue(key, out var quantity)
-            ? quantity
-            : (int?)null;
+        // a literal in `Ago.Chat.*`, applies identically to this one). A kind this deployment has never
+        // priced (`entitlements.TryGet` returns `null`) is omitted from the list entirely - the
+        // console has nothing to offer a grant/revoke action against for a kind nobody sells.
+        var channelEntitlements = Enum.GetValues<ChannelKind>()
+            .Select(kind => (Kind: kind, ModuleKey: entitlements.TryGet(ChannelEntitlementOptionKeys.For(kind))))
+            .Where(pair => pair.ModuleKey is not null)
+            .Select(pair => ToChannelEntitlementDto(
+                pair.Kind, pair.ModuleKey!.Value, grants.FirstOrDefault(g => g.ModuleKey == pair.ModuleKey!.Value), now))
+            .ToList();
 
         return new OwnerSiteDetailResponse(
             site.Id.Value,
@@ -117,7 +123,7 @@ public sealed class GetSiteForOwnerHandler(
             aggregate?.SuspendedUntil,
             roleRows.Select(ToRoleDto).ToList(),
             Permission.AllKnownValues,
-            channelQuantity);
+            channelEntitlements);
     }
 
     private static OwnerSiteOperatorDto ToOperatorDto(OperatorTeamMemberItem item) => new(
@@ -136,4 +142,31 @@ public sealed class GetSiteForOwnerHandler(
         module.RevokedAt,
         module.Status,
         quantities.TryGetValue(module.ModuleKey, out var quantity) ? quantity : null);
+
+    /// <summary>`25-115`: one row of the owner's channel-entitlement table - <paramref name="grant"/>
+    /// is <see langword="null"/> when this site has never had a grant row for this channel's own
+    /// <see cref="ModuleKey"/> at all (never bought, never owner-granted), which reads identically to a
+    /// grant row present with <see cref="ModuleQuantityGrant.Quantity"/> zero and no live unconditional
+    /// flag - both are "not entitled right now", the same collapse
+    /// <see cref="ModuleQuantityGrant.EffectiveQuantity"/> already makes for every other caller of this
+    /// port, restated here rather than re-derived a second way.</summary>
+    private static OwnerSiteChannelEntitlementDto ToChannelEntitlementDto(
+        ChannelKind kind, ModuleKey moduleKey, ModuleQuantityGrant? grant, DateTimeOffset now)
+    {
+        // `25-115`'s own "do not fake data" warning: GrantedByOwner is true only while the owner's own
+        // flag is actually live (set, and not past its own expiry) - never merely "was set at some
+        // point," which is exactly the distinction ModuleQuantityGrant.EffectiveQuantity's own remarks
+        // already draw between a lifted-or-lapsed flag and a live one.
+        var ownerGrantIsLive = grant is { UnconditionallyGrantedByOwner: true }
+            && (grant.UnconditionalGrantExpiresAt is not { } expiresAt || expiresAt > now);
+
+        return new OwnerSiteChannelEntitlementDto(
+            kind.ToString(),
+            moduleKey.Value,
+            Granted: (grant?.EffectiveQuantity(now) ?? 0) > 0,
+            GrantedByOwner: ownerGrantIsLive,
+            // The billing-driven case (Granted by Quantity > 0 alone) has no owner-set expiry to show -
+            // this item's own warning against inventing data for the "paid" case not yet reachable.
+            ExpiresAt: ownerGrantIsLive ? grant!.UnconditionalGrantExpiresAt : null);
+    }
 }
