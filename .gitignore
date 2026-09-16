@@ -483,3 +483,8 @@ $RECYCLE.BIN/
 
 # Machine-specific configuration (docs/runbooks/local-dev.md) - never committed.
 appsettings.Local.json
+
+# Local load-test scratch output and per-run invocation scripts (capacity-ramp skill, ago-root's own
+# load/output/ convention) - findings get written up in ago-root's load/reports/, not kept here.
+load-local-run/
+tests/Ago.Chat.LoadDriver/run-*.sh
