@@ -1,5 +1,7 @@
-﻿using Ago.Chat.Application.Tests.Fakes;
+﻿using System.Text.Json;
+using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.RevokeAttachmentUpload;
@@ -15,7 +17,7 @@ public class RevokeAttachmentUploadHandlerTests
 
     private sealed record Fixture(
         RevokeAttachmentUploadHandler Handler, FakeConversationRepository Conversations,
-        FakeConversationAttachmentUploadGrantRepository Grants);
+        FakeConversationAttachmentUploadGrantRepository Grants, FakeOutboxWriter Outbox, FakeUnitOfWork UnitOfWork);
 
     private static Fixture CreateFixture(
         bool grantPermission = true, bool seedConversation = true, bool currentlyGranted = true,
@@ -37,8 +39,11 @@ public class RevokeAttachmentUploadHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ConversationAttachmentUploadGrant);
         }
 
-        var handler = new RevokeAttachmentUploadHandler(conversations, grants, permissions, new FakeClock(Now));
-        return new Fixture(handler, conversations, grants);
+        var outbox = new FakeOutboxWriter();
+        var unitOfWork = new FakeUnitOfWork();
+        var handler = new RevokeAttachmentUploadHandler(
+            conversations, grants, permissions, unitOfWork, outbox, new FakeIdGenerator(), new FakeClock(Now));
+        return new Fixture(handler, conversations, grants, outbox, unitOfWork);
     }
 
     [Fact]
@@ -57,6 +62,31 @@ public class RevokeAttachmentUploadHandlerTests
         Assert.Equal(1, fixture.Grants.RevokeCalls);
     }
 
+    // `25-110`: the item's own root cause, now fixed - a revoke that actually changes state must
+    // enqueue AttachmentUploadGrantChanged(Granted: false) through the outbox, inside a committed
+    // transaction, so a visitor whose connection is already open learns about it live rather than only
+    // on a later reconnect.
+    [Fact]
+    public async Task HandleAsync_WhenCurrentlyGranted_EnqueuesAttachmentUploadGrantChanged_WithGrantedFalse_AndCommits()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RevokeAttachmentUpload.RevokeAttachmentUpload(ConversationId, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+        Assert.Equal(nameof(AttachmentUploadGrantChanged), envelope.Type);
+        var contract = JsonSerializer.Deserialize<AttachmentUploadGrantChanged>(envelope.Payload);
+        Assert.Equal(ConversationId.Value, contract!.ConversationId);
+        Assert.Equal(VisitorId.Value, contract.VisitorId);
+        Assert.False(contract.Granted);
+        Assert.Equal(Now, contract.OccurredAt);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsBegun);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsCommitted);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenTheOperatorLacksThePermission_ReturnsForbidden_AndRevokesNothing()
     {
@@ -69,6 +99,8 @@ public class RevokeAttachmentUploadHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Equal(0, fixture.Grants.RevokeCalls);
+        Assert.Empty(fixture.Outbox.Enqueued);
+        Assert.Equal(0, fixture.UnitOfWork.TransactionsBegun);
     }
 
     [Fact]
@@ -83,6 +115,7 @@ public class RevokeAttachmentUploadHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Equal(0, fixture.Grants.RevokeCalls);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
     [Fact]
@@ -96,10 +129,13 @@ public class RevokeAttachmentUploadHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
+    // `25-110`: "not on AlreadyInState - nothing changed, nothing to tell anyone" (the item's own
+    // Scope). Already-not-granted is exactly that outcome for a revoke.
     [Fact]
-    public async Task HandleAsync_WhenNotCurrentlyGranted_ReturnsConversationAttachmentUploadNotGranted()
+    public async Task HandleAsync_WhenNotCurrentlyGranted_ReturnsConversationAttachmentUploadNotGranted_AndEnqueuesNothing()
     {
         var fixture = CreateFixture(currentlyGranted: false);
 
@@ -109,6 +145,11 @@ public class RevokeAttachmentUploadHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.AttachmentUploadNotGranted", result.Error!.Value.Code);
+        Assert.Empty(fixture.Outbox.Enqueued);
+        // A transaction was opened (the conditional UPDATE still has to run to learn nothing changed)
+        // but never committed - nothing for it to persist.
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, fixture.UnitOfWork.TransactionsCommitted);
     }
 
     // `23-78`: revoking a conversation whose grant came from the tenant-level default (no operator
@@ -127,7 +168,8 @@ public class RevokeAttachmentUploadHandlerTests
         grants.SeedConversation(ConversationId, SiteId, granted: true);
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationAttachmentUploadGrant);
-        var handler = new RevokeAttachmentUploadHandler(conversations, grants, permissions, new FakeClock(Now));
+        var handler = new RevokeAttachmentUploadHandler(
+            conversations, grants, permissions, new FakeUnitOfWork(), new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RevokeAttachmentUpload.RevokeAttachmentUpload(ConversationId, OperatorId, SiteId),

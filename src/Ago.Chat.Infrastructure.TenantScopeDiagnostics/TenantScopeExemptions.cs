@@ -189,6 +189,11 @@ public static class TenantScopeExemptions
             + "visitor). What the site id is actually used for is narrow and self-consistent: reading that same "
             + "site's own configuration, and asking whether that same site has an operator online. Nothing is read "
             + "back to any caller.",
+        ["Ago.Chat.Application.UseCases.ResolveAttachmentUploadGrantDelivery.ResolveAttachmentUploadGrantDeliveryTargetsHandler.HandleAsync"] =
+            "`25-110`, consumer side (Ago.Chat.Worker). Fan-out to the one visitor principal the "
+            + "AttachmentUploadGrantChanged event itself names; the identical shape "
+            + "ResolveConversationAssignmentTargetsHandler right below already establishes - no lookup, no caller, "
+            + "nothing read back.",
         ["Ago.Chat.Application.UseCases.ResolveConversationAssignment.ResolveConversationAssignmentTargetsHandler.HandleAsync"] =
             "Consumer side. Fan-out to the two principals the assignment event itself names; no lookup, no caller.",
         ["Ago.Chat.Application.UseCases.ResolveMessageDelivery.ResolveMessageDeliveryTargetsHandler.HandleAsync"] =

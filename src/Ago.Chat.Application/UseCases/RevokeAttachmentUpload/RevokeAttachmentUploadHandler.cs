@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
@@ -19,11 +20,20 @@ namespace Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
 /// repository's own <c>UPDATE ... WHERE attachment_upload_granted_at IS NOT NULL</c> does not care
 /// whether <c>attachment_upload_granted_by</c> was ever populated, and clearing both columns is exactly
 /// as correct a reversal either way (`IConversationAttachmentUploadGrantRepository`'s own remarks).</para>
+///
+/// <para>`25-110`: the outbox enqueue + <see cref="IUnitOfWork"/> transaction + "flush via
+/// <see cref="IConversationRepository.SaveAsync"/> on an untouched, still-<c>Unchanged</c> aggregate"
+/// shape is identical to <see cref="Application.UseCases.GrantAttachmentUpload.GrantAttachmentUploadHandler"/>'s
+/// own - see that type's own remarks for the full reasoning, restated here only for
+/// <see cref="AttachmentUploadGrantChangedMapper"/>'s <c>granted: false</c> direction.</para>
 /// </summary>
 public sealed class RevokeAttachmentUploadHandler(
     IConversationRepository conversations,
     IConversationAttachmentUploadGrantRepository grants,
     IPermissionChecker permissions,
+    IUnitOfWork unitOfWork,
+    IOutboxWriter outbox,
+    IIdGenerator idGenerator,
     IClock clock)
 {
     public async Task<Result<AttachmentUploadGrantStatus>> HandleAsync(
@@ -48,7 +58,22 @@ public sealed class RevokeAttachmentUploadHandler(
         }
 
         var now = clock.UtcNow;
+
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         var outcome = await grants.RevokeAsync(command.ConversationId, command.SiteId, command.RequestedBy, now, cancellationToken);
+
+        if (outcome == AttachmentUploadGrantOutcome.Applied)
+        {
+            // `25-110`: enqueued only on an actual transition - a visitor mid-upload when this fires
+            // must lose the icon live too (the item's own "revoke matters as much as grant").
+            outbox.Enqueue(AttachmentUploadGrantChangedMapper.ToEnvelope(
+                command.ConversationId, conversation.VisitorId, granted: false, now, idGenerator));
+
+            // Flushes the outbox row staged above, and only that - GrantAttachmentUploadHandler's own
+            // remarks explain why this cannot reintroduce the xmin race this handler was built to avoid.
+            await conversations.SaveAsync(conversation, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
 
         return outcome switch
         {
