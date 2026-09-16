@@ -12,6 +12,19 @@ public interface IConversationRepository
 {
     Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken);
 
+    /// <summary>`25-109` follow-up: the batched twin of <see cref="GetByIdAsync"/> -
+    /// <c>MessageBatchWriter</c>'s own reason for existing (`4-05`'s doc comment: several
+    /// conversations' worth of messages in one flush) needs several conversations loaded before it
+    /// commits, and one query for all of them is what turns that into a single round trip instead of
+    /// <paramref name="ids"/>.Count sequential ones - shrinking the window between "loaded" and
+    /// "committed" that a concurrent writer of the same row can land in, not just the round-trip
+    /// count. Keyed by <see cref="ConversationId"/> so a caller can look up each group's own
+    /// conversation without re-scanning a list; an id with no matching row is simply absent from the
+    /// result, the same "not found" <see cref="GetByIdAsync"/> already expresses as <c>null</c>.
+    /// </summary>
+    Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+        IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken);
+
     /// <summary>The visitor's own not-yet-closed conversation, if one exists - what
     /// <c>StartConversation</c> uses to resume instead of always starting a new one.</summary>
     Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken);

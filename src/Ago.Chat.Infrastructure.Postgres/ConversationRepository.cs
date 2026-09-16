@@ -14,6 +14,29 @@ public sealed class ConversationRepository(AgoChatDbContext db) : IConversationR
             .Include("_moduleTasks")
             .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
 
+    public async Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+        IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<ConversationId, Conversation>();
+        }
+
+        // `AsSplitQuery` - two collection Includes (`_messages`, `_moduleTasks`) on a multi-row result
+        // would otherwise join into one result set and multiply rows together (a conversation with 5
+        // messages and 2 module tasks becomes 10 duplicate-conversation rows EF then has to
+        // de-duplicate client-side) - a single-row GetByIdAsync never hits this, which is why it has
+        // never needed this call. Two round trips instead of one, still far fewer than ids.Count.
+        var conversations = await db.Conversations
+            .AsSplitQuery()
+            .Include("_messages")
+            .Include("_moduleTasks")
+            .Where(c => ids.Contains(c.Id))
+            .ToListAsync(cancellationToken);
+
+        return conversations.ToDictionary(c => c.Id);
+    }
+
     public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
         db.Conversations
             .Include("_messages")

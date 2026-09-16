@@ -121,6 +121,11 @@ public sealed class WhatsAppChannelAdapterTests
         public Task<Conversation?> GetByIdAsync(ConversationId id, CancellationToken cancellationToken) =>
             Task.FromResult<Conversation?>(Conversation.Start(id, SiteId, new VisitorId(Guid.NewGuid()), DateTimeOffset.UtcNow));
 
+        public Task<IReadOnlyDictionary<ConversationId, Conversation>> GetByIdsAsync(
+            IReadOnlyCollection<ConversationId> ids, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<ConversationId, Conversation>>(
+                ids.ToDictionary(id => id, id => Conversation.Start(id, SiteId, new VisitorId(Guid.NewGuid()), DateTimeOffset.UtcNow)));
+
         public Task<Conversation?> GetActiveForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

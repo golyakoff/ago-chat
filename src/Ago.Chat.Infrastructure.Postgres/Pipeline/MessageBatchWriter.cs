@@ -260,9 +260,17 @@ public sealed class MessageBatchWriter(
         // batched, right before this transaction commits - see this method's own closing remarks.
         var touchedSiteIds = new HashSet<Guid>();
 
+        // `25-109` follow-up: one round trip for every conversation this attempt touches, not one per
+        // group - GetByIdsAsync's own remarks explain why this matters beyond raw round-trip count:
+        // it shrinks the window between "loaded" and "committed" that a concurrent writer of the same
+        // row (ConversationAssignmentJob and friends, per this item's own root-cause finding) can land
+        // in, which is the actual race this whole retry mechanism exists to recover from.
+        var conversationIds = pending.Select(i => i.Message.ConversationId).Distinct().ToList();
+        var conversationsById = await conversations.GetByIdsAsync(conversationIds, cancellationToken);
+
         foreach (var group in pending.GroupBy(i => i.Message.ConversationId))
         {
-            var conversation = await conversations.GetByIdAsync(group.Key, cancellationToken);
+            conversationsById.TryGetValue(group.Key, out var conversation);
 
             // Resolved once per conversation, not once per message - the site's tier does not change
             // mid-batch, and this is a cache-aside read (adr/0031's own carve-out from CLAUDE.md rule
