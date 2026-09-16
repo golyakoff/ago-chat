@@ -142,6 +142,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ConversationAssignmentFanoutConsumer>();
 
+// `25-110`: the attachment-upload grant/revoke's own live-push fan-out consumer - same registration
+// shape as ConversationAssignmentFanoutConsumer right above.
+builder.Services
+    .AddOptions<AttachmentUploadGrantFanoutConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(AttachmentUploadGrantFanoutConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<AttachmentUploadGrantFanoutConsumer>();
+
 // 4-03: which mechanism actually performs the claim - concurrency.md's "two mechanisms, both
 // implemented, compared" - chosen once at startup, not per-request. SkipLocked is the default
 // (concurrency.md: "no extra infrastructure, no lock-lease expiry problems").

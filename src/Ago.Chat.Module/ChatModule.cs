@@ -137,6 +137,7 @@ using Ago.Chat.Application.UseCases.RequestChannelLinkFromConsole;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.RequestSiteErasure;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
+using Ago.Chat.Application.UseCases.ResolveAttachmentUploadGrantDelivery;
 using Ago.Chat.Application.UseCases.ResolveConversationAssignment;
 using Ago.Chat.Application.UseCases.ResolveMessageDelivery;
 using Ago.Chat.Application.UseCases.ResolveTeamMessageDelivery;
@@ -1060,6 +1061,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
+        // `25-110`: the attachment-upload grant/revoke's own live-push resolver - see the handler's
+        // own remarks.
+        services.AddScoped<ResolveAttachmentUploadGrantDeliveryTargetsHandler>();
         services.AddScoped<CreateAttachmentHandler>();
         services.AddScoped<ConfirmAttachmentHandler>();
         services.AddScoped<GetAttachmentDownloadUrlHandler>();

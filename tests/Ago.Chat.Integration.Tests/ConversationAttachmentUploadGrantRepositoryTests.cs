@@ -14,13 +14,36 @@ namespace Ago.Chat.Integration.Tests;
 /// that class's own audit-trail assertions - this item builds no
 /// <c>conversation_block_records</c>-shaped table for itself
 /// (<see cref="IConversationAttachmentUploadGrantRepository"/>'s own remarks).
+///
+/// <para>`25-110`: <see cref="GrantAsync"/>/<see cref="RevokeAsync"/> below each open a fresh
+/// <see cref="Infrastructure.Postgres.Persistence.AgoChatDbContext"/> per call, replacing the old
+/// `Repository` property that built the adapter once over a shared <c>NpgsqlDataSource</c> - the
+/// identical "a fresh context per attempt, not one store shared across all of them" shape
+/// <c>ConversationAttachmentBudgetStoreTests</c> already uses, now required here because the adapter
+/// itself moved onto <c>AgoChatDbContext</c>'s own connection (that type's own remarks).</para>
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fixture)
 {
     private static readonly DateTimeOffset Now = new(DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond, TimeSpan.Zero);
 
-    private ConversationAttachmentUploadGrantRepository Repository => new(fixture.DataSource);
+    private async Task<AttachmentUploadGrantOutcome> GrantAsync(
+        ConversationId conversationId, SiteId siteId, OperatorId grantedBy, DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = fixture.CreateDbContext();
+        return await new ConversationAttachmentUploadGrantRepository(db)
+            .GrantAsync(conversationId, siteId, grantedBy, now, cancellationToken);
+    }
+
+    private async Task<AttachmentUploadGrantOutcome> RevokeAsync(
+        ConversationId conversationId, SiteId siteId, OperatorId revokedBy, DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = fixture.CreateDbContext();
+        return await new ConversationAttachmentUploadGrantRepository(db)
+            .RevokeAsync(conversationId, siteId, revokedBy, now, cancellationToken);
+    }
 
     private async Task<(SiteId SiteId, ConversationId ConversationId)> SeedConversation()
     {
@@ -52,7 +75,7 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
         var (siteId, conversationId) = await SeedConversation();
         var grantedBy = new OperatorId(Guid.NewGuid());
 
-        var outcome = await Repository.GrantAsync(conversationId, siteId, grantedBy, Now, CancellationToken.None);
+        var outcome = await GrantAsync(conversationId, siteId, grantedBy, Now, CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.Applied, outcome);
         var (grantedAt, grantedByColumn) = await ReadCurrentStateAsync(conversationId);
@@ -65,9 +88,9 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
     {
         var (siteId, conversationId) = await SeedConversation();
         var firstGrantedBy = new OperatorId(Guid.NewGuid());
-        await Repository.GrantAsync(conversationId, siteId, firstGrantedBy, Now, CancellationToken.None);
+        await GrantAsync(conversationId, siteId, firstGrantedBy, Now, CancellationToken.None);
 
-        var secondOutcome = await Repository.GrantAsync(
+        var secondOutcome = await GrantAsync(
             conversationId, siteId, new OperatorId(Guid.NewGuid()), Now.AddMinutes(5), CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.AlreadyInState, secondOutcome);
@@ -84,7 +107,7 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
         var siteId = new SiteId(Guid.NewGuid());
         var missingConversationId = new ConversationId(Guid.NewGuid());
 
-        var outcome = await Repository.GrantAsync(
+        var outcome = await GrantAsync(
             missingConversationId, siteId, new OperatorId(Guid.NewGuid()), Now, CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.NotFound, outcome);
@@ -98,7 +121,7 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
         var (_, conversationId) = await SeedConversation();
         var otherSiteId = new SiteId(Guid.NewGuid());
 
-        var outcome = await Repository.GrantAsync(
+        var outcome = await GrantAsync(
             conversationId, otherSiteId, new OperatorId(Guid.NewGuid()), Now, CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.NotFound, outcome);
@@ -108,9 +131,9 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
     public async Task RevokeAsync_OnAGrantedConversation_ClearsBothColumns_AndReturnsApplied()
     {
         var (siteId, conversationId) = await SeedConversation();
-        await Repository.GrantAsync(conversationId, siteId, new OperatorId(Guid.NewGuid()), Now, CancellationToken.None);
+        await GrantAsync(conversationId, siteId, new OperatorId(Guid.NewGuid()), Now, CancellationToken.None);
 
-        var outcome = await Repository.RevokeAsync(
+        var outcome = await RevokeAsync(
             conversationId, siteId, new OperatorId(Guid.NewGuid()), Now.AddHours(1), CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.Applied, outcome);
@@ -124,7 +147,7 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
     {
         var (siteId, conversationId) = await SeedConversation();
 
-        var outcome = await Repository.RevokeAsync(
+        var outcome = await RevokeAsync(
             conversationId, siteId, new OperatorId(Guid.NewGuid()), Now, CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.AlreadyInState, outcome);
@@ -136,7 +159,7 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
         var siteId = new SiteId(Guid.NewGuid());
         var missingConversationId = new ConversationId(Guid.NewGuid());
 
-        var outcome = await Repository.RevokeAsync(
+        var outcome = await RevokeAsync(
             missingConversationId, siteId, new OperatorId(Guid.NewGuid()), Now, CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.NotFound, outcome);
@@ -161,7 +184,7 @@ public class ConversationAttachmentUploadGrantRepositoryTests(PostgresFixture fi
             await db.SaveChangesAsync();
         }
 
-        var outcome = await Repository.RevokeAsync(
+        var outcome = await RevokeAsync(
             conversation.Id, siteId, new OperatorId(Guid.NewGuid()), Now.AddHours(1), CancellationToken.None);
 
         Assert.Equal(AttachmentUploadGrantOutcome.Applied, outcome);

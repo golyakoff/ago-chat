@@ -1,5 +1,7 @@
-﻿using Ago.Chat.Application.Tests.Fakes;
+﻿using System.Text.Json;
+using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.GrantAttachmentUpload;
@@ -16,7 +18,7 @@ public class GrantAttachmentUploadHandlerTests
 
     private sealed record Fixture(
         GrantAttachmentUploadHandler Handler, FakeConversationRepository Conversations,
-        FakeConversationAttachmentUploadGrantRepository Grants);
+        FakeConversationAttachmentUploadGrantRepository Grants, FakeOutboxWriter Outbox, FakeUnitOfWork UnitOfWork);
 
     private static Fixture CreateFixture(
         bool grantPermission = true, bool seedConversation = true, bool alreadyGranted = false,
@@ -38,8 +40,11 @@ public class GrantAttachmentUploadHandlerTests
             permissions.Grant(OperatorId, SiteId, Permission.ConversationAttachmentUploadGrant);
         }
 
-        var handler = new GrantAttachmentUploadHandler(conversations, grants, permissions, new FakeClock(Now));
-        return new Fixture(handler, conversations, grants);
+        var outbox = new FakeOutboxWriter();
+        var unitOfWork = new FakeUnitOfWork();
+        var handler = new GrantAttachmentUploadHandler(
+            conversations, grants, permissions, unitOfWork, outbox, new FakeIdGenerator(), new FakeClock(Now));
+        return new Fixture(handler, conversations, grants, outbox, unitOfWork);
     }
 
     [Fact]
@@ -58,6 +63,32 @@ public class GrantAttachmentUploadHandlerTests
         Assert.Equal(1, fixture.Grants.GrantCalls);
     }
 
+    // `25-110`: the item's own root cause, now fixed - a grant that actually changes state must
+    // enqueue AttachmentUploadGrantChanged(Granted: true) through the outbox, inside a committed
+    // transaction, so a visitor whose connection is already open learns about it live rather than only
+    // on a later reconnect (`ago-widget`'s own `connection.ts` doc comment on
+    // `onAttachmentUploadGrantChange` used to name this exact gap).
+    [Fact]
+    public async Task HandleAsync_WhenApplied_EnqueuesAttachmentUploadGrantChanged_WithGrantedTrue_AndCommits()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.GrantAttachmentUpload.GrantAttachmentUpload(ConversationId, OperatorId, SiteId),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+        Assert.Equal(nameof(AttachmentUploadGrantChanged), envelope.Type);
+        var contract = JsonSerializer.Deserialize<AttachmentUploadGrantChanged>(envelope.Payload);
+        Assert.Equal(ConversationId.Value, contract!.ConversationId);
+        Assert.Equal(VisitorId.Value, contract.VisitorId);
+        Assert.True(contract.Granted);
+        Assert.Equal(Now, contract.OccurredAt);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsBegun);
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsCommitted);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenTheOperatorLacksThePermission_ReturnsForbidden_AndGrantsNothing()
     {
@@ -70,6 +101,8 @@ public class GrantAttachmentUploadHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Equal(0, fixture.Grants.GrantCalls);
+        Assert.Empty(fixture.Outbox.Enqueued);
+        Assert.Equal(0, fixture.UnitOfWork.TransactionsBegun);
     }
 
     // `23-78`: the "RBAC answers may this operator act at all, a per-conversation comparison answers
@@ -87,6 +120,7 @@ public class GrantAttachmentUploadHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
         Assert.Equal(0, fixture.Grants.GrantCalls);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
     [Fact]
@@ -100,10 +134,13 @@ public class GrantAttachmentUploadHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
+    // `25-110`: "not on AlreadyInState - nothing changed, nothing to tell anyone" (the item's own
+    // Scope).
     [Fact]
-    public async Task HandleAsync_WhenAlreadyGranted_ReturnsConversationAttachmentUploadAlreadyGranted()
+    public async Task HandleAsync_WhenAlreadyGranted_ReturnsConversationAttachmentUploadAlreadyGranted_AndEnqueuesNothing()
     {
         var fixture = CreateFixture(alreadyGranted: true);
 
@@ -113,6 +150,11 @@ public class GrantAttachmentUploadHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.AttachmentUploadAlreadyGranted", result.Error!.Value.Code);
+        Assert.Empty(fixture.Outbox.Enqueued);
+        // A transaction was opened (the conditional UPDATE still has to run to learn nothing changed)
+        // but never committed - nothing for it to persist.
+        Assert.Equal(1, fixture.UnitOfWork.TransactionsBegun);
+        Assert.Equal(0, fixture.UnitOfWork.TransactionsCommitted);
     }
 
     // `23-78`: unlike `IConversationRepository.GetByIdAsync` (no site filter at all - the same shape
@@ -134,7 +176,8 @@ public class GrantAttachmentUploadHandlerTests
         var grants = new FakeConversationAttachmentUploadGrantRepository();
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationAttachmentUploadGrant);
-        var handler = new GrantAttachmentUploadHandler(conversations, grants, permissions, new FakeClock(Now));
+        var handler = new GrantAttachmentUploadHandler(
+            conversations, grants, permissions, new FakeUnitOfWork(), new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GrantAttachmentUpload.GrantAttachmentUpload(ConversationId, OperatorId, SiteId),
