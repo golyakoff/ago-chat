@@ -371,7 +371,9 @@ public class DeliverChannelMessageHandlerTests
         Assert.Empty(harness.Deliveries.Saved);
     }
 
-    /// <summary>Out of this item's scope (14-03's own job) - see the handler's own remarks.</summary>
+    /// <summary>A System-authored trigger naming a sequence with no matching message at all (the wire
+    /// field alone cannot yet tell a module-task prompt from anything else) still resolves to "nothing to
+    /// relay", the same not-found path an Operator trigger would take.</summary>
     [Fact]
     public async Task HandleAsync_ForASystemMessage_DoesNotRelayIt()
     {
@@ -386,6 +388,103 @@ public class DeliverChannelMessageHandlerTests
         Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.NotAnOperatorMessage, outcome);
         Assert.Empty(maxAdapter.Sent);
         Assert.Empty(harness.Deliveries.Saved);
+    }
+
+    /// <summary>
+    /// `25-121`'s own single most important regression to protect: `14-04`'s offline auto-reply is
+    /// `System`-authored exactly like a module task's own prompt is, and remains explicitly out of this
+    /// item's scope. Shaped identically to <see cref="Application.UseCases.SendOfflineAutoReply.SendOfflineAutoReplyHandler"/>'s
+    /// own <c>AddSystemMessage</c> call - System-authored, no <see cref="MessageContent"/> at all - this
+    /// is the row-backed proof that widening the loop guard to admit a module task's own prompt did not
+    /// also widen it to admit this.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_ForASystemMessageWithNoContent_LikeTheOfflineAutoReply_DoesNotRelayIt()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()),
+            new MessageBody("We're offline right now - a team member will get back to you soon."), Now);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.NotAnOperatorMessage, outcome);
+        Assert.Empty(maxAdapter.Sent);
+        Assert.Empty(harness.Deliveries.Saved);
+    }
+
+    /// <summary>
+    /// `25-121`: the fix itself, fails-before/passes-after. A module task's own prompt
+    /// (`RouteConversationToModuleHandler`'s own <c>System</c>-authored, <see cref="MessageContent"/>-
+    /// carrying message) must now reach the visitor's linked channel exactly the way an operator's reply
+    /// already does - the "silence on Telegram after `/записаться`" bug this item exists to close.
+    /// <see cref="MessageBody"/> is deliberately set to something the rendering must NOT reproduce
+    /// (<see cref="PrimitiveTextRenderer"/> reads <c>payload.prompt</c> first, falling back to it only
+    /// when absent) - proving the relayed text is actually reconstructed from
+    /// <see cref="MessageContent.Payload"/>/<see cref="MessageContent.Actions"/> via
+    /// <see cref="PrimitiveTextRenderer.Render"/>, the one rendering path this item reuses, rather than
+    /// merely echoed from the row's own <c>Body</c> column.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_ForAModuleTaskPromptSystemMessage_RelaysThePrimitiveTextRendering()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.ChoiceList),
+            new MessagePayload("""{"prompt":"Which service?"}"""),
+            [new MessageAction("Haircut", "svc-1"), new MessageAction("Manicure", "svc-2")]);
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.Equal(
+            "Which service?\n1) Haircut\n2) Manicure\nReply with the number.", sent.Body.Value);
+
+        var delivery = Assert.Single(harness.Deliveries.Saved);
+        Assert.Equal(message.Id, delivery.MessageId);
+        Assert.Equal(ChannelDeliveryStatus.Delivered, delivery.Status);
+    }
+
+    /// <summary>`25-121`'s own Done-when: every channel-kind adapter benefits, not just Telegram - this
+    /// item's own fix lives in the shared handler, so proving it once against the fake MAX adapter this
+    /// file already uses is proving it for Telegram/WhatsApp/Avito too, none of which this handler treats
+    /// differently (<see cref="Application.Abstractions.IInboundChannelAdapterRegistry"/> is the only
+    /// place a <see cref="ChannelKind"/> is ever selected on).</summary>
+    [Fact]
+    public async Task HandleAsync_ForAModuleTaskPromptSystemMessage_WithNoActionsAtAll_RelaysThePlainPrompt()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.Form), new MessagePayload("""{"prompt":"What's your phone number?"}"""));
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.Equal("What's your phone number?", sent.Body.Value);
     }
 
     /// <summary>`23-19`'s own Done-when: "a conversation with no linked channel writes nothing at all -
