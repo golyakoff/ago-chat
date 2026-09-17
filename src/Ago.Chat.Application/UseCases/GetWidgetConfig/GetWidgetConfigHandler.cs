@@ -41,6 +41,7 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             site.WidgetConfig.AutoOpenDelaySeconds,
             site.WidgetConfig.AutoOpenGreetingText,
             site.WidgetConfig.AcceptUnverifiedPhone,
-            site.WidgetConfig.AllowAttachmentUploadsByDefault);
+            site.WidgetConfig.AllowAttachmentUploadsByDefault,
+            site.WidgetConfig.ContactCaptureConfirmationText);
     }
 }

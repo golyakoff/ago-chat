@@ -124,10 +124,15 @@ public sealed class Site
     // hot conversation-start path) to seed a brand-new `Conversation`'s own upload grant.
     private bool _allowAttachmentUploadsByDefault;
 
+    // `25-129`: one more flat backing field, the same shape as the pair above - its own column (the
+    // migration this item adds), a nullable free-text field for the identical "one more caller of an
+    // already-established shape" reason `23-64`'s own `_autoOpenGreetingText` comment gives for itself.
+    private string? _contactCaptureConfirmationText;
+
     public WidgetConfig WidgetConfig =>
         new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl, _requireContactConsent,
             _attractAttention, _autoOpenEnabled, _autoOpenDelaySeconds, _autoOpenGreetingText,
-            _acceptUnverifiedPhone, _allowAttachmentUploadsByDefault);
+            _acceptUnverifiedPhone, _allowAttachmentUploadsByDefault, _contactCaptureConfirmationText);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -426,6 +431,7 @@ public sealed class Site
         _autoOpenGreetingText = config.AutoOpenGreetingText;
         _acceptUnverifiedPhone = config.AcceptUnverifiedPhone;
         _allowAttachmentUploadsByDefault = config.AllowAttachmentUploadsByDefault;
+        _contactCaptureConfirmationText = config.ContactCaptureConfirmationText;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

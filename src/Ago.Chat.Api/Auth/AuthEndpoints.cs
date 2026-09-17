@@ -139,7 +139,7 @@ public static class AuthEndpoints
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
                 site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
                 site.WidgetAttractAttention, site.WidgetAutoOpenEnabled, (int)site.WidgetAutoOpenDelaySeconds,
-                site.WidgetAutoOpenGreetingText));
+                site.WidgetAutoOpenGreetingText, site.WidgetContactCaptureConfirmationText));
     }
 
     /// <summary>
@@ -260,7 +260,7 @@ public static class AuthEndpoints
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
             site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
             site.WidgetAttractAttention, site.WidgetAutoOpenEnabled, (int)site.WidgetAutoOpenDelaySeconds,
-            site.WidgetAutoOpenGreetingText));
+            site.WidgetAutoOpenGreetingText, site.WidgetContactCaptureConfirmationText));
     }
 
     /// <summary>
@@ -329,6 +329,14 @@ public static class AuthEndpoints
     /// (`ui/widget.ts`) is what actually decides whether to animate - reading `false` unconditionally
     /// when `prefers-reduced-motion: reduce` is set, whatever this field says - so this server-side
     /// field only ever states the tenant's own setting, never the effective, motion-aware decision.
+    ///
+    /// `25-129`: <see cref="WidgetContactCaptureConfirmationText"/> joins as one more additive,
+    /// nullable field - the tenant's own override for the contact-capture control's confirmation
+    /// sentence, `null` for every site that has not configured one. `ago-widget`'s `ui/appearance.ts`
+    /// re-validates it on receipt, the identical "courtesy re-check, never trust the wire value
+    /// blindly" posture every other field here already gets, and substitutes the literal `{name}` in it
+    /// with the visitor's own just-submitted name - a substitution that can only happen client-side,
+    /// since the server has no visitor to name until after the visitor submits.
     /// </summary>
     public sealed record VisitorSessionResponse(
         string Token,
@@ -348,5 +356,6 @@ public static class AuthEndpoints
         // posture every other field here already gets.
         bool WidgetAutoOpenEnabled,
         int WidgetAutoOpenDelaySeconds,
-        string? WidgetAutoOpenGreetingText);
+        string? WidgetAutoOpenGreetingText,
+        string? WidgetContactCaptureConfirmationText = null);
 }

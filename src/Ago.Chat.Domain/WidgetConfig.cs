@@ -120,6 +120,29 @@ public readonly partial record struct WidgetConfig
     /// panel.</summary>
     public string? AutoOpenGreetingText { get; }
 
+    /// <summary>`25-129`: a bound, matching <see cref="MaxAutoOpenGreetingTextLength"/>'s own reasoning -
+    /// this rides the same cached, per-handshake `SiteConfigDto`/wire path on every visitor bootstrap.
+    /// Sized the same as the greeting rather than the notice's 500: this is one drawn confirmation
+    /// sentence a visitor reads once, not a legal disclosure.</summary>
+    public const int MaxContactCaptureConfirmationTextLength = 300;
+
+    /// <summary>`25-129`: the tenant's own override for the contact-capture control's confirmation
+    /// sentence (`ago-widget`'s `ui/contactCapture.ts`) - <see langword="null"/> for every site that has
+    /// not configured one, the identical "no default sentence we supply" posture <see cref="NoticeText"/>
+    /// and <see cref="AutoOpenGreetingText"/> already state for their own tenant-facing text: a
+    /// confirmation authored by AGO on a tenant's behalf is the same mistake `16-04` already forbids for
+    /// the processing notice. Unlike <see cref="AutoOpenGreetingText"/>, there is no "required whenever a
+    /// flag is on" guard here - this text has no enabling flag of its own, the contact-capture control
+    /// always exists, and the widget itself supplies a real default sentence when this is
+    /// <see langword="null"/> (`ago-widget`'s own `i18n` string table), so an unconfigured site is never
+    /// left with nothing to show the way an enabled-but-textless auto-open would be.
+    ///
+    /// May contain the literal substring <c>{name}</c>, a placeholder the widget substitutes with the
+    /// visitor's own just-submitted name - never expanded here or anywhere server-side, since the server
+    /// never knows which visitor is about to submit before they do (`ago-widget`'s own remarks on why
+    /// this substitution can only ever happen client-side).</summary>
+    public string? ContactCaptureConfirmationText { get; }
+
     /// <summary>`25-39`: a tenant-level, off-by-default escape hatch around `20-09`'s own verified-phone
     /// gate on the chat-driven booking flow - joins <see cref="RequireContactConsent"/>/
     /// <see cref="AttractAttention"/>/<see cref="AutoOpenEnabled"/> on the identical terms (one more
@@ -162,7 +185,8 @@ public readonly partial record struct WidgetConfig
         string? primaryColorHex, Position position, string? noticeText = null, string? noticeUrl = null,
         bool requireContactConsent = false, bool attractAttention = false, bool autoOpenEnabled = false,
         AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30, string? autoOpenGreetingText = null,
-        bool acceptUnverifiedPhone = false, bool allowAttachmentUploadsByDefault = false)
+        bool acceptUnverifiedPhone = false, bool allowAttachmentUploadsByDefault = false,
+        string? contactCaptureConfirmationText = null)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -209,6 +233,23 @@ public readonly partial record struct WidgetConfig
             }
         }
 
+        if (contactCaptureConfirmationText is not null)
+        {
+            if (string.IsNullOrWhiteSpace(contactCaptureConfirmationText))
+            {
+                throw new ArgumentException(
+                    "Widget contact-capture confirmation text cannot be whitespace-only - leave it null to use the widget's own default.",
+                    nameof(contactCaptureConfirmationText));
+            }
+
+            if (contactCaptureConfirmationText.Length > MaxContactCaptureConfirmationTextLength)
+            {
+                throw new ArgumentException(
+                    $"Widget contact-capture confirmation text cannot exceed {MaxContactCaptureConfirmationTextLength} characters.",
+                    nameof(contactCaptureConfirmationText));
+            }
+        }
+
         // `23-64`: "There is no default sentence we supply" (the backlog item's own Scope) - turning
         // auto-open on with nothing configured to say is not a state this constructor lets exist,
         // the same "an enabled configuration with nothing to say" guard `OfflineAutoReplySettings`
@@ -231,6 +272,7 @@ public readonly partial record struct WidgetConfig
         AutoOpenGreetingText = autoOpenGreetingText;
         AcceptUnverifiedPhone = acceptUnverifiedPhone;
         AllowAttachmentUploadsByDefault = allowAttachmentUploadsByDefault;
+        ContactCaptureConfirmationText = contactCaptureConfirmationText;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls

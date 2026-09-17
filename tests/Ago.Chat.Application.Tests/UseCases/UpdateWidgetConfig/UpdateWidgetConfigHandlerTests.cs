@@ -40,11 +40,13 @@ public class UpdateWidgetConfigHandlerTests
         bool attractAttention = false,
         bool autoOpenEnabled = false,
         int autoOpenDelaySeconds = 30,
-        string? autoOpenGreetingText = null) =>
+        string? autoOpenGreetingText = null,
+        string? contactCaptureConfirmationText = null) =>
         new(
             SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl,
             AttractAttention: attractAttention, AutoOpenEnabled: autoOpenEnabled,
-            AutoOpenDelaySeconds: autoOpenDelaySeconds, AutoOpenGreetingText: autoOpenGreetingText);
+            AutoOpenDelaySeconds: autoOpenDelaySeconds, AutoOpenGreetingText: autoOpenGreetingText,
+            ContactCaptureConfirmationText: contactCaptureConfirmationText);
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_UpdatesTheSitesWidgetConfig()
@@ -379,5 +381,77 @@ public class UpdateWidgetConfigHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("WidgetConfig.InvalidAutoOpenGreetingText", result.Error!.Value.Code);
+    }
+
+    // `25-129`: the tenth field this same call writes - straight onto Ago.Chat.Domain.WidgetConfig
+    // itself, the identical "no third Site method needed" shape NoticeText/AutoOpenGreetingText
+    // already established. Unlike AutoOpenGreetingText, there is no enabling flag to pair it with -
+    // this text has no "on/off" of its own, the contact-capture control always exists.
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_UpdatesTheSitesContactCaptureConfirmationText()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(contactCaptureConfirmationText: "Спасибо, {name}, мы всё записали."), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Спасибо, {name}, мы всё записали.", result.Value.ContactCaptureConfirmationText);
+
+        var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
+        Assert.Equal("Спасибо, {name}, мы всё записали.", saved!.WidgetConfig.ContactCaptureConfirmationText);
+    }
+
+    // A tenant who has not configured one gets null - the widget's own default sentence is what fills
+    // that in, not a value this handler invents.
+    [Fact]
+    public async Task HandleAsync_WhenContactCaptureConfirmationTextIsNotSupplied_LeavesItNull()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.ContactCaptureConfirmationText);
+    }
+
+    // Mirrors the notice-text guard above - a bad confirmation text is a clean Result failure with its
+    // own error code, not an unhandled exception, and it costs no outbox writes.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task HandleAsync_WhenTheContactCaptureConfirmationTextIsWhitespaceOnly_ReturnsInvalidContactCaptureConfirmationText(
+        string malformedText)
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(contactCaptureConfirmationText: malformedText), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidContactCaptureConfirmationText", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheContactCaptureConfirmationTextExceedsMaxLength_ReturnsInvalidContactCaptureConfirmationText()
+    {
+        var fixture = CreateFixture();
+        var tooLong = new string('a', WidgetConfig.MaxContactCaptureConfirmationTextLength + 1);
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(contactCaptureConfirmationText: tooLong), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidContactCaptureConfirmationText", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheContactCaptureConfirmationTextIsInvalid_EnqueuesNothing()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(Command(contactCaptureConfirmationText: "   "), CancellationToken.None);
+
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 }

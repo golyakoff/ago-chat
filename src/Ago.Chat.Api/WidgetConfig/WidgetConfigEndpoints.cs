@@ -74,7 +74,8 @@ public static class WidgetConfigEndpoints
                 request.AutoOpenDelaySeconds,
                 request.AutoOpenGreetingText,
                 request.AcceptUnverifiedPhone,
-                request.AllowAttachmentUploadsByDefault),
+                request.AllowAttachmentUploadsByDefault,
+                request.ContactCaptureConfirmationText),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
@@ -83,7 +84,8 @@ public static class WidgetConfigEndpoints
     private static WidgetConfigResponse ToResponse(Application.UseCases.GetWidgetConfig.WidgetConfigDto dto) =>
         new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
             dto.RequireContactConsent, dto.AttractAttention, dto.AutoOpenEnabled, (int)dto.AutoOpenDelaySeconds,
-            dto.AutoOpenGreetingText, dto.AcceptUnverifiedPhone, dto.AllowAttachmentUploadsByDefault);
+            dto.AutoOpenGreetingText, dto.AcceptUnverifiedPhone, dto.AllowAttachmentUploadsByDefault,
+            dto.ContactCaptureConfirmationText);
 
     /// <summary>
     /// <para>
@@ -121,7 +123,12 @@ public static class WidgetConfigEndpoints
         // `23-78`: a plain bool, the identical "missing binds to false" posture - false ("a visitor
         // cannot obtain an upload slot until an operator has agreed") is the safe reading of an
         // omission, the same closed-by-default direction this item's own Decision commits to.
-        bool AllowAttachmentUploadsByDefault = false);
+        bool AllowAttachmentUploadsByDefault = false,
+        // `25-129`: a nullable string, the identical "no state this can silently destroy" posture
+        // NoticeText/AutoOpenGreetingText already take above - a missing value binds to null, which is
+        // "this tenant has not configured one," a legitimate value the widget already falls back to its
+        // own default for.
+        string? ContactCaptureConfirmationText = null);
 
     /// <summary>`23-64`: <c>AutoOpenDelaySeconds</c> crosses the wire as its plain `int` value
     /// (`AutoOpenDelay`'s own remarks on why it needs no PascalCase-string convention the way
@@ -130,5 +137,6 @@ public static class WidgetConfigEndpoints
     public sealed record WidgetConfigResponse(
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
         bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, int AutoOpenDelaySeconds,
-        string? AutoOpenGreetingText, bool AcceptUnverifiedPhone, bool AllowAttachmentUploadsByDefault);
+        string? AutoOpenGreetingText, bool AcceptUnverifiedPhone, bool AllowAttachmentUploadsByDefault,
+        string? ContactCaptureConfirmationText);
 }

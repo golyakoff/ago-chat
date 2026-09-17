@@ -292,13 +292,15 @@ public static class ErrorExtensions
                 // `AssignmentPenalty.Invalid`/`ContactVisibility.InvalidRung`/`OfflineAutoReply.Invalid`/
                 // `WidgetConfig.InvalidAutoOpenDelay`/`WidgetConfig.InvalidAutoOpenGreetingText`/
                 // `WidgetConfig.InvalidLocale`/`WidgetConfig.InvalidNoticeText`/
-                // `WidgetConfig.InvalidNoticeUrl` - the identical "validate the value or enum, translate
-                // the throw at the Application boundary" split `WidgetConfig.InvalidColor`/
-                // `WidgetConfig.InvalidPosition` already draw a few lines up, restated for each field
-                // ConversationErrors' own remarks name for it.
+                // `WidgetConfig.InvalidNoticeUrl`/`WidgetConfig.InvalidContactCaptureConfirmationText` -
+                // the identical "validate the value or enum, translate the throw at the Application
+                // boundary" split `WidgetConfig.InvalidColor`/`WidgetConfig.InvalidPosition` already
+                // draw a few lines up, restated for each field ConversationErrors' own remarks name for
+                // it.
                 or "AssignmentPenalty.Invalid" or "ContactVisibility.InvalidRung" or "OfflineAutoReply.Invalid"
                 or "WidgetConfig.InvalidAutoOpenDelay" or "WidgetConfig.InvalidAutoOpenGreetingText"
                 or "WidgetConfig.InvalidLocale" or "WidgetConfig.InvalidNoticeText" or "WidgetConfig.InvalidNoticeUrl"
+                or "WidgetConfig.InvalidContactCaptureConfirmationText"
                 // `Billing.InvalidSeatCount` - "the requested seat count falls outside
                 // SubscriptionTierBands.MinSeats-MaxSeats ... never a purchasable band"
                 // (ConversationErrors.BillingInvalidSeatCount's own remarks) - the caller's own mistake
