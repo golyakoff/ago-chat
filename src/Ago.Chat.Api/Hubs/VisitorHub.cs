@@ -3,6 +3,7 @@ using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Cors;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
+using Ago.Chat.Application.UseCases.AcknowledgeMessageDelivered;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
@@ -28,6 +29,7 @@ public sealed class VisitorHub(
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
+    AcknowledgeMessageDeliveredHandler acknowledgeMessageDelivered,
     HubConnectionRegistration connectionRegistration,
     HubOriginValidator originValidator,
     DrainState drainState,
@@ -325,6 +327,30 @@ public sealed class VisitorHub(
         }
 
         return new HistoryPage(ToDtos(page.Value.Messages, id), page.Value.NextBeforeSequence);
+    }
+
+    /// <summary>
+    /// `25-119`: the widget's own delivery ack - called from inside `connection.ts`'s
+    /// `handleIncoming`, fire-and-forget, once the visitor's own live connection has actually processed
+    /// an incoming operator message (`MessageReceived`). Refuses (never silently no-ops) a
+    /// <paramref name="messageId"/> that does not name an operator-authored message of
+    /// <paramref name="conversationId"/> this visitor owns - <see cref="AcknowledgeMessageDeliveredHandler"/>'s
+    /// own remarks state why one code covers both a bogus id and a real-but-wrong-kind one. No return
+    /// value and no local echo: unlike a send, there is nothing for this connection's own other tabs to
+    /// reconcile against, and the one interested party - the authoring operator - learns about it
+    /// through the live push (`MessageDeliveredFanoutConsumer`), never from this call's own response.
+    /// </summary>
+    public async Task AcknowledgeDeliveredAsync(Guid conversationId, Guid messageId)
+    {
+        var visitorId = Context.User!.GetVisitorId();
+
+        var acknowledged = await acknowledgeMessageDelivered.HandleAsync(
+            new AcknowledgeMessageDelivered(new ConversationId(conversationId), visitorId, new MessageId(messageId)),
+            Context.ConnectionAborted);
+        if (acknowledged.IsFailure)
+        {
+            throw new HubException(acknowledged.Error!.Value.Message);
+        }
     }
 
     /// <summary>

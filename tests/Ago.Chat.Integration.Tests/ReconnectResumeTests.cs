@@ -120,7 +120,7 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         // seeded directly through SendVisitorMessageHandler in the test body instead of through
         // the hub's SendMessageAsync (which also echoes to Clients.Caller, irrelevant here).
         var hub = new VisitorHub(
-            startConversation, null!, getHistory, registration, originValidator, new DrainState(),
+            startConversation, null!, getHistory, null!, registration, originValidator, new DrainState(),
             new NoOpWidgetActivityRecorder(), new SystemClock())
         {
             Context = new FakeHubCallerContext(connectionId, ClaimsPrincipalFor(siteId, visitorId)),

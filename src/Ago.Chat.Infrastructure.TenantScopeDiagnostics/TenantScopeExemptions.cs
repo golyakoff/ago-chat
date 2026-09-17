@@ -70,6 +70,11 @@ public static class TenantScopeExemptions
         ["Ago.Chat.Application.UseCases.SendMessage.SendVisitorMessageHandler.HandleAsync"] =
             "Visitor path. Conversation.AddVisitorMessage rejects an author who is not this conversation's visitor; "
             + "this handler's own pre-checks are rate limiting and body shape, not authorization.",
+        ["Ago.Chat.Application.UseCases.AcknowledgeMessageDelivered.AcknowledgeMessageDeliveredHandler.HandleAsync"] =
+            "`25-119`. Visitor path. Gated by conversation.VisitorId == command.VisitorId, from the signed visitor "
+            + "token - the identical shape GetConversationHistoryHandler.HandleAsVisitorAsync's own entry above "
+            + "uses. The named message is further checked against this same conversation's own loaded messages "
+            + "(Message.MarkDelivered's own AuthorKind guard on top), never a second, unscoped lookup.",
         ["Ago.Chat.Application.UseCases.StartConversation.StartConversationHandler.HandleAsync"] =
             "Visitor path, and the one that mints the pairing every other visitor check relies on: both SiteId and "
             + "VisitorId come from the signed visitor token, so a visitor cannot name a site their token was not "
@@ -194,6 +199,11 @@ public static class TenantScopeExemptions
             + "AttachmentUploadGrantChanged event itself names; the identical shape "
             + "ResolveConversationAssignmentTargetsHandler right below already establishes - no lookup, no caller, "
             + "nothing read back.",
+        ["Ago.Chat.Application.UseCases.ResolveMessageDeliveredDelivery.ResolveMessageDeliveredTargetsHandler.HandleAsync"] =
+            "`25-119`, consumer side (Ago.Chat.Worker). Fan-out to the one operator principal the "
+            + "MessageDelivered event itself names; the identical shape "
+            + "ResolveAttachmentUploadGrantDeliveryTargetsHandler right above already establishes - no lookup, "
+            + "no caller, nothing read back.",
         ["Ago.Chat.Application.UseCases.ResolveConversationAssignment.ResolveConversationAssignmentTargetsHandler.HandleAsync"] =
             "Consumer side. Fan-out to the two principals the assignment event itself names; no lookup, no caller.",
         ["Ago.Chat.Application.UseCases.ResolveMessageDelivery.ResolveMessageDeliveryTargetsHandler.HandleAsync"] =

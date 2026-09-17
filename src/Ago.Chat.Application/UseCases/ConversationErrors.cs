@@ -68,6 +68,16 @@ public static class ConversationErrors
     public static Error AttachmentNotFound(Guid attachmentId) =>
         new("Attachment.NotFound", $"Attachment {attachmentId} was not found.");
 
+    /// <summary>`25-119`: the widget's own delivery ack named a <c>messageId</c> that either does not
+    /// exist in this conversation at all or does not belong to an operator - one code for both, the
+    /// same "wrong tenant reads like no row" info-hiding shape
+    /// <see cref="ConversationAttachmentUploadAlreadyGranted"/>'s own sibling handlers already use for a
+    /// cross-tenant id: a visitor's own client has no legitimate way to construct either case, so there
+    /// is nothing this refusal could teach a caller doing something structurally wrong that a plain
+    /// "not found" does not already say.</summary>
+    public static Error MessageNotFound(Guid messageId) =>
+        new("Message.NotFound", $"Message {messageId} was not found in this conversation.");
+
     public static Error AttachmentInvalidContentType(string contentType) =>
         new("Attachment.InvalidContentType", $"Content type '{contentType}' is not allowed.");
 

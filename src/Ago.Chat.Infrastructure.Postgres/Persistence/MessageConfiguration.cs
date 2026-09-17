@@ -34,6 +34,14 @@ internal sealed class MessageConfiguration : IEntityTypeConfiguration<Message>
         builder.Property(m => m.ClientMessageId).HasColumnName("client_message_id");
         builder.Property(m => m.CreatedAt).HasColumnName("created_at");
 
+        // `25-119`: nullable, additive - see Message.DeliveredAt's own remarks for what sets it and
+        // why. No default, no backfill: every row written before this shipped simply has no delivery
+        // signal, which is the honest answer (nobody ever acked it, because the ack mechanism did not
+        // exist yet). No concurrency token on this entity at all (see this class's own HasKey remarks),
+        // so an UPDATE against this column never contends for anything - AcknowledgeMessageDeliveredHandler's
+        // own remarks state why that is safe.
+        builder.Property(m => m.DeliveredAt).HasColumnName("delivered_at");
+
         // `18-01`/`adr/0031` Addendum: denormalized straight onto `messages` rather than reached
         // through `conversations` by a join - the whole point being a tenant-scoped predicate that
         // does not defeat partition pruning. `15-09`/`adr/0087`: this is now also the physical

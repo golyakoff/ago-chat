@@ -15,6 +15,8 @@ using Ago.Chat.Application.UseCases.LiftVisitorRestriction;
 using Ago.Chat.Application.UseCases.GetVisitorRestrictionsForSite;
 using Ago.Chat.Application.UseCases.GrantAttachmentUpload;
 using Ago.Chat.Application.UseCases.RevokeAttachmentUpload;
+using Ago.Chat.Application.UseCases.AcknowledgeMessageDelivered;
+using Ago.Chat.Application.UseCases.ResolveMessageDeliveredDelivery;
 using Ago.Chat.Application.UseCases.GetModuleFlowReportForSite;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.AiAddOn;
@@ -1061,6 +1063,10 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetOperatorPresenceHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         services.AddScoped<ResolveMessageDeliveryTargetsHandler>();
+        // `25-119`: the widget's own delivery-ack write and its live-push resolver - see each
+        // handler's own remarks.
+        services.AddScoped<AcknowledgeMessageDeliveredHandler>();
+        services.AddScoped<ResolveMessageDeliveredTargetsHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
         // `25-110`: the attachment-upload grant/revoke's own live-push resolver - see the handler's
         // own remarks.
