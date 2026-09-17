@@ -388,13 +388,22 @@ public sealed class RouteConversationToModuleHandler(
         // No further step: the module's own "done" with nothing to add - unaffected by `19-03`, since
         // an escalate step always carries a step (that is the whole signal); a module that wants to hand
         // off with literally nothing to say still has to say so through a step, not through silence.
+        // `25-134`: localized through the same PrimitiveTextRenderer.Strings table this class's own
+        // ModuleUnavailableText/ModuleBecameUnreachableText/PhoneVerificationRequiredText/
+        // ModuleEscalatedFallbackText siblings hand-write their own pairs for - this one reuses Chat's
+        // own primitive-vocabulary table instead of a fifth private method here, because "done, nothing
+        // more to say" is knowledge of the module-task lifecycle PrimitiveTextRenderer already owns
+        // (it is the text a module's own missing final step falls back to), not a fact specific to this
+        // handler the way the other four apology texts are.
         var doneMessageId = new MessageId(idGenerator.NewId(now));
         return await AddSystemMessageAndSaveAsync(
             conversation, command, RouteConversationToModuleOutcome.TaskCompleted,
             c =>
             {
                 c.CloseModuleTask(now);
-                c.AddSystemMessage(doneMessageId, new MessageBody("Done - thank you."), now, content: null);
+                c.AddSystemMessage(
+                    doneMessageId, new MessageBody(PrimitiveTextRenderer.Strings.For(locale).ModuleTaskDone), now,
+                    content: null);
             },
             cancellationToken);
     }
@@ -437,7 +446,7 @@ public sealed class RouteConversationToModuleHandler(
         // `ResolveModuleContextAsync`) - reaches `ModuleEscalatedFallbackText` only here, the one place
         // both call paths converge, rather than each caller localizing its own copy of this fallback.
         var fallback = isEscalation ? ModuleEscalatedFallbackText(locale) : trigger.Body.Value;
-        var body = PrimitiveTextRenderer.Render(fallback, step.Kind.Value, step.Payload, step.Actions);
+        var body = PrimitiveTextRenderer.Render(fallback, step.Kind.Value, step.Payload, step.Actions, locale);
         var content = MessageContent.Create(step.Kind, step.Payload, step.Actions);
         var outcome = isEscalation ? RouteConversationToModuleOutcome.Escalated : nonEscalationOutcome;
         var messageId = new MessageId(idGenerator.NewId(now));

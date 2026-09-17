@@ -21,7 +21,8 @@ public class DeliverChannelMessageHandlerTests
         FakeVisitorRepository Visitors,
         FakeModuleTaskChannelPreferenceRepository ModuleTaskPreferences,
         FakeInboundChannelAdapterRegistry Adapters,
-        FakeChannelDeliveryRepository Deliveries);
+        FakeChannelDeliveryRepository Deliveries,
+        FakeSiteRepository Sites);
 
     private static Harness CreateHarness(out Conversation conversation, out FakeInboundChannelAdapter maxAdapter)
     {
@@ -31,6 +32,7 @@ public class DeliverChannelMessageHandlerTests
         var moduleTaskPreferences = new FakeModuleTaskChannelPreferenceRepository();
         var adapters = new FakeInboundChannelAdapterRegistry();
         var deliveries = new FakeChannelDeliveryRepository();
+        var sites = new FakeSiteRepository();
         maxAdapter = new FakeInboundChannelAdapter(ChannelKind.Max);
         adapters.Register(maxAdapter);
 
@@ -39,12 +41,17 @@ public class DeliverChannelMessageHandlerTests
         conversation.AssignTo(OperatorId, Now);
         conversations.Seed(conversation);
         visitors.Seed(new Visitor(visitorId, SiteId, Now));
+        // `25-134`: a freshly registered Site at this fixture's own SiteId, Locale.En - the same
+        // "every existing row" default ResolveLocaleAsync falls back to anyway when no site is seeded,
+        // made explicit here so a test that wants Russian has something to mutate.
+        sites.Seed(new Site(SiteId, $"pk-{SiteId.Value:N}", []));
 
         var handler = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler(
             conversations, identities, visitors, moduleTaskPreferences, adapters,
-            deliveries, new FakeIdGenerator(), new FakeClock(Now));
+            deliveries, new FakeIdGenerator(), new FakeClock(Now), sites);
 
-        return new Harness(handler, conversations, identities, visitors, moduleTaskPreferences, adapters, deliveries);
+        return new Harness(
+            handler, conversations, identities, visitors, moduleTaskPreferences, adapters, deliveries, sites);
     }
 
     private static Task LinkMaxIdentity(FakeChannelIdentityRepository identities, VisitorId visitorId, string address = "555000") =>
@@ -459,6 +466,39 @@ public class DeliverChannelMessageHandlerTests
         Assert.Equal(ChannelDeliveryStatus.Delivered, delivery.Status);
     }
 
+    /// <summary>`25-134`: found live 2026-09-17 - a Russian-locale site's relayed booking prompt reached
+    /// Telegram/MAX with this one trailing instruction line in English, since this handler resolved no
+    /// locale at all before this item. The site's own <c>Locale.Ru</c> must now reach
+    /// <see cref="PrimitiveTextRenderer"/> the same way <c>RouteConversationToModuleHandler</c>'s own
+    /// call to it already receives one.</summary>
+    [Fact]
+    public async Task HandleAsync_ForAModuleTaskPromptSystemMessage_OnARussianSite_RelaysTheRussianInstruction()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        var site = new Site(SiteId, $"pk-{SiteId.Value:N}", []);
+        site.UpdateLocale(Locale.Ru, Now);
+        harness.Sites.Seed(site);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.ChoiceList),
+            new MessagePayload("""{"prompt":"Which service?"}"""),
+            [new MessageAction("Haircut", "svc-1"), new MessageAction("Manicure", "svc-2")]);
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.Equal("Which service?\n1) Haircut\n2) Manicure\nОтветьте номером.", sent.Body.Value);
+    }
+
     /// <summary>`25-121`'s own Done-when: every channel-kind adapter benefits, not just Telegram - this
     /// item's own fix lives in the shared handler, so proving it once against the fake MAX adapter this
     /// file already uses is proving it for Telegram/WhatsApp/Avito too, none of which this handler treats
@@ -523,7 +563,7 @@ public class DeliverChannelMessageHandlerTests
         var deliveries = new FakeChannelDeliveryRepository();
         var handler = new Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler(
             conversations, identities, visitors, new FakeModuleTaskChannelPreferenceRepository(), adapters,
-            deliveries, new FakeIdGenerator(), new FakeClock(Now));
+            deliveries, new FakeIdGenerator(), new FakeClock(Now), new FakeSiteRepository());
         var outcome = await handler.HandleAsync(
             new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
                 SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),

@@ -106,7 +106,8 @@ public sealed class DeliverChannelMessageHandler(
     IInboundChannelAdapterRegistry adapters,
     IChannelDeliveryRepository deliveries,
     IIdGenerator idGenerator,
-    IClock clock)
+    IClock clock,
+    ISiteRepository sites)
 {
     public async Task<DeliverChannelMessageOutcome> HandleAsync(
         DeliverChannelMessage command, CancellationToken cancellationToken)
@@ -164,13 +165,22 @@ public sealed class DeliverChannelMessageHandler(
         // already-rendered text: RouteConversationToModuleHandler's own FinishStepAsync happens to store
         // that same rendering into Body today, but this handler has no contract with that upstream
         // implementation detail - PrimitiveTextRenderer.Render's own signature (fallback, kind, payload,
-        // actions) is the actual contract, so this handler calls it the same way any other channel
-        // adapter would. An Operator message never carries Content today (no caller ever passes one to
-        // AddOperatorMessage), so trigger.Body is the only branch that path has ever taken - this is
-        // additive, not a change to the existing Operator-relay behaviour.
+        // actions, locale) is the actual contract, so this handler calls it the same way any other
+        // channel adapter would. An Operator message never carries Content today (no caller ever passes
+        // one to AddOperatorMessage), so trigger.Body is the only branch that path has ever taken - this
+        // is additive, not a change to the existing Operator-relay behaviour.
+        //
+        // `25-134`: the site's own locale is resolved here, freshly, only on this branch - unlike
+        // RouteConversationToModuleHandler, which already needs a Site read on every reply for the
+        // module gateway call and so resolves locale unconditionally, this handler had no existing Site
+        // read to piggyback on, and most relayed messages (an ordinary operator reply) never reach
+        // PrimitiveTextRenderer.Render at all - resolving it unconditionally would pay for a lookup the
+        // common case never uses.
         var body = trigger.Content is { } content
             ? new MessageBody(
-                PrimitiveTextRenderer.Render(trigger.Body.Value, content.Kind.Value, content.Payload, content.Actions))
+                PrimitiveTextRenderer.Render(
+                    trigger.Body.Value, content.Kind.Value, content.Payload, content.Actions,
+                    await ResolveLocaleAsync(conversation.SiteId, cancellationToken)))
             : trigger.Body;
 
         // Thrown exceptions (transient faults, per IInboundChannelAdapter's own contract) are
@@ -260,6 +270,19 @@ public sealed class DeliverChannelMessageHandler(
         }
 
         return null;
+    }
+
+    /// <summary>`25-134`: the site's own configured language, as the Domain enum's PascalCase member
+    /// name - the identical resolution <see cref="RouteConversationToModule.RouteConversationToModuleHandler.ResolveLocaleAsync"/>
+    /// already performs, duplicated rather than shared because that method is <c>private</c> to a
+    /// different handler and the read itself is one line; a missing site (deleted between the message's
+    /// own commit and this consumer's delivery attempt - narrow, not the ordinary case) reads as
+    /// <see cref="Locale.En"/>, the same safe-default posture every other locale resolution in this
+    /// codebase already takes.</summary>
+    private async Task<string> ResolveLocaleAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        var site = await sites.GetByIdAsync(siteId, cancellationToken);
+        return (site?.Locale ?? Locale.En).ToString();
     }
 
     /// <summary>`25-121`: the row-backed half of the loop guard's answer for a message this handler has

@@ -119,6 +119,27 @@ public class RouteConversationToModuleHandlerTests
         Assert.NotNull(reply.Content);
     }
 
+    /// <summary>`25-134`: found live 2026-09-17 - a Russian-locale site's booking reply ended with this
+    /// one trailing instruction line in English, the one piece of this handler's own rendered
+    /// system-message text that <see cref="PrimitiveTextRenderer"/>, not <see
+    /// cref="RouteConversationToModuleHandler"/>, owns.</summary>
+    [Fact]
+    public async Task HandleAsync_WithATriggerMatch_OnARussianSite_RendersTheTrailingInstructionInRussian()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(site: site);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1"), ("Manicure", "svc-2")), false);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("Reply with the number", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Which service?\n1) Haircut\n2) Manicure\nОтветьте номером.", reply.Body.Value);
+    }
+
     /// <summary>`22-02`: the registry's own credential rides along on every call to the gateway, not
     /// merely the entry point - <c>HttpModuleGateway</c> is what turns this into the per-call signed
     /// header a module actually checks, but this handler is the one place that reads it off the
@@ -454,6 +475,38 @@ public class RouteConversationToModuleHandlerTests
 
         Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, result.Value);
         Assert.Null(fixture.Conversation.ActiveModuleTask);
+    }
+
+    /// <summary>`25-134`: the module-finished-with-no-further-step fallback - currently unreachable
+    /// against the shipped booking module (it always answers with a confirmation step), but latent and
+    /// worth proving directly since nothing else in this codebase exercises it.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleReportsCompletionWithNoStep_AddsTheEnglishDoneMessageByDefault()
+    {
+        var fixture = CreateFixture(arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal("Done - thank you.", reply.Body.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheModuleReportsCompletionWithNoStep_OnARussianSite_AddsTheRussianDoneMessage()
+    {
+        var site = DefaultSite();
+        site.UpdateLocale(Locale.Ru, Now);
+        var fixture = CreateFixture(
+            site: site, arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal("Готово, спасибо.", reply.Body.Value);
     }
 
     /// <summary>`19-03`: the *reachable-but-unsure* mirror of the unreachable-mid-task case just below -
