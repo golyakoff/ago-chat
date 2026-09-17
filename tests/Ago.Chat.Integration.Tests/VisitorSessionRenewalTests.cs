@@ -362,6 +362,80 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         Assert.Contains("calendar", body!.EnabledModules);
     }
 
+    /// <summary>
+    /// `25-131`'s own fails-before proof, mint side, against the exact scenario found live: a real
+    /// tenant's `calendar` module carries <c>["/записаться"]</c> as its only trigger word - `/booking`
+    /// is not in that list at all. Before this item <see cref="AuthEndpoints.VisitorSessionResponse"/>
+    /// carried nothing but the bare module key, so `ago-widget`'s own chip had no way to learn this and
+    /// sent the literal text <c>/booking</c>, which `TriggerCommandMatcher.Match` then refused to open
+    /// the module for - the visitor's own click produced silence.
+    /// </summary>
+    [Fact]
+    public async Task TheMint_Returns_TheSitesRealTriggerWords_NotAHardcodedOne()
+    {
+        var site = await SeedSiteAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), new SiteId(site.SiteId), new ModuleKey("calendar"),
+                ["/записаться"], new Uri("https://calendar.example.com"),
+                new ModuleCredential("a-calendar-secret-of-sixteen-plus-chars"), DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        var triggerWords = Assert.Contains("calendar", body!.EnabledModuleTriggerWords);
+        Assert.Equal(["/записаться"], triggerWords);
+        Assert.DoesNotContain("/booking", triggerWords);
+    }
+
+    /// <summary>The renewal side of the identical proof - a returning visitor's browser must learn the
+    /// site's real trigger word too, not only at the very first mint.</summary>
+    [Fact]
+    public async Task ARenewal_Returns_TheSitesRealTriggerWordsAtRenewalTime()
+    {
+        var site = await SeedSiteAsync();
+        var token = IssueToken(new VisitorId(Guid.NewGuid()), site.SiteId, MintedDaysAgo(0));
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), new SiteId(site.SiteId), new ModuleKey("calendar"),
+                ["/записаться"], new Uri("https://calendar.example.com"),
+                new ModuleCredential("a-calendar-secret-of-sixteen-plus-chars"), DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await RenewAsync(app, token, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        var triggerWords = Assert.Contains("calendar", body!.EnabledModuleTriggerWords);
+        Assert.Equal(["/записаться"], triggerWords);
+    }
+
+    /// <summary>The other half of `25-131`'s own additivity requirement: a site with no granted
+    /// modules at all must come back with an empty map, not a missing field or a thrown exception -
+    /// the identical "no booking is the honest default" property `TheMint_ForASiteWithNoGrantedModules_Returns_AnEmptyList`
+    /// already proves for the bare key list beside it.</summary>
+    [Fact]
+    public async Task TheMint_ForASiteWithNoGrantedModules_Returns_AnEmptyTriggerWordMap()
+    {
+        var site = await SeedSiteAsync();
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Empty(body!.EnabledModuleTriggerWords);
+    }
+
     private static Task<HttpResponseMessage> MintAsync(WebApplication app, string publicKey)
     {
         var client = app.GetTestClient();
