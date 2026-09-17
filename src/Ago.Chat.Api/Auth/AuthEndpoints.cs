@@ -132,14 +132,16 @@ public static class AuthEndpoints
 
         var visitorId = new VisitorId(idGenerator.NewId(clock.UtcNow));
         var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
-        var enabledModules = await GetEnabledModuleKeysAsync(moduleReadStore, new SiteId(site.SiteId), clock, cancellationToken);
+        var (enabledModules, enabledModuleTriggerWords) =
+            await GetEnabledModulesAsync(moduleReadStore, new SiteId(site.SiteId), clock, cancellationToken);
         return Results.Created(
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
                 site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
-                site.WidgetAttractAttention, site.WidgetAutoOpenEnabled, (int)site.WidgetAutoOpenDelaySeconds,
-                site.WidgetAutoOpenGreetingText, site.WidgetContactCaptureConfirmationText));
+                enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
+                (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText,
+                site.WidgetContactCaptureConfirmationText));
     }
 
     /// <summary>
@@ -255,12 +257,14 @@ public static class AuthEndpoints
         await installationSignals.RecordSightingAsync(tokenSiteId, clock.UtcNow, cancellationToken);
 
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
-        var enabledModules = await GetEnabledModuleKeysAsync(moduleReadStore, tokenSiteId, clock, cancellationToken);
+        var (enabledModules, enabledModuleTriggerWords) =
+            await GetEnabledModulesAsync(moduleReadStore, tokenSiteId, clock, cancellationToken);
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
             site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
-            site.WidgetAttractAttention, site.WidgetAutoOpenEnabled, (int)site.WidgetAutoOpenDelaySeconds,
-            site.WidgetAutoOpenGreetingText, site.WidgetContactCaptureConfirmationText));
+            enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
+            (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText,
+            site.WidgetContactCaptureConfirmationText));
     }
 
     /// <summary>
@@ -269,14 +273,27 @@ public static class AuthEndpoints
     /// decision and this store is never behind the 5-minute <see cref="GetSiteConfigByPublicKeyHandler"/>
     /// cache), never filtered or renamed to a single product's boolean here. The identical read
     /// <see cref="GetMyPermissions.GetMyPermissionsHandler"/> already does for
-    /// <see cref="OperatorPermissionsResponse.EnabledModules"/> (`23-21`) - this is that same shape
-    /// applied to the visitor-facing handshake instead of the operator-facing one, not a second design.
+    /// <see cref="OperatorPermissionsResponse.EnabledModules"/> (`23-21`) - the two diverge as of
+    /// `25-131` below, but the bare-key half of this read is still that same shape.
+    ///
+    /// <para><b>`25-131`: also returns each key's own <see cref="EnabledModuleSummary.TriggerWords"/>,
+    /// off the identical rows this method already iterates for the keys - never a second call to
+    /// <see cref="IEnabledModuleReadStore.GetForSiteAsync"/>.</b> This is now a genuinely *wider* read
+    /// than <see cref="GetMyPermissionsHandler"/>'s own use of the same rows: an operator's console has
+    /// no reason to know a trigger word meant for a visitor typing into a chat box, so
+    /// <see cref="OperatorPermissionsResponse.EnabledModules"/> stays the bare key list it always was -
+    /// only the visitor-facing handshake needed to grow (`docs/backlog/25-131-*.md`'s own root cause:
+    /// nothing on this response told `ago-widget` what a site's own module actually opens with, so its
+    /// booking chip sent a hardcoded <c>/booking</c> no site had to have configured).</para>
     /// </summary>
-    private static async Task<IReadOnlyList<string>> GetEnabledModuleKeysAsync(
-        IEnabledModuleReadStore moduleReadStore, SiteId siteId, IClock clock, CancellationToken cancellationToken)
+    private static async Task<(IReadOnlyList<string> Keys, IReadOnlyDictionary<string, IReadOnlyList<string>> TriggerWords)>
+        GetEnabledModulesAsync(
+            IEnabledModuleReadStore moduleReadStore, SiteId siteId, IClock clock, CancellationToken cancellationToken)
     {
         var modules = await moduleReadStore.GetForSiteAsync(siteId, clock.UtcNow, cancellationToken);
-        return modules.Select(m => m.ModuleKey.Value).ToArray();
+        var keys = modules.Select(m => m.ModuleKey.Value).ToArray();
+        var triggerWords = modules.ToDictionary(m => m.ModuleKey.Value, m => m.TriggerWords);
+        return (keys, triggerWords);
     }
 
     public sealed record VisitorSessionRequest(string PublicKey);
@@ -324,6 +341,29 @@ public static class AuthEndpoints
     /// separate repository the guard does not reach - that is allowed to know which one key means
     /// "show the booking chip".
     ///
+    /// `25-131`: <see cref="EnabledModuleTriggerWords"/> joins as a genuinely additive sibling, never a
+    /// reshape of <see cref="EnabledModules"/> itself - a real, live tenant's booking chip sent the
+    /// literal text <c>/booking</c> as an ordinary visitor message because nothing on this response told
+    /// <c>ago-widget</c> what a site's own module actually opens with, and the widget's own chip
+    /// hardcoded <c>/booking</c> unconditionally. A map from module key to the real, currently-configured
+    /// <see cref="Domain.EnabledModule.TriggerWords"/> for it (e.g. <c>{"calendar": ["/записаться"]}</c>)
+    /// is the smallest additive fact that fixes this: <c>ago-widget</c>'s chip now sends the site's own
+    /// first configured word instead of a value nobody on this platform granted it the right to assume.
+    /// A parallel field rather than reshaping <see cref="EnabledModules"/> into a list of
+    /// <c>{ModuleKey, TriggerWords}</c> objects, for two independent reasons: (1)
+    /// <see cref="OperatorPermissionsResponse.EnabledModules"/> is a genuinely separate type in a
+    /// separate project (<c>Ago.Chat.Contracts</c>, no reference to this one) that merely happens to
+    /// share a field name, so reshaping this record would not even touch it - but (2)
+    /// <c>ago-widget</c>'s own <c>enabledModules: string[]</c> is read as a bare key list in well over a
+    /// dozen places (`session.ts`, `storage.ts`'s persisted shape, `ui/widget.ts`'s
+    /// <c>.includes("calendar")</c> gate, and every test fixture built against that shape) - reshaping it
+    /// there would not be additive at all, which is exactly what this item's own Done-when requires
+    /// ("does not change any existing consumer's behavior for a site that never customized its trigger
+    /// words"). Never a hardcoded fallback trigger word on this side either - the whole point of
+    /// <see cref="Domain.EnabledModule.TriggerWords"/> being tenant-replaceable is that a site may not
+    /// want <c>/booking</c> to mean anything, so an empty or missing entry here means exactly that, not
+    /// "assume the old default."
+    ///
     /// `23-63`: <see cref="WidgetAttractAttention"/> joins as one more additive, plain bool field -
     /// off for every site that has not turned it on. `ago-widget`'s own `scheduleAttractAttention`
     /// (`ui/widget.ts`) is what actually decides whether to animate - reading `false` unconditionally
@@ -347,6 +387,7 @@ public static class AuthEndpoints
         string? WidgetNoticeText,
         string? WidgetNoticeUrl,
         IReadOnlyList<string> EnabledModules,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> EnabledModuleTriggerWords,
         bool WidgetAttractAttention,
         // `23-64`: three more additive fields, off/default/absent for every site that has not turned
         // «Раскрывать виджет автоматически» on. `WidgetAutoOpenDelaySeconds` crosses the wire as its
