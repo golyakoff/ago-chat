@@ -41,6 +41,10 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// `23-78`: <see cref="AllowAttachmentUploadsByDefault"/> joins on the identical terms - one more
 /// plain <see langword="bool"/> with nothing to validate, riding the same `new WidgetConfig(...)`
 /// call.
+///
+/// `25-129`: <see cref="ContactCaptureConfirmationText"/> joins on the identical terms
+/// <see cref="NoticeText"/>/<see cref="AutoOpenGreetingText"/> already have - a raw, unvalidated string
+/// `Ago.Chat.Domain.WidgetConfig`'s own constructor validates.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -56,4 +60,5 @@ public sealed record UpdateWidgetConfig(
     int AutoOpenDelaySeconds = 30,
     string? AutoOpenGreetingText = null,
     bool AcceptUnverifiedPhone = false,
-    bool AllowAttachmentUploadsByDefault = false);
+    bool AllowAttachmentUploadsByDefault = false,
+    string? ContactCaptureConfirmationText = null);

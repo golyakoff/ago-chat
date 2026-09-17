@@ -43,6 +43,11 @@ public class SiteTests
         // `23-63`: every existing tenant, and every freshly created one, has a motionless launcher -
         // the item's own Decision: "a setting, off unless the tenant turns it on."
         Assert.False(site.WidgetConfig.AttractAttention);
+        // `25-129`: every existing tenant, and every freshly created one, has no configured
+        // contact-capture confirmation override - the widget supplies its own default sentence, never
+        // an AGO-authored one on the tenant's behalf (the identical reasoning NoticeText's own remarks
+        // already state for itself).
+        Assert.Null(site.WidgetConfig.ContactCaptureConfirmationText);
     }
 
     [Fact]
@@ -226,6 +231,58 @@ public class SiteTests
 
         Assert.Null(site.WidgetConfig.NoticeText);
         Assert.Equal("https://tenant.example/privacy", site.WidgetConfig.NoticeUrl);
+    }
+
+    // `25-129`: whitespace-only text is rejected rather than silently stored - the identical "leave it
+    // null to use the widget's own default" reflex `NoticeText`'s own guard above already states for
+    // itself.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateWidgetConfig_WhenContactCaptureConfirmationTextIsWhitespaceOnly_Throws(string malformedText)
+    {
+        Assert.Throws<ArgumentException>(
+            () => new WidgetConfig(null, Position.BottomRight, contactCaptureConfirmationText: malformedText));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenContactCaptureConfirmationTextExceedsMaxLength_Throws()
+    {
+        var tooLong = new string('a', WidgetConfig.MaxContactCaptureConfirmationTextLength + 1);
+
+        Assert.Throws<ArgumentException>(
+            () => new WidgetConfig(null, Position.BottomRight, contactCaptureConfirmationText: tooLong));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenContactCaptureConfirmationTextIsValid_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        const string text = "Спасибо, {name}, ваши контакты добавлены.";
+
+        site.UpdateWidgetConfig(
+            new WidgetConfig(null, Position.BottomRight, contactCaptureConfirmationText: text), now);
+
+        Assert.Equal(text, site.WidgetConfig.ContactCaptureConfirmationText);
+    }
+
+    // Unlike AutoOpenGreetingText, this field has no enabling flag of its own to pair a "required
+    // when on" guard with - the contact-capture control always exists, so an unconfigured value simply
+    // stays null and the widget supplies its own default.
+    [Fact]
+    public void UpdateWidgetConfig_WhenContactCaptureConfirmationTextIsOmitted_DefaultsNull()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.UpdateWidgetConfig(
+            new WidgetConfig(null, Position.BottomRight, contactCaptureConfirmationText: "Спасибо, {name}!"), now);
+
+        // The identical "a later call that omits the field must not silently carry the old value
+        // forward" guard AttractAttention/RequireContactConsent's own tests state, for this field.
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomLeft), now);
+
+        Assert.Null(site.WidgetConfig.ContactCaptureConfirmationText);
     }
 
     [Fact]

@@ -178,6 +178,13 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property<bool>("_allowAttachmentUploadsByDefault")
             .HasColumnName("widget_allow_attachment_uploads_by_default")
             .HasDefaultValue(false);
+        // `25-129`: one more backing field on the same terms as widget_notice_text/
+        // widget_auto_open_greeting_text - a nullable free-text column with no CHECK constraint and no
+        // database default, for the identical "free text is not a closed set SQL can enumerate,
+        // WidgetConfig's own constructor is this value's only validation" reasoning those two already
+        // state for themselves.
+        builder.Property<string?>("_contactCaptureConfirmationText")
+            .HasColumnName("widget_contact_capture_confirmation_text");
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

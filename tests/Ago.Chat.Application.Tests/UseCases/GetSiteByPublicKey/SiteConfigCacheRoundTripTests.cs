@@ -27,11 +27,12 @@ public class SiteConfigCacheRoundTripTests
         string? noticeUrl = "https://tenant.example/privacy",
         bool autoOpenEnabled = false,
         AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30,
-        string? autoOpenGreetingText = null) =>
+        string? autoOpenGreetingText = null,
+        string? contactCaptureConfirmationText = null) =>
         new(
             Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply,
             "free", noticeText, noticeUrl, ContactVisibility.Visible, false, autoOpenEnabled, autoOpenDelaySeconds,
-            autoOpenGreetingText);
+            autoOpenGreetingText, WidgetContactCaptureConfirmationText: contactCaptureConfirmationText);
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;
@@ -161,5 +162,27 @@ public class SiteConfigCacheRoundTripTests
 
         Assert.False(read.WidgetAutoOpenEnabled);
         Assert.Null(read.WidgetAutoOpenGreetingText);
+    }
+
+    // `25-129`: `WidgetContactCaptureConfirmationText` joins `TheWidgetNoticeFields_SurviveTheCache`'s
+    // own reasoning - a plain nullable string with no validating constructor at this DTO layer, still
+    // asserted through the real (de)serializer rather than trusted because the test compiles.
+    [Fact]
+    public void TheContactCaptureConfirmationText_SurvivesTheCache()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, contactCaptureConfirmationText: "Спасибо, {name}, мы всё записали."));
+
+        Assert.Equal("Спасибо, {name}, мы всё записали.", read.WidgetContactCaptureConfirmationText);
+    }
+
+    // `25-129`'s own default - a site with no override configured must round-trip as `null`, not as an
+    // empty string a naive (de)serializer default could substitute - the identical guard
+    // `ANullWidgetNotice_SurvivesTheCacheAsNull` already states for the sibling notice field.
+    [Fact]
+    public void ANullContactCaptureConfirmationText_SurvivesTheCacheAsNull()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled));
+
+        Assert.Null(read.WidgetContactCaptureConfirmationText);
     }
 }

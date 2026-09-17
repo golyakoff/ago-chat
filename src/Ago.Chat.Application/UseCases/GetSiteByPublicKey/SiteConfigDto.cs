@@ -52,6 +52,12 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// describe ("composes rather than duplicates") - so the same event that evicts every other cached
 /// setting (<c>SiteSettingsChanged</c>, via <c>SiteContactVisibilityUpdatedMapper</c>) keeps this field
 /// fresh too, with no new cache-invalidation code.
+/// `25-129`: <see cref="WidgetContactCaptureConfirmationText"/> joins on the identical terms
+/// <see cref="WidgetNoticeText"/> did - an additive, nullable field on the existing cached DTO,
+/// populated identically by both loaders, and <b>put on the wire</b> by the handshake: the widget
+/// substitutes the visitor's own name into it and shows it after a contact-capture submission, so it
+/// must reach the widget before that moment, the same "a visitor must see it before acting" reasoning
+/// <see cref="WidgetNoticeText"/>'s own remarks already state for itself.
 /// `23-63`: <see cref="WidgetAttractAttention"/> joins on the identical terms <see cref="WidgetNoticeText"/>
 /// did - an additive field on the existing cached DTO, populated identically by both loaders, and
 /// <b>put on the wire</b> by the handshake: whether the launcher animates is a fact the widget's own
@@ -90,4 +96,5 @@ public sealed record SiteConfigDto(
     OfflineAutoReplySettings OfflineAutoReply, string Tier,
     string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility,
     bool WidgetAttractAttention, bool WidgetAutoOpenEnabled, AutoOpenDelay WidgetAutoOpenDelaySeconds,
-    string? WidgetAutoOpenGreetingText, bool WidgetAllowAttachmentUploadsByDefault = false);
+    string? WidgetAutoOpenGreetingText, bool WidgetAllowAttachmentUploadsByDefault = false,
+    string? WidgetContactCaptureConfirmationText = null);

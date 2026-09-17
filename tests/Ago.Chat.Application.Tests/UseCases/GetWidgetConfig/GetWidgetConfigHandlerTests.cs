@@ -19,7 +19,7 @@ public class GetWidgetConfigHandlerTests
         site.UpdateWidgetConfig(
             new WidgetConfig(
                 "#112233", Position.BottomLeft, "We read what you send us.", "https://tenant.example/privacy",
-                attractAttention: true),
+                attractAttention: true, contactCaptureConfirmationText: "Спасибо, {name}, мы всё записали."),
             DateTimeOffset.UtcNow);
         site.UpdateLocale(Locale.Ru, DateTimeOffset.UtcNow);
         site.ClearDomainEvents();
@@ -36,6 +36,26 @@ public class GetWidgetConfigHandlerTests
         Assert.Equal("We read what you send us.", result.Value.NoticeText);
         Assert.Equal("https://tenant.example/privacy", result.Value.NoticeUrl);
         Assert.True(result.Value.AttractAttention);
+        Assert.Equal("Спасибо, {name}, мы всё записали.", result.Value.ContactCaptureConfirmationText);
+    }
+
+    // `25-129`: every site that predates this item, or has simply never configured an override, reads
+    // back `null` - the widget's own default sentence is what fills that in, not a value this handler
+    // invents on the tenant's behalf.
+    [Fact]
+    public async Task HandleAsync_WhenContactCaptureConfirmationTextWasNeverSet_ReturnsNull()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", []));
+        var handler = new GetWidgetConfigHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.ContactCaptureConfirmationText);
     }
 
     // `16-04`: every site that predates this item, or has simply never set a notice, reads back
