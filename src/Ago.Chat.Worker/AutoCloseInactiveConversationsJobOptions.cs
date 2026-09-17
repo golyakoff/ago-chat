@@ -25,12 +25,30 @@ public sealed class AutoCloseInactiveConversationsJobOptions
     /// large backlog cannot hold a transaction-free scan open indefinitely.</summary>
     public int BatchSize { get; set; } = 100;
 
-    /// <summary>A conversation whose visitor has no `channel_identities` row (`ChannelKind`'s own
-    /// remarks: a widget visitor is identified by a signed token, never a channel address) is closed
-    /// after this long with no message either direction. One hour: long enough that a visitor
+    /// <summary>`25-118`: renamed in meaning, not in name, from "closes after this long" to "releases
+    /// back to `Waiting` after this long" - a conversation whose visitor has no `channel_identities` row
+    /// (`ChannelKind`'s own remarks: a widget visitor is identified by a signed token, never a channel
+    /// address) and no message either direction for this long is <see cref="Domain.Conversation.ReleaseToQueue"/>-d,
+    /// freeing the assigned operator's capacity slot immediately - it is no longer actually closed at
+    /// this window (see <see cref="WidgetCloseWindow"/> for that). One hour: long enough that a visitor
     /// re-reading a reply and typing a follow-up is never caught by it, short enough that a released
     /// operator capacity slot is not needlessly held by a visitor who has simply closed the tab.</summary>
     public TimeSpan WidgetInactivityWindow { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>`25-118`: the second, longer widget-only window this item adds -
+    /// `docs/backlog/25-118-*`'s own "Answered" design: a widget conversation (`Assigned` *or*
+    /// `Waiting` - unlike <see cref="WidgetInactivityWindow"/>, which only ever touches `Assigned`) with
+    /// no message either direction for this much longer stretch is actually
+    /// <see cref="Domain.Conversation.Close"/>-d, through the same path <see cref="WidgetInactivityWindow"/>
+    /// used to reach directly. Defaulted to seven days to match `Ago.Chat.Api.Auth.JwtTokenService
+    /// .VisitorTokenLifetime` - a widget visitor's own signed identity is designed to persist (and
+    /// auto-renew on return) for exactly this long, and there is no point keeping a conversation
+    /// resumable past the point its visitor's own token has already lapsed. `Ago.Chat.Worker` cannot
+    /// reference `Ago.Chat.Api` (the two are separate hosts, `docs/adr/0013-*`), so this default is a
+    /// plain <see cref="TimeSpan"/> literal, not a shared constant - if `VisitorTokenLifetime` ever
+    /// changes, this default has to be changed here too, by hand; nothing enforces the two staying
+    /// equal.</summary>
+    public TimeSpan WidgetCloseWindow { get; set; } = TimeSpan.FromDays(7);
 
     /// <summary>Applied to any `ChannelKind` not given its own entry in
     /// <see cref="ChannelInactivityWindows"/>. Twenty-four hours: a durable identity (a phone number, a

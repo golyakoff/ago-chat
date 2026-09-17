@@ -52,6 +52,19 @@ public static class ChatMetrics
     /// the domain event itself needing a field that says who.</summary>
     public const string ConversationAutoClosedInstrumentName = "ago.chat.conversation.auto_closed";
 
+    /// <summary>`25-118`: a widget conversation `AutoCloseInactiveConversationsJob`'s new "release" pass
+    /// sent back to `Waiting` for inactivity - deliberately a separate counter from
+    /// <see cref="ConversationAutoClosedInstrumentName"/> rather than a second value of its
+    /// `channel_kind` tag, for the identical reason that tag exists in the first place: an operator
+    /// reading observability alone must be able to tell "this conversation's capacity was freed but it
+    /// is still resumable" apart from "this conversation actually ended" - conflating the two into one
+    /// counter's tag would misreport which of two materially different things happened. Never tagged by
+    /// channel kind (unlike its sibling): this pass only ever runs against the widget bucket
+    /// (`docs/backlog/25-118-*`'s own scope - channel-kind conversations keep their single-window,
+    /// close-only behaviour untouched), so a tag with exactly one possible value would carry no
+    /// information.</summary>
+    public const string ConversationAutoReleasedInstrumentName = "ago.chat.conversation.auto_released";
+
     /// <summary>`15-04`: one heartbeat instrument shared by every retention-pruning job
     /// (<c>OutboxPruneJob</c>, <c>WebhookDeliveryPruneJob</c>, <c>InboxPruneJob</c>,
     /// <c>MessagePartitionPruneJob</c>), tagged by <c>table</c>. Incremented once per completed cycle
@@ -137,6 +150,9 @@ public static class ChatMetrics
     private static readonly Counter<long> ConversationAutoClosed = Meter.CreateCounter<long>(
         ConversationAutoClosedInstrumentName, unit: "{conversation}", description: "Conversations closed by AutoCloseInactiveConversationsJob rather than an operator's own close, tagged by channel_kind (widget or a Domain.ChannelKind member name).");
 
+    private static readonly Counter<long> ConversationAutoReleased = Meter.CreateCounter<long>(
+        ConversationAutoReleasedInstrumentName, unit: "{conversation}", description: "Widget conversations released back to Waiting by AutoCloseInactiveConversationsJob's own release pass - `25-118`. Untagged (widget-only), unlike ConversationAutoClosed.");
+
     private static Func<int>? _channelOccupancyProvider;
     private static int _channelCapacity;
     private static double _outboxLagSeconds;
@@ -214,6 +230,12 @@ public static class ChatMetrics
     /// failure).</summary>
     public static void RecordConversationAutoClosed(string channelKind) =>
         ConversationAutoClosed.Add(1, new KeyValuePair<string, object?>("channel_kind", channelKind));
+
+    /// <summary>`25-118`: one point per widget conversation the release pass actually sent back to
+    /// `Waiting` - never called for a candidate that no longer qualified by the time
+    /// `ReleaseInactiveConversationHandler` reached it, the identical "logged as a skip, not counted as
+    /// a failure" shape <see cref="RecordConversationAutoClosed"/>'s own remarks already state.</summary>
+    public static void RecordConversationAutoReleased() => ConversationAutoReleased.Add(1);
 
     public static void RecordCapacityClaimAttempt(bool claimed)
     {

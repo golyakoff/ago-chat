@@ -66,6 +66,31 @@ public static class AutoCloseInactiveConversationsQuery
         LIMIT @batchSize
         """;
 
+    /// <summary>`25-118`: the widget-only "close" pass's own candidate scan - identical to
+    /// <see cref="WidgetSql"/> in every predicate except `c.state`, which this widens from `= 'Assigned'`
+    /// to `IN ('Assigned', 'Waiting')`. This is the one line that makes the design decision real: a
+    /// `Waiting` widget conversation was never a candidate for anything before this item (`WidgetSql`
+    /// structurally cannot select one), so widening it here is what lets a genuinely abandoned
+    /// conversation that has already been released (see <see cref="FindStaleAssignedBatchAsync"/>'s own
+    /// caller in `AutoCloseInactiveConversationsJob`) eventually actually close, once
+    /// `AutoCloseInactiveConversationsJobOptions.WidgetCloseWindow` has also elapsed. No new bind
+    /// parameter for the two literal state values, matching `WidgetSql`/`ChannelSql`'s own choice not to
+    /// parameterise `'Assigned'` either - both are fixed by the shape of this SQL text, not caller input.
+    /// </summary>
+    private const string WidgetCloseSql = """
+        SELECT c.id
+        FROM conversations c
+        WHERE c.state IN ('Assigned', 'Waiting')
+          AND c.created_at < @cutoff
+          AND NOT EXISTS (SELECT 1 FROM channel_identities ci WHERE ci.visitor_id = c.visitor_id)
+          AND NOT EXISTS (
+              SELECT 1 FROM messages m
+              WHERE m.conversation_id = c.id AND m.site_id = c.site_id AND m.created_at >= @cutoff
+          )
+        ORDER BY c.created_at
+        LIMIT @batchSize
+        """;
+
     private const string ChannelSql = """
         SELECT c.id
         FROM conversations c
@@ -105,6 +130,32 @@ public static class AutoCloseInactiveConversationsQuery
             // row.
             command.Parameters.AddWithValue("kind", kind.ToString());
         }
+
+        var ids = new List<ConversationId>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            ids.Add(new ConversationId(reader.GetGuid(0)));
+        }
+
+        return ids;
+    }
+
+    /// <summary>`25-118`: the widget-only "close" pass - see <see cref="WidgetCloseSql"/> for the one
+    /// predicate that differs from <see cref="FindStaleAssignedBatchAsync"/>'s widget branch, and why.
+    /// No `channelKind` parameter: this is never called for the channel-kind buckets, which keep their
+    /// existing single-window, `Assigned`-only behaviour through <see cref="FindStaleAssignedBatchAsync"/>
+    /// unchanged.</summary>
+    /// <param name="cutoff">Conversations with no message (either direction) at or after this instant,
+    /// created before it, are candidates - the same contract <see cref="FindStaleAssignedBatchAsync"/>
+    /// documents, just against `AutoCloseInactiveConversationsJobOptions.WidgetCloseWindow` rather than
+    /// `WidgetInactivityWindow`.</param>
+    public static async Task<IReadOnlyList<ConversationId>> FindStaleWidgetBatchIncludingWaitingAsync(
+        NpgsqlConnection connection, DateTimeOffset cutoff, int batchSize, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(WidgetCloseSql, connection);
+        command.Parameters.AddWithValue("cutoff", cutoff);
+        command.Parameters.AddWithValue("batchSize", batchSize);
 
         var ids = new List<ConversationId>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

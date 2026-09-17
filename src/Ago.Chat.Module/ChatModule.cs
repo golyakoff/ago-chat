@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.AddRolePermissionsAsOwner;
 using Ago.Chat.Application.UseCases.RemoveRolePermissionsAsOwner;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
+using Ago.Chat.Application.UseCases.ReleaseInactiveConversation;
 using Ago.Chat.Application.UseCases.BlockConversation;
 using Ago.Chat.Application.UseCases.BlockVisitor;
 using Ago.Chat.Application.UseCases.CloseConversationAsSpam;
@@ -1125,6 +1126,9 @@ public sealed class ChatModule : IProductModule
         // (Ago.Chat.Worker) - see the handler's own remarks for why it is a second handler rather than
         // a nullable OperatorId branch on the one above.
         services.AddScoped<AutoCloseConversationHandler>();
+        // `25-118`: the widget-only "release" pass's own handler, resolved the identical way -
+        // AutoCloseInactiveConversationsJob's own remarks explain the two-pass split.
+        services.AddScoped<ReleaseInactiveConversationHandler>();
         // `5-15`: the unread counter's first-ever downward writer - see the handler's own remarks.
         services.AddScoped<MarkConversationReadHandler>();
         // `10-02`
