@@ -118,14 +118,16 @@ public class AutoCloseConversationHandlerTests
     }
 
     /// <summary>
-    /// `18-06`'s own scope note, exercised directly: a `Waiting` conversation (never assigned - the
-    /// query never selects one, but this proves the handler itself refuses one too, closing the race
-    /// window between `AutoCloseInactiveConversationsQuery`'s scan and this handler actually running -
-    /// see the handler's own remarks on why this check has to be explicit here, unlike
-    /// `CloseConversationHandler`, which gets it for free from its `OperatorId` comparison.
+    /// `25-118`: reverses `18-06`'s original scope note - see the handler's own remarks on why its
+    /// guard narrowed from `!= Assigned` to `== Closed`. A `Waiting` conversation (never assigned - a
+    /// conversation `AutoCloseInactiveConversationsQuery.FindStaleWidgetBatchIncludingWaitingAsync` can
+    /// now genuinely surface, unlike the channel-kind/`FindStaleAssignedBatchAsync` scan, which still
+    /// never selects one) is now closed successfully, with no capacity to release (the fails-before
+    /// table's own second row: this is what "the new query variant actually reaches Waiting rows"
+    /// means end to end, at the handler rather than the query).
     /// </summary>
     [Fact]
-    public async Task HandleAsync_WhenTheConversationIsWaiting_ReturnsInvalidState_AndTouchesNothing()
+    public async Task HandleAsync_WhenTheConversationIsWaiting_ClosesItSuccessfully_WithNoCapacityToRelease()
     {
         var conversations = new FakeConversationRepository();
         var conversation = Ago.Chat.Domain.Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
@@ -141,11 +143,34 @@ public class AutoCloseConversationHandlerTests
             new Ago.Chat.Application.UseCases.AutoCloseConversation.AutoCloseConversation(conversation.Id),
             CancellationToken.None);
 
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ConversationState.Closed, conversation.State);
+        Assert.Single(outbox.Enqueued);
+        Assert.Empty(capacity.Releases);
+    }
+
+    /// <summary>`25-118`: the flip side of the test right above - a conversation already `Closed` is
+    /// still refused, exactly as before the guard narrowed. Proves the guard's new `== Closed` form
+    /// still catches the one case it always had to.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenAlreadyClosed_FromWaiting_ReturnsInvalidState()
+    {
+        var conversations = new FakeConversationRepository();
+        var conversation = Ago.Chat.Domain.Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversation.Close(Now);
+        conversation.ClearDomainEvents();
+        conversations.Seed(conversation);
+
+        var handler = new AutoCloseConversationHandler(
+            conversations, new FakeOperatorCapacity(), new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now),
+            NullLogger<AutoCloseConversationHandler>.Instance);
+
+        var result = await handler.HandleAsync(
+            new Ago.Chat.Application.UseCases.AutoCloseConversation.AutoCloseConversation(conversation.Id),
+            CancellationToken.None);
+
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.InvalidState", result.Error!.Value.Code);
-        Assert.Equal(ConversationState.Waiting, conversation.State);
-        Assert.Empty(outbox.Enqueued);
-        Assert.Empty(capacity.Releases);
     }
 
     [Fact]

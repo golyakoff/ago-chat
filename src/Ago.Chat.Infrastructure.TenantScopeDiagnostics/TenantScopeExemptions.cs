@@ -232,6 +232,19 @@ public static class TenantScopeExemptions
             + "would have protected against - reaching another tenant's row - is already ruled out "
             + "structurally: IConversationRepository.GetByIdAsync loads exactly the row named by the "
             + "ConversationId the scan produced, and Conversation.Close() only ever mutates that one aggregate.",
+        ["Ago.Chat.Application.UseCases.ReleaseInactiveConversation.ReleaseInactiveConversationHandler.HandleAsync"] =
+            "`25-118`, worker side (Ago.Chat.Worker), the identical category and reasoning as "
+            + "AutoCloseConversationHandler right above - its own sibling, reached by the same job's new "
+            + "release pass rather than its close pass. The only input is a ConversationId that "
+            + "AutoCloseInactiveConversationsQuery's widget-Assigned scan already restricted to Assigned "
+            + "conversations past WidgetInactivityWindow, a fact the scan itself established by reading "
+            + "conversations.state and messages.created_at, not a claim to verify. There is also no "
+            + "principal to check a permission for: nobody asked for this release, a scheduled sweep did, "
+            + "the same category AutoCloseConversationHandler's own entry describes. What a SiteId check "
+            + "would have protected against - reaching another tenant's row - is already ruled out "
+            + "structurally the identical way: IConversationRepository.GetByIdAsync loads exactly the row "
+            + "named by the ConversationId the scan produced, and Conversation.ReleaseToQueue only ever "
+            + "mutates that one aggregate.",
         ["Ago.Chat.Application.UseCases.CategorizeConversation.CategorizeConversationHandler.HandleAsync"] =
             "`19-02`, worker side (Ago.Chat.Worker), the same category as AutoCloseConversationHandler right "
             + "above: the only input is a (ConversationId, SiteId) pair that ConversationCategorizationJob's own "

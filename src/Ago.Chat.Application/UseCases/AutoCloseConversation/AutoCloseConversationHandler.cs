@@ -25,32 +25,38 @@ namespace Ago.Chat.Application.UseCases.AutoCloseConversation;
 /// unconditional: this one always applies to a system close, the other always applies to an operator's
 /// own.</para>
 ///
-/// <para><b>The one guard <see cref="Conversation.Close"/> itself does not enforce, made explicit
-/// here.</b> <see cref="Conversation.Close"/> only refuses a conversation that is already `Closed` - it
-/// has no opinion on `Waiting`, because <c>CloseConversationHandler</c> never needed one: comparing
-/// <c>command.OperatorId</c> against <see cref="Conversation.OperatorId"/> (`null` on a `Waiting`
-/// conversation) already returns `Forbidden` for that case as a side effect of the ownership check.
-/// This handler has no `OperatorId` to compare against, so without an explicit state check here, a
-/// conversation that regressed from `Assigned` to `Waiting` between
-/// `AutoCloseInactiveConversationsQuery`'s candidate scan and this handler actually running (`4-04`'s
-/// disconnect-grace release landing in that exact window, for instance) would be closed anyway - the
-/// backlog item's own scope note is explicit that `Waiting` conversations are not this item's call to
-/// make. <see cref="HandleAndSaveAsync"/> checks it directly, first.</para>
+/// <para><b>`18-06`'s original guard here rejected anything but `Assigned` - `25-118` narrowed it to
+/// reject only `Closed`.</b> Until `25-118`, a `Waiting` conversation was never this item's call to
+/// make at all (the backlog item's own scope note said so explicitly, and
+/// `AutoCloseInactiveConversationsQuery`'s scan structurally never produced one as a candidate anyway),
+/// so the guard below used to read `State != Assigned` - a strict superset of what
+/// <see cref="Conversation.Close"/> itself refuses, added defensively against a conversation that
+/// regressed from `Assigned` to `Waiting` between the scan and this handler actually running (`4-04`'s
+/// disconnect-grace release landing in that exact window, for instance). `25-118`'s own "Answered"
+/// design deliberately reverses that scope decision for the widget bucket: a `Waiting` widget
+/// conversation past `WidgetCloseWindow` is now a real, intended candidate for this exact handler
+/// (`AutoCloseInactiveConversationsQuery.FindStaleWidgetBatchIncludingWaitingAsync`, wired by
+/// `AutoCloseInactiveConversationsJob`'s new close pass) - so the old guard would now silently refuse
+/// the very rows this item exists to reach. The guard below is narrowed to match exactly what
+/// <see cref="Conversation.Close"/> itself refuses (`State == Closed`, nothing more), which is honest
+/// about what invariant this handler is actually enforcing: "never close an already-closed
+/// conversation," not "never touch anything but Assigned." The channel-kind bucket is unaffected - its
+/// own query (`AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync`, given a real
+/// `ChannelKind`) still only ever selects `Assigned` rows, so this handler never actually sees a
+/// `Waiting` channel-kind candidate to widen the guard for in practice.</para>
 ///
 /// <para><b>Why <see cref="HandleAndSaveAsync"/> does not also catch
 /// <see cref="InvalidConversationStateException"/> around the <see cref="Conversation.Close"/> call
-/// the way <c>CloseConversationHandler.CloseAndSaveAsync</c> does.</b> Found while writing this
-/// handler's own fails-before table: the guard above is a strict superset of what
-/// <see cref="Conversation.Close"/> itself refuses (`State != Assigned` covers both `Waiting` and
-/// `Closed`; `Close` only ever throws for `Closed`), so by the time execution reaches the `Close` call
-/// below, `State == Assigned` is already established and the exception is provably unreachable through
-/// this call path - unlike `CloseConversationHandler`, whose weaker OperatorId-equality guard does
-/// <em>not</em> catch "the same operator retries their own already-closed conversation" (`OperatorId`
-/// survives `Close()`, so the comparison still passes), which is exactly why that handler's own
-/// try/catch is load-bearing rather than redundant. Keeping an unreachable catch here would read as
-/// protection this handler does not actually have, and the next person to touch this file has no way
-/// to tell "defensive" from "dead" without re-deriving this same argument - so it is removed rather
-/// than left in for symmetry with its sibling.</para>
+/// the way <c>CloseConversationHandler.CloseAndSaveAsync</c> does.</b> The guard below is now exactly
+/// what <see cref="Conversation.Close"/> itself refuses, not merely a superset of it, so by the time
+/// execution reaches the `Close` call, `State != Closed` is already established and the exception is
+/// provably unreachable through this call path - unlike `CloseConversationHandler`, whose weaker
+/// OperatorId-equality guard does <em>not</em> catch "the same operator retries their own
+/// already-closed conversation" (`OperatorId` survives `Close()`, so the comparison still passes),
+/// which is exactly why that handler's own try/catch is load-bearing rather than redundant. Keeping an
+/// unreachable catch here would read as protection this handler does not actually have, and the next
+/// person to touch this file has no way to tell "defensive" from "dead" without re-deriving this same
+/// argument - so it is removed rather than left in for symmetry with its sibling.</para>
 /// </summary>
 public sealed class AutoCloseConversationHandler(
     IConversationRepository conversations,
@@ -99,17 +105,16 @@ public sealed class AutoCloseConversationHandler(
 
     private async Task<Result> HandleAndSaveAsync(Conversation conversation, CancellationToken cancellationToken)
     {
-        // See this class's own remarks: the one check CloseConversationHandler gets for free from its
-        // OperatorId comparison, and this handler must make explicit because it has no OperatorId to
-        // compare. A strict superset of what Conversation.Close() itself refuses (both Waiting and
-        // Closed fail `!= Assigned`), which is also why HandleAndSaveAsync never needs to catch
-        // InvalidConversationStateException around the Close() call below - see this class's own
-        // remarks on why that catch was removed rather than kept for symmetry with
-        // CloseConversationHandler.
-        if (conversation.State != ConversationState.Assigned)
+        // See this class's own remarks: `25-118` narrowed this from `!= Assigned` to `== Closed` -
+        // exactly what Conversation.Close() itself refuses, no more - so a Waiting widget conversation
+        // past WidgetCloseWindow (the new query variant's whole point) is no longer turned away here.
+        // This is also why HandleAndSaveAsync never needs to catch InvalidConversationStateException
+        // around the Close() call below - see this class's own remarks on why that catch was removed
+        // rather than kept for symmetry with CloseConversationHandler.
+        if (conversation.State == ConversationState.Closed)
         {
             return ConversationErrors.InvalidState(
-                $"Conversation {conversation.Id.Value} is {conversation.State}, not Assigned; auto-close only touches Assigned conversations.");
+                $"Conversation {conversation.Id.Value} is already {ConversationState.Closed}.");
         }
 
         var consumedCapacityClaim = conversation.Close(clock.UtcNow);
@@ -127,9 +132,13 @@ public sealed class AutoCloseConversationHandler(
         {
             // Read directly from the aggregate rather than a command field, unlike
             // CloseConversationHandler (which has one to avoid a null-forgiving read) - this handler
-            // never had an OperatorId to begin with, and the state guard above already established
-            // conversation.State == Assigned, where OperatorId is always populated
-            // (Conversation.AssignTo's own invariant).
+            // never had an OperatorId to begin with. `25-118`: the guard above no longer establishes
+            // conversation.State == Assigned (a Waiting conversation is now an accepted candidate too),
+            // but consumedCapacityClaim can only be true here because HoldsCapacityClaim can only be
+            // true while State == Assigned (Conversation.AssignTo's own invariant) - ReleaseToQueue and
+            // the "never assigned" case both leave it false, and Close() itself does not flip it back on
+            // - so reaching this branch still implies conversation.OperatorId was populated by the same
+            // AssignTo call that set the claim, and Close() never clears OperatorId.
             var operatorId = conversation.OperatorId!.Value;
             try
             {

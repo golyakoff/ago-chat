@@ -287,6 +287,51 @@ public class ConversationTests
         Assert.False(conversation.Close(Now));
     }
 
+    /// <summary>`25-118`: an explicit proof, not just an inference from reading the guard - `Close`
+    /// only ever refuses a conversation that is already `Closed` (see its own remarks), so a `Waiting`
+    /// conversation (never assigned, exactly the shape `AutoCloseInactiveConversationsJob`'s new close
+    /// pass reaches once `AutoCloseConversationHandler`'s own guard was widened from `!= Assigned` to
+    /// `== Closed`) closes cleanly: no capacity claim to consume (`HoldsCapacityClaim` is `false` for
+    /// every `Waiting` conversation - it is only ever set by `AssignTo`), `ClosedAt` stamped, and a real
+    /// `ConversationClosed` raised, the identical shape closing from `Assigned` produces.</summary>
+    [Fact]
+    public void Close_WhenWaiting_ClosesCleanly_WithNoCapacityClaimToConsume_AndRaisesConversationClosed()
+    {
+        var conversation = StartConversation();
+        conversation.ClearDomainEvents();
+
+        var consumedCapacityClaim = conversation.Close(Now.AddMinutes(5));
+
+        Assert.False(consumedCapacityClaim);
+        Assert.Equal(ConversationState.Closed, conversation.State);
+        Assert.Equal(Now.AddMinutes(5), conversation.ClosedAt);
+        Assert.False(conversation.HoldsCapacityClaim);
+        var raised = Assert.Single(conversation.DomainEvents);
+        var closed = Assert.IsType<ConversationClosed>(raised);
+        Assert.Equal(conversation.Id, closed.ConversationId);
+        Assert.Equal(Now.AddMinutes(5), closed.OccurredAt);
+    }
+
+    /// <summary>`25-118`: the same proof, for a conversation that passed through `Assigned` and was
+    /// released back to `Waiting` first (the exact path `AutoCloseInactiveConversationsJob`'s release
+    /// pass now puts a widget conversation through before its close pass can ever reach it) - not just
+    /// one that was never assigned at all. `ReleaseToQueue` already clears `HoldsCapacityClaim`, so this
+    /// is the same "nothing left to consume" outcome as the never-assigned case above, reached by a
+    /// different route.</summary>
+    [Fact]
+    public void Close_WhenReleasedBackToWaitingAfterHoldingACapacityClaim_ConsumesNothingOnClose()
+    {
+        var conversation = StartConversation();
+        conversation.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
+        conversation.ReleaseToQueue(Now.AddMinutes(1));
+        conversation.ClearDomainEvents();
+
+        var consumedCapacityClaim = conversation.Close(Now.AddMinutes(5));
+
+        Assert.False(consumedCapacityClaim);
+        Assert.Equal(ConversationState.Closed, conversation.State);
+    }
+
     [Fact]
     public void ReleaseToQueue_ConsumesTheCapacityClaimIfThereWasOne()
     {
