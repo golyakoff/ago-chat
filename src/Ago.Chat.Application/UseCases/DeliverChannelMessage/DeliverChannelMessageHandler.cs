@@ -14,13 +14,35 @@ namespace Ago.Chat.Application.UseCases.DeliverChannelMessage;
 /// race the write that makes the message real. Reacting to <c>MessageAccepted</c> means the trigger is
 /// durable before this handler ever calls out to a third party.
 ///
-/// <para><b>The loop guard.</b> Only <see cref="MessageAuthorKind.Operator"/> is ever relayed. A
+/// <para><b>The loop guard.</b> <see cref="MessageAuthorKind.Operator"/> is always relayed. A
 /// <see cref="MessageAuthorKind.Visitor"/> message is what arrived <em>from</em> the channel in the
 /// first place (`ReceiveChannelMessageHandler`) - relaying it back would echo every inbound MAX message
-/// straight back to the same MAX chat. A <see cref="MessageAuthorKind.System"/> message (`14-04`'s
-/// offline auto-reply) is deliberately excluded too, and that is a scope line rather than a safety one:
-/// this item's own Out-of-scope section leaves "auto-reply's own interaction with this channel" to
-/// `14-03`, which is expected to widen this check once it exists.</para>
+/// straight back to the same MAX chat, so it is never relayed, full stop.
+///
+/// <para><b>`25-121`: a <see cref="MessageAuthorKind.System"/> message is relayed only when it carries
+/// structured <see cref="Message.Content"/>.</b> Two, otherwise indistinguishable-by-author-kind,
+/// things are `System`-authored today: `14-04`'s offline auto-reply
+/// (<see cref="Application.UseCases.SendOfflineAutoReply.SendOfflineAutoReplyHandler"/>, which calls
+/// <see cref="Conversation.AddSystemMessage"/> with no <c>content</c> at all) and `20-07`'s module-task
+/// prompt (<see cref="Application.UseCases.RouteConversationToModule.RouteConversationToModuleHandler.FinishStepAsync"/>,
+/// the only call site that ever passes a non-null <c>content</c> to that same method - every other
+/// `System` message in this codebase, including this handler's own apology texts for an unreachable or
+/// disabled module, passes <c>content: null</c> exactly like the auto-reply does). <see cref="Message.Content"/>
+/// is therefore the one fact already on the row that tells the two apart without inventing a new column
+/// or a new enum member: it is set if and only if <see cref="PrimitiveTextRenderer"/> has something
+/// concrete to render (a choice list, a form, a confirmation card, an escalate or verified-phone-form
+/// step) - exactly "the module's own prompt," never "any System text." The alternative considered and
+/// rejected - branching on <see cref="Conversation.ActiveModuleTask"/> instead - would have relayed
+/// nothing for a task's own *final* step (<c>RecordModuleStep</c>/<c>CloseModuleTask</c> both still run
+/// before this handler ever sees the message, but a task's `TaskCompleted` "Done - thank you." message
+/// carries <c>content: null</c> and is deliberately not widened by this item; see the item's own Done-when,
+/// scoped to the module's step prompts, not to every system message a completed task happens to add) and
+/// would have wrongly relayed a `System` message added by an *unrelated* handler
+/// (<c>HandleLinkIdentityCommandHandler</c>, <c>GetAttachmentDownloadUrlHandler</c>) the moment it ran
+/// while a module task happened to be active on the same conversation - a coincidence of timing, not of
+/// meaning. Content-presence has neither failure mode: it is true only for the exact messages
+/// <see cref="Application.UseCases.RouteConversationToModule.RouteConversationToModuleHandler"/> builds
+/// from a live module step, regardless of what else is or is not active on the conversation.</para>
 ///
 /// <para><b>No new idempotency mechanism.</b> A redelivered <c>MessageAccepted</c> (the broker's own
 /// at-least-once) would call <see cref="IInboundChannelAdapter.SendAsync"/> a second time with the
@@ -89,9 +111,15 @@ public sealed class DeliverChannelMessageHandler(
     public async Task<DeliverChannelMessageOutcome> HandleAsync(
         DeliverChannelMessage command, CancellationToken cancellationToken)
     {
-        // THE LOOP GUARD - first, before any I/O, the same "cost this consumer nothing at all"
-        // discipline OfflineAutoReplyConsumer's own remarks describe for its own guard.
-        if (command.TriggerAuthorKind != MessageAuthorKind.Operator)
+        // THE LOOP GUARD, wire-field half - first, before any I/O, the same "cost this consumer
+        // nothing at all" discipline OfflineAutoReplyConsumer's own remarks describe for its own guard.
+        // `25-121`: widened to let a System-authored trigger through too - MessageAccepted carries no
+        // Content, so whether this particular System message is a module-task prompt (relay it) or
+        // 14-04's offline auto-reply (do not) cannot be decided from the wire field alone; the row-backed
+        // check below, which can see Content, makes the real decision. A Visitor message is refused here
+        // unconditionally - see this handler's own class remarks for why that half of the guard is not
+        // rechecked by Content or anything else.
+        if (command.TriggerAuthorKind is not (MessageAuthorKind.Operator or MessageAuthorKind.System))
         {
             return DeliverChannelMessageOutcome.NotAnOperatorMessage;
         }
@@ -120,13 +148,30 @@ public sealed class DeliverChannelMessageHandler(
         }
 
         var trigger = conversation.Messages.FirstOrDefault(m => m.Sequence == command.TriggerSequence);
-        if (trigger is null || trigger.AuthorKind != MessageAuthorKind.Operator)
+        if (trigger is null || !IsRelayable(trigger))
         {
             // The row itself disagrees with the wire field - the same second, row-backed check
             // SendOfflineAutoReplyHandler's own loop guard makes, so this does not depend on
-            // MessageAccepted's AuthorKind being trustworthy on its own.
+            // MessageAccepted's AuthorKind being trustworthy on its own. `25-121`: IsRelayable is also
+            // where a System message earns its answer - see its own remarks and this handler's own
+            // class-level remarks for why Content is the fact that decides it.
             return DeliverChannelMessageOutcome.NotAnOperatorMessage;
         }
+
+        // `25-121`: PrimitiveTextRenderer.Render only when there is a step to render - reusing the exact
+        // rendering vocabulary RouteConversationToModuleHandler already builds Content from, rather than
+        // a second rendering path. Re-rendered here rather than trusted from trigger.Body.Value as
+        // already-rendered text: RouteConversationToModuleHandler's own FinishStepAsync happens to store
+        // that same rendering into Body today, but this handler has no contract with that upstream
+        // implementation detail - PrimitiveTextRenderer.Render's own signature (fallback, kind, payload,
+        // actions) is the actual contract, so this handler calls it the same way any other channel
+        // adapter would. An Operator message never carries Content today (no caller ever passes one to
+        // AddOperatorMessage), so trigger.Body is the only branch that path has ever taken - this is
+        // additive, not a change to the existing Operator-relay behaviour.
+        var body = trigger.Content is { } content
+            ? new MessageBody(
+                PrimitiveTextRenderer.Render(trigger.Body.Value, content.Kind.Value, content.Payload, content.Actions))
+            : trigger.Body;
 
         // Thrown exceptions (transient faults, per IInboundChannelAdapter's own contract) are
         // deliberately not caught here - they propagate to ChannelMessageDeliveryConsumer, which is
@@ -135,7 +180,7 @@ public sealed class DeliverChannelMessageHandler(
         // "the consumer decides what a failure means for redelivery."
         var outcome = await adapter.SendAsync(
             new OutboundChannelMessage(
-                identity.Kind, identity.Address, command.ConversationId, command.TriggerMessageId, trigger.Body),
+                identity.Kind, identity.Address, command.ConversationId, command.TriggerMessageId, body),
             cancellationToken);
 
         var now = clock.UtcNow;
@@ -216,4 +261,13 @@ public sealed class DeliverChannelMessageHandler(
 
         return null;
     }
+
+    /// <summary>`25-121`: the row-backed half of the loop guard's answer for a message this handler has
+    /// actually loaded - see this handler's own class remarks for why <see cref="Message.Content"/>
+    /// presence, not <see cref="Conversation.ActiveModuleTask"/> or any new field, is the fact that tells
+    /// a module-task prompt apart from every other <see cref="MessageAuthorKind.System"/> message this
+    /// codebase writes.</summary>
+    private static bool IsRelayable(Message trigger) =>
+        trigger.AuthorKind == MessageAuthorKind.Operator
+        || (trigger.AuthorKind == MessageAuthorKind.System && trigger.Content is not null);
 }

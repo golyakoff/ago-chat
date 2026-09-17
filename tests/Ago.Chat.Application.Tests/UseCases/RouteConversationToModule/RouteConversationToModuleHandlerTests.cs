@@ -717,6 +717,38 @@ public class RouteConversationToModuleHandlerTests
     }
 
     /// <summary>
+    /// `25-121`'s own explicit "confirm, don't assume" concern: once `DeliverChannelMessageHandler`
+    /// starts relaying a module task's own <see cref="MessageAuthorKind.System"/> prompt out to a real
+    /// channel, could the identical <c>MessageAccepted</c> that triggers that relay also be mistaken by
+    /// *this* handler for a fresh visitor trigger? No - this guard checks <see cref="MessageAuthorKind"/>
+    /// alone, unconditionally, before it ever looks at <see cref="Message.Content"/> or anything else, so
+    /// a System-authored message that happens to carry the exact same structured Content shape a relayed
+    /// prompt carries is refused here exactly as any other System message is. The inbound half of the
+    /// loop (a visitor's own reply, always authored <see cref="MessageAuthorKind.Visitor"/> by
+    /// <see cref="Conversation.AddVisitorMessage"/>, hardcoded and untouched by `25-121`) was never at
+    /// risk; this test is what makes that "obviously true" claim falsifiable instead of assumed.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_ForASystemAuthoredTriggerCarryingModuleStepContent_IsNotTreatedAsAFreshVisitorReply()
+    {
+        var fixture = CreateFixture();
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.ChoiceList),
+            new MessagePayload("""{"prompt":"Which service?"}"""),
+            [new MessageAction("Haircut", "svc-1")]);
+        var reply = fixture.Conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("Which service?\n1) Haircut\nReply with the number."), Now,
+            content: content);
+        fixture.Conversation.ClearDomainEvents();
+
+        var result = await fixture.Handler.HandleAsync(
+            Trigger(fixture.Conversation, MessageAuthorKind.System, reply.Sequence, reply.Id.Value), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.NotAVisitorMessage, result.Value);
+        Assert.Empty(fixture.Gateway.StartCalls);
+    }
+
+    /// <summary>
     /// A genuine redelivery happens only when the first attempt's own commit never actually landed
     /// (`adr/0017`: stage-then-single-save is all-or-nothing) - so the conversation a redelivery sees
     /// is in the <em>same</em> state the first attempt started from, never whatever a successfully

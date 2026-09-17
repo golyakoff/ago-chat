@@ -19,9 +19,12 @@ public sealed record DeliverChannelMessage(
 
 public enum DeliverChannelMessageOutcome
 {
-    /// <summary>The common case for the message pipeline as a whole (visitor messages, and `14-03`'s
-    /// own future system-authored auto-replies - see the handler's own remarks on why System is out of
-    /// this item's scope) - not a failure, a correct decision not to act.</summary>
+    /// <summary>The common case for the message pipeline as a whole - not a failure, a correct decision
+    /// not to act. Covers every <see cref="MessageAuthorKind.Visitor"/> message (never relayed, full
+    /// stop) and every <see cref="MessageAuthorKind.System"/> message that is not a module task's own
+    /// prompt - `14-04`'s offline auto-reply chief among them, still out of this item's scope
+    /// (`25-121`'s own class remarks on <see cref="Message.Content"/> being the fact that tells the two
+    /// apart).</summary>
     NotAnOperatorMessage,
 
     /// <summary>An ordinary widget conversation - no <see cref="ChannelIdentity"/> is linked to this
