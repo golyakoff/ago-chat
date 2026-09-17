@@ -40,7 +40,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
                author_id as "AuthorId", body as "Body", created_at as "CreatedAt",
                attachment_id as "AttachmentId", client_message_id as "ClientMessageId",
-               content_kind as "ContentKind", content as "Payload", actions as "Actions"
+               content_kind as "ContentKind", content as "Payload", actions as "Actions",
+               delivered_at as "DeliveredAt"
         from messages
         where conversation_id = @ConversationId
           and site_id = @SiteId
@@ -55,7 +56,8 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         select id as "Id", sequence as "Sequence", author_kind as "AuthorKind",
                author_id as "AuthorId", body as "Body", created_at as "CreatedAt",
                attachment_id as "AttachmentId", client_message_id as "ClientMessageId",
-               content_kind as "ContentKind", content as "Payload", actions as "Actions"
+               content_kind as "ContentKind", content as "Payload", actions as "Actions",
+               delivered_at as "DeliveredAt"
         from messages
         where conversation_id = @ConversationId
           and site_id = @SiteId
@@ -345,5 +347,6 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.ClientMessageId,
         r.ContentKind,
         r.Payload,
-        r.Actions);
+        r.Actions,
+        r.DeliveredAt is { } deliveredAt ? new DateTimeOffset(DateTime.SpecifyKind(deliveredAt, DateTimeKind.Utc)) : null);
 }

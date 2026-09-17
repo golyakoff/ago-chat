@@ -17,4 +17,8 @@ public sealed record MessageHistoryItem(
     // inside a document it is not allowed to understand, on the hottest read in the product.
     string? ContentKind = null,
     string? Payload = null,
-    string? Actions = null);
+    string? Actions = null,
+    // `25-119`: appended last, the same additive shape every optional field on this record already
+    // follows - null for a visitor-authored row and for an operator-authored one no widget connection
+    // has acked yet.
+    DateTimeOffset? DeliveredAt = null);

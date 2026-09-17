@@ -40,6 +40,8 @@ internal static class ErrorCodeMappingExemptions
             ["TeamChat.Forbidden"] = HubOnly + " (OperatorHub only.)",
             ["TeamChat.InvalidBody"] = HubOnly + " (OperatorHub only.)",
             ["TeamChat.NotFound"] = HubOnly + " (OperatorHub only.)",
+            ["Message.NotFound"] = HubOnly + " (25-119: AcknowledgeMessageDeliveredHandler's own only "
+                + "caller is VisitorHub.AcknowledgeDeliveredAsync.)",
         };
 
     public static bool IsExempt(string code) => ByCode.ContainsKey(code);

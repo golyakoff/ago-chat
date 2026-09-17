@@ -75,6 +75,64 @@ public sealed class Message
 
     public DateTimeOffset CreatedAt { get; }
 
+    /// <summary>
+    /// `25-119`: set once, the moment the widget visitor's own live connection actually receives this
+    /// message - never merely that the server handed it to the transport (<c>ConnectionFanoutConsumer</c>'s
+    /// fan-out is fire-and-forget by construction; this is the ack that closes the loop `25-119`'s own
+    /// backlog item found missing entirely). <see langword="null"/> until then, and for every message
+    /// this concept does not apply to.
+    ///
+    /// <para><b>Scoped to an operator-authored message only</b> - a visitor's own message has no
+    /// "did the operator see it" concept this item was asked to build (the console's existing
+    /// <c>ChannelDelivery</c> badge draws the identical line for the channel-kind case). Enforced here,
+    /// not left to the call site: <see cref="MarkDelivered"/> throws for any other
+    /// <see cref="AuthorKind"/>, the same "the invariant lives on the mutator, not on every caller's own
+    /// discipline" shape <see cref="AddOperatorMessage"/>'s own state/participant checks already
+    /// establish for this aggregate.</para>
+    ///
+    /// <para><b>Not <see cref="ChannelDelivery"/>.</b> That type requires a real <c>ChannelIdentityId</c>/
+    /// <c>ChannelKind</c>, which a widget visitor never has (`14-01`'s own domain model) - this is a
+    /// plain fact about the message itself instead, which is also why it lives here rather than on a
+    /// second, `ChannelDelivery`-shaped side table.</para>
+    /// </summary>
+    public DateTimeOffset? DeliveredAt { get; private set; }
+
+    /// <summary>
+    /// `25-119`: the widget visitor's own ack that this message actually reached their live connection -
+    /// see <see cref="DeliveredAt"/>'s own remarks for what this is and is not.
+    ///
+    /// <para><b>Idempotent, not merely re-callable.</b> At-least-once delivery means the same ack can
+    /// arrive twice (a redelivered `MessageDelivered` push is one thing; the widget's own fire-and-forget
+    /// re-ack on reconnect, `adr/0020`'s own reasoning already cited for this item, is another) - a
+    /// second call with <paramref name="now"/> after the first must never move the timestamp, and must
+    /// tell the caller nothing changed, so <see cref="Application.UseCases.AcknowledgeMessageDelivered.AcknowledgeMessageDeliveredHandler"/>
+    /// (referenced only in this remark; <c>Ago.Chat.Domain</c> itself takes no dependency on it) knows
+    /// not to publish a duplicate live push for an ack that changed nothing.</b></para>
+    ///
+    /// <para><b>Refuses a non-operator message</b> - see <see cref="DeliveredAt"/>'s own remarks for why
+    /// this is enforced on the mutator itself rather than trusted to whichever call site happens to
+    /// reach it.</para>
+    /// </summary>
+    /// <returns><see langword="true"/> if this call actually set <see cref="DeliveredAt"/>;
+    /// <see langword="false"/> if it was already set (a harmless no-op).</returns>
+    public bool MarkDelivered(DateTimeOffset now)
+    {
+        if (AuthorKind != MessageAuthorKind.Operator)
+        {
+            throw new InvalidOperationException(
+                $"Cannot mark message {Id.Value} delivered - only an operator-authored message has a " +
+                $"delivery signal to record, and this one was authored by {AuthorKind}.");
+        }
+
+        if (DeliveredAt is not null)
+        {
+            return false;
+        }
+
+        DeliveredAt = now;
+        return true;
+    }
+
     // `14-06`: three backing fields rather than one owned entity, mapped by name in
     // MessageConfiguration (the shape Site.WidgetConfig already uses) - an EF owned type would bring
     // nullable-owned-entity ceremony for a value that is absent on almost every row. Kept private so

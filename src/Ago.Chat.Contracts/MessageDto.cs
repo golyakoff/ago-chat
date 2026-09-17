@@ -31,8 +31,17 @@
 /// already JSON, and sending it as a string would make every client parse a string out of a document
 /// it had just parsed. It is also the one field on this DTO that AGO Chat has no schema for - a
 /// client is free to have one; this product is not.
+/// <summary>
+/// `25-119`: <see cref="DeliveredAt"/> is additive, appended last, the same rule every field on this
+/// record since `5-07` already follows - <see langword="null"/> for every message this concept does not
+/// apply to (a visitor-authored message, or an operator-authored one the visitor's own connection has
+/// not yet acked) and for any client built before this shipped, which simply ignores a field it has
+/// never heard of. Sourced from <see cref="Domain.Message.DeliveredAt"/> on the same read
+/// <see cref="MessageAuthorKind"/>/<see cref="Body"/> already come from - one field addition serves both
+/// the operator's and the visitor's own history reads, since both already return this same DTO.
+/// </summary>
 public sealed record MessageDto(
     Guid Id, int Sequence, string AuthorKind, Guid AuthorId, string Body, DateTimeOffset CreatedAt,
     Guid? AttachmentId = null, Guid? ClientMessageId = null, Guid? ConversationId = null,
     string? ContentKind = null, System.Text.Json.JsonElement? Content = null,
-    IReadOnlyList<MessageActionDto>? Actions = null);
+    IReadOnlyList<MessageActionDto>? Actions = null, DateTimeOffset? DeliveredAt = null);

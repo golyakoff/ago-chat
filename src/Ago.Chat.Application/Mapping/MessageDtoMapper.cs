@@ -39,7 +39,8 @@ public static class MessageDtoMapper
             conversationId.Value,
             item.ContentKind,
             ParsePayload(item.Payload),
-            ParseActions(item.Actions));
+            ParseActions(item.Actions),
+            item.DeliveredAt);
     }
 
     public static IReadOnlyList<MessageDto> ToDtos(

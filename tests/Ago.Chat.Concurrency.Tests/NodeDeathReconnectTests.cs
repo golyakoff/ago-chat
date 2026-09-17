@@ -146,7 +146,7 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var originValidator = new HubOriginValidator(siteConfig);
 
         return new VisitorHub(
-            startConversation, null!, getHistory, registration, originValidator, new DrainState(),
+            startConversation, null!, getHistory, null!, registration, originValidator, new DrainState(),
             new NoOpWidgetActivityRecorder(), new SystemClock())
         {
             Context = new FakeHubCallerContext(connectionId, VisitorPrincipal(siteId, visitorId)),

@@ -86,7 +86,7 @@ public sealed class VisitorJoinRateLimitedTests(PostgresFixture fixture)
         var originValidator = new HubOriginValidator(siteConfig);
 
         var hub = new VisitorHub(
-            startConversation, sendMessage, getHistory, registration, originValidator, new DrainState(),
+            startConversation, sendMessage, getHistory, null!, registration, originValidator, new DrainState(),
             new NoOpWidgetActivityRecorder(), new SystemClock())
         {
             Context = new FakeHubCallerContext(connectionId, ClaimsPrincipalFor(siteId, visitorId)),

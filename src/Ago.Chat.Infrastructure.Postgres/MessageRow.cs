@@ -20,4 +20,8 @@ internal sealed record MessageRow(
     // AGO Chat looking inside a document it is forbidden to understand, on the hottest read in the
     // product. Deserialising happens once, at the wire boundary (MessageDtoMapper), and only for
     // Actions, whose schema AGO Chat does own.
-    string? ContentKind = null, string? Payload = null, string? Actions = null);
+    string? ContentKind = null, string? Payload = null, string? Actions = null,
+    // `25-119`: same DateTime-not-DateTimeOffset reasoning as CreatedAt above - Npgsql hands raw
+    // ADO.NET/Dapper a UTC-kinded DateTime? for a nullable timestamptz, and ConversationReadStore
+    // converts it before this type crosses back over IConversationReadStore.
+    DateTime? DeliveredAt = null);

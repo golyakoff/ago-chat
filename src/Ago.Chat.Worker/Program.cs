@@ -150,6 +150,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<AttachmentUploadGrantFanoutConsumer>();
 
+// `25-119`: the widget's own delivery-ack fan-out consumer - same registration shape as
+// AttachmentUploadGrantFanoutConsumer right above.
+builder.Services
+    .AddOptions<MessageDeliveredFanoutConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(MessageDeliveredFanoutConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<MessageDeliveredFanoutConsumer>();
+
 // 4-03: which mechanism actually performs the claim - concurrency.md's "two mechanisms, both
 // implemented, compared" - chosen once at startup, not per-request. SkipLocked is the default
 // (concurrency.md: "no extra infrastructure, no lock-lease expiry problems").

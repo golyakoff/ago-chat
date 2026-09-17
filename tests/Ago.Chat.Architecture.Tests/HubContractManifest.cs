@@ -53,6 +53,10 @@ internal static class HubContractManifest
             + "SendMessageAsync entry states."),
         new("VisitorHub.GetHistoryAsync", 3,
             "ago-widget VisitorConnection; dev-harness.html"),
+        new("VisitorHub.AcknowledgeDeliveredAsync", 2,
+            "nobody yet - `25-119` created it; ago-widget's own connection.ts (built in the same stage, "
+            + "in parallel) is the expected first caller, from inside handleIncoming once an incoming "
+            + "MessageReceived has been processed."),
 
         new("OperatorHub.JoinConversationAsync", 2,
             "ago-console OperatorConnection"),

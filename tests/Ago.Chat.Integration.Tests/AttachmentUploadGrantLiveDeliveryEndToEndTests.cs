@@ -298,6 +298,12 @@ public sealed class AttachmentUploadGrantLiveDeliveryEndToEndTests(ConnectionFan
         builder.Services.AddScoped<SendVisitorMessageHandler>();
         builder.Services.AddScoped<GetConversationHistoryHandler>();
         builder.Services.AddSingleton<IWidgetActivityRecorder, NoOpWidgetActivityRecorder>();
+        // `25-119`: VisitorHub's own new dependency - not exercised by this test (it never calls
+        // AcknowledgeDeliveredAsync), but SignalR activates the whole Hub via this container per
+        // invocation, so every constructor parameter must resolve regardless of which method is called.
+        builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
+        builder.Services.AddScoped<Application.UseCases.AcknowledgeMessageDelivered.AcknowledgeMessageDeliveredHandler>();
 
         // 3-01/3-02's own hub wiring - the real pieces CompositionRoot.ConfigureServices registers for
         // Ago.Chat.Api, hand-wired here the same way ConnectionFanoutEndToEndTests hand-wires the

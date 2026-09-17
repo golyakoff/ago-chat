@@ -266,7 +266,7 @@ public sealed class VisitorReopenHistoryTests(PostgresFixture fixture)
         var originValidator = new HubOriginValidator(siteConfig);
 
         var hub = new VisitorHub(
-            startConversation, null!, getHistory, registration, originValidator, new DrainState(),
+            startConversation, null!, getHistory, null!, registration, originValidator, new DrainState(),
             new NoOpWidgetActivityRecorder(), new SystemClock())
         {
             Context = new FakeHubCallerContext(connectionId, ClaimsPrincipalFor(siteId, visitorId)),
