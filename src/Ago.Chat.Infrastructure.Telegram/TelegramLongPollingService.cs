@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.RecordChannelVisitorContact;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -254,26 +255,77 @@ public sealed class TelegramLongPollingService(
         var parsed = TelegramInboundMessageParser.TryParse(update);
         if (parsed is null)
         {
+            // `25-151`: a contact attached to this update but failed TelegramInboundMessageParser's own
+            // `user_id` trust check reads identically to "no message this parser understood at all" to
+            // TryParse's own caller - re-inspecting the raw update here is the only way to log the
+            // rejection distinctly from an ordinary skipped update (an edited_message, a callback_query,
+            // ...), the same "malformed inbound fact never breaks the pipeline, but is still logged"
+            // posture this class already holds for every other rejection.
+            if (update.Message?.Contact is not null)
+            {
+                logger.LogWarning(
+                    "Rejected a shared Telegram contact for site {SiteId}: contact.user_id did not match the sender.",
+                    siteId.Value);
+            }
+
             return;
         }
 
         await using var scope = scopeFactory.CreateAsyncScope();
-        var handler = scope.ServiceProvider.GetRequiredService<ReceiveChannelMessageHandler>();
 
-        var result = await handler.HandleAsync(
-            new ReceiveChannelMessage(
-                siteId, ChannelKind.Telegram,
-                new ExternalChannelAddress(parsed.ChatId.ToString()),
-                new ExternalMessageId(parsed.ExternalMessageId),
-                parsed.Text),
-            cancellationToken);
-
-        if (result.IsFailure)
+        if (!string.IsNullOrWhiteSpace(parsed.Text))
         {
-            logger.LogWarning(
-                "Could not receive a Telegram message for site {SiteId}: {Code} {Message}",
-                siteId.Value, result.Error!.Value.Code, result.Error!.Value.Message);
+            var handler = scope.ServiceProvider.GetRequiredService<ReceiveChannelMessageHandler>();
+
+            var result = await handler.HandleAsync(
+                new ReceiveChannelMessage(
+                    siteId, ChannelKind.Telegram,
+                    new ExternalChannelAddress(parsed.ChatId.ToString()),
+                    new ExternalMessageId(parsed.ExternalMessageId),
+                    parsed.Text),
+                cancellationToken);
+
+            if (result.IsFailure)
+            {
+                logger.LogWarning(
+                    "Could not receive a Telegram message for site {SiteId}: {Code} {Message}",
+                    siteId.Value, result.Error!.Value.Code, result.Error!.Value.Message);
+            }
         }
+
+        // `25-151`: a verified contact share, dispatched to its own sibling command rather than folded
+        // into ReceiveChannelMessage above - see RecordChannelVisitorContact's own remarks for why.
+        if (parsed.Contact is { } contact)
+        {
+            var contactHandler = scope.ServiceProvider.GetRequiredService<RecordChannelVisitorContactHandler>();
+
+            var contactResult = await contactHandler.HandleAsync(
+                new RecordChannelVisitorContact(
+                    siteId, ChannelKind.Telegram,
+                    new ExternalChannelAddress(parsed.ChatId.ToString()),
+                    contact.PhoneNumber,
+                    ComposeContactName(contact.FirstName, contact.LastName)),
+                cancellationToken);
+
+            if (contactResult.IsFailure)
+            {
+                logger.LogWarning(
+                    "Could not record a shared Telegram contact for site {SiteId}: {Code} {Message}",
+                    siteId.Value, contactResult.Error!.Value.Code, contactResult.Error!.Value.Message);
+            }
+        }
+    }
+
+    /// <summary>`25-151`: Telegram's contact carries first/last name as two separate, both-optional
+    /// fields (core.telegram.org/bots/api#contact) - joined here into the single <c>Name</c>
+    /// <see cref="VisitorContactDetail"/> value every other writer of that kind already produces
+    /// (the widget's own name field, `25-62`), rather than teaching RecordChannelVisitorContact a
+    /// two-part name shape nothing else in this codebase has.</summary>
+    private static string? ComposeContactName(string? firstName, string? lastName)
+    {
+        var parts = new[] { firstName, lastName }.Where(part => !string.IsNullOrWhiteSpace(part));
+        var name = string.Join(' ', parts);
+        return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
     private async Task StopAllPollersAsync()

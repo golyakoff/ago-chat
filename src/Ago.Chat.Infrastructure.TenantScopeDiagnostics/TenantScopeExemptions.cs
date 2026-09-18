@@ -238,6 +238,21 @@ public static class TenantScopeExemptions
             + "exactly as a visitor is (adr/0016) - and what replaces it is stronger than a site check: every "
             + "write goes to the Visitor that this site's own ChannelIdentity row resolves to, so a message can "
             + "only ever land in a conversation belonging to the site whose credentials received it.",
+        ["Ago.Chat.Application.UseCases.RecordChannelVisitorContact.RecordChannelVisitorContactHandler.HandleAsync"] =
+            "`25-151`, adapter side (AGO Inbox) - the identical category and reasoning as "
+            + "ReceiveChannelMessageHandler right above, its own sibling command: SiteId comes off the same "
+            + "concrete-adapter resolution (the site whose Telegram/MAX credentials received the update), "
+            + "never a claim a channel provider's payload could make. There is also no principal to check a "
+            + "permission for, for the identical reason - a Telegram/MAX contact share is outside the RBAC "
+            + "model exactly as an ordinary channel message is (adr/0016) - and what replaces it is the same "
+            + "structural guarantee: every write goes to the Visitor that this site's own ChannelIdentity row "
+            + "resolves to (or a freshly minted one, on the identical first-contact branch "
+            + "ReceiveChannelMessageHandler's own entry describes), so a shared contact can only ever land on "
+            + "the site whose credentials received it. The one write this handler itself does not perform "
+            + "directly - recording the VisitorContactDetail - is delegated to "
+            + "RecordVisitorContactDetailHandler.HandleAsVisitorAsync, whose own entry above already argues "
+            + "its visitor-participant check; this handler supplies that check's own inputs (a ConversationId "
+            + "and VisitorId it just resolved or minted itself), never a caller-suppliable pair.",
         ["Ago.Chat.Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler.HandleAsync"] =
             "`14-02`, consumer side (Ago.Chat.Worker). SiteId comes off the same MessageAccepted envelope "
             + "SendOfflineAutoReplyHandler/RecordUnreadMessageHandler already read it from - a fact the triggering "

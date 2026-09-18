@@ -38,7 +38,49 @@ public sealed record MaxRecipient([property: JsonPropertyName("chat_id")] long? 
 
 public sealed record MaxMessageBody(
     [property: JsonPropertyName("mid")] string? Mid,
-    [property: JsonPropertyName("text")] string? Text);
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("attachments")] IReadOnlyList<MaxAttachment>? Attachments = null);
+
+/// <summary>
+/// `25-151`: one entry of <see cref="MaxMessageBody.Attachments"/> - shares this file's own top-level
+/// honesty note in full: MAX's public documentation describes an attachment only in outline, so this
+/// shape (and <see cref="MaxContactAttachmentPayload"/>/<see cref="MaxContactInfo"/> beneath it) is this
+/// item's own best-effort reconstruction from public third-party write-ups, not a confirmed capture
+/// against a live bot - flagged again, explicitly, in this item's own report rather than left to be
+/// rediscovered the way this file's own top-level note already warns a "wrong guess" should be.
+/// </summary>
+public sealed record MaxAttachment(
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("payload")] MaxContactAttachmentPayload? Payload);
+
+/// <summary>
+/// `25-151`: MAX's own "shared contact" attachment payload, present only when the visitor shared their
+/// own contact via a `request_contact`-type button or shared it unprompted - the same payload shape
+/// either way (`25-152`'s own outbound half is the only thing that differs, not this shape). <see
+/// cref="Hash"/> is MAX's substitute for Telegram's `user_id` equality check
+/// (<c>TelegramContact</c>'s own remarks): an HMAC-SHA256 of <see cref="VcfInfo"/>, keyed with the
+/// receiving site's own bot token - see <c>MaxInboundMessageParser.TryVerifyContact</c>'s own remarks for
+/// the verification itself, and this item's own report for why the exact digest encoding (hex vs
+/// base64) is an assumption a real capture must settle.
+/// </summary>
+public sealed record MaxContactAttachmentPayload(
+    [property: JsonPropertyName("vcf_info")] string? VcfInfo,
+    [property: JsonPropertyName("max_info")] MaxContactInfo? MaxInfo,
+    [property: JsonPropertyName("hash")] string? Hash);
+
+/// <summary>
+/// `25-151`: the structured half of a shared-contact attachment - alongside <see
+/// cref="MaxContactAttachmentPayload.VcfInfo"/>'s own vCard-formatted string, this is this item's own
+/// assumption that MAX also echoes the same facts as plain fields (the same "documentation is only an
+/// outline" honesty note this file's own top level note already states), since parsing a vCard blob just
+/// to re-extract what a structured sibling field would already give directly is exactly the kind of
+/// guesswork a real captured payload should replace, not compound.
+/// </summary>
+public sealed record MaxContactInfo(
+    [property: JsonPropertyName("user_id")] long? UserId,
+    [property: JsonPropertyName("phone")] string? Phone,
+    [property: JsonPropertyName("first_name")] string? FirstName,
+    [property: JsonPropertyName("last_name")] string? LastName);
 
 public sealed record MaxSendMessageRequest([property: JsonPropertyName("text")] string Text);
 

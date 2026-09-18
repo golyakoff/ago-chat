@@ -1,9 +1,11 @@
 ﻿using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.RecordChannelVisitorContact;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.MaxBot;
+using Microsoft.Extensions.Logging;
 
 namespace Ago.Chat.Api.Channels;
 
@@ -43,7 +45,10 @@ public static class MaxWebhookEndpoints
         Guid credentialId,
         HttpContext httpContext,
         IChannelCredentialRepository credentials,
+        IChannelCredentialCipher cipher,
         ReceiveChannelMessageHandler receiveHandler,
+        RecordChannelVisitorContactHandler recordContactHandler,
+        ILogger<RecordChannelVisitorContactHandler> logger,
         CancellationToken cancellationToken)
     {
         var credential = await credentials.GetByIdAsync(new ChannelCredentialId(credentialId), cancellationToken);
@@ -72,25 +77,79 @@ public static class MaxWebhookEndpoints
             return Results.BadRequest();
         }
 
+        // `25-151`: decrypted unconditionally, alongside the ordinary text path below, rather than only
+        // when a contact attachment is actually present - MaxInboundMessageParser's own trust check is
+        // the only thing that needs it, but this endpoint has no cheap way to know an update carries a
+        // contact before parsing it, and MaxLongPollingService's own iteration-level decrypt already
+        // accepts the identical cost per update.
+        var token = cipher.Decrypt(credential.TokenCiphertext);
+
         // MAX retries a non-2xx delivery up to ten times (this item's backlog note) - an update this
         // deserialized fine but this item has no use case for (a malformed body, or an update_type
         // other than message_created) is acknowledged with 200 rather than rejected, so MAX does not
         // burn its retry budget resending something that will never parse differently.
-        var parsed = update is null ? null : MaxInboundMessageParser.TryParse(update);
+        var parsed = update is null ? null : MaxInboundMessageParser.TryParse(update, token);
         if (parsed is null)
         {
+            // `25-151`: a contact attachment present but rejected by MaxInboundMessageParser's own hash
+            // check reads identically to "nothing this parser understood" to TryParse's own caller -
+            // re-inspecting the raw update here is the only way to log the rejection distinctly from an
+            // ordinary skipped update, the same split MaxLongPollingService's own dispatch makes for the
+            // identical case on its own inbound mechanism.
+            if (update?.Message?.Body?.Attachments?.Any(a => a.Type == "contact") == true)
+            {
+                logger.LogWarning(
+                    "Rejected a shared MAX contact for site {SiteId}: the attachment's hash did not verify.",
+                    credential.SiteId.Value);
+            }
+
             return Results.Ok();
         }
 
-        var result = await receiveHandler.HandleAsync(
-            new ReceiveChannelMessage(
-                credential.SiteId,
-                ChannelKind.Max,
-                new ExternalChannelAddress(parsed.ChatId.ToString()),
-                new ExternalMessageId(parsed.ExternalMessageId),
-                parsed.Text),
-            cancellationToken);
+        var problem = default(IResult);
 
-        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok();
+        if (!string.IsNullOrWhiteSpace(parsed.Text))
+        {
+            var result = await receiveHandler.HandleAsync(
+                new ReceiveChannelMessage(
+                    credential.SiteId,
+                    ChannelKind.Max,
+                    new ExternalChannelAddress(parsed.ChatId.ToString()),
+                    new ExternalMessageId(parsed.ExternalMessageId),
+                    parsed.Text),
+                cancellationToken);
+
+            if (result.IsFailure)
+            {
+                problem = result.Error!.Value.ToProblem(httpContext);
+            }
+        }
+
+        // `25-151`: a verified contact share, dispatched to its own sibling command rather than folded
+        // into ReceiveChannelMessage above - see RecordChannelVisitorContact's own remarks for why. Its
+        // own failure (e.g. `24-05`'s consent gate) is logged, never turned into a non-2xx response - a
+        // rejected/unrecordable contact is not the kind of transient failure MAX's own retry budget
+        // exists for, unlike the ordinary-message failure above, which keeps its existing ToProblem
+        // behaviour unchanged.
+        if (parsed.Contact is { } contact)
+        {
+            var contactResult = await recordContactHandler.HandleAsync(
+                new RecordChannelVisitorContact(
+                    credential.SiteId,
+                    ChannelKind.Max,
+                    new ExternalChannelAddress(parsed.ChatId.ToString()),
+                    contact.Phone,
+                    MaxContactName.Compose(contact.FirstName, contact.LastName)),
+                cancellationToken);
+
+            if (contactResult.IsFailure)
+            {
+                logger.LogWarning(
+                    "Could not record a shared MAX contact for site {SiteId}: {Code} {Message}",
+                    credential.SiteId.Value, contactResult.Error!.Value.Code, contactResult.Error!.Value.Message);
+            }
+        }
+
+        return problem ?? Results.Ok();
     }
 }

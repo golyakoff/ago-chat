@@ -104,7 +104,7 @@ public sealed class TelegramLinkContinuityTests(PostgresFixture fixture)
         var result = await receiveHandler.HandleAsync(
             new ReceiveChannelMessage(
                 siteId, ChannelKind.Telegram, new ExternalChannelAddress(parsed.ChatId.ToString()),
-                new ExternalMessageId(parsed.ExternalMessageId), parsed.Text),
+                new ExternalMessageId(parsed.ExternalMessageId), parsed.Text!),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : "");
@@ -191,7 +191,7 @@ public sealed class TelegramLinkContinuityTests(PostgresFixture fixture)
         var result = await receiveHandler.HandleAsync(
             new ReceiveChannelMessage(
                 siteId, ChannelKind.Telegram, new ExternalChannelAddress(parsed.ChatId.ToString()),
-                new ExternalMessageId(parsed.ExternalMessageId), parsed.Text),
+                new ExternalMessageId(parsed.ExternalMessageId), parsed.Text!),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : "");
