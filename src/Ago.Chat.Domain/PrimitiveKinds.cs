@@ -85,4 +85,50 @@ public static class PrimitiveKinds
     public static readonly IReadOnlyList<string> ChoiceShaped = [ChoiceList, ConfirmationCard, DateTimePicker];
 
     public static bool IsChoiceShaped(string kind) => ChoiceShaped.Contains(kind, StringComparer.Ordinal);
+
+    /// <summary>
+    /// `25-153`: whether a step is this vocabulary's own "collect the visitor's phone number" shape -
+    /// a <see cref="Form"/> or <see cref="VerifiedPhoneForm"/> step whose own <c>fieldId</c> is
+    /// <c>"phone"</c>. Promoted here from a private helper `25-152` first wrote inside
+    /// <c>DeliverChannelMessageHandler</c> (which still calls this, unchanged in behaviour) once a
+    /// second, unrelated caller needed the identical recognition: `25-153`'s own consent gate in
+    /// <c>RouteConversationToModuleHandler</c> asks the exact same question - "is this one of Chat's
+    /// own two phone-shaped primitives" - before a phone step is ever shown, the identical question
+    /// `DeliverChannelMessageHandler` asks after one already was, to decide whether to offer a native
+    /// contact-sharing button. Both are knowledge of this vocabulary's own six members, not of either
+    /// caller's own flow - the same "shape, not meaning" split this class's own remarks already draw
+    /// for <see cref="IsChoiceShaped"/>, which is why this lives beside it rather than as two private
+    /// copies of the identical JSON read.
+    ///
+    /// <para>A payload's own fields are opaque everywhere else in this codebase
+    /// (<see cref="MessagePayload"/>'s own remarks) except here, at this vocabulary's one owner - the
+    /// same licence <see cref="PrimitiveTextRenderer"/> already exercises to read <c>"prompt"</c>.
+    /// A malformed or absent <c>fieldId</c> degrades to <see langword="false"/>, never a thrown
+    /// exception, for the identical reason: a producer's payload is opaque bytes to Chat, and neither
+    /// caller has any business rejecting one over a shape it does not own.</para>
+    /// </summary>
+    public static bool IsPhoneCollectionStep(string kind, MessagePayload? payload)
+    {
+        if (kind != Form && kind != VerifiedPhoneForm)
+        {
+            return false;
+        }
+
+        if (payload is not { } value)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(value.Value);
+            return document.RootElement.TryGetProperty("fieldId", out var element)
+                && element.ValueKind == System.Text.Json.JsonValueKind.String
+                && element.GetString() == "phone";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
 }
