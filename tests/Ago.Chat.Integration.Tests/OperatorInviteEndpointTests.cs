@@ -75,6 +75,27 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
             Task.FromResult<OperatorInviteProvisionOutcome>(new OperatorInviteProvisionOutcome.Sent());
     }
 
+    /// <summary>`25-90`: this stripped-down host builds its own container by hand (this file's own
+    /// class-level remarks) rather than going through <c>ChatModule</c>, which is the only place
+    /// <c>INotificationMailSender</c> is normally registered (as <c>NotificationMailSender</c>, against a
+    /// real SMTP relay) - so <see cref="CreateOperatorInviteHandler"/>'s new dependency on it needs its
+    /// own registration here too, the identical reason <see cref="FakeOperatorInviteEmailProvisioner"/>
+    /// exists right above. Records every send, the same shape
+    /// <c>Ago.Chat.Integration.Tests.InactivityWatchdogJobTests</c>'s own private fake of this same port
+    /// already uses, so a test can assert the second, independent channel actually fired through the
+    /// real handler wiring - not merely through the Application-layer fake in
+    /// <c>CreateOperatorInviteHandlerTests</c>.</summary>
+    private sealed class FakeNotificationMailSender : INotificationMailSender
+    {
+        public List<NotificationMailMessage> Sent { get; } = [];
+
+        public Task SendAsync(NotificationMailMessage message, CancellationToken cancellationToken)
+        {
+            Sent.Add(message);
+            return Task.CompletedTask;
+        }
+    }
+
     [Fact]
     public async Task Redeem_ARealKeycloakTokenWithNoOperatorRowAnywhere_BecomesAWorkingOperatorOfTheInvitingSite()
     {
@@ -776,6 +797,28 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>`25-90`'s own Done-when: "a second `NotificationMailSender` email fires from
+    /// `CreateOperatorInviteHandler`... proven against a real send, not asserted from a template file."
+    /// Exercised here through the real HTTP endpoint and the real handler's own DI wiring (not the
+    /// Application-layer fake `CreateOperatorInviteHandlerTests` already covers this same behaviour
+    /// with) - only the two Keycloak-writing and SMTP-writing edges are faked
+    /// (`FakeOperatorInviteEmailProvisioner`/`FakeNotificationMailSender`, this file's own class-level
+    /// remarks on why), everything else is the real `CreateOperatorInviteHandler.HandleAsync`.</summary>
+    [Fact]
+    public async Task CreateInvite_AlsoSendsASecondFallbackEmailToTheInviteeCarryingTheCodeAsPlainText()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", "colleague@example.test");
+
+        var mailSender = (FakeNotificationMailSender)host.Services.GetRequiredService<INotificationMailSender>();
+        var sent = Assert.Single(mailSender.Sent);
+        Assert.Equal("colleague@example.test", sent.To);
+        Assert.Contains(invite.Code, sent.Subject + sent.Body);
+    }
+
     /// <summary>
     /// `23-70`'s own Done-when: "a colleague opening the link sees what they are joining and when it
     /// expires." No `Authorization` header on this call at all - proving `AllowAnonymous()` actually
@@ -980,6 +1023,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddSingleton(new OperatorInviteCreationRateLimitOptions());
         builder.Services.AddSingleton<IOperatorInviteEmailProvisioner, FakeOperatorInviteEmailProvisioner>();
+        // `25-90`: CreateOperatorInviteHandler's fourth new dependency - see FakeNotificationMailSender's
+        // own doc comment. Singleton so a test can resolve the same instance from `host.Services` after
+        // the request completes and inspect what it recorded.
+        builder.Services.AddSingleton<INotificationMailSender, FakeNotificationMailSender>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<RegisterSiteHandler>();
         builder.Services.AddScoped<CreateOperatorInviteHandler>();
