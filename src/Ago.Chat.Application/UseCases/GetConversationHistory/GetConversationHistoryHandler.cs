@@ -93,6 +93,37 @@ public sealed class GetConversationHistoryHandler(
         return Result<IReadOnlyList<MessageHistoryItem>>.Success(delta);
     }
 
+    /// <summary>
+    /// `25-143`: the same access check as <see cref="HandleDeltaAsVisitorAsync"/> right above it - a
+    /// returning visitor is a party to this conversation or is not, and that question does not change
+    /// depending on whether the answer comes back as a page or a number - but a genuinely different
+    /// read store call, not <c>(await HandleDeltaAsVisitorAsync(...)).Value.Count</c>. This is a page
+    /// reload's own read, reached with no live connection and, per `adr/0148`'s lazy-connect design, no
+    /// hub join either: fetching every message body just to discard all but the count would cost the
+    /// same bytes the widget's own lazy-connect exists to avoid paying before a visitor engages.
+    /// <see cref="IConversationReadStore.GetUnreadCountAsync"/> is the count-only
+    /// sibling to <see cref="IConversationReadStore.GetDeltaAsync"/> that makes this a single indexed
+    /// <c>COUNT(*)</c> instead.
+    /// </summary>
+    public async Task<Result<int>> HandleUnreadCountAsVisitorAsync(
+        GetUnreadCountAsVisitor query, CancellationToken cancellationToken)
+    {
+        var conversation = await conversations.GetByIdAsync(query.ConversationId, cancellationToken);
+        if (conversation is null)
+        {
+            return ConversationErrors.NotFound(query.ConversationId.Value);
+        }
+
+        if (conversation.VisitorId != query.RequestedBy)
+        {
+            return ConversationErrors.Forbidden("This visitor is not a participant of this conversation.");
+        }
+
+        var count = await readStore.GetUnreadCountAsync(
+            query.ConversationId, conversation.SiteId, query.AfterSequence, cancellationToken);
+        return Result<int>.Success(count);
+    }
+
     /// <summary>Operator-side equivalent of <see cref="HandleDeltaAsVisitorAsync"/> - see its remarks.</summary>
     public async Task<Result<IReadOnlyList<MessageHistoryItem>>> HandleDeltaAsOperatorAsync(
         GetConversationDeltaAsOperator query, CancellationToken cancellationToken)

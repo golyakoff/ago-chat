@@ -57,6 +57,10 @@ public static class TenantScopeExemptions
             "Visitor path. Gated by conversation.VisitorId == query.RequestedBy, from the signed visitor token.",
         ["Ago.Chat.Application.UseCases.GetConversationHistory.GetConversationHistoryHandler.HandleDeltaAsVisitorAsync"] =
             "Visitor path. Gated by conversation.VisitorId == query.RequestedBy, from the signed visitor token.",
+        ["Ago.Chat.Application.UseCases.GetConversationHistory.GetConversationHistoryHandler.HandleUnreadCountAsVisitorAsync"] =
+            "`25-143`. Visitor path. Gated by conversation.VisitorId == query.RequestedBy, from the signed visitor "
+            + "token - the identical shape this same handler's own HandleAsVisitorAsync/HandleDeltaAsVisitorAsync "
+            + "entries above use, just answering with a count instead of a page of messages.",
         ["Ago.Chat.Application.UseCases.InitiatePhoneVerification.InitiatePhoneVerificationHandler.HandleAsVisitorAsync"] =
             "`14-15`. Visitor path. Gated by conversation.VisitorId == command.RequestedBy, from the signed visitor "
             + "token - the identical shape CreateAttachmentHandler's own entry above uses. No operator-initiated "

@@ -65,6 +65,41 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         order by sequence asc
         """;
 
+    // `25-143`: GetDeltaAsync's own filter and direction, minus the ORDER BY (a count has no order to
+    // give), plus the "unread" definition the backlog item states in words - "not authored by the
+    // visitor". `@VisitorAuthorKind` is a bound parameter, not a literal baked into the SQL text - the
+    // same "no magic string" convention OperatorAnalyticsReadStore/OperatorLoadReportReadStore already
+    // use for the identical column in this same table. A plain `count(*)`, served by the same
+    // `(conversation_id, site_id, sequence)`-shaped range scan GetDeltaAsync's own query already uses -
+    // no new index for this item.
+    private static readonly string VisitorAuthorKind = nameof(MessageAuthorKind.Visitor);
+
+    private const string UnreadCountSql = """
+        select count(*)
+        from messages
+        where conversation_id = @ConversationId
+          and site_id = @SiteId
+          and sequence > @AfterSequence
+          and author_kind <> @VisitorAuthorKind
+        """;
+
+    public async Task<int> GetUnreadCountAsync(
+        ConversationId conversationId, SiteId siteId, int afterSequence, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        return await connection.QuerySingleAsync<int>(new CommandDefinition(
+            UnreadCountSql,
+            new
+            {
+                ConversationId = conversationId.Value,
+                SiteId = siteId.Value,
+                AfterSequence = afterSequence,
+                VisitorAuthorKind,
+            },
+            cancellationToken: cancellationToken));
+    }
+
     // `5-08`: keyset on `id` alone - conversation ids are uuid v7 (IIdGenerator), so id order is
     // already creation order, the same single-column cursor GetHistoryAsync uses `sequence` for.
     // No state filter, unlike ix_conversations_waiting - this is the admin's "every conversation"

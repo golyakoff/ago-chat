@@ -62,6 +62,17 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         m.Id, m.Sequence, m.AuthorKind, m.AuthorId, m.Body.Value, m.CreatedAt,
         ContentKind: m.Content?.Kind.Value, Payload: m.Content?.Payload?.Value);
 
+    /// <summary>`25-143`: mirrors the real store's own filter and direction as an in-memory count -
+    /// good enough to test <c>GetConversationHistoryHandler.HandleUnreadCountAsVisitorAsync</c>'s own
+    /// access-check logic without a real Postgres.</summary>
+    public Task<int> GetUnreadCountAsync(
+        ConversationId conversationId, SiteId siteId, int afterSequence, CancellationToken cancellationToken)
+    {
+        var conversation = _bySource[conversationId];
+        var count = conversation.Messages.Count(m => m.Sequence > afterSequence && m.AuthorKind != MessageAuthorKind.Visitor);
+        return Task.FromResult(count);
+    }
+
     /// <summary>`5-08`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive)
     /// over whatever this fake was seeded with for the requested site - good enough to test a
     /// handler's own access-check and paging-forwarding logic without a real Postgres.</summary>
