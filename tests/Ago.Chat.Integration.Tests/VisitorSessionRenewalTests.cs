@@ -5,7 +5,9 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -436,6 +438,177 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         Assert.Empty(body!.EnabledModuleTriggerWords);
     }
 
+    /// <summary>`25-148`'s own Done-when: a site with nothing connected gets `channelLinks: []`, never
+    /// `null` - the identical "no booking is the honest default" discipline
+    /// <see cref="TheMint_ForASiteWithNoGrantedModules_Returns_AnEmptyList"/> already proves for
+    /// <see cref="Domain.EnabledModule"/> beside it.</summary>
+    [Fact]
+    public async Task TheMint_ForASiteWithNoConnectedChannels_Returns_AnEmptyChannelLinksList()
+    {
+        var site = await SeedSiteAsync();
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Empty(body!.ChannelLinks);
+    }
+
+    /// <summary>The renewal side of the identical proof.</summary>
+    [Fact]
+    public async Task ARenewal_ForASiteWithNoConnectedChannels_Returns_AnEmptyChannelLinksList()
+    {
+        var site = await SeedSiteAsync();
+        var token = IssueToken(new VisitorId(Guid.NewGuid()), site.SiteId, MintedDaysAgo(0));
+
+        await using var app = await BuildAppAsync();
+        var body = await (await RenewAsync(app, token, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Empty(body!.ChannelLinks);
+    }
+
+    /// <summary>
+    /// `25-148`'s own load-bearing shape decision, proven on the wire: the widget receives a full,
+    /// absolute URL it can open directly - never a bare handle - and a WhatsApp entry (no `?start=` code
+    /// in this item's own scope) carries no query string at all.
+    /// </summary>
+    [Fact]
+    public async Task TheMint_ForASiteWithAConnectedWhatsAppChannel_Returns_AFullServerBuiltUrl()
+    {
+        var site = await SeedSiteAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.WhatsApp,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                providerAccountId: $"phone-{site.SiteId:N}", publicHandle: "+1 555 0100"));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        var link = Assert.Single(body!.ChannelLinks);
+        Assert.Equal(nameof(Domain.ChannelKind.WhatsApp), link.Kind);
+        Assert.Equal("https://wa.me/15550100", link.Url);
+    }
+
+    /// <summary>
+    /// `MintVisitorChannelLinkCodeHandler`'s own graceful-degradation case, proven on the wire: a brand
+    /// new visitor session mint has no persisted `Visitor` row yet (one is never written at mint time -
+    /// only the first real message creates it), so `pending_channel_link_requests`' own foreign key to
+    /// `visitors` cannot be satisfied. The mint must still succeed, with a plain Telegram link and no
+    /// `?start=` code - graceful degradation, not a 500.
+    /// </summary>
+    [Fact]
+    public async Task TheMint_ForASiteWithAConnectedTelegramChannel_Returns_APlainUrlWithNoStartCode()
+    {
+        var site = await SeedSiteAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.Telegram,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                publicHandle: "shop_support_bot"));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        var link = Assert.Single(body!.ChannelLinks);
+        Assert.Equal(nameof(Domain.ChannelKind.Telegram), link.Kind);
+        Assert.Equal("https://t.me/shop_support_bot", link.Url);
+    }
+
+    /// <summary>
+    /// `25-148`'s own Telegram-identity-continuity half: a visitor who already has real, persisted
+    /// history (a `Visitor` row - the same precondition a widget conversation already establishes)
+    /// renews their session and gets a fresh `?start=` code, and that code is a genuinely live, usable
+    /// `PendingChannelLinkRequest` - proven by looking it up through the real repository
+    /// (`TelegramLinkContinuityTests` proves the end-to-end wiring through the real inbound-message
+    /// chain; this test proves the code this exact handshake response hands out is the same kind of
+    /// value, extracted straight off the wire).
+    /// </summary>
+    [Fact]
+    public async Task ARenewal_ForAVisitorWithExistingHistory_OnASiteWithAConnectedTelegramChannel_Returns_AUrlCarryingAFreshStartCode()
+    {
+        var site = await SeedSiteAsync();
+        var visitorId = new VisitorId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Domain.Visitor(visitorId, new SiteId(site.SiteId), DateTimeOffset.UtcNow));
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.Telegram,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                publicHandle: "shop_support_bot"));
+            await db.SaveChangesAsync();
+        }
+        var token = IssueToken(visitorId, site.SiteId, MintedDaysAgo(6));
+
+        await using var app = await BuildAppAsync();
+        var body = await (await RenewAsync(app, token, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        var link = Assert.Single(body!.ChannelLinks);
+        Assert.Equal(nameof(Domain.ChannelKind.Telegram), link.Kind);
+        Assert.StartsWith("https://t.me/shop_support_bot?start=", link.Url);
+
+        var code = link.Url["https://t.me/shop_support_bot?start=".Length..];
+        Assert.NotEmpty(code);
+        var codeHash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code));
+        await using var verifyDb = fixture.CreateDbContext();
+        var pending = await new PendingChannelLinkRequestRepository(verifyDb).FindLiveAsync(
+            new SiteId(site.SiteId), Domain.ChannelKind.Telegram, codeHash, DateTimeOffset.UtcNow, CancellationToken.None);
+        Assert.NotNull(pending);
+        Assert.Equal(visitorId, pending!.VisitorId);
+    }
+
+    /// <summary>
+    /// `25-148`'s own Done-when: read live, proven not to come from the cached `SiteConfigDto` - a
+    /// channel connected *after* the first mint (which already populated the 5-minute site cache) must
+    /// still appear on the very next renewal, the identical "no cache to invalidate, no event to wait
+    /// for" proof `TenantSuspensionSessionGateTests`' own class remarks already give for the sibling
+    /// `ISiteSuspensionReadStore` check on this same endpoint.
+    /// </summary>
+    [Fact]
+    public async Task ARenewal_Returns_AChannelConnectedAfterTheFirstMintAlreadyCachedTheSite()
+    {
+        var site = await SeedSiteAsync();
+        var token = IssueToken(new VisitorId(Guid.NewGuid()), site.SiteId, MintedDaysAgo(0));
+
+        await using var app = await BuildAppAsync();
+        // Populates the 5-minute GetSiteConfigByPublicKeyHandler cache for this site, with no channel
+        // connected yet.
+        var firstMintBody = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+        Assert.Empty(firstMintBody!.ChannelLinks);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.WhatsApp,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                providerAccountId: $"phone-{site.SiteId:N}-renewed", publicHandle: "+1 555 0100"));
+            await db.SaveChangesAsync();
+        }
+
+        var body = await (await RenewAsync(app, token, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        var link = Assert.Single(body!.ChannelLinks);
+        Assert.Equal(nameof(Domain.ChannelKind.WhatsApp), link.Kind);
+    }
+
     private static Task<HttpResponseMessage> MintAsync(WebApplication app, string publicKey)
     {
         var client = app.GetTestClient();
@@ -490,6 +663,7 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        builder.Services.AddScoped<IVisitorRepository, VisitorRepository>();
         builder.Services.AddScoped<GetSiteConfigByPublicKeyHandler>();
         // `23-06`: both mint and renewal endpoints now record a sighting/refusal through this port -
         // the real Postgres-backed implementation, the same "real dependency, not a fake" posture
@@ -499,6 +673,16 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
         // this file's own remarks already give for ISiteInstallationSignalRepository above - both mint
         // and renewal now read a site's entitlements the same live way rule 8 requires.
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `25-148`: the identical "real dependency, not a fake" posture, for the visitor handshake's own
+        // new read and its one write - HandleVisitorSessionAsync/HandleVisitorSessionRenewalAsync fail to
+        // resolve at all without these two, the same "unregistered means every route on this stripped-down
+        // host fails at first request" hazard `22-08`'s own comment right below already names for
+        // ISiteSuspensionReadStore.
+        builder.Services.AddScoped<IPublicChannelLinkReadStore, PublicChannelLinkReadStore>();
+        builder.Services.AddScoped<IPendingChannelLinkRequestRepository, PendingChannelLinkRequestRepository>();
+        builder.Services.AddSingleton<IPendingChannelLinkCodeGenerator, PendingChannelLinkCodeGenerator>();
+        builder.Services.AddSingleton(new PendingChannelLinkRequestOptions());
+        builder.Services.AddScoped<MintVisitorChannelLinkCodeHandler>();
         // `22-08`: HandleVisitorSessionAsync's own new dependency - unregistered, Minimal API cannot
         // even infer whether this parameter is a body or a service, which fails every route on this
         // stripped-down host at first request, not only a suspended-site one.

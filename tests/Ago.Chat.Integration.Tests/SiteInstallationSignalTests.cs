@@ -1,7 +1,9 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Platform.Caching.Redis;
@@ -180,7 +182,8 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
             new AuthEndpoints.VisitorSessionRequest(publicKey), getSite, signalRepository,
-            new EnabledModuleReadStore(fixture.DataSource), new SiteSuspensionReadStore(fixture.DataSource), new FakeRateLimiter(),
+            new EnabledModuleReadStore(fixture.DataSource), new PublicChannelLinkReadStore(fixture.DataSource),
+            CreateMintChannelLinkCodeHandler(), new SiteSuspensionReadStore(fixture.DataSource), new FakeRateLimiter(),
             Options.Create(new VisitorSessionRateLimitOptions()), new UuidV7Generator(), new SystemClock(), tokens,
             httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);
@@ -205,7 +208,8 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
             new AuthEndpoints.VisitorSessionRequest(publicKey), getSite, signalRepository,
-            new EnabledModuleReadStore(fixture.DataSource), new SiteSuspensionReadStore(fixture.DataSource), new FakeRateLimiter(),
+            new EnabledModuleReadStore(fixture.DataSource), new PublicChannelLinkReadStore(fixture.DataSource),
+            CreateMintChannelLinkCodeHandler(), new SiteSuspensionReadStore(fixture.DataSource), new FakeRateLimiter(),
             Options.Create(new VisitorSessionRateLimitOptions()), new UuidV7Generator(), new SystemClock(), tokens,
             httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);
@@ -218,6 +222,12 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
 
     private RedisCache CreateCache() => new(
         fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(), NullLogger<RedisCache>.Instance);
+
+    /// <summary>`25-148`: the identical real-Postgres-backed construction
+    /// <see cref="OriginAuthorizationTests.CreateMintChannelLinkCodeHandler"/> already uses.</summary>
+    private MintVisitorChannelLinkCodeHandler CreateMintChannelLinkCodeHandler() => new(
+        new VisitorRepository(fixture.CreateDbContext()), new PendingChannelLinkRequestRepository(fixture.CreateDbContext()), new PendingChannelLinkCodeGenerator(),
+        new PendingChannelLinkRequestOptions(), new UuidV7Generator(), new SystemClock());
 
     private static DefaultHttpContext BuildHttpContext(string? origin)
     {

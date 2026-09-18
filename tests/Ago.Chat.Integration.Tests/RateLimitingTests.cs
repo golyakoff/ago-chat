@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Api.Auth;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Application.UseCases.RequestSiteExport;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Domain;
@@ -97,7 +99,9 @@ public sealed class RateLimitingTests(SiteCachingFixture fixture)
             };
             var result = await AuthEndpoints.HandleVisitorSessionAsync(
                 new AuthEndpoints.VisitorSessionRequest(publicKey),
-                getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource), new SiteSuspensionReadStore(fixture.DataSource),
+                getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource),
+                new PublicChannelLinkReadStore(fixture.DataSource), CreateMintChannelLinkCodeHandler(),
+                new SiteSuspensionReadStore(fixture.DataSource),
                 limiter, rateLimitOptions, new UuidV7Generator(), new SystemClock(), tokens, httpContext, CancellationToken.None);
             await result.ExecuteAsync(httpContext);
             return (httpContext.Response.StatusCode, httpContext.Response.Headers.RetryAfter.FirstOrDefault());
@@ -145,4 +149,10 @@ public sealed class RateLimitingTests(SiteCachingFixture fixture)
 
     private RedisRateLimiter CreateLimiter() => new(
         fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(), NullLogger<RedisRateLimiter>.Instance);
+
+    /// <summary>`25-148`: the identical real-Postgres-backed construction
+    /// <see cref="OriginAuthorizationTests.CreateMintChannelLinkCodeHandler"/> already uses.</summary>
+    private MintVisitorChannelLinkCodeHandler CreateMintChannelLinkCodeHandler() => new(
+        new VisitorRepository(fixture.CreateDbContext()), new PendingChannelLinkRequestRepository(fixture.CreateDbContext()), new PendingChannelLinkCodeGenerator(),
+        new PendingChannelLinkRequestOptions(), new UuidV7Generator(), new SystemClock());
 }

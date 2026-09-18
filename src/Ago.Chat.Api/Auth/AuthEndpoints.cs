@@ -1,5 +1,7 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Application;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -53,6 +55,8 @@ public static class AuthEndpoints
         GetSiteConfigByPublicKeyHandler getSite,
         ISiteInstallationSignalRepository installationSignals,
         IEnabledModuleReadStore moduleReadStore,
+        IPublicChannelLinkReadStore channelLinkReadStore,
+        MintVisitorChannelLinkCodeHandler mintChannelLinkCode,
         ISiteSuspensionReadStore suspensions,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRateLimitOptions> rateLimitOptions,
@@ -134,13 +138,15 @@ public static class AuthEndpoints
         var token = tokens.IssueVisitorToken(visitorId, new SiteId(site.SiteId));
         var (enabledModules, enabledModuleTriggerWords) =
             await GetEnabledModulesAsync(moduleReadStore, new SiteId(site.SiteId), clock, cancellationToken);
+        var channelLinks = await GetChannelLinksAsync(
+            channelLinkReadStore, mintChannelLinkCode, new SiteId(site.SiteId), visitorId, cancellationToken);
         return Results.Created(
             $"/api/v1/visitor-sessions/{visitorId.Value}",
             new VisitorSessionResponse(
                 token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
                 site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
                 enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
-                (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText,
+                (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText, channelLinks,
                 site.WidgetContactCaptureConfirmationText));
     }
 
@@ -174,6 +180,8 @@ public static class AuthEndpoints
         GetSiteConfigByPublicKeyHandler getSite,
         ISiteInstallationSignalRepository installationSignals,
         IEnabledModuleReadStore moduleReadStore,
+        IPublicChannelLinkReadStore channelLinkReadStore,
+        MintVisitorChannelLinkCodeHandler mintChannelLinkCode,
         IRateLimiter rateLimiter,
         IOptions<VisitorSessionRenewalRateLimitOptions> rateLimitOptions,
         IClock clock,
@@ -259,11 +267,13 @@ public static class AuthEndpoints
         var token = tokens.IssueVisitorToken(visitorId, tokenSiteId);
         var (enabledModules, enabledModuleTriggerWords) =
             await GetEnabledModulesAsync(moduleReadStore, tokenSiteId, clock, cancellationToken);
+        var channelLinks = await GetChannelLinksAsync(
+            channelLinkReadStore, mintChannelLinkCode, tokenSiteId, visitorId, cancellationToken);
         return Results.Ok(new VisitorSessionResponse(
             token, visitorId.Value, site.WidgetPrimaryColorHex, site.WidgetPosition.ToString(),
             site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
             enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
-            (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText,
+            (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText, channelLinks,
             site.WidgetContactCaptureConfirmationText));
     }
 
@@ -296,7 +306,76 @@ public static class AuthEndpoints
         return (keys, triggerWords);
     }
 
+    /// <summary>
+    /// `25-148`: the identical "read the port directly from a host-level helper" shape
+    /// <see cref="GetEnabledModulesAsync"/> already establishes right above - <see cref="IPublicChannelLinkReadStore"/>
+    /// is itself the Application-layer port; there is nothing left for an extra handler class to wrap for
+    /// a read this thin. Read live, through that store, never through the 5-minute
+    /// <see cref="GetSiteConfigByPublicKeyHandler"/> cache <paramref name="siteId"/>'s own caller already
+    /// resolved <c>site</c> from - the identical reasoning <see cref="GetEnabledModulesAsync"/>'s own
+    /// remarks give: a tenant who just connected a channel wants it to show up on the very next handshake,
+    /// and a credential write raises no cache-eviction event the way a widget config change does.
+    ///
+    /// <para><b>Telegram's own row, when present, gets a fresh linking code minted alongside it - unless
+    /// this visitor has no persisted history yet, in which case the code is silently skipped.</b> The
+    /// one write on this otherwise read-only path - <see cref="MintVisitorChannelLinkCodeHandler"/>'s own
+    /// remarks have the full reasoning for both halves: why this is the right place for the write, and
+    /// why a brand-new visitor session mint (no <see cref="Domain.Visitor"/> row exists yet - one is only
+    /// ever written lazily, at the first real message) gets a plain Telegram link with no `?start=`
+    /// instead of a failed request. Every other channel's own row is turned into a URL with nothing
+    /// appended, per this item's own explicit scope: "MAX and VK do not get a `?start=` code in this
+    /// item."</para>
+    /// </summary>
+    private static async Task<IReadOnlyList<ChannelLinkResponse>> GetChannelLinksAsync(
+        IPublicChannelLinkReadStore channelLinkReadStore, MintVisitorChannelLinkCodeHandler mintChannelLinkCode,
+        SiteId siteId, VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var links = await channelLinkReadStore.GetForSiteAsync(siteId, cancellationToken);
+
+        var responses = new List<ChannelLinkResponse>(links.Count);
+        foreach (var link in links)
+        {
+            var url = ChannelLinkUrlBuilder.BuildUrl(link.Kind, link.Handle);
+            if (url is null)
+            {
+                continue;
+            }
+
+            if (link.Kind == ChannelKind.Telegram)
+            {
+                // `null` when this visitor has no persisted Visitor row yet - MintVisitorChannelLinkCodeHandler's
+                // own remarks explain why (the pending-link-request's own foreign key cannot be satisfied
+                // before the visitor's first real message creates that row). Graceful degradation, not a
+                // failure: the widget still gets a working Telegram link, just without a continuity code.
+                var minted = await mintChannelLinkCode.HandleAsync(
+                    new MintVisitorChannelLinkCode(siteId, visitorId, ChannelKind.Telegram), cancellationToken);
+                if (minted is not null)
+                {
+                    url = $"{url}?start={minted.Code}";
+                }
+            }
+
+            responses.Add(new ChannelLinkResponse(link.Kind.ToString(), url));
+        }
+
+        return responses;
+    }
+
     public sealed record VisitorSessionRequest(string PublicKey);
+
+    /// <summary>
+    /// `25-148`: one connected, linkable channel - <see cref="Kind"/> crosses the wire as
+    /// <see cref="Domain.ChannelKind"/>'s own CLR member name, matching <see cref="VisitorSessionResponse.WidgetPosition"/>/
+    /// <see cref="VisitorSessionResponse.WidgetLocale"/>'s own convention on this same response.
+    /// <see cref="Url"/> is a full, absolute <c>https</c> URL built server-side
+    /// (<see cref="ChannelLinkUrlBuilder"/>'s own remarks on why this is the load-bearing shape decision,
+    /// `docs/adr/0175-*.md`) - never a bare handle the widget would have to template into a
+    /// provider-specific URL itself. Carries nothing else: no <c>ChannelCredentialId</c>, no
+    /// <c>ProviderAccountId</c>, no token-shaped field of any kind -
+    /// <c>ChannelPortTests.ChannelLinkResponse_CarriesNoTokenOrSecretOrCredentialIdProperty</c> is the
+    /// structural guarantee, not just this sentence.
+    /// </summary>
+    public sealed record ChannelLinkResponse(string Kind, string Url);
 
     /// <summary>
     /// `11-01`: <see cref="WidgetPrimaryColorHex"/>/<see cref="WidgetPosition"/> are additive fields,
@@ -377,6 +456,21 @@ public static class AuthEndpoints
     /// blindly" posture every other field here already gets, and substitutes the literal `{name}` in it
     /// with the visitor's own just-submitted name - a substitution that can only happen client-side,
     /// since the server has no visitor to name until after the visitor submits.
+    ///
+    /// `25-148`: <see cref="ChannelLinks"/> joins as one more additive field, never `null` - a site with
+    /// nothing connected gets an empty list, the identical "no booking is the honest default"
+    /// discipline <see cref="EnabledModules"/>'s own remarks already state. Before this item the widget
+    /// had no way to learn which messaging channels a site had connected, or what to link to for any of
+    /// them - a Jivo-style "message us on Telegram" switcher had nothing to switch to. Read live through
+    /// <see cref="Abstractions.IPublicChannelLinkReadStore"/>, the identical "never through the 5-minute
+    /// cache" reasoning <see cref="EnabledModules"/>'s own remarks give, and built server-side into a
+    /// full URL rather than a bare `{kind, handle}` pair - `docs/adr/0175-*.md` records why that shape is
+    /// load-bearing: a new channel with a public deep link needs zero `ago-widget` code changes, only a
+    /// later, purely cosmetic icon addition. Telegram's own entry additionally carries a fresh
+    /// `?start=&lt;code&gt;` linking code, reusing `14-12`'s own verified-channel-identity mechanism
+    /// (`adr/0079`) rather than a second one - opening it and messaging the bot continues the same
+    /// conversation the widget already had, the identical guarantee `/linkidentity`'s own hand-typed
+    /// flow already gives, just reached without the visitor having to type a command first.
     /// </summary>
     public sealed record VisitorSessionResponse(
         string Token,
@@ -398,5 +492,6 @@ public static class AuthEndpoints
         bool WidgetAutoOpenEnabled,
         int WidgetAutoOpenDelaySeconds,
         string? WidgetAutoOpenGreetingText,
+        IReadOnlyList<ChannelLinkResponse> ChannelLinks,
         string? WidgetContactCaptureConfirmationText = null);
 }
