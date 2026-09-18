@@ -25,6 +25,10 @@ public sealed class EmailChannelAdapterTests
         ChannelKind.Email, new ExternalChannelAddress(recipient), ConversationId, new MessageId(Guid.NewGuid()),
         new MessageBody("Your order ships tomorrow."));
 
+    private static OutboundChannelMessage Reply(Guid messageId, bool requestContactIfSupported) => new(
+        ChannelKind.Email, new ExternalChannelAddress("visitor@example.com"), ConversationId, new MessageId(messageId),
+        new MessageBody("Your order ships tomorrow."), requestContactIfSupported);
+
     [Fact]
     public async Task SendAsync_WhenTheRelayAccepts_ReturnsSentWithTheProviderMessageId()
     {
@@ -97,6 +101,31 @@ public sealed class EmailChannelAdapterTests
 
         Assert.False(outcome.Delivered);
         Assert.Contains("550", outcome.FailureReason);
+    }
+
+    /// <summary>`25-152`'s own Done-when: Email has no contact-sharing affordance, so
+    /// <see cref="OutboundChannelMessage.RequestContactIfSupported"/> must change nothing this adapter
+    /// sends. Two separate servers, not one server sent to twice - <see cref="FakeSmtpServer"/> accepts
+    /// exactly one connection - with the identical <see cref="OutboundChannelMessage.MessageId"/> and the
+    /// same <see cref="FixedClock"/> both adapters share, so the only two facts that could otherwise vary
+    /// the DATA payload (the <c>Message-Id</c> and <c>Date</c> headers) are held fixed and the comparison
+    /// is a genuine proof, not a coincidence.</summary>
+    [Fact]
+    public async Task SendAsync_IgnoresRequestContactIfSupported_TheDataPayloadIsByteIdenticalEitherWay()
+    {
+        var messageId = Guid.NewGuid();
+
+        using var serverWithoutFlag = await FakeSmtpServer.StartAsync();
+        var adapterWithoutFlag = BuildAdapter(serverWithoutFlag.Options, hasConversation: true, hasThread: true);
+        await adapterWithoutFlag.SendAsync(Reply(messageId, requestContactIfSupported: false), CancellationToken.None);
+        var transcriptWithoutFlag = await serverWithoutFlag.WaitForTranscriptAsync();
+
+        using var serverWithFlag = await FakeSmtpServer.StartAsync();
+        var adapterWithFlag = BuildAdapter(serverWithFlag.Options, hasConversation: true, hasThread: true);
+        await adapterWithFlag.SendAsync(Reply(messageId, requestContactIfSupported: true), CancellationToken.None);
+        var transcriptWithFlag = await serverWithFlag.WaitForTranscriptAsync();
+
+        Assert.Equal(transcriptWithoutFlag.DataPayload, transcriptWithFlag.DataPayload);
     }
 
     private static EmailChannelAdapter BuildAdapter(EmailBotApiOptions options, bool hasConversation, bool hasThread)

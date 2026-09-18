@@ -50,6 +50,59 @@ public sealed class MaxApiClientTests
         Assert.Null(result.Username);
     }
 
+    /// <summary>`25-152`: <c>requestContact: false</c> (every ordinary reply) must not add an
+    /// <c>attachments</c> field at all - the identical "byte-identical to today" proof
+    /// <see cref="TelegramApiClientTests"/>'s own equivalent test makes for Telegram's
+    /// <c>reply_markup</c>. See <see cref="MaxApiClient"/>'s own remarks for the standing caveat that
+    /// this shape is built from MAX's documented outline, not a live capture.</summary>
+    [Fact]
+    public async Task SendMessageAsync_WithRequestContactFalse_SendsNoAttachmentsField()
+    {
+        string? capturedBody = null;
+        await using var host = await BuildFakeMaxHostAsync(app =>
+            app.MapPost("/messages", async (HttpContext ctx) =>
+            {
+                capturedBody = await new StreamReader(ctx.Request.Body).ReadToEndAsync();
+                return Results.Json(new { message = new { body = new { mid = "1" } } });
+            }));
+        var client = BuildClient(host.BaseUrl);
+
+        await client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        Assert.DoesNotContain("attachments", capturedBody);
+    }
+
+    /// <summary>`25-152`'s own outbound half: a phone-collection step's own flag reaches MAX as an
+    /// <c>inline_keyboard</c> attachment carrying exactly one <c>request_contact</c>-type button,
+    /// alongside the unchanged prose text - proven against the real wire body, against the documented
+    /// shape only (<see cref="MaxApiClient"/>'s own remarks: no live MAX bot was available to confirm
+    /// this envelope).</summary>
+    [Fact]
+    public async Task SendMessageAsync_WithRequestContactTrue_SendsAnInlineKeyboardWithARequestContactButton()
+    {
+        string? capturedBody = null;
+        await using var host = await BuildFakeMaxHostAsync(app =>
+            app.MapPost("/messages", async (HttpContext ctx) =>
+            {
+                capturedBody = await new StreamReader(ctx.Request.Body).ReadToEndAsync();
+                return Results.Json(new { message = new { body = new { mid = "1" } } });
+            }));
+        var client = BuildClient(host.BaseUrl);
+
+        await client.SendMessageAsync(
+            Token, chatId: 42, text: "What is your phone number?", requestContact: true, CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        using var document = System.Text.Json.JsonDocument.Parse(capturedBody);
+        var attachments = document.RootElement.GetProperty("attachments");
+        var attachment = Assert.Single(attachments.EnumerateArray());
+        Assert.Equal("inline_keyboard", attachment.GetProperty("type").GetString());
+        var firstRow = attachment.GetProperty("payload").GetProperty("buttons")[0];
+        Assert.Single(firstRow.EnumerateArray());
+        Assert.Equal("request_contact", firstRow[0].GetProperty("type").GetString());
+    }
+
     /// <summary>401 is this item's own reasoned default for "MAX refused the token" - a terminal
     /// refusal, never worth retrying, so it must come back as a result the caller inspects rather than an
     /// exception - the same shape <see cref="MaxApiClient.SendMessageAsync"/> already gives for the

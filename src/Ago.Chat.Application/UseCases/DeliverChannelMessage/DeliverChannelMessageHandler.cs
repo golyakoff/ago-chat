@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Text.Json;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -183,6 +184,13 @@ public sealed class DeliverChannelMessageHandler(
                     await ResolveLocaleAsync(conversation.SiteId, cancellationToken)))
             : trigger.Body;
 
+        // `25-152`: intent, not a rendering instruction - see OutboundChannelMessage.RequestContactIfSupported's
+        // own remarks. IsPhoneCollectionStep is the identical discriminator `25-146` already uses on the
+        // widget side for this same step (content.Kind is Form or VerifiedPhoneForm, and the field being
+        // collected is "phone") - kept here as this handler's own private helper rather than shared with
+        // the widget's TypeScript, since there is nothing in this codebase for the two to share through.
+        var requestContact = IsPhoneCollectionStep(trigger.Content);
+
         // Thrown exceptions (transient faults, per IInboundChannelAdapter's own contract) are
         // deliberately not caught here - they propagate to ChannelMessageDeliveryConsumer, which is
         // where messaging.md's retry-then-dead-letter decision belongs, the same split
@@ -190,7 +198,8 @@ public sealed class DeliverChannelMessageHandler(
         // "the consumer decides what a failure means for redelivery."
         var outcome = await adapter.SendAsync(
             new OutboundChannelMessage(
-                identity.Kind, identity.Address, command.ConversationId, command.TriggerMessageId, body),
+                identity.Kind, identity.Address, command.ConversationId, command.TriggerMessageId, body,
+                requestContact),
             cancellationToken);
 
         var now = clock.UtcNow;
@@ -293,4 +302,45 @@ public sealed class DeliverChannelMessageHandler(
     private static bool IsRelayable(Message trigger) =>
         trigger.AuthorKind == MessageAuthorKind.Operator
         || (trigger.AuthorKind == MessageAuthorKind.System && trigger.Content is not null);
+
+    /// <summary>
+    /// `25-152`: the exact "is this the phone-collection step" discriminator `25-146` already established
+    /// on the widget side (that repository's own <c>isPhoneCollectionStep</c>, in <c>ui/widget.ts</c>) -
+    /// a <see cref="PrimitiveKinds.Form"/> or <see cref="PrimitiveKinds.VerifiedPhoneForm"/> step whose
+    /// own <c>fieldId</c> is <c>"phone"</c>, read out of <see cref="MessageContent.Payload"/> the same
+    /// defensive way <see cref="TryReadReplyValue"/> in <c>RouteConversationToModuleHandler</c> already
+    /// reads <c>"value"</c> back out of a reply payload: a malformed or absent field degrades to
+    /// <see langword="false"/>, never a thrown exception, because a producer's payload is opaque to Chat
+    /// (<see cref="MessagePayload"/>'s own remarks) and this handler has no business rejecting a relay
+    /// over a shape it does not own.
+    /// </summary>
+    private static bool IsPhoneCollectionStep(MessageContent? content)
+    {
+        if (content is not { } value)
+        {
+            return false;
+        }
+
+        if (value.Kind.Value != PrimitiveKinds.Form && value.Kind.Value != PrimitiveKinds.VerifiedPhoneForm)
+        {
+            return false;
+        }
+
+        if (value.Payload is not { } payload)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payload.Value);
+            return document.RootElement.TryGetProperty("fieldId", out var element)
+                && element.ValueKind == JsonValueKind.String
+                && element.GetString() == "phone";
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 }

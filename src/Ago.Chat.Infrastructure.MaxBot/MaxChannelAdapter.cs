@@ -30,6 +30,13 @@ namespace Ago.Chat.Infrastructure.MaxBot;
 /// last wrote in) is a <em>terminal</em> outcome, not a fault: `adr/0069`'s own reasoning is that
 /// revocation "surfaces as a rejected call at use time," and this is exactly that surfacing, mapped to
 /// <see cref="ChannelSendOutcome.Refused"/> rather than an exception so it is never retried.</para>
+///
+/// <para><b>`25-152`: <see cref="OutboundChannelMessage.RequestContactIfSupported"/> is honored here,
+/// never above.</b> This class is the only place that knows MAX's own affordance is an
+/// <c>inline_keyboard</c> attachment with a <c>request_contact</c>-type button - the flag itself crosses
+/// the port as a plain <c>bool</c> (`docs/adr/0176-*`), and <see cref="MaxApiClient.SendMessageAsync"/>
+/// is where that bool becomes MAX's own vocabulary, one layer below even this adapter. See that class's
+/// own remarks for the live-verification caveat this button shares with `25-151`'s inbound half.</para>
 /// </summary>
 public sealed class MaxChannelAdapter(
     MaxApiClient client, IServiceScopeFactory scopeFactory, ILogger<MaxChannelAdapter> logger) : IInboundChannelAdapter
@@ -82,7 +89,8 @@ public sealed class MaxChannelAdapter(
             token = cipher.Decrypt(credential.TokenCiphertext);
         }
 
-        var result = await client.SendMessageAsync(token, chatId, message.Body.Value, cancellationToken);
+        var result = await client.SendMessageAsync(
+            token, chatId, message.Body.Value, message.RequestContactIfSupported, cancellationToken);
 
         if (result.Success)
         {

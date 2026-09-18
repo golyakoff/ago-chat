@@ -82,7 +82,52 @@ public sealed record MaxContactInfo(
     [property: JsonPropertyName("first_name")] string? FirstName,
     [property: JsonPropertyName("last_name")] string? LastName);
 
-public sealed record MaxSendMessageRequest([property: JsonPropertyName("text")] string Text);
+public sealed record MaxSendMessageRequest(
+    [property: JsonPropertyName("text")] string Text,
+    // `25-152`: WhenWritingNull, not the default "always write" - an ordinary reply (every channel this
+    // item does not touch, and MAX itself before this item) must serialize byte-identically to what this
+    // client has always sent, and a bare `null` attachments key is a field MAX's own /messages endpoint
+    // never saw from this codebase before today.
+    [property: JsonPropertyName("attachments")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<MaxOutboundAttachment>? Attachments = null);
+
+/// <summary>
+/// `25-152`: one entry of <see cref="MaxSendMessageRequest.Attachments"/> - the outbound mirror of
+/// <see cref="MaxAttachment"/>, built rather than parsed. Shares this file's own top-level honesty note
+/// in full and adds to it: MAX's public documentation (dev.max.ru/docs-api) names <c>inline_keyboard</c>
+/// as one of the attachment types a message may carry and separately documents its own button
+/// vocabulary (<c>callback</c>, <c>link</c>, <c>request_contact</c>, <c>request_geo_location</c>,
+/// <c>open_app</c>, <c>message</c>, <c>clipboard</c>), but the exact envelope one wraps the other in -
+/// this record's own <see cref="Type"/>/<see cref="Payload"/> split - is this item's own best-effort
+/// reconstruction from the same public third-party integration write-ups and client-library source
+/// `MaxAttachment`'s own remarks already lean on for the inbound shape, not a confirmed request/response
+/// capture against a live bot; the standing caveat `25-151` names for its own inbound reconstruction
+/// applies identically here, and repeated in this item's own report rather than left to be
+/// rediscovered. <see cref="MaxChannelAdapter"/>'s own Done-when is explicit that this shape is
+/// verifiable only against MAX's documented outline, not against a real MAX bot, until a token exists.
+/// </summary>
+public sealed record MaxOutboundAttachment(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("payload")] MaxInlineKeyboardPayload Payload);
+
+/// <summary>`25-152`: an <c>inline_keyboard</c> attachment's own payload - rows of buttons, the same
+/// "array of arrays" shape Telegram's own <c>ReplyKeyboardMarkup.Keyboard</c> uses for the unrelated
+/// reply-keyboard case, and MAX's own documented "at most three <c>request_contact</c>-type buttons per
+/// row" constraint is a caller-side discipline (<see cref="MaxChannelAdapter"/> never builds more than
+/// one), not something this record itself enforces - the same "do not validate what the caller already
+/// controls" restraint <see cref="MessagePayload"/>'s own remarks describe for a different boundary.
+/// </summary>
+public sealed record MaxInlineKeyboardPayload(
+    [property: JsonPropertyName("buttons")] IReadOnlyList<IReadOnlyList<MaxInlineKeyboardButton>> Buttons);
+
+/// <summary>`25-152`: one button of a <see cref="MaxInlineKeyboardPayload"/> row. <see cref="Type"/> is
+/// MAX's own closed button vocabulary (this file's own remarks list all seven members); only
+/// <c>"request_contact"</c> has a caller in this codebase - "do not model what nothing reads" applies to
+/// the other six exactly as it does to <c>MaxGetMeResponse</c>'s own unused fields.</summary>
+public sealed record MaxInlineKeyboardButton(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("text")] string Text);
 
 public sealed record MaxSendMessageResponse([property: JsonPropertyName("message")] MaxSentMessage? Message);
 

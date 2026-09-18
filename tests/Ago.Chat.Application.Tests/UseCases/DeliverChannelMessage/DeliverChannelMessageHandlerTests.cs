@@ -527,6 +527,145 @@ public class DeliverChannelMessageHandlerTests
         Assert.Equal("What's your phone number?", sent.Body.Value);
     }
 
+    /// <summary>
+    /// `25-152`'s own core new behaviour: a <see cref="PrimitiveKinds.Form"/> step whose own
+    /// <c>fieldId</c> is <c>"phone"</c> - the phone-collection step, `25-146`'s own identical
+    /// discriminator - must set <see cref="Application.Abstractions.OutboundChannelMessage.RequestContactIfSupported"/>,
+    /// so a channel with a contact-sharing affordance can offer it. The prose <see cref="Message.Body"/>
+    /// rendering is unaffected - the flag is additive, not a replacement for the text every channel
+    /// already relays.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_ForAPhoneCollectionFormStep_SetsRequestContactIfSupported()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.Form),
+            new MessagePayload("""{"prompt":"What is your phone number?","fieldId":"phone","fieldLabel":"Phone number"}"""));
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.True(sent.RequestContactIfSupported);
+        Assert.Equal("What is your phone number?", sent.Body.Value);
+    }
+
+    /// <summary>`25-152`: the identical step, but on `20-09`'s own <see cref="PrimitiveKinds.VerifiedPhoneForm"/>
+    /// kind - the flag's own discriminator is stated as "Form or VerifiedPhoneForm", not "Form alone", and
+    /// this is the fails-before proof that the second kind was not forgotten.</summary>
+    [Fact]
+    public async Task HandleAsync_ForAVerifiedPhoneFormStep_SetsRequestContactIfSupported()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.VerifiedPhoneForm),
+            new MessagePayload("""{"prompt":"Confirm the phone we have on file","fieldId":"phone","fieldLabel":"Phone number"}"""));
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.True(sent.RequestContactIfSupported);
+    }
+
+    /// <summary>`25-152`: a <see cref="PrimitiveKinds.Form"/> step asking for something other than a
+    /// phone number (the same regression axis `ui/modules.test.ts`'s own "a form-kind step with a
+    /// different fieldId still renders the plain generic input, unchanged" establishes on the widget
+    /// side) must never set the flag - this is the discriminator's own negative case, proving it keys on
+    /// <c>fieldId</c>, not merely on the step being a <see cref="PrimitiveKinds.Form"/>.</summary>
+    [Fact]
+    public async Task HandleAsync_ForAFormStepWithADifferentFieldId_DoesNotSetRequestContactIfSupported()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.Form),
+            new MessagePayload("""{"prompt":"What's your postcode?","fieldId":"postcode","fieldLabel":"Postcode"}"""));
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.False(sent.RequestContactIfSupported);
+    }
+
+    /// <summary>`25-152`: a choice-shaped step never sets the flag, even one whose payload happens to
+    /// carry a <c>"fieldId":"phone"</c> key it has no business having - the kind check runs first, so a
+    /// producer's own payload shape on the wrong kind can never accidentally trigger a contact
+    /// affordance.</summary>
+    [Fact]
+    public async Task HandleAsync_ForAChoiceListStep_DoesNotSetRequestContactIfSupported_EvenWithAPhoneFieldId()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        conversation.StartModuleTask(
+            new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
+
+        var content = MessageContent.Create(
+            new MessageContentKind(PrimitiveKinds.ChoiceList),
+            new MessagePayload("""{"prompt":"Which service?","fieldId":"phone"}"""),
+            [new MessageAction("Haircut", "svc-1")]);
+        var message = conversation.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("irrelevant fallback text"), Now, content: content);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.System, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.False(sent.RequestContactIfSupported);
+    }
+
+    /// <summary>`25-152`: an ordinary operator reply (no <see cref="Message.Content"/> at all) must
+    /// default the flag to <see langword="false"/> - the ordinary path every existing test in this file
+    /// already exercises, made explicit here so a future change to the default cannot silently widen
+    /// which messages ask for a contact.</summary>
+    [Fact]
+    public async Task HandleAsync_ForAnOperatorMessageWithNoContent_DoesNotSetRequestContactIfSupported()
+    {
+        var harness = CreateHarness(out var conversation, out var maxAdapter);
+        await LinkMaxIdentity(harness.Identities, conversation.VisitorId);
+        var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi there"), Now);
+
+        var outcome = await harness.Handler.HandleAsync(
+            new Application.UseCases.DeliverChannelMessage.DeliverChannelMessage(
+                SiteId, conversation.Id, message.Id, MessageAuthorKind.Operator, message.Sequence),
+            CancellationToken.None);
+
+        Assert.Equal(Application.UseCases.DeliverChannelMessage.DeliverChannelMessageOutcome.Delivered, outcome);
+        var sent = Assert.Single(maxAdapter.Sent);
+        Assert.False(sent.RequestContactIfSupported);
+    }
+
     /// <summary>`23-19`'s own Done-when: "a conversation with no linked channel writes nothing at all -
     /// the no-linked-channel outcome is not a delivery failure and must not be reported as one."</summary>
     [Fact]

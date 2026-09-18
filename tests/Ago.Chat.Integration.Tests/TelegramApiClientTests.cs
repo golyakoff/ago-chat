@@ -36,10 +36,60 @@ public sealed class TelegramApiClientTests
 
         var client = BuildClient(host.BaseUrl);
 
-        var result = await client.SendMessageAsync(Token, chatId: 42, text: "hello", CancellationToken.None);
+        var result = await client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal("555", result.ProviderMessageId);
+    }
+
+    /// <summary>`25-152`: <c>requestContact: false</c> (every ordinary reply) must not add a
+    /// <c>reply_markup</c> field at all - not an empty one, not a keyboard with zero rows - proving the
+    /// "byte-identical to today" claim <c>OutboundChannelMessage.RequestContactIfSupported</c>'s own
+    /// remarks make for every channel that does not set the flag is honoured even by Telegram itself on
+    /// its own unset path, the same request shape this client has always sent.</summary>
+    [Fact]
+    public async Task SendMessageAsync_WithRequestContactFalse_SendsNoReplyMarkupField()
+    {
+        string? capturedBody = null;
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapPost($"/bot{Token}/sendMessage", async (HttpContext ctx) =>
+            {
+                capturedBody = await new StreamReader(ctx.Request.Body).ReadToEndAsync();
+                return Results.Json(new { ok = true, result = new { message_id = 1 } });
+            }));
+        var client = BuildClient(host.BaseUrl);
+
+        await client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        Assert.DoesNotContain("reply_markup", capturedBody);
+    }
+
+    /// <summary>`25-152`'s own outbound half: a phone-collection step's own flag reaches Telegram as a
+    /// <c>ReplyKeyboardMarkup</c> carrying exactly one <c>request_contact</c> button, alongside the
+    /// unchanged prose text - proven against the real wire body, not just the DTO in isolation.</summary>
+    [Fact]
+    public async Task SendMessageAsync_WithRequestContactTrue_SendsAReplyKeyboardWithARequestContactButton()
+    {
+        string? capturedBody = null;
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapPost($"/bot{Token}/sendMessage", async (HttpContext ctx) =>
+            {
+                capturedBody = await new StreamReader(ctx.Request.Body).ReadToEndAsync();
+                return Results.Json(new { ok = true, result = new { message_id = 1 } });
+            }));
+        var client = BuildClient(host.BaseUrl);
+
+        await client.SendMessageAsync(
+            Token, chatId: 42, text: "What is your phone number?", requestContact: true, CancellationToken.None);
+
+        Assert.NotNull(capturedBody);
+        using var document = System.Text.Json.JsonDocument.Parse(capturedBody);
+        var keyboard = document.RootElement.GetProperty("reply_markup").GetProperty("keyboard");
+        var firstRow = keyboard[0];
+        Assert.Single(firstRow.EnumerateArray());
+        Assert.True(firstRow[0].GetProperty("request_contact").GetBoolean());
+        Assert.Equal("What is your phone number?", document.RootElement.GetProperty("text").GetString());
     }
 
     /// <summary>403 is Telegram's own well-known shape for "the bot was blocked by this user" - a
@@ -56,7 +106,7 @@ public sealed class TelegramApiClientTests
 
         var client = BuildClient(host.BaseUrl);
 
-        var result = await client.SendMessageAsync(Token, chatId: 42, text: "hello", CancellationToken.None);
+        var result = await client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.Contains("403", result.RefusalReason);
@@ -78,7 +128,7 @@ public sealed class TelegramApiClientTests
         var client = BuildClient(host.BaseUrl);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => client.SendMessageAsync(Token, chatId: 42, text: "hello", CancellationToken.None));
+            () => client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None));
     }
 
     [Fact]
@@ -90,7 +140,7 @@ public sealed class TelegramApiClientTests
         var client = BuildClient(host.BaseUrl);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => client.SendMessageAsync(Token, chatId: 42, text: "hello", CancellationToken.None));
+            () => client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None));
     }
 
     /// <summary>The literal "provider unreachable" case, against a real closed socket rather than a
@@ -106,7 +156,7 @@ public sealed class TelegramApiClientTests
         await host.App.StopAsync();
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => client.SendMessageAsync(Token, chatId: 42, text: "hello", CancellationToken.None));
+            () => client.SendMessageAsync(Token, chatId: 42, text: "hello", requestContact: false, CancellationToken.None));
     }
 
     [Fact]
