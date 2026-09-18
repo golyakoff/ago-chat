@@ -1,4 +1,6 @@
-﻿namespace Ago.Chat.Application.UseCases.CreateOperatorInvite;
+﻿using Ago.Chat.Application.Emailing;
+
+namespace Ago.Chat.Application.UseCases.CreateOperatorInvite;
 
 /// <summary>
 /// `25-90`: the invite code's own second, independent delivery channel. `docs/backlog/25-90-*.md`'s own
@@ -34,7 +36,13 @@
 /// </summary>
 internal static class OperatorInviteCodeMailTemplate
 {
-    public static (string Subject, string Body) Build(string code, string redeemUrl)
+    /// <summary>
+    /// `25-155`: <paramref name="Body"/> is byte-for-byte the same string this method has always
+    /// returned - the plain-text wording is unchanged, only a third, HTML rendering of the identical
+    /// content through <see cref="EmailHtmlShell"/> (`docs/backlog/25-155-*.md`'s own "same wording, new
+    /// rendering") is new.
+    /// </summary>
+    public static (string Subject, string Body, string HtmlBody) Build(string code, string redeemUrl)
     {
         const string ruSubject = "Резервный код приглашения AGO Chat";
         var ruBody = $"""
@@ -74,6 +82,28 @@ internal static class OperatorInviteCodeMailTemplate
 
         var subject = $"{ruSubject} / {enSubject}";
         var body = $"{ruBody}\n\n----------\n\n{enBody}";
-        return (subject, body);
+
+        var htmlBody = EmailHtmlShell.Render(new EmailShellContent(
+            Heading: "Ваш резервный код приглашения / Your backup invite code",
+            HeroIcon: "\U0001F511", // key
+            BodyParagraphs:
+            [
+                "Здравствуйте! Это отдельное, резервное письмо с кодом приглашения в AGO Chat — на случай, " +
+                "если письмо со ссылкой для активации аккаунта не дошло или потерялось.",
+                $"Ваш код приглашения (скопируйте его целиком): {code}",
+                "Что делать: создайте аккаунт (или войдите, если он уже есть), откройте страницу «Активировать " +
+                "код приглашения» и вставьте этот код в поле «Код приглашения».",
+                "Hello, this is a separate, backup email carrying your AGO Chat invite code, in case the " +
+                "account-activation email did not arrive or got lost.",
+                $"Your invite code (copy it in full): {code}",
+                "What to do: create your account (or sign in if you already have one), open the \"Redeem an " +
+                "invite code\" page, and paste this code into the \"Invite code\" field.",
+            ],
+            CallToAction: new EmailShellCallToAction("Открыть страницу активации / Open the redeem page", redeemUrl),
+            SecondaryNote:
+                "Оба письма независимы друг от друга — для активации аккаунта достаточно любого одного из " +
+                "них. / The two emails are independent of each other — either one on its own is enough."));
+
+        return (subject, body, htmlBody);
     }
 }

@@ -108,13 +108,13 @@ public sealed class DownloadThresholdWatchdogJob(
             recipients = await InactivityWatchdogQuery.ListOperatorEmailsAsync(connection, candidate.SiteId, cancellationToken);
         }
 
-        var (subject, body) = DownloadThresholdWarningMailTemplate.Build(
+        var (subject, body, htmlBody) = DownloadThresholdWarningMailTemplate.Build(
             candidate.SiteName, candidate.BytesOut, candidate.SoftThresholdBytes, candidate.HardThresholdBytes,
             options.Value.ConsoleUrl);
 
         foreach (var recipient in recipients)
         {
-            await mailSender.SendAsync(new NotificationMailMessage(recipient, subject, body), cancellationToken);
+            await mailSender.SendAsync(new NotificationMailMessage(recipient, subject, body, htmlBody), cancellationToken);
         }
 
         // Marked notified even when this site has no operator email on file - the identical

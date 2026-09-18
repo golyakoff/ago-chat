@@ -42,7 +42,12 @@ public sealed class NotificationMailSender(
             MessageId: $"<{Guid.NewGuid():N}@{options.Value.Domain}>",
             InReplyTo: null,
             References: null,
-            Date: now);
+            Date: now,
+            // `25-155`: the only new thing this class does - hand the HTML rendering straight through so
+            // EmailSmtpClient.SendAsync's own branch picks BuildMultipartAlternative when the caller
+            // supplied one, or the untouched plain-only Build otherwise (message.HtmlBody is null for
+            // every caller that has not been rewired to the shared shell yet).
+            HtmlBody: message.HtmlBody);
 
         // `EmailSmtpClient.SendAsync`'s own terminal/transient split (its own remarks) is reused as-is
         // here, unwrapped: a 4xx/connection-stage fault is *thrown* by that client directly, and is left

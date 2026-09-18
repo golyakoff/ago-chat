@@ -137,12 +137,12 @@ public sealed class InactivityWatchdogJob(
 
         var deletionDate = candidate.EffectiveActivityAt + options.Value.InactivityWindow;
         var daysRemaining = Math.Max(0, (int)Math.Ceiling((deletionDate - now).TotalDays));
-        var (subject, body) = InactivityWarningMailTemplate.Build(
+        var (subject, body, htmlBody) = InactivityWarningMailTemplate.Build(
             candidate.SiteName, daysRemaining, deletionDate, options.Value.ConsoleLoginUrl);
 
         foreach (var recipient in recipients)
         {
-            await mailSender.SendAsync(new NotificationMailMessage(recipient, subject, body), cancellationToken);
+            await mailSender.SendAsync(new NotificationMailMessage(recipient, subject, body, htmlBody), cancellationToken);
         }
 
         // Marked warned even when this site has no operator email on file (recipients is empty) -
