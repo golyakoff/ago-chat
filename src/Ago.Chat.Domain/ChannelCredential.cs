@@ -107,10 +107,35 @@ public sealed class ChannelCredential
     /// </summary>
     public byte[]? RefreshTokenCiphertext { get; private set; }
 
+    /// <summary>
+    /// `25-147`: the one public-facing fact a stranger could already see or dial - a Telegram/MAX bot's
+    /// own `@username`, a WhatsApp number's `display_phone_number` - never a credential-adjacent id like
+    /// <see cref="ProviderAccountId"/> (WhatsApp's own `phone_number_id`, an inbound-routing key, stays
+    /// exactly as private as before). <see langword="null"/> until a provider round trip discovers it,
+    /// which does not always happen at <see cref="Register"/> time: VK's own community id (already in
+    /// <see cref="ProviderAccountId"/>) is deliberately never copied here - `25-147`'s own decision is
+    /// that VK's handle is <em>derived</em> at read time (`vk.me/club&lt;id&gt;`, computed by
+    /// `Ago.Chat.Infrastructure.Postgres.PublicChannelLinkReadStore`), not stored, since nothing about it
+    /// can ever change independently of <see cref="ProviderAccountId"/> and a second, redundant column
+    /// would only invite the two to drift. Avito gets no value here at all, ever - it has no provider-
+    /// documented public deep-link at all (`docs/backlog/25-147-*.md`'s own explicit "store nothing, and
+    /// record why").
+    ///
+    /// <para><b>Settable independently of <see cref="Register"/>, via <see cref="SetPublicHandle"/>.</b>
+    /// Telegram's own bot username is known at connect time (the existing `getMe` verification call
+    /// already fetches it) but is captured through a second write after that call succeeds, not folded
+    /// into <see cref="Register"/>'s own argument list, because <c>Ago.Chat.Api.Channels.TelegramChannelEndpoints.HandleConnectAsync</c>
+    /// registers the credential row *before* calling `getMe` (so it has something to roll back if
+    /// Telegram refuses the token) - the identical ordering this type's own remarks already document for
+    /// that endpoint. WhatsApp's and VK's own provider calls both happen *before* <see cref="Register"/>,
+    /// so their own connect endpoints pass a value straight into <see cref="Register"/> instead.</para>
+    /// </summary>
+    public string? PublicHandle { get; private set; }
+
     private ChannelCredential(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
         byte[] webhookSecretHash, bool active, DateTimeOffset createdAt, string? providerAccountId,
-        byte[]? refreshTokenCiphertext)
+        byte[]? refreshTokenCiphertext, string? publicHandle)
     {
         Id = id;
         SiteId = siteId;
@@ -121,6 +146,7 @@ public sealed class ChannelCredential
         CreatedAt = createdAt;
         ProviderAccountId = providerAccountId;
         RefreshTokenCiphertext = refreshTokenCiphertext;
+        PublicHandle = publicHandle;
     }
 
     // EF Core materialization only (1-04's precedent) - never called by domain code.
@@ -146,9 +172,21 @@ public sealed class ChannelCredential
     public static ChannelCredential Register(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
         byte[] webhookSecretHash, DateTimeOffset now, string? providerAccountId = null,
-        byte[]? refreshTokenCiphertext = null) =>
+        byte[]? refreshTokenCiphertext = null, string? publicHandle = null) =>
         new(id, siteId, kind, tokenCiphertext, webhookSecretHash, active: true, now, providerAccountId,
-            refreshTokenCiphertext);
+            refreshTokenCiphertext, publicHandle);
+
+    /// <summary>
+    /// `25-147`: records a public handle discovered *after* <see cref="Register"/> already ran - see
+    /// <see cref="PublicHandle"/>'s own remarks for why Telegram's connect flow needs this rather than
+    /// passing the value in at registration. Also what
+    /// <c>Ago.Chat.Api.Channels.TelegramChannelEndpoints.HandleStatusAsync</c> calls on every live status
+    /// read, so a tenant who connected before this item shipped gets a handle the next time they look at
+    /// that screen - no reconnect required, and no guard here against overwriting an existing value with
+    /// an identical or updated one: a bot's own `@username` can change at Telegram's side, and this is
+    /// exactly the live-recheck path meant to notice that.
+    /// </summary>
+    public void SetPublicHandle(string? publicHandle) => PublicHandle = publicHandle;
 
     /// <summary>
     /// Constant-time comparison of a candidate webhook secret (as received on an inbound MAX request's

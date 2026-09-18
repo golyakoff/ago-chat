@@ -109,6 +109,11 @@ public static class AvitoChannelEndpoints
             return ConversationErrors.ChannelInvalidToken(ex.Message).ToProblem(httpContext);
         }
 
+        // `25-147`: Avito gets no PublicHandle, deliberately, and never will through this endpoint.
+        // AvitoUserInfoSelf.Id is a numeric seller account id - Avito documents no public deep-link URL
+        // built from it (or from anything else this credential holds), so storing it here would only
+        // invite a future reader to assume a link exists that Avito itself never promised. Left null
+        // rather than reusing ProviderAccountId's own value the way VK's read-time derivation does.
         var registered = await registerHandler.HandleAsync(
             new RegisterChannelCredential(
                 user.GetOperatorId(), site, ChannelKind.Avito, request.AccessToken,

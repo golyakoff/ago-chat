@@ -33,7 +33,15 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("chat")] TelegramChat? Chat,
     [property: JsonPropertyName("text")] string? Text);
 
-public sealed record TelegramUser([property: JsonPropertyName("id")] long? Id);
+/// <summary>
+/// `25-147`: <see cref="Username"/> joins as an additive field - unused by every existing caller
+/// (<see cref="TelegramMessage.From"/>, which has never read anything off this type but <see cref="Id"/>),
+/// and read for the first time by <see cref="TelegramApiClient.GetMeAsync"/>'s own success path, since
+/// Telegram's `getMe` response is this identical `User` shape (`core.telegram.org/bots/api#user`).
+/// </summary>
+public sealed record TelegramUser(
+    [property: JsonPropertyName("id")] long? Id,
+    [property: JsonPropertyName("username")] string? Username = null);
 
 public sealed record TelegramChat([property: JsonPropertyName("id")] long? Id);
 

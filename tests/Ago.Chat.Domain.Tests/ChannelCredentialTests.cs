@@ -224,4 +224,58 @@ public class ChannelCredentialTests
 
         Assert.Throws<InvalidChannelCredentialStateException>(() => credential.RevokeForLapsedEntitlement());
     }
+
+    /// <summary>`25-147`: MAX's/Telegram's own registrations never pass this parameter either (both
+    /// capture it via a second write, <see cref="SetPublicHandle_RecordsTheValue"/> below) - the identical
+    /// "the default keeps every existing call site unchanged" precedent
+    /// <see cref="Register_WithNoProviderAccountId_LeavesItNull"/> already establishes for the two
+    /// parameters before this one.</summary>
+    [Fact]
+    public void Register_WithNoPublicHandle_LeavesItNull()
+    {
+        var credential = Register();
+
+        Assert.Null(credential.PublicHandle);
+    }
+
+    /// <summary>WhatsApp's own registration path (`Ago.Chat.Api`'s <c>WhatsAppChannelEndpoints</c>)
+    /// supplies one at registration time, unlike Telegram/MAX - <see cref="Domain.ChannelCredential.PublicHandle"/>'s
+    /// own remarks on why only VK's and WhatsApp's own connect calls happen before <see cref="ChannelCredential.Register"/>.</summary>
+    [Fact]
+    public void Register_WithAPublicHandle_StoresIt()
+    {
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), SiteId, ChannelKind.WhatsApp, [1, 2, 3], Hash("s"), Now,
+            publicHandle: "+1 555 0100");
+
+        Assert.Equal("+1 555 0100", credential.PublicHandle);
+    }
+
+    /// <summary>Telegram's and MAX's own connect flows both register the row first, then discover the
+    /// handle from a second provider call - this is that second write, proven directly against the
+    /// aggregate rather than only through an endpoint test.</summary>
+    [Fact]
+    public void SetPublicHandle_RecordsTheValue()
+    {
+        var credential = Register();
+
+        credential.SetPublicHandle("shop_support_bot");
+
+        Assert.Equal("shop_support_bot", credential.PublicHandle);
+    }
+
+    /// <summary>`TelegramChannelEndpoints.HandleStatusAsync`'s own live-recheck path calls this on every
+    /// status read, whether or not a handle was already known - overwriting with a fresher value (or
+    /// clearing it back to null, if a bot's own username were ever removed at Telegram's side) must both
+    /// work, not just the first-time-known case above.</summary>
+    [Fact]
+    public void SetPublicHandle_OverwritesAnExistingValue()
+    {
+        var credential = Register();
+        credential.SetPublicHandle("old_handle");
+
+        credential.SetPublicHandle("new_handle");
+
+        Assert.Equal("new_handle", credential.PublicHandle);
+    }
 }

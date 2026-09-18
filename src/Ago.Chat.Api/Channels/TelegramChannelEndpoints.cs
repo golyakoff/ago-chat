@@ -125,6 +125,17 @@ public static class TelegramChannelEndpoints
         var outcome = await TelegramLiveTokenCheck.RunAsync(
             telegramApiClient, token, TelegramLiveTokenCheck.Timeout, cancellationToken);
 
+        // `25-147`: backfill on this same live read, no reconnect required - a tenant who connected
+        // before this item shipped, or whose bot's own @username changed since, gets it (or its update)
+        // the next time this screen is loaded. Never gates or changes anything about `outcome` itself:
+        // a verified-but-handle-less bot still reports Verified: true here exactly as it did before this
+        // item, this is purely an additional, silent write alongside the existing read.
+        if (outcome.Ok && outcome.Username is { Length: > 0 } username && credential.PublicHandle != username)
+        {
+            credential.SetPublicHandle(username);
+            await credentials.SaveAsync(credential, cancellationToken);
+        }
+
         return Results.Ok(new TelegramChannelStatusResponse(
             Connected: true,
             ChannelCredentialId: credentialId.Value,
@@ -140,6 +151,7 @@ public static class TelegramChannelEndpoints
         ConnectTelegramChannelRequest request,
         RegisterChannelCredentialHandler registerHandler,
         RevokeChannelCredentialHandler revokeHandler,
+        IChannelCredentialRepository credentials,
         TelegramApiClient telegramApiClient,
         HttpContext httpContext,
         CancellationToken cancellationToken)
@@ -165,6 +177,21 @@ public static class TelegramChannelEndpoints
             await revokeHandler.HandleAsync(
                 new RevokeChannelCredential(credentialId, user.GetOperatorId(), site), cancellationToken);
             return ConversationErrors.ChannelInvalidToken(verified.RefusalReason!).ToProblem(httpContext);
+        }
+
+        // `25-147`: the credential was already written above with no public handle
+        // (Domain.ChannelCredential.PublicHandle's own remarks on why this endpoint captures it as a
+        // second write rather than passing it into Register - this endpoint's own rollback-on-refusal
+        // ordering has to create the row before it can call Telegram at all). A bot with no username
+        // configured (Telegram allows this) leaves the row exactly as it was: no write, no handle.
+        if (verified.Username is { Length: > 0 } username)
+        {
+            var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
+            credential?.SetPublicHandle(username);
+            if (credential is not null)
+            {
+                await credentials.SaveAsync(credential, cancellationToken);
+            }
         }
 
         return Results.Created(

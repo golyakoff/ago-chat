@@ -290,6 +290,40 @@ public class RegisterChannelCredentialHandlerTests
         Assert.Equal("ChannelCredential.InvalidToken", result.Error!.Value.Code);
     }
 
+    /// <summary>`25-147`: the one field only VK's and WhatsApp's own connect endpoints ever supply -
+    /// the identical "stays channel-neutral by simply forwarding it" reasoning
+    /// <see cref="HandleAsync_WithAProviderAccountId_PersistsItOnTheCredential"/> already proves.</summary>
+    [Fact]
+    public async Task HandleAsync_WithAPublicHandle_PersistsItOnTheCredential()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.WhatsApp, "whatsapp-token", ProviderAccountId: "phone-number-id-1",
+                PublicHandle: "+1 555 0100"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = await fixture.Credentials.GetByIdAsync(result.Value.ChannelCredentialId, CancellationToken.None);
+        Assert.Equal("+1 555 0100", saved!.PublicHandle);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithNoPublicHandle_LeavesItNull()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterChannelCredential.RegisterChannelCredential(
+                OperatorId, SiteId, ChannelKind.Max, "shop-bot-token"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = await fixture.Credentials.GetByIdAsync(result.Value.ChannelCredentialId, CancellationToken.None);
+        Assert.Null(saved!.PublicHandle);
+    }
+
     [Fact]
     public async Task HandleAsync_AfterTheExistingCredentialIsRevoked_AllowsRegisteringAReplacement()
     {
