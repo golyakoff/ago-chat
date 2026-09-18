@@ -438,6 +438,10 @@ public sealed class ChatModule : IProductModule
                 .Get(ChannelResiliencePipelines.PipelineName)));
         services.AddSingleton<IInboundChannelAdapterRegistry, InboundChannelAdapterRegistry>();
         services.AddScoped<ReceiveChannelMessageHandler>();
+        // `25-151`: the inbound-channel sibling right beside it - see RecordChannelVisitorContact's own
+        // remarks for why a shared contact gets its own command rather than a field on
+        // ReceiveChannelMessage.
+        services.AddScoped<Ago.Chat.Application.UseCases.RecordChannelVisitorContact.RecordChannelVisitorContactHandler>();
         // `14-02`: the outbound half - relays an operator's already-committed reply through whichever
         // channel the visitor was reached by. See DeliverChannelMessageHandler's own remarks for why it
         // is driven off MessageAccepted rather than the send path.

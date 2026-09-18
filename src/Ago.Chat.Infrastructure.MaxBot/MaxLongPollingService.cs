@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.RecordChannelVisitorContact;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -193,7 +194,13 @@ public sealed class MaxLongPollingService(
 
                 foreach (var update in envelope.Updates ?? [])
                 {
-                    await DispatchIfMessageAsync(siteId, update, cancellationToken);
+                    // `25-151`: the token this iteration already decrypted for GetUpdatesAsync above is
+                    // passed straight through - MaxInboundMessageParser's own HMAC trust check needs it,
+                    // and re-decrypting per update inside the dispatch would only spend the same AES-GCM
+                    // cost again for no reason (the iteration-level "never risk a stale token surviving
+                    // past its own revocation" trade-off this method's own remarks already state applies
+                    // just as well to every update this same iteration processes).
+                    await DispatchIfMessageAsync(siteId, update, token, cancellationToken);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -245,32 +252,74 @@ public sealed class MaxLongPollingService(
         }
     }
 
-    private async Task DispatchIfMessageAsync(SiteId siteId, MaxUpdate update, CancellationToken cancellationToken)
+    private async Task DispatchIfMessageAsync(
+        SiteId siteId, MaxUpdate update, string botToken, CancellationToken cancellationToken)
     {
-        var parsed = MaxInboundMessageParser.TryParse(update);
+        var parsed = MaxInboundMessageParser.TryParse(update, botToken);
         if (parsed is null)
         {
+            // `25-151`: a contact attachment present but rejected by MaxInboundMessageParser's own hash
+            // check reads identically to "nothing this parser understood" to TryParse's own caller -
+            // re-inspecting the raw update here is the only way to log the rejection distinctly from an
+            // ordinary skipped update, the same split TelegramLongPollingService's own dispatch makes for
+            // Telegram's identical case.
+            if (HasContactAttachment(update))
+            {
+                logger.LogWarning(
+                    "Rejected a shared MAX contact for site {SiteId}: the attachment's hash did not verify.",
+                    siteId.Value);
+            }
+
             return;
         }
 
         await using var scope = scopeFactory.CreateAsyncScope();
-        var handler = scope.ServiceProvider.GetRequiredService<ReceiveChannelMessageHandler>();
 
-        var result = await handler.HandleAsync(
-            new ReceiveChannelMessage(
-                siteId, ChannelKind.Max,
-                new ExternalChannelAddress(parsed.ChatId.ToString()),
-                new ExternalMessageId(parsed.ExternalMessageId),
-                parsed.Text),
-            cancellationToken);
-
-        if (result.IsFailure)
+        if (!string.IsNullOrWhiteSpace(parsed.Text))
         {
-            logger.LogWarning(
-                "Could not receive a MAX message for site {SiteId}: {Code} {Message}",
-                siteId.Value, result.Error!.Value.Code, result.Error!.Value.Message);
+            var handler = scope.ServiceProvider.GetRequiredService<ReceiveChannelMessageHandler>();
+
+            var result = await handler.HandleAsync(
+                new ReceiveChannelMessage(
+                    siteId, ChannelKind.Max,
+                    new ExternalChannelAddress(parsed.ChatId.ToString()),
+                    new ExternalMessageId(parsed.ExternalMessageId),
+                    parsed.Text),
+                cancellationToken);
+
+            if (result.IsFailure)
+            {
+                logger.LogWarning(
+                    "Could not receive a MAX message for site {SiteId}: {Code} {Message}",
+                    siteId.Value, result.Error!.Value.Code, result.Error!.Value.Message);
+            }
+        }
+
+        // `25-151`: a verified contact share, dispatched to its own sibling command rather than folded
+        // into ReceiveChannelMessage above - see RecordChannelVisitorContact's own remarks for why.
+        if (parsed.Contact is { } contact)
+        {
+            var contactHandler = scope.ServiceProvider.GetRequiredService<RecordChannelVisitorContactHandler>();
+
+            var contactResult = await contactHandler.HandleAsync(
+                new RecordChannelVisitorContact(
+                    siteId, ChannelKind.Max,
+                    new ExternalChannelAddress(parsed.ChatId.ToString()),
+                    contact.Phone,
+                    MaxContactName.Compose(contact.FirstName, contact.LastName)),
+                cancellationToken);
+
+            if (contactResult.IsFailure)
+            {
+                logger.LogWarning(
+                    "Could not record a shared MAX contact for site {SiteId}: {Code} {Message}",
+                    siteId.Value, contactResult.Error!.Value.Code, contactResult.Error!.Value.Message);
+            }
         }
     }
+
+    private static bool HasContactAttachment(MaxUpdate update) =>
+        update.Message?.Body?.Attachments?.Any(a => a.Type == "contact") == true;
 
     private async Task StopAllPollersAsync()
     {

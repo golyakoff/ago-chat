@@ -31,7 +31,26 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("message_id")] long? MessageId,
     [property: JsonPropertyName("from")] TelegramUser? From,
     [property: JsonPropertyName("chat")] TelegramChat? Chat,
-    [property: JsonPropertyName("text")] string? Text);
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("contact")] TelegramContact? Contact = null);
+
+/// <summary>
+/// `25-151`: Telegram's own "share a contact" message shape (core.telegram.org/bots/api#contact),
+/// confirmed against the public Bot API documentation - unlike <c>MaxDtos.cs</c>'s own contact shape,
+/// this one carries no honesty caveat, the same "documentation is complete and current" standing this
+/// file's own top-level remarks already give Telegram's wire shapes in general.
+///
+/// <para><see cref="UserId"/> is what <see cref="TelegramInboundMessageParser"/>'s own trust check
+/// exists for: present only when the shared contact is a Telegram user, and the mandatory discriminator
+/// between "the sender shared their own number" (<c>UserId == message.from.id</c>) and "the sender
+/// forwarded someone else's address-book entry" - Telegram signs nothing here, so this equality is the
+/// entire trust mechanism (this item's own backlog text).</para>
+/// </summary>
+public sealed record TelegramContact(
+    [property: JsonPropertyName("phone_number")] string? PhoneNumber,
+    [property: JsonPropertyName("first_name")] string? FirstName,
+    [property: JsonPropertyName("last_name")] string? LastName,
+    [property: JsonPropertyName("user_id")] long? UserId);
 
 /// <summary>
 /// `25-147`: <see cref="Username"/> joins as an additive field - unused by every existing caller

@@ -61,31 +61,67 @@ public static class TelegramInboundMessageParser
         }
 
         var text = update.Message.Text;
-        if (string.IsNullOrWhiteSpace(text))
+
+        // `25-151`: a Telegram "share contact" message carries no `text` at all - the two are mutually
+        // exclusive on Telegram's own wire shape - so this can no longer bail out just because `text` is
+        // blank; it must also ask whether a trustworthy contact rode along instead. See
+        // TryVerifyContact's own remarks for what "trustworthy" means here.
+        var contact = TryVerifyContact(update.Message.Contact, senderId);
+
+        if (string.IsNullOrWhiteSpace(text) && contact is null)
         {
             return null;
         }
 
-        // `25-148`: strip Telegram's own `/start ` prefix off a deep-link payload before it ever reaches
-        // ReceiveChannelMessageHandler - this is the entire mechanism that lets a visitor tapping
-        // `AuthEndpoints`' own minted `t.me/<bot>?start=<code>` link confirm a pending channel-identity
-        // link (`14-12`/`adr/0079`) exactly the way typing the bare code by hand already does, with no
-        // second, parallel verification mechanism: ReceiveChannelMessageHandler's own confirmation branch
-        // compares the message body to a live pending code by *exact* equality, never a command parse
-        // (that handler's own remarks), so "/start 4821" has to become "4821" here, at the one place this
-        // codebase already translates Telegram's own wire vocabulary into a plain message body, or it
-        // would never match. A bare "/start" with no payload (a visitor manually starting the bot, not
-        // following a link) has no trailing space to strip and is left exactly as it is - it will simply
-        // fail to match any pending code, the identical, unremarkable outcome any other non-code text
-        // already produces.
-        if (text.StartsWith(StartCommandPrefix, StringComparison.Ordinal))
+        if (!string.IsNullOrWhiteSpace(text))
         {
-            text = text[StartCommandPrefix.Length..];
+            // `25-148`: strip Telegram's own `/start ` prefix off a deep-link payload before it ever
+            // reaches ReceiveChannelMessageHandler - this is the entire mechanism that lets a visitor
+            // tapping `AuthEndpoints`' own minted `t.me/<bot>?start=<code>` link confirm a pending
+            // channel-identity link (`14-12`/`adr/0079`) exactly the way typing the bare code by hand
+            // already does, with no second, parallel verification mechanism: ReceiveChannelMessageHandler's
+            // own confirmation branch compares the message body to a live pending code by *exact* equality,
+            // never a command parse (that handler's own remarks), so "/start 4821" has to become "4821"
+            // here, at the one place this codebase already translates Telegram's own wire vocabulary into a
+            // plain message body, or it would never match. A bare "/start" with no payload (a visitor
+            // manually starting the bot, not following a link) has no trailing space to strip and is left
+            // exactly as it is - it will simply fail to match any pending code, the identical, unremarkable
+            // outcome any other non-code text already produces.
+            if (text.StartsWith(StartCommandPrefix, StringComparison.Ordinal))
+            {
+                text = text[StartCommandPrefix.Length..];
+            }
         }
 
         var externalMessageId = $"{chatId}:{messageId}";
 
-        return new ParsedTelegramMessage(chatId, senderId, externalMessageId, text);
+        return new ParsedTelegramMessage(chatId, senderId, externalMessageId, text, contact);
+    }
+
+    /// <summary>
+    /// `25-151`: the entire trust mechanism this item's own backlog text names - Telegram attaches no
+    /// signature to a shared contact, so <paramref name="senderId"/> (<c>message.from.id</c>) equalling
+    /// <see cref="TelegramContact.UserId"/> is the only thing standing between "the sender shared their
+    /// own number" and "the sender forwarded someone else's address-book entry." A contact with no phone
+    /// number, or one whose <c>user_id</c> is absent or does not match, is rejected here - returned as
+    /// <see langword="null"/>, indistinguishable to this method's own caller from "no contact was ever
+    /// attached" so the two can be told apart only by looking at <see cref="TelegramMessage.Contact"/>
+    /// itself, which is exactly what <see cref="TelegramLongPollingService"/>'s own dispatch does to log a
+    /// rejection distinctly from an ordinary absence.
+    /// </summary>
+    private static ParsedTelegramContact? TryVerifyContact(TelegramContact? contact, long senderId)
+    {
+        if (contact is null || string.IsNullOrWhiteSpace(contact.PhoneNumber))
+        {
+            return null;
+        }
+
+        if (contact.UserId != senderId)
+        {
+            return null;
+        }
+
+        return new ParsedTelegramContact(contact.PhoneNumber, contact.FirstName, contact.LastName);
     }
 }
 
@@ -99,4 +135,20 @@ public static class TelegramInboundMessageParser
 /// part of the channel identity <see cref="ChatId"/> alone already resolves - the same split
 /// <c>ParsedMaxMessage</c> draws.
 /// </summary>
-public sealed record ParsedTelegramMessage(long ChatId, long SenderId, string ExternalMessageId, string Text);
+/// <summary>
+/// `25-151`: <paramref name="Text"/> is nullable since this item - a contact-only message carries none
+/// at all (this type's own remarks on <see cref="TelegramInboundMessageParser.TryParse"/>'s new
+/// behaviour). Exactly one of <paramref name="Text"/>/<paramref name="Contact"/> is non-null in
+/// practice (Telegram's own wire shape makes the two mutually exclusive on one message), but nothing
+/// here enforces that as an invariant - the caller (<see cref="TelegramLongPollingService"/>) simply
+/// acts on whichever is present.
+/// </summary>
+public sealed record ParsedTelegramMessage(
+    long ChatId, long SenderId, string ExternalMessageId, string? Text, ParsedTelegramContact? Contact = null);
+
+/// <summary>
+/// `25-151`: a Telegram contact that has already passed <see cref="TelegramInboundMessageParser"/>'s own
+/// <c>user_id</c> trust check - by the time this type exists, "is this really the sender's own number" is
+/// already answered, so nothing downstream needs to re-ask it.
+/// </summary>
+public sealed record ParsedTelegramContact(string PhoneNumber, string? FirstName, string? LastName);

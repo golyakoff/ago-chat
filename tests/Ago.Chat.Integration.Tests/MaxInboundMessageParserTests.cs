@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Infrastructure.MaxBot;
+﻿using System.Security.Cryptography;
+using System.Text;
+using Ago.Chat.Infrastructure.MaxBot;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -104,5 +106,120 @@ public class MaxInboundMessageParserTests
         var update = new MaxUpdate("message_created", 1, null);
 
         Assert.Null(MaxInboundMessageParser.TryParse(update));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-151`: a shared contact attachment - no text at all, and the HMAC-SHA256 hash check that is
+    // this item's own best-effort reconstruction of MAX's substitute for Telegram's `user_id` equality
+    // (this file's own honesty note above, restated for this one addition: field names and the exact
+    // digest encoding are not confirmed against a live capture).
+    // -----------------------------------------------------------------------------------------
+
+    private const string BotToken = "test-bot-token";
+
+    private static string ComputeHash(string vcfInfo, string botToken) =>
+        Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(botToken), Encoding.UTF8.GetBytes(vcfInfo)));
+
+    private static MaxUpdate ContactUpdate(
+        long senderId, long chatId, string vcfInfo, string? hash, string? phone = "+1 555 0100",
+        string? firstName = "Ada", string? lastName = "Lovelace") =>
+        new(
+            "message_created", 1_700_000_000_000,
+            new MaxIncomingMessage(
+                new MaxUser(senderId), new MaxRecipient(chatId),
+                new MaxMessageBody(
+                    Mid: "provider-mid-1", Text: null,
+                    Attachments:
+                    [
+                        new MaxAttachment(
+                            "contact",
+                            new MaxContactAttachmentPayload(
+                                vcfInfo, new MaxContactInfo(senderId, phone, firstName, lastName), hash)),
+                    ]),
+                1_700_000_000_000));
+
+    /// <summary>The item's own headline case for MAX: a contact attachment whose hash verifies against
+    /// this site's own bot token is accepted, with no text at all.</summary>
+    [Fact]
+    public void TryParse_AContactAttachmentWhoseHashVerifies_IsAccepted()
+    {
+        const string vcfInfo = "BEGIN:VCARD\nTEL:+15550100\nEND:VCARD";
+        var update = ContactUpdate(senderId: 1, chatId: 999, vcfInfo, hash: ComputeHash(vcfInfo, BotToken));
+
+        var parsed = MaxInboundMessageParser.TryParse(update, BotToken);
+
+        Assert.NotNull(parsed);
+        Assert.Null(parsed.Text);
+        Assert.NotNull(parsed.Contact);
+        Assert.Equal("+1 555 0100", parsed.Contact.Phone);
+        Assert.Equal("Ada", parsed.Contact.FirstName);
+        Assert.Equal("Lovelace", parsed.Contact.LastName);
+    }
+
+    /// <summary>Case-insensitive on purpose - see this method's own honesty note on the digest's
+    /// unconfirmed exact encoding.</summary>
+    [Fact]
+    public void TryParse_AVerifyingHash_IsAcceptedRegardlessOfLetterCasing()
+    {
+        const string vcfInfo = "BEGIN:VCARD\nTEL:+15550100\nEND:VCARD";
+        var update = ContactUpdate(senderId: 1, chatId: 999, vcfInfo, hash: ComputeHash(vcfInfo, BotToken).ToLowerInvariant());
+
+        Assert.NotNull(MaxInboundMessageParser.TryParse(update, BotToken));
+    }
+
+    /// <summary>The mandatory discriminator, failing: a hash that does not verify against this site's
+    /// own bot token is rejected - the same as no contact attachment at all.</summary>
+    [Fact]
+    public void TryParse_AContactAttachmentWithAWrongHash_IsRejected()
+    {
+        const string vcfInfo = "BEGIN:VCARD\nTEL:+15550100\nEND:VCARD";
+        var update = ContactUpdate(senderId: 1, chatId: 999, vcfInfo, hash: ComputeHash(vcfInfo, "a-different-token"));
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update, BotToken));
+    }
+
+    /// <summary>A caller with no bot token available (the default parameter every ordinary-text call
+    /// site before this item still uses) can never verify a real HMAC - "no contact" for any update
+    /// that happens to carry one, never a false accept.</summary>
+    [Fact]
+    public void TryParse_WithNoBotTokenSupplied_RejectsEvenAGenuinelyValidHash()
+    {
+        const string vcfInfo = "BEGIN:VCARD\nTEL:+15550100\nEND:VCARD";
+        var update = ContactUpdate(senderId: 1, chatId: 999, vcfInfo, hash: ComputeHash(vcfInfo, BotToken));
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update));
+    }
+
+    [Fact]
+    public void TryParse_AContactAttachmentWithNoHash_IsRejected()
+    {
+        const string vcfInfo = "BEGIN:VCARD\nTEL:+15550100\nEND:VCARD";
+        var update = ContactUpdate(senderId: 1, chatId: 999, vcfInfo, hash: null);
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update, BotToken));
+    }
+
+    [Fact]
+    public void TryParse_AContactAttachmentWithNoPhone_IsRejected()
+    {
+        const string vcfInfo = "BEGIN:VCARD\nTEL:+15550100\nEND:VCARD";
+        var update = ContactUpdate(senderId: 1, chatId: 999, vcfInfo, hash: ComputeHash(vcfInfo, BotToken), phone: null);
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update, BotToken));
+    }
+
+    [Fact]
+    public void TryParse_AnAttachmentThatIsNotAContactType_IsIgnored()
+    {
+        var update = new MaxUpdate(
+            "message_created", 1,
+            new MaxIncomingMessage(
+                new MaxUser(1), new MaxRecipient(999),
+                new MaxMessageBody(
+                    Mid: "m", Text: null,
+                    Attachments: [new MaxAttachment("image", Payload: null)]),
+                1));
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update, BotToken));
     }
 }
