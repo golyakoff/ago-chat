@@ -25,19 +25,23 @@ WORKDIR /src
 # certificate chains to "Russian Trusted Root CA" (issued by Russia's own Ministry of Digital
 # Development, confirmed by inspecting the live chain with openssl and verifying it against the
 # published root), which is in no international trust store (Mozilla/Microsoft/Ubuntu) at all - every
-# outbound call MaxApiClient makes failed TLS validation with UntrustedRoot. Fetched from
-# gu-st.ru (Gosuslugi's own static-content domain), the URL this certificate's own publishers
-# document and the one every other .ru-hosted-service integration that needs it uses. Installed
-# system-wide (the author's own explicit choice, 2026-08-28, over scoping trust to MaxApiClient's own
-# HttpClient alone) via the SDK stage's ordinary apt/update-ca-certificates, then the whole
-# /etc/ssl/certs directory is copied into the Chiseled final stage below, which has no package
-# manager of its own to run update-ca-certificates in.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
- && curl -fsSL https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt \
-      -o /usr/local/share/ca-certificates/russian-trusted-root-ca.crt \
- && update-ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+# outbound call MaxApiClient makes failed TLS validation with UntrustedRoot.
+#
+# `25-144`: vendored as a committed file rather than fetched from gu-st.ru (Gosuslugi's own
+# static-content domain) at every build, after that fetch started failing from GitHub Actions'
+# runners with `curl: (35) Recv failure: Connection reset by peer` - reproducibly, five builds in a
+# row, blocking every image publish regardless of what changed in this repository. The certificate
+# itself is public, not a secret (`ago-root docs/architecture/secrets.md`'s reasoning for a site's
+# public key applies here identically, and is already this file's own stated justification for
+# committing `internal-ca.crt` below) - a build-time network fetch of a public, rarely-rotated root
+# certificate bought nothing this repository's own git history does not already give it (provenance,
+# a diff on rotation, a build that does not depend on a third party's uptime), and cost exactly the
+# outage this item was filed for. Installed system-wide (unchanged from the original 2026-08-28
+# choice) via the SDK stage's ordinary `update-ca-certificates`, then the whole /etc/ssl/certs
+# directory is copied into the Chiseled final stage below, which has no package manager of its own to
+# run `update-ca-certificates` in.
+COPY russian-trusted-root-ca.crt /usr/local/share/ca-certificates/russian-trusted-root-ca.crt
+RUN update-ca-certificates
 
 # `22-24`/`adr/0137`: the second root this trust store needs to carry, and a different origin from
 # the one above on purpose. The Russian CA is fetched at build time because Gosuslugi actually
