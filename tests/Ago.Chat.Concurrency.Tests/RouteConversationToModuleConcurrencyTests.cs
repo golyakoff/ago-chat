@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -240,20 +241,37 @@ public sealed class RouteConversationToModuleConcurrencyTests(ConcurrencyTestFix
         SiteId siteId, ConversationId conversationId, EnabledModuleSummary enabledModule, Guid triggerMessageId, int triggerSequence)
     {
         await using var db = fixture.CreateDbContext();
+        var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+        var clock = new SystemClock();
+        var idGenerator = new UuidV7Generator();
+
+        // `25-138`: RouteConversationToModuleHandler's own new contact gate reuses this write path - this
+        // scenario always seeds an already-active module task (SeedActiveTaskConversationAsync), so
+        // ContinueActiveTaskAsync is the only path ever reached, and its own cheap `ExternalTaskId`
+        // sentinel check (never a real gate open) means neither this handler nor
+        // UnreachableChannelIdentityRepository is ever actually exercised by it - a real one is
+        // constructed anyway rather than a throwing stand-in, since a real Postgres context is already
+        // here for it.
+        var recordContactDetail = new RecordVisitorContactDetailHandler(
+            new ConversationRepository(db), new VisitorContactDetailRepository(db), new SiteRepository(db),
+            new AcceptanceRepository(db), new PermissionChecker(db), new FakeRateLimiter(),
+            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+
         var handler = new RouteConversationToModuleHandler(
             new ConversationRepository(db),
             new FixedEnabledModuleReadStore(siteId, enabledModule),
             new FixedStepModuleGateway(ReplyStep, complete: false),
             new UnreachableChannelIdentityRepository(),
-            new EfOutboxWriter<AgoChatDbContext>(db),
-            new EfInboxChecker<AgoChatDbContext>(db, new SystemClock()),
-            new SystemClock(),
-            new UuidV7Generator(),
+            outbox,
+            new EfInboxChecker<AgoChatDbContext>(db, clock),
+            clock,
+            idGenerator,
             new SiteRepository(db),
             new VisitorContactDetailRepository(db),
             new AcceptanceRepository(db),
             new DocumentRepository(db),
-            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" },
+            recordContactDetail);
 
         return await handler.HandleAsync(
             new RouteConversationToModule(triggerMessageId, siteId, conversationId, MessageAuthorKind.Visitor, triggerSequence),

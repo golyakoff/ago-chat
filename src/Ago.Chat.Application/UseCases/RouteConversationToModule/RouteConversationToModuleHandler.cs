@@ -2,6 +2,7 @@
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -63,9 +64,38 @@ public sealed class RouteConversationToModuleHandler(
     IVisitorContactDetailRepository contactDetails,
     IAcceptanceRepository acceptances,
     IDocumentRepository documents,
-    OperatorInviteOptions consoleOptions)
+    OperatorInviteOptions consoleOptions,
+    RecordVisitorContactDetailHandler recordContactDetail)
 {
     public const string ConsumerName = "module-task-routing";
+
+    /// <summary>
+    /// `25-138`: the sentinel <see cref="ModuleTask.ExternalTaskId"/> this gate's own, Chat-only
+    /// <see cref="ModuleTask"/> is started with - the one, deliberate, narrowly-scoped exception to that
+    /// field's own "opaque, never generated or interpreted by Chat" contract. Every other
+    /// <see cref="ModuleTask"/> in this codebase owes that id to a real module (`gateway.StartTaskAsync`'s
+    /// own return value) because a reply against it is eventually resubmitted to that same module
+    /// (<c>gateway.SubmitReplyAsync</c>); this gate's own two steps never reach a module at all - see
+    /// <see cref="OpenContactGateAsync"/>'s own remarks - so there is no real id to store, and this
+    /// constant exists only so <see cref="ContinueActiveTaskAsync"/> can recognise "the active task is
+    /// this gate, not a module's" without adding a field this aggregate does not otherwise need. This
+    /// sentinel is discarded, together with the gate task itself, the instant a real module is finally
+    /// engaged - <see cref="ContinueContactGateReplyAsync"/>'s own <c>StartRealModuleTaskAsync</c> call
+    /// replaces it with a genuine <see cref="ModuleTask"/> carrying the module's own real id.</summary>
+    private const string ContactGateExternalTaskId = "chat-contact-gate";
+
+    /// <summary>
+    /// `25-138`: the one JSON field this gate's own two <see cref="PrimitiveKinds.Form"/> payloads carry
+    /// that neither <see cref="PrimitiveTextRenderer"/> nor <see cref="PrimitiveKinds.IsPhoneCollectionStep"/>
+    /// ever reads - the trigger message's own <see cref="Message.Sequence"/>, so the visitor's original
+    /// reply (the one this gate must never itself consume, per the backlog item's own "must never eat the
+    /// visitor's first real message, only precede it") can be found again and handed to the module,
+    /// unchanged, the instant this gate clears. Chat is both the sole producer and the sole consumer of
+    /// this field for as long as the gate task stays open - it is gone, together with the gate task
+    /// itself, the moment a real module step (with its own real fields, and none of this one) replaces
+    /// it.
+    /// </summary>
+    private const string ContactGateTriggerSequenceField = "_gateTriggerSequence";
 
     /// <summary>Opaque sentinel <see cref="MessageAction.Value"/>s for `25-153`'s own consent gate -
     /// the one case in this codebase where <em>Chat itself</em> is the producer of a
@@ -350,15 +380,48 @@ public sealed class RouteConversationToModuleHandler(
         }
 
         var enabledModule = modulesForSite.First(m => m.ModuleKey == key);
-
-        // `20-07`'s own id trick: Chat's own ModuleTaskId doubles as the wire contract's `chatTaskId` -
-        // the module is handed exactly the id this aggregate will use to identify the task once
-        // StartModuleTask below succeeds, so no second id has to be invented or reconciled.
-        var chatTaskId = idGenerator.NewId(now);
         // `25-37`: the site's own configured widget language, resolved once here and handed to the
         // module for its very first step - see ResolveLocaleAsync's own remarks for why a missing site
         // reads as the safe default rather than a hard failure.
         var locale = await ResolveLocaleAsync(command.SiteId, cancellationToken);
+
+        // `25-138`: the server-side name+phone gate, checked before this conversation's own first reply
+        // is ever forwarded into a module - the exact entry point the backlog item names. See
+        // ResolveContactGateAsync's own remarks for what it checks and why.
+        var contactGate = await ResolveContactGateAsync(conversation.VisitorId, cancellationToken);
+        if (contactGate != ContactGateStatus.Clear)
+        {
+            return await OpenContactGateAsync(conversation, trigger, key, contactGate, locale, now, command, cancellationToken);
+        }
+
+        return await StartRealModuleTaskAsync(
+            conversation, trigger, key, enabledModule, locale, now, command, beforeStart: _ => { }, cancellationToken);
+    }
+
+    /// <summary>
+    /// `25-138`: the one place this class ever calls <c>gateway.StartTaskAsync</c> - pulled out of
+    /// <see cref="TryStartTaskAsync"/> unchanged so <see cref="ContinueContactGateReplyAsync"/> can reach
+    /// the identical call once this gate clears, with the visitor's own original trigger (never the
+    /// gate's own name/phone replies) as <see cref="StartModuleTaskRequest.TriggerText"/> - the backlog
+    /// item's own "forward the original reply to the module exactly as before this item."
+    /// <paramref name="beforeStart"/> is the one thing that differs between the two callers: a no-op for
+    /// <see cref="TryStartTaskAsync"/> (nothing precedes an ordinary task start), and
+    /// <c>c =&gt; c.CloseModuleTask(now)</c> for <see cref="ContinueContactGateReplyAsync"/> (this gate's
+    /// own Chat-only task has to close before <see cref="Conversation.StartModuleTask"/> can open the
+    /// real one - <see cref="Conversation.ActiveModuleTask"/> allows only one at a time). Folded into the
+    /// same replayable <c>applyStep</c> delegate <see cref="FinishStepAsync"/> already builds, for the
+    /// identical "a save-retry replays the whole sequence, never half of it" reason that method's own
+    /// remarks give.
+    /// </summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> StartRealModuleTaskAsync(
+        Conversation conversation, Message trigger, ModuleKey key, EnabledModuleSummary enabledModule, string locale,
+        DateTimeOffset now, RouteConversationToModule command, Action<Conversation> beforeStart,
+        CancellationToken cancellationToken)
+    {
+        // `20-07`'s own id trick: Chat's own ModuleTaskId doubles as the wire contract's `chatTaskId` -
+        // the module is handed exactly the id this aggregate will use to identify the task once
+        // StartModuleTask below succeeds, so no second id has to be invented or reconciled.
+        var chatTaskId = idGenerator.NewId(now);
         StartModuleTaskResult startResult;
         try
         {
@@ -369,11 +432,16 @@ public sealed class RouteConversationToModuleHandler(
         }
         catch (ModuleUnreachableException)
         {
-            // Nothing was ever started domain-side - there is no task to close, only an apology to add.
+            // Nothing was ever started domain-side - there is no task to close, only an apology to add
+            // (plus, for the gate-cleared caller, closing this gate's own Chat-only task first).
             var messageId = new MessageId(idGenerator.NewId(now));
             return await AddSystemMessageAndSaveAsync(
                 conversation, command, RouteConversationToModuleOutcome.ModuleUnavailableAtTrigger,
-                c => c.AddSystemMessage(messageId, new MessageBody(ModuleUnavailableText(locale)), now, content: null),
+                c =>
+                {
+                    beforeStart(c);
+                    c.AddSystemMessage(messageId, new MessageBody(ModuleUnavailableText(locale)), now, content: null);
+                },
                 cancellationToken);
         }
 
@@ -392,10 +460,208 @@ public sealed class RouteConversationToModuleHandler(
         return await FinishStepAsync(
             conversation, trigger, startResult.Step, startResult.Complete, RouteConversationToModuleOutcome.TaskStarted,
             now, command, locale,
-            c => c.StartModuleTask(
-                new ModuleTaskId(chatTaskId), key, startResult.ExternalTaskId, now,
-                startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions),
+            c =>
+            {
+                beforeStart(c);
+                c.StartModuleTask(
+                    new ModuleTaskId(chatTaskId), key, startResult.ExternalTaskId, now,
+                    startResult.Step.Kind, startResult.Step.Payload, startResult.Step.Actions);
+            },
             cancellationToken);
+    }
+
+    private enum ContactGateStatus
+    {
+        /// <summary>Either this visitor did not arrive through a gated channel (no <see cref="ChannelIdentity"/>
+        /// at all - a widget visitor, `25-136`'s own client-side gate already covers it - or one whose
+        /// <see cref="ChannelIdentity.Kind"/> is not explicitly named below), or both a name and a phone
+        /// are already on file for them.</summary>
+        Clear,
+
+        /// <summary>A gated channel, and no <see cref="VisitorContactDetailKind.Phone"/> on file yet -
+        /// checked, and asked for, before <see cref="NeedsName"/> (see <see cref="ResolveContactGateAsync"/>'s
+        /// own remarks for why).</summary>
+        NeedsPhone,
+
+        /// <summary>A gated channel, a phone already on file, but no <see cref="VisitorContactDetailKind.Name"/>
+        /// yet.</summary>
+        NeedsName,
+    }
+
+    /// <summary>
+    /// `25-138`: the server-side equivalent of `25-136`'s widget-only, client-side contact gate - derived
+    /// fresh from existing state on every call, exactly the way `25-153`'s own <see cref="ResolveConsentGateAsync"/>
+    /// is (never persisted onto the <see cref="Domain.ModuleTask"/> itself; there is no new column
+    /// anywhere in this item).
+    ///
+    /// <para><b>Gated on <see cref="ChannelKind"/>, explicitly - never on "not the widget."</b> A widget
+    /// visitor never links a <see cref="ChannelIdentity"/> at all (that type's own remarks: "one built-in
+    /// identity mechanism, plus N external ones that link into it"), so <paramref name="visitorId"/>
+    /// resolving no identity here already excludes the widget structurally; the explicit
+    /// <c>Telegram</c>/<c>Max</c> check on top is what keeps a future channel with its own native capture
+    /// mechanism out of this gate by name, deliberately, rather than by the accident of merely not being
+    /// the widget - this backlog item's own "where this is likely to go wrong" warning.</para>
+    ///
+    /// <para><b>Phone before name.</b> Asking for the phone first means this gate's own first step is
+    /// always <see cref="PrimitiveKinds.IsPhoneCollectionStep"/>-shaped, which is what lets `25-153`'s own
+    /// consent gate apply to it automatically, with no change to that gate at all (see
+    /// <see cref="OpenContactGateAsync"/>'s own remarks) - and it is also what makes
+    /// <see cref="RecordVisitorContactDetailHandler.HandleAsVisitorAsync"/>'s own <em>unconditional</em>
+    /// consent check (it gates every kind, not only <see cref="VisitorContactDetailKind.Phone"/>) a
+    /// non-issue for the name write that follows: by the time this gate ever asks for a name, a required
+    /// consent has already been granted recording the phone.</para>
+    /// </summary>
+    private async Task<ContactGateStatus> ResolveContactGateAsync(VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var identity = await channelIdentities.FindMostRecentForVisitorAsync(visitorId, cancellationToken);
+        if (identity is not { Kind: ChannelKind.Telegram or ChannelKind.Max })
+        {
+            return ContactGateStatus.Clear;
+        }
+
+        var details = await contactDetails.GetForVisitorAsync(visitorId, cancellationToken);
+        if (!details.Any(d => d.Kind == VisitorContactDetailKind.Phone))
+        {
+            return ContactGateStatus.NeedsPhone;
+        }
+
+        return details.Any(d => d.Kind == VisitorContactDetailKind.Name) ? ContactGateStatus.Clear : ContactGateStatus.NeedsName;
+    }
+
+    private static string ContactGatePhonePromptText(string locale) => locale == nameof(Locale.Ru)
+        ? "Прежде чем продолжить, оставьте, пожалуйста, номер телефона для связи."
+        : "Before we continue, please share a phone number we can reach you on.";
+
+    private static string ContactGateNamePromptText(string locale) => locale == nameof(Locale.Ru)
+        ? "И как к вам обращаться?"
+        : "And what name should we use for you?";
+
+    /// <summary>
+    /// `25-138`: builds whichever of this gate's own two <see cref="PrimitiveKinds.Form"/> steps
+    /// <paramref name="status"/> says is still owed - never a new wire shape (the backlog item's own "no
+    /// new wire shape" Scope), just this vocabulary's existing single-field form, wire-shaped exactly
+    /// like `Ago.Calendar`'s own <c>ModuleStepFactory.PhoneForm</c>. The phone step's own <c>fieldId</c>
+    /// is the unmodified <c>"phone"</c> this vocabulary already reserves - <see
+    /// cref="PrimitiveKinds.IsPhoneCollectionStep"/>'s exact condition - so `25-153`'s own consent gate
+    /// recognises it automatically the moment <see cref="FinishStepAsync"/> is asked to show it, with no
+    /// change to that gate at all.
+    /// </summary>
+    private static ModuleStep BuildContactGateStep(ContactGateStatus status, int originalTriggerSequence, string locale)
+    {
+        var (fieldId, label, prompt) = status == ContactGateStatus.NeedsPhone
+            ? ("phone", locale == nameof(Locale.Ru) ? "Телефон" : "Phone", ContactGatePhonePromptText(locale))
+            : ("name", locale == nameof(Locale.Ru) ? "Имя" : "Name", ContactGateNamePromptText(locale));
+
+        var payload = new MessagePayload(JsonSerializer.Serialize(new
+        {
+            prompt,
+            fieldId,
+            fieldLabel = label,
+            _gateTriggerSequence = originalTriggerSequence,
+        }));
+
+        return new ModuleStep(new MessageContentKind(PrimitiveKinds.Form), payload, []);
+    }
+
+    /// <summary>See <see cref="ContactGateTriggerSequenceField"/>'s own remarks.</summary>
+    private static int ReadGateTriggerSequence(MessagePayload? payload)
+    {
+        using var document = JsonDocument.Parse(payload!.Value.Value);
+        return document.RootElement.GetProperty(ContactGateTriggerSequenceField).GetInt32();
+    }
+
+    /// <summary>
+    /// `25-138`: opens this gate - reached only from <see cref="TryStartTaskAsync"/>, the one entry point
+    /// the backlog item names ("the conversation's first reply into a module"). Routed through
+    /// <see cref="FinishStepAsync"/> unmodified, exactly the way `25-153`'s own consent gate already
+    /// routes a module's real phone step through it: <paramref name="status"/>'s own phone-shaped step
+    /// (see <see cref="ResolveContactGateAsync"/>'s own "phone before name" remarks) is what lets that
+    /// consent gate intercept it automatically, with nothing here or in <see cref="FinishStepAsync"/>
+    /// needing to know this gate exists.
+    /// </summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> OpenContactGateAsync(
+        Conversation conversation, Message trigger, ModuleKey key, ContactGateStatus status, string locale,
+        DateTimeOffset now, RouteConversationToModule command, CancellationToken cancellationToken)
+    {
+        var chatTaskId = new ModuleTaskId(idGenerator.NewId(now));
+        var step = BuildContactGateStep(status, trigger.Sequence, locale);
+        return await FinishStepAsync(
+            conversation, trigger, step, moduleSaysComplete: false, RouteConversationToModuleOutcome.TaskStarted,
+            now, command, locale,
+            c => c.StartModuleTask(chatTaskId, key, ContactGateExternalTaskId, now, step.Kind, step.Payload, step.Actions),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// `25-138`: a reply against this gate's own active (Chat-only) task - reached from
+    /// <see cref="ContinueActiveTaskAsync"/>'s own <see cref="ContactGateExternalTaskId"/> check, itself
+    /// placed <em>after</em> that method's existing `25-153` consent-gate branch runs unmodified (a reply
+    /// answering that gate's own consent choice must resolve there first, never here).
+    ///
+    /// <para>Records the reply through the identical, consent-gate-aware, rate-limited write path every
+    /// other source of a <see cref="Domain.VisitorContactDetail"/> already goes through - never a second
+    /// one (the backlog item's own explicit instruction). Recorded before this reply's own dedup/save
+    /// point below, the same accepted at-least-once cost `ContinueConsentGateAsync`'s own remarks already
+    /// state for its acceptance write: a redelivered reply would record a second, harmless row (<see
+    /// cref="Domain.VisitorContactDetail"/> carries no per-kind uniqueness - that type's own remarks), not
+    /// a wrong outcome.</para>
+    /// </summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> ContinueContactGateReplyAsync(
+        Conversation conversation, ModuleTask active, Message trigger, IReadOnlyList<EnabledModuleSummary> modulesForSite,
+        string locale, DateTimeOffset now, RouteConversationToModule command, CancellationToken cancellationToken)
+    {
+        var isPhoneStage = PrimitiveKinds.IsPhoneCollectionStep(active.LastStepKind!.Value.Value, active.LastStepPayload);
+        var kind = isPhoneStage ? nameof(VisitorContactDetailKind.Phone) : nameof(VisitorContactDetailKind.Name);
+
+        var written = await recordContactDetail.HandleAsVisitorAsync(
+            new RecordVisitorContactDetailAsVisitor(conversation.Id, conversation.VisitorId, kind, trigger.Body.Value),
+            cancellationToken);
+        if (written.IsFailure)
+        {
+            // Empty/oversized text, or a rate limit - the same "malformed reply, task stays open, nothing
+            // saved" outcome every other unresolved reply in this class already gets (ResolveReplyValue's
+            // own null branch); the visitor can simply answer again.
+            return RouteConversationToModuleOutcome.ReplyNotResolved;
+        }
+
+        var originalTriggerSequence = ReadGateTriggerSequence(active.LastStepPayload);
+        var gate = await ResolveContactGateAsync(conversation.VisitorId, cancellationToken);
+        if (gate != ContactGateStatus.Clear)
+        {
+            // The phone was just given, the name is still owed (or vice versa, for a visitor who already
+            // had a phone on file but no name) - advance this gate's own Chat-only task to its next step,
+            // exactly the way a real module's own multi-step task advances.
+            var nextStep = BuildContactGateStep(gate, originalTriggerSequence, locale);
+            return await FinishStepAsync(
+                conversation, trigger, nextStep, moduleSaysComplete: false, RouteConversationToModuleOutcome.StepAdvanced,
+                now, command, locale, c => c.RecordModuleStep(nextStep.Kind, nextStep.Payload, nextStep.Actions),
+                cancellationToken);
+        }
+
+        var enabledModule = modulesForSite.FirstOrDefault(m => m.ModuleKey == active.ModuleKey);
+        if (enabledModule is null)
+        {
+            // The module was disabled while this visitor was going through this gate - indistinguishable
+            // from the module having gone unreachable, the identical posture ContinueActiveTaskAsync's
+            // own top already takes for a real module task in the same situation.
+            var messageId = new MessageId(idGenerator.NewId(now));
+            return await AddSystemMessageAndSaveAsync(
+                conversation, command, RouteConversationToModuleOutcome.Escalated,
+                c =>
+                {
+                    c.CloseModuleTask(now);
+                    c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText(locale)), now, content: null);
+                },
+                cancellationToken);
+        }
+
+        // Both on file now - this Chat-only gate task closes, and the visitor's own original reply
+        // (never itself shown to, or consumed by, this gate) finally reaches the module, exactly as it
+        // would have before this item existed.
+        var originalTrigger = conversation.Messages.First(m => m.Sequence == originalTriggerSequence);
+        return await StartRealModuleTaskAsync(
+            conversation, originalTrigger, active.ModuleKey, enabledModule, locale, now, command,
+            beforeStart: c => c.CloseModuleTask(now), cancellationToken);
     }
 
     private async Task<Result<RouteConversationToModuleOutcome>> ContinueActiveTaskAsync(
@@ -463,6 +729,16 @@ public sealed class RouteConversationToModuleHandler(
             {
                 return await ContinueConsentGateAsync(conversation, active, trigger, gate, locale, now, command, cancellationToken);
             }
+        }
+
+        // `25-138`: the active task is this gate's own Chat-only task, not a real module's - see
+        // ContactGateExternalTaskId's own remarks for why this sentinel, rather than the step kind, is
+        // the discriminator. Placed after the `25-153` consent-gate branch above runs unmodified: a reply
+        // still answering that gate's own consent choice must resolve there first, never here.
+        if (active.ExternalTaskId == ContactGateExternalTaskId)
+        {
+            return await ContinueContactGateReplyAsync(
+                conversation, active, trigger, modulesForSite, locale, now, command, cancellationToken);
         }
 
         var value = ResolveReplyValue(trigger, active);

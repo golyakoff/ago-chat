@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -74,10 +75,20 @@ public class RouteConversationToModuleHandlerTests
             sites.Seed(site ?? DefaultSite());
         }
 
+        var idGenerator = new FakeIdGenerator();
+        var clock = new FakeClock(Now);
+        // `25-138`: the identical, consent-gate-aware, rate-limited write path `RecordChannelVisitorContact`
+        // (`25-151`) already reuses - constructed the same way that handler's own tests build one, sharing
+        // this fixture's own `conversations`/`sites`/`contactDetails`/`acceptances`/`outbox` so a write
+        // this gate makes is visible to everything else the fixture asserts against.
+        var recordContactDetail = new RecordVisitorContactDetailHandler(
+            conversations, contactDetails, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
+            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+
         var handler = new RouteConversationToModuleHandler(
-            conversations, readStore, gateway, channelIdentities, outbox, inbox, new FakeClock(Now),
-            new FakeIdGenerator(), sites, contactDetails, acceptances, documents,
-            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
+            conversations, readStore, gateway, channelIdentities, outbox, inbox, clock,
+            idGenerator, sites, contactDetails, acceptances, documents,
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" }, recordContactDetail);
 
         return new Fixture(handler, conversation, gateway, outbox, inbox, channelIdentities, contactDetails, acceptances, documents);
     }
@@ -1059,6 +1070,220 @@ public class RouteConversationToModuleHandlerTests
     }
 
     // ------------------------------------------------------------------------------------------
+    // `25-138`: the server-side name+phone gate - a Telegram/MAX visitor with no name+phone on file is
+    // asked for one, as a `form`-primitive step, before their first reply ever reaches a module.
+    // ------------------------------------------------------------------------------------------
+
+    private static ChannelIdentity GatedIdentity(ChannelKind kind, VisitorId visitorId) =>
+        ChannelIdentity.Link(new ChannelIdentityId(Guid.NewGuid()), SiteId, kind, new ExternalChannelAddress("ext-1"), visitorId, Now);
+
+    private static VisitorContactDetail ExistingPhone(VisitorId visitorId) =>
+        VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Phone, "+15550100", Now);
+
+    private static VisitorContactDetail ExistingName(VisitorId visitorId) =>
+        VisitorContactDetail.RecordFromVisitor(
+            new VisitorContactDetailId(Guid.NewGuid()), visitorId, VisitorContactDetailKind.Name, "Jamie", Now);
+
+    [Theory]
+    [InlineData(ChannelKind.Telegram)]
+    [InlineData(ChannelKind.Max)]
+    public async Task HandleAsync_AGatedChannelVisitorWithNoContactOnFile_IsAskedForAPhoneFirst_AndNeverReachesTheModule(
+        ChannelKind channel)
+    {
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(channel, VisitorId), CancellationToken.None);
+        var fixture = CreateFixture(channelIdentities: channelIdentities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        // Done-when #1: asked for one, as a `form`-primitive step, before the module is ever reached.
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        Assert.Empty(fixture.Gateway.StartCalls);
+        Assert.NotNull(fixture.Conversation.ActiveModuleTask);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal(PrimitiveKinds.Form, reply.Content!.Kind.Value);
+        Assert.Contains("phone", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(fixture.ContactDetails.All);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AnsweringTheGatesPhoneStep_AsksForANameNext_StillWithoutReachingTheModule()
+    {
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(ChannelKind.Telegram, VisitorId), CancellationToken.None);
+        var fixture = CreateFixture(channelIdentities: channelIdentities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+15550100"), Now);
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.StepAdvanced, result.Value);
+        Assert.Empty(fixture.Gateway.StartCalls);
+        var phone = Assert.Single(fixture.ContactDetails.All);
+        Assert.Equal(VisitorContactDetailKind.Phone, phone.Kind);
+        Assert.Equal("+15550100", phone.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal(PrimitiveKinds.Form, reply.Content!.Kind.Value);
+        Assert.Contains("name", reply.Body.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HandleAsync_CompletingTheNamePhoneGate_ForwardsTheOriginalTriggerToTheModule_Unmodified()
+    {
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(ChannelKind.Telegram, VisitorId), CancellationToken.None);
+        var fixture = CreateFixture(channelIdentities: channelIdentities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+15550100"), Now);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("Jamie"), Now);
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        var call = Assert.Single(fixture.Gateway.StartCalls);
+        // The visitor's own original booking request - never "Jamie", the reply that merely happened to
+        // clear the gate - is what finally reaches the module (this item's own "must never eat the
+        // visitor's first real message, only precede it").
+        Assert.Equal("/booking", call.Request.TriggerText);
+        Assert.Equal(Calendar, fixture.Conversation.ActiveModuleTask!.ModuleKey);
+        Assert.Equal("external-1", fixture.Conversation.ActiveModuleTask!.ExternalTaskId);
+        var name = Assert.Single(fixture.ContactDetails.All, d => d.Kind == VisitorContactDetailKind.Name);
+        Assert.Equal("Jamie", name.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Contains("Which service?", reply.Body.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AGatedChannelVisitorWithNameAndPhoneAlreadyOnFile_SkipsTheGateEntirely()
+    {
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(ChannelKind.Telegram, VisitorId), CancellationToken.None);
+        var contactDetails = new FakeVisitorContactDetailRepository();
+        contactDetails.Seed(ExistingPhone(VisitorId));
+        contactDetails.Seed(ExistingName(VisitorId));
+        var fixture = CreateFixture(channelIdentities: channelIdentities, contactDetails: contactDetails);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        // Done-when #2: forwarded straight through - no gate step is ever shown.
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        var call = Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Equal("/booking", call.Request.TriggerText);
+        Assert.Contains("Which service?", fixture.Conversation.Messages.Last().Body.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AWidgetVisitorWithNoContactOnFile_IsCompletelyUnaffectedByTheContactGate()
+    {
+        // Done-when #4: a widget visitor never links a ChannelIdentity at all (ChannelIdentity's own
+        // remarks) - CreateFixture's own default (an empty FakeChannelIdentityRepository) already is
+        // this case; asserted here explicitly rather than left implicit in every other test's default.
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Empty(fixture.ContactDetails.All);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AChannelWithNoNameForThisGate_IsNeverGated_EvenWithNoContactOnFile()
+    {
+        // The backlog item's own explicit instruction: gated on ChannelKind by name, never on "not the
+        // widget" - a channel with its own equivalent capture mechanism (Sms, here) must stay excluded
+        // by not being named, not merely by accident of not being the widget.
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(ChannelKind.Sms, VisitorId), CancellationToken.None);
+        var fixture = CreateFixture(channelIdentities: channelIdentities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Empty(fixture.ContactDetails.All);
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheContactGatesPhoneStep_OnASiteRequiringConsent_ShowsTheConsentChoiceFirst_ReusingThatGateUnmodified()
+    {
+        // Done-when #3: `25-153`'s own consent gate applies to this gate's own phone step too - reused,
+        // not duplicated. Asked before phone (never before name, which carries no PD needing consent).
+        var documents = new FakeDocumentRepository();
+        await PublishContactConsentDocumentAsync(documents, "Contact Policy");
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(ChannelKind.Telegram, VisitorId), CancellationToken.None);
+        var fixture = CreateFixture(site: ConsentRequiredSite(), documents: documents, channelIdentities: channelIdentities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+
+        var started = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, started.Value);
+        Assert.Empty(fixture.Gateway.StartCalls);
+        var consentPrompt = fixture.Conversation.Messages.Last();
+        Assert.Contains("Contact Policy", consentPrompt.Body.Value);
+        Assert.Equal(PrimitiveKinds.ChoiceList, consentPrompt.Content!.Kind.Value);
+        // The gate's own real phone step was recorded, unshown - the identical "record now, reveal on
+        // accept" shape `25-153`'s own gate already established.
+        Assert.Equal(PrimitiveKinds.Form, fixture.Conversation.ActiveModuleTask!.LastStepKind!.Value.Value);
+
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        var accepted = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.ConsentGranted, accepted.Value);
+        Assert.Single(fixture.Acceptances.Saved);
+        Assert.Empty(fixture.ContactDetails.All);
+        Assert.Contains("phone", fixture.Conversation.Messages.Last().Body.Value, StringComparison.OrdinalIgnoreCase);
+
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+15550100"), Now);
+        var recorded = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.StepAdvanced, recorded.Value);
+        var phone = Assert.Single(fixture.ContactDetails.All);
+        Assert.Equal(VisitorContactDetailKind.Phone, phone.Kind);
+        Assert.Contains("name", fixture.Conversation.Messages.Last().Body.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheRecordedContact_IsTheOrdinaryVisitorContactDetailShape_TheSameEveryOtherSourceProduces()
+    {
+        // Done-when #5: the identical VisitorContactDetail shape/write-path every other source already
+        // produces - RecordFromVisitor, Source.Visitor, unverified - findable by ResolveKnownPhoneAsync
+        // and by GetOperatorQueueHandler's own name lookup exactly as any other visitor-submitted detail.
+        var channelIdentities = new FakeChannelIdentityRepository();
+        await channelIdentities.SaveAsync(GatedIdentity(ChannelKind.Telegram, VisitorId), CancellationToken.None);
+        var fixture = CreateFixture(channelIdentities: channelIdentities);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+15550100"), Now);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var phone = Assert.Single(fixture.ContactDetails.All);
+        Assert.Equal(VisitorId, phone.VisitorId);
+        Assert.Equal(VisitorContactDetailKind.Phone, phone.Kind);
+        Assert.Equal(VisitorContactDetailSource.Visitor, phone.Source);
+        Assert.Null(phone.RecordedByOperatorId);
+        Assert.False(phone.Verified);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // `25-34`: retry-once-on-conflict, at the level a real Postgres race is expensive to exercise
     // for every branch - CloseConversationHandler's own established shape, reused here. The real
     // `xmin`/message-sequence race itself is Ago.Chat.Concurrency.Tests.RouteConversationToModuleConcurrencyTests's
@@ -1089,11 +1314,23 @@ public class RouteConversationToModuleHandlerTests
         var gateway = new FakeModuleGateway { OnSubmitReply = _ => new SubmitModuleReplyResult(null, true) };
         var sites = new FakeSiteRepository();
         sites.Seed(DefaultSite());
+        var outbox = new FakeOutboxWriter();
+        var idGenerator = new FakeIdGenerator();
+        var clock = new FakeClock(Now);
+        var contactDetailsRepository = new FakeVisitorContactDetailRepository();
+        var acceptances = new FakeAcceptanceRepository();
+        // `25-138`: never actually exercised by this test - the active task's own `ExternalTaskId`
+        // (`ConversationWithActiveTask`'s own default, not this gate's sentinel) means
+        // ContinueActiveTaskAsync's new gate check never diverts here - but the dependency still has to
+        // exist, so it is built the same way `CreateFixture`'s own remarks build one.
+        var recordContactDetail = new RecordVisitorContactDetailHandler(
+            repository, contactDetailsRepository, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
+            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
         var handler = new RouteConversationToModuleHandler(
-            repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
-            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository(),
-            new FakeAcceptanceRepository(), new FakeDocumentRepository(),
-            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
+            repository, readStore, gateway, new FakeChannelIdentityRepository(), outbox, new FakeInboxChecker(),
+            clock, idGenerator, sites, contactDetailsRepository,
+            acceptances, new FakeDocumentRepository(),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" }, recordContactDetail);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RouteConversationToModule.RouteConversationToModule(
@@ -1119,11 +1356,23 @@ public class RouteConversationToModuleHandlerTests
         var gateway = new FakeModuleGateway { OnSubmitReply = _ => new SubmitModuleReplyResult(null, true) };
         var sites = new FakeSiteRepository();
         sites.Seed(DefaultSite());
+        var outbox = new FakeOutboxWriter();
+        var idGenerator = new FakeIdGenerator();
+        var clock = new FakeClock(Now);
+        var contactDetailsRepository = new FakeVisitorContactDetailRepository();
+        var acceptances = new FakeAcceptanceRepository();
+        // `25-138`: never actually exercised by this test - the active task's own `ExternalTaskId`
+        // (`ConversationWithActiveTask`'s own default, not this gate's sentinel) means
+        // ContinueActiveTaskAsync's new gate check never diverts here - but the dependency still has to
+        // exist, so it is built the same way `CreateFixture`'s own remarks build one.
+        var recordContactDetail = new RecordVisitorContactDetailHandler(
+            repository, contactDetailsRepository, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
+            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
         var handler = new RouteConversationToModuleHandler(
-            repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
-            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository(),
-            new FakeAcceptanceRepository(), new FakeDocumentRepository(),
-            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
+            repository, readStore, gateway, new FakeChannelIdentityRepository(), outbox, new FakeInboxChecker(),
+            clock, idGenerator, sites, contactDetailsRepository,
+            acceptances, new FakeDocumentRepository(),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" }, recordContactDetail);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RouteConversationToModule.RouteConversationToModule(
