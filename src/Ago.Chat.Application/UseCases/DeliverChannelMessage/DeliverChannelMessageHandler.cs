@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using Ago.Chat.Application.Abstractions;
+﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -25,14 +24,16 @@ namespace Ago.Chat.Application.UseCases.DeliverChannelMessage;
 /// things are `System`-authored today: `14-04`'s offline auto-reply
 /// (<see cref="Application.UseCases.SendOfflineAutoReply.SendOfflineAutoReplyHandler"/>, which calls
 /// <see cref="Conversation.AddSystemMessage"/> with no <c>content</c> at all) and `20-07`'s module-task
-/// prompt (<see cref="Application.UseCases.RouteConversationToModule.RouteConversationToModuleHandler.FinishStepAsync"/>,
-/// the only call site that ever passes a non-null <c>content</c> to that same method - every other
-/// `System` message in this codebase, including this handler's own apology texts for an unreachable or
-/// disabled module, passes <c>content: null</c> exactly like the auto-reply does). <see cref="Message.Content"/>
+/// prompt (<see cref="Application.UseCases.RouteConversationToModule.RouteConversationToModuleHandler.FinishStepAsync"/>
+/// and, `25-153`, that same class's own consent-gate messages - the only call sites that ever pass a
+/// non-null <c>content</c> to that method - every other `System` message in this codebase, including
+/// this handler's own apology texts for an unreachable or disabled module, passes <c>content: null</c>
+/// exactly like the auto-reply does). <see cref="Message.Content"/>
 /// is therefore the one fact already on the row that tells the two apart without inventing a new column
 /// or a new enum member: it is set if and only if <see cref="PrimitiveTextRenderer"/> has something
 /// concrete to render (a choice list, a form, a confirmation card, an escalate or verified-phone-form
-/// step) - exactly "the module's own prompt," never "any System text." The alternative considered and
+/// step, or `25-153`'s own consent choice, built the identical way) - exactly "a step this vocabulary
+/// defines," never "any System text." The alternative considered and
 /// rejected - branching on <see cref="Conversation.ActiveModuleTask"/> instead - would have relayed
 /// nothing for a task's own *final* step (<c>RecordModuleStep</c>/<c>CloseModuleTask</c> both still run
 /// before this handler ever sees the message, but a task's `TaskCompleted` "Done - thank you." message
@@ -305,42 +306,15 @@ public sealed class DeliverChannelMessageHandler(
 
     /// <summary>
     /// `25-152`: the exact "is this the phone-collection step" discriminator `25-146` already established
-    /// on the widget side (that repository's own <c>isPhoneCollectionStep</c>, in <c>ui/widget.ts</c>) -
-    /// a <see cref="PrimitiveKinds.Form"/> or <see cref="PrimitiveKinds.VerifiedPhoneForm"/> step whose
-    /// own <c>fieldId</c> is <c>"phone"</c>, read out of <see cref="MessageContent.Payload"/> the same
-    /// defensive way <see cref="TryReadReplyValue"/> in <c>RouteConversationToModuleHandler</c> already
-    /// reads <c>"value"</c> back out of a reply payload: a malformed or absent field degrades to
-    /// <see langword="false"/>, never a thrown exception, because a producer's payload is opaque to Chat
-    /// (<see cref="MessagePayload"/>'s own remarks) and this handler has no business rejecting a relay
-    /// over a shape it does not own.
+    /// on the widget side (that repository's own <c>isPhoneCollectionStep</c>, in <c>ui/widget.ts</c>).
+    /// `25-153`: the actual JSON read this delegates to moved to <see cref="PrimitiveKinds.IsPhoneCollectionStep"/>
+    /// once that item's own consent gate needed the identical recognition on the *inbound* side, before a
+    /// phone step is ever shown, rather than a second private copy of this method's own JSON parsing -
+    /// see that method's own remarks for why Domain, not either caller, is where this question belongs.
+    /// This wrapper stays, unchanged in behaviour, because every other private helper in this file takes
+    /// a <see cref="MessageContent"/> - its own caller passes <c>trigger.Content</c> unwrapped here once,
+    /// rather than at every call site.
     /// </summary>
-    private static bool IsPhoneCollectionStep(MessageContent? content)
-    {
-        if (content is not { } value)
-        {
-            return false;
-        }
-
-        if (value.Kind.Value != PrimitiveKinds.Form && value.Kind.Value != PrimitiveKinds.VerifiedPhoneForm)
-        {
-            return false;
-        }
-
-        if (value.Payload is not { } payload)
-        {
-            return false;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(payload.Value);
-            return document.RootElement.TryGetProperty("fieldId", out var element)
-                && element.ValueKind == JsonValueKind.String
-                && element.GetString() == "phone";
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
+    private static bool IsPhoneCollectionStep(MessageContent? content) =>
+        content is { } value && PrimitiveKinds.IsPhoneCollectionStep(value.Kind.Value, value.Payload);
 }

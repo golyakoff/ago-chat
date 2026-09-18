@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Modules;
@@ -276,7 +277,8 @@ public class ModuleTaskGatewayIntegrationTests
         var handler = new RouteConversationToModuleHandler(
             conversations, readStore, gateway, channelIdentities ?? new FixedChannelIdentityRepository(),
             outbox, inbox, new FixedClock(Now), new FixedIdGenerator(), new FixedSiteRepository(),
-            new FixedVisitorContactDetailRepository());
+            new FixedVisitorContactDetailRepository(), new FixedAcceptanceRepository(), new FixedDocumentRepository(),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
 
         var command = new RouteConversationToModule(
             Guid.NewGuid(), conversation.SiteId, conversation.Id, MessageAuthorKind.Visitor, conversation.LastSequence);
@@ -420,6 +422,44 @@ public class ModuleTaskGatewayIntegrationTests
         // every other method on this fixed stand-in already uses.
         public Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
             IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>`25-153`: this suite's own sites never turn <see cref="WidgetConfig.RequireContactConsent"/>
+    /// on (`FixedSiteRepository`'s own default), so <c>RouteConversationToModuleHandler</c>'s consent
+    /// gate always resolves <c>Clear</c> before either port here is ever touched - the identical
+    /// "unused by this suite, throws if that ever stops being true" shape
+    /// <see cref="FixedVisitorContactDetailRepository"/>'s own remarks already use.</summary>
+    private sealed class FixedAcceptanceRepository : IAcceptanceRepository
+    {
+        public Task SaveAsync(AcceptanceRecord record, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<AcceptanceRecord>> GetForSubjectAsync(
+            AcceptanceSubjectKind subjectKind, Guid subjectId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<AcceptanceRecord>> GetForDocumentKeyAsync(string documentKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>`25-153`: the identical "unused by this suite" shape <see cref="FixedAcceptanceRepository"/>
+    /// just above takes, for the gate's other read.</summary>
+    private sealed class FixedDocumentRepository : IDocumentRepository
+    {
+        public Task<Document?> GetByKeyAsync(string documentKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SaveAsync(Document document, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PublishedDocumentVersion?> FindVersionAsync(string documentKey, string version, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PublishedDocumentVersion?> FindCurrentAsync(string documentKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<PublishedDocumentVersion>> ListVersionsAsync(string documentKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 

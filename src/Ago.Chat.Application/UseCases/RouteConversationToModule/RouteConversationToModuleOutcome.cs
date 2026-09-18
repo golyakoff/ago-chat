@@ -53,4 +53,22 @@ public enum RouteConversationToModuleOutcome
     /// <summary>`CLAUDE.md` rule 5: this exact trigger message was already processed by this consumer -
     /// a redelivery, correctly producing no second effect.</summary>
     AlreadyProcessed,
+
+    /// <summary>
+    /// `25-153`: a reply against the consent step this vocabulary's own gate substitutes for a
+    /// phone-collection step named "decline" - the module is never called (the same "nothing to stage
+    /// against it, nothing to save on its behalf" shape <see cref="ReplyNotResolved"/>/
+    /// <see cref="PhoneVerificationRequired"/> already have), and the task stays open, re-offering the
+    /// identical choice with an explanation of why consent is required rather than dead-ending.
+    /// </summary>
+    ConsentDeclined,
+
+    /// <summary>
+    /// `25-153`: a reply against that same gate named "accept" - an <see cref="Domain.AcceptanceRecord"/>
+    /// is written (`24-01`'s own mechanism, the identical fact the widget's own checkbox produces), and
+    /// the phone-collection step this task's own module already answered with is revealed for the first
+    /// time - the module is not called a second time; it already sent this step, once, before the gate
+    /// ever withheld it from the visitor.
+    /// </summary>
+    ConsentGranted,
 }

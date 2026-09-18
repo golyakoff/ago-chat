@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -59,9 +60,22 @@ public sealed class RouteConversationToModuleHandler(
     IClock clock,
     IIdGenerator idGenerator,
     ISiteRepository sites,
-    IVisitorContactDetailRepository contactDetails)
+    IVisitorContactDetailRepository contactDetails,
+    IAcceptanceRepository acceptances,
+    IDocumentRepository documents,
+    OperatorInviteOptions consoleOptions)
 {
     public const string ConsumerName = "module-task-routing";
+
+    /// <summary>Opaque sentinel <see cref="MessageAction.Value"/>s for `25-153`'s own consent gate -
+    /// the one case in this codebase where <em>Chat itself</em> is the producer of a
+    /// <see cref="PrimitiveKinds.ChoiceList"/> step, rather than relaying a module's. Chosen, not
+    /// generated, because nothing downstream ever needs to look them up again the way a module's own
+    /// ids do - <see cref="ContinueActiveTaskAsync"/>'s own gate branch is the only reader, comparing
+    /// them by value the instant <see cref="ChoiceReplyTextResolver.Resolve"/> hands one back.</summary>
+    private const string ConsentAcceptValue = "consent-accept";
+
+    private const string ConsentDeclineValue = "consent-decline";
 
     /// <summary>`25-66`: the second of this class's four visitor-facing system-message texts to gain
     /// a <paramref name="locale"/> parameter - `PhoneVerificationRequiredText`'s own remarks record why
@@ -119,6 +133,177 @@ public sealed class RouteConversationToModuleHandler(
     private static string ModuleEscalatedFallbackText(string locale) => locale == nameof(Locale.Ru)
         ? "Сейчас подключу сотрудника, чтобы помочь с этим."
         : "Let me get a team member to help with that.";
+
+    /// <summary>`25-153`: what a visitor sees the first time this gate withholds a phone-collection
+    /// step, and (with <paramref name="explainDecline"/>) every time it re-offers the identical choice
+    /// after a decline. <paramref name="title"/>/<paramref name="link"/> are the tenant's own document's
+    /// - never AGO's words - the exact `adr/0076` split the widget's own consent checkbox label already
+    /// draws: this sentence is UI chrome asking the visitor to look at the tenant's own document, not
+    /// AGO stating what that document says or asserting a policy on the tenant's behalf.</summary>
+    private static string ConsentPromptText(string locale, string title, string link, bool explainDecline)
+    {
+        var reason = explainDecline ? ConsentDeclinedExplanationText(locale) + " " : string.Empty;
+        return reason + (locale == nameof(Locale.Ru)
+            ? $"Чтобы продолжить, пожалуйста, ознакомьтесь с документом «{title}»: {link}"
+            : $"Before we continue, please review {title}: {link}");
+    }
+
+    private static string ConsentDeclinedExplanationText(string locale) => locale == nameof(Locale.Ru)
+        ? "Без вашего согласия мы не можем записать номер телефона, и мы не сможем продолжить."
+        : "Without your consent we can't record a phone number, so we can't continue.";
+
+    /// <summary>`25-153`: the one place this gate has nothing to show - required, but the tenant has
+    /// never published a document under this purpose's own key (<see cref="ResolveConsentGateAsync"/>'s
+    /// own remarks). The identical "an escape to a human always exists" posture
+    /// <see cref="ModuleBecameUnreachableText"/> already takes for a module gone unreachable, applied
+    /// here to a dead end the module itself could not have anticipated or caused.</summary>
+    private static string ConsentUnavailableText(string locale) => locale == nameof(Locale.Ru)
+        ? "Извините, сейчас мы не можем запросить согласие — скоро с вами свяжется сотрудник."
+        : "Sorry, we can't ask for your consent right now - a team member will help you shortly.";
+
+    /// <summary>`25-153`: the two <see cref="MessageAction"/>s this gate's own <see cref="PrimitiveKinds.ChoiceList"/>
+    /// step offers - labels a text renderer numbers 1/2 exactly like any other choice-shaped step
+    /// (<see cref="PrimitiveTextRenderer"/>'s own remarks), values that never leave this class (see
+    /// <see cref="ConsentAcceptValue"/>'s own remarks).</summary>
+    private static IReadOnlyList<MessageAction> ConsentActions(string locale) => locale == nameof(Locale.Ru)
+        ? [new MessageAction("Согласен(на)", ConsentAcceptValue), new MessageAction("Не согласен(на)", ConsentDeclineValue)]
+        : [new MessageAction("Accept", ConsentAcceptValue), new MessageAction("Decline", ConsentDeclineValue)];
+
+    /// <summary>`25-153`: the tenant's own public policy page - `ago-console`'s `/policies/:documentKey`
+    /// (`23-37`), the identical route the widget's own consent checkbox already links to
+    /// (`ago-widget`'s `ui/contactCapture.ts`, `buildConsentLabel`). Built from
+    /// <see cref="OperatorInviteOptions.ConsoleBaseUrl"/> rather than a second, purpose-named config
+    /// value: that option is already "the one canonical console origin" this codebase resolves
+    /// (`OperatorInviteOptions`'s own remarks reject reusing `Ago.Chat.Api.Cors.ConsoleOriginOptions`
+    /// for the identical reason - Application cannot reference `Ago.Chat.Api` at all), and a second key
+    /// bound to the identical physical URL would only ever be a config-drift risk with no benefit - see
+    /// this item's own report for why that reuse, not a new `ConsentLinkOptions`, was the judgment call
+    /// made here.</summary>
+    private string ConsentDocumentLink(string documentKey) =>
+        $"{consoleOptions.ConsoleBaseUrl.TrimEnd('/')}/policies/{Uri.EscapeDataString(documentKey)}";
+
+    private enum ConsentGateStatus
+    {
+        /// <summary>Either this site never turned <see cref="WidgetConfig.RequireContactConsent"/> on,
+        /// or this visitor's own acceptance is already on file - the phone step proceeds exactly as it
+        /// did before this item, `25-153`'s own "completely unaffected" Done-when.</summary>
+        Clear,
+
+        /// <summary>Required, unmet, and there is a real document to ask about.</summary>
+        Pending,
+
+        /// <summary>Required, unmet, and the tenant has never published a document under this purpose's
+        /// own key - <see cref="ConsentUnavailableText"/>'s own remarks.</summary>
+        Unavailable,
+    }
+
+    private sealed record ConsentGateOutcome(
+        ConsentGateStatus Status, string? DocumentKey, string? DocumentVersion, string? Title)
+    {
+        public static readonly ConsentGateOutcome Clear = new(ConsentGateStatus.Clear, null, null, null);
+
+        public static readonly ConsentGateOutcome Unavailable = new(ConsentGateStatus.Unavailable, null, null, null);
+
+        public static ConsentGateOutcome Pending(string documentKey, string documentVersion, string title) =>
+            new(ConsentGateStatus.Pending, documentKey, documentVersion, title);
+    }
+
+    /// <summary>
+    /// `25-153`: the general, not-calendar-specific half of this item's own design - "is this site's own
+    /// PD-consent gate satisfied for this visitor, right now" - re-derived fresh on every call from
+    /// existing state, never cached and never stored on the <see cref="Domain.ModuleTask"/> itself (the
+    /// backlog item's own "a small, bounded derivation... do not add any new persistent field" Scope).
+    ///
+    /// <para>The identical read <see cref="RecordVisitorContactDetail.RecordVisitorContactDetailHandler.ConsentSatisfiedAsync"/>
+    /// already performs for the widget's own contact-detail write, and the identical fact
+    /// `GetConsentRequirementHandler` surfaces to the widget before it ever shows its own checkbox -
+    /// three call sites computing the same "required, and satisfied how" question locally rather than
+    /// one calling another, matching this codebase's own established shape (<c>ConsentSatisfiedAsync</c>
+    /// is itself a private method, not shared with `GetConsentRequirementHandler` even though both read
+    /// the identical rows) rather than introducing the first Application-handler-calls-another-handler
+    /// dependency in this repository.</para>
+    /// </summary>
+    private async Task<ConsentGateOutcome> ResolveConsentGateAsync(
+        SiteId siteId, VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var site = await sites.GetByIdAsync(siteId, cancellationToken);
+        if (site is null || !site.WidgetConfig.RequireContactConsent)
+        {
+            return ConsentGateOutcome.Clear;
+        }
+
+        var documentKey = SiteConsentDocumentKey.For(siteId, VisitorConsentPurpose.Contact);
+        var accepted = await acceptances.GetForSubjectAsync(AcceptanceSubjectKind.Visitor, visitorId.Value, cancellationToken);
+        if (accepted.Any(a => a.DocumentKey == documentKey))
+        {
+            return ConsentGateOutcome.Clear;
+        }
+
+        var current = await documents.FindCurrentAsync(documentKey, cancellationToken);
+        return current is null
+            ? ConsentGateOutcome.Unavailable
+            : ConsentGateOutcome.Pending(documentKey, current.Version, current.Title);
+    }
+
+    /// <summary>`25-153`: builds and sends this gate's own <see cref="PrimitiveKinds.ChoiceList"/>
+    /// message - the first time a phone-collection step is withheld (<see cref="FinishStepAsync"/>'s own
+    /// interception) and every re-offer after a decline (<see cref="ContinueActiveTaskAsync"/>'s own
+    /// gate branch). <paramref name="applyBeforeMessage"/> is the one thing that differs between those
+    /// two callers: the first also has to record the real, withheld step onto the task
+    /// (<see cref="FinishStepAsync"/>'s own remarks on why); a re-offer after decline changes nothing
+    /// about the task at all, so that caller passes a no-op.</summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> SendConsentPromptAsync(
+        Conversation conversation, ConsentGateOutcome gate, string locale, bool explainDecline,
+        RouteConversationToModuleOutcome outcome, DateTimeOffset now, RouteConversationToModule command,
+        Action<Conversation> applyBeforeMessage, CancellationToken cancellationToken)
+    {
+        var link = ConsentDocumentLink(gate.DocumentKey!);
+        var prompt = ConsentPromptText(locale, gate.Title!, link, explainDecline);
+        var payload = new MessagePayload(JsonSerializer.Serialize(new { prompt }));
+        var actions = ConsentActions(locale);
+        var kind = new MessageContentKind(PrimitiveKinds.ChoiceList);
+        var body = PrimitiveTextRenderer.Render(prompt, PrimitiveKinds.ChoiceList, payload, actions, locale);
+        var content = MessageContent.Create(kind, payload, actions);
+        var messageId = new MessageId(idGenerator.NewId(now));
+
+        return await AddSystemMessageAndSaveAsync(
+            conversation, command, outcome,
+            c =>
+            {
+                applyBeforeMessage(c);
+                c.AddSystemMessage(messageId, new MessageBody(body), now, content: content);
+            },
+            cancellationToken);
+    }
+
+    /// <summary>`25-153`: the escalation this gate takes when there is nothing to ask about at all -
+    /// <see cref="ConsentGateStatus.Unavailable"/>. The identical "task closed, a person takes over"
+    /// shape <see cref="ModuleBecameUnreachableText"/>'s own call site already uses for a module gone
+    /// unreachable, reused here for a dead end this task's own module never caused and cannot fix.
+    ///
+    /// <para><paramref name="applyStepBeforeClosing"/> exists only for <see cref="FinishStepAsync"/>'s
+    /// own call: reached from <c>TryStartTaskAsync</c>, no <see cref="Domain.ModuleTask"/> exists on
+    /// <paramref name="conversation"/> yet, so <see cref="Conversation.CloseModuleTask"/> would throw
+    /// <see cref="InvalidConversationStateException"/> unless the task is started first - the identical
+    /// step every ungated `moduleSaysComplete`/escalate close already applies before its own
+    /// <c>CloseModuleTask</c> call. <see cref="ContinueConsentGateAsync"/>'s own call passes
+    /// <see langword="null"/>: that task is already active, so there is already something to
+    /// close.</para></summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> EscalateForUnavailableConsentAsync(
+        Conversation conversation, string locale, DateTimeOffset now, RouteConversationToModule command,
+        Action<Conversation>? applyStepBeforeClosing, CancellationToken cancellationToken)
+    {
+        var messageId = new MessageId(idGenerator.NewId(now));
+        return await AddSystemMessageAndSaveAsync(
+            conversation, command, RouteConversationToModuleOutcome.Escalated,
+            c =>
+            {
+                applyStepBeforeClosing?.Invoke(c);
+                c.CloseModuleTask(now);
+                c.AddSystemMessage(messageId, new MessageBody(ConsentUnavailableText(locale)), now, content: null);
+            },
+            cancellationToken);
+    }
 
     public async Task<Result<RouteConversationToModuleOutcome>> HandleAsync(
         RouteConversationToModule command, CancellationToken cancellationToken)
@@ -258,6 +443,26 @@ public sealed class RouteConversationToModuleHandler(
                     c.AddSystemMessage(messageId, new MessageBody(ModuleBecameUnreachableText(locale)), now, content: null);
                 },
                 cancellationToken);
+        }
+
+        // `25-153`: the general consent gate, re-checked before ResolveReplyValue rather than trusted
+        // from whenever this task's own phone-collection step was first shown. If the step this task is
+        // currently waiting a reply to is this vocabulary's own phone-collection shape, and this site's
+        // own gate is not yet satisfied for this visitor, a real phone number was never actually
+        // rendered - FinishStepAsync would have substituted this gate's own consent choice for it - so
+        // this reply can only ever be answering *that* choice. Nothing about this is remembered on
+        // `active` itself: it is derived fresh, every time, from the identical two facts
+        // ResolveConsentGateAsync always reads - the backlog item's own "derive it, don't persist it"
+        // instruction, applied to the reply side the same way FinishStepAsync already applies it to the
+        // send side.
+        if (active.LastStepKind is { } activeStepKind
+            && PrimitiveKinds.IsPhoneCollectionStep(activeStepKind.Value, active.LastStepPayload))
+        {
+            var gate = await ResolveConsentGateAsync(conversation.SiteId, conversation.VisitorId, cancellationToken);
+            if (gate.Status != ConsentGateStatus.Clear)
+            {
+                return await ContinueConsentGateAsync(conversation, active, trigger, gate, locale, now, command, cancellationToken);
+            }
         }
 
         var value = ResolveReplyValue(trigger, active);
@@ -409,6 +614,74 @@ public sealed class RouteConversationToModuleHandler(
     }
 
     /// <summary>
+    /// `25-153`: resolves a reply against this gate's own consent step, exactly the way
+    /// <c>ContinueActiveTaskAsync</c>'s own gate branch found it pending. The module is never called from
+    /// here, on any path - accept reveals a step the module already sent once (<see cref="FinishStepAsync"/>'s
+    /// own remarks on why nothing more is owed to it); decline and "unresolved" both leave the task
+    /// exactly where it was.
+    /// </summary>
+    private async Task<Result<RouteConversationToModuleOutcome>> ContinueConsentGateAsync(
+        Conversation conversation, ModuleTask active, Message trigger, ConsentGateOutcome gate, string locale,
+        DateTimeOffset now, RouteConversationToModule command, CancellationToken cancellationToken)
+    {
+        if (gate.Status == ConsentGateStatus.Unavailable)
+        {
+            // Became unavailable between this task's own phone step and this reply (the tenant's
+            // document was unpublished mid-task) - the identical dead end FinishStepAsync's own
+            // Unavailable branch already escalates for. `active` is already this conversation's own
+            // ActiveModuleTask (that is how ContinueConsentGateAsync was ever reached), so there is
+            // already something for CloseModuleTask to close - no applyStepBeforeClosing needed.
+            return await EscalateForUnavailableConsentAsync(
+                conversation, locale, now, command, applyStepBeforeClosing: null, cancellationToken);
+        }
+
+        var resolved = ChoiceReplyTextResolver.Resolve(trigger.Body.Value, ConsentActions(locale));
+        if (resolved is null)
+        {
+            // Out-of-range or non-numeric - the identical "module never called, task stays open" shape
+            // ContinueActiveTaskAsync's own ResolveReplyValue branch already gives every other
+            // unresolved reply.
+            return RouteConversationToModuleOutcome.ReplyNotResolved;
+        }
+
+        if (resolved == ConsentDeclineValue)
+        {
+            return await SendConsentPromptAsync(
+                conversation, gate, locale, explainDecline: true, RouteConversationToModuleOutcome.ConsentDeclined,
+                now, command, applyBeforeMessage: _ => { }, cancellationToken);
+        }
+
+        // Accept: record the identical acceptance fact `24-01`'s own mechanism writes for the widget
+        // (`RecordVisitorConsentHandler`'s own write, reused here as the same domain factory plus port
+        // rather than a call across to that handler - see ResolveConsentGateAsync's own remarks on why
+        // this class computes the read side locally instead of calling GetConsentRequirementHandler, the
+        // identical reasoning applied to the write side), then reveal the real step this task already
+        // recorded - see FinishStepAsync's own remarks for why it is already sitting on `active`, unshown,
+        // needing no second call to the module to show now.
+        //
+        // Recorded before this reply's own dedup/save point (`AddSystemMessageAndSaveAsync`'s own
+        // ordering), the same accepted at-least-once cost this class's own type remarks already state for
+        // the module gateway call - a redelivered accept would write a second acceptance row, which
+        // `AcceptanceRecord`'s own remarks already treat as harmless (never an update, never read as
+        // "more accepted than a single row would mean").
+        var acceptance = AcceptanceRecord.ForVisitor(
+            new AcceptanceRecordId(idGenerator.NewId(now)), conversation.VisitorId, gate.DocumentKey!,
+            gate.DocumentVersion!, now);
+        await acceptances.SaveAsync(acceptance, cancellationToken);
+
+        var revealedKind = active.LastStepKind!.Value;
+        var revealedBody = PrimitiveTextRenderer.Render(
+            trigger.Body.Value, revealedKind.Value, active.LastStepPayload, active.LastStepActions, locale);
+        var revealedContent = MessageContent.Create(revealedKind, active.LastStepPayload, active.LastStepActions);
+        var revealedMessageId = new MessageId(idGenerator.NewId(now));
+
+        return await AddSystemMessageAndSaveAsync(
+            conversation, command, RouteConversationToModuleOutcome.ConsentGranted,
+            c => c.AddSystemMessage(revealedMessageId, new MessageBody(revealedBody), now, content: revealedContent),
+            cancellationToken);
+    }
+
+    /// <summary>
     /// `19-03`: the one place both call paths (a task's first step and every step after it) decide
     /// what a step means for the task's own lifecycle and which system message to add - pulled out once
     /// <see cref="PrimitiveKinds.Escalate"/> gave the two call sites a second outcome to agree on
@@ -440,6 +713,48 @@ public sealed class RouteConversationToModuleHandler(
         RouteConversationToModuleOutcome nonEscalationOutcome, DateTimeOffset now, RouteConversationToModule command,
         string locale, Action<Conversation> applyStep, CancellationToken cancellationToken)
     {
+        // `25-153`: before this step is ever shown, ask whether it is this vocabulary's own
+        // phone-collection shape and, if so, whether this site's own PD-consent gate is still unmet for
+        // this visitor. General on purpose - it inspects the step Chat is about to show, never which
+        // module produced it, so a future non-calendar module's own phone step is gated identically with
+        // no changes here.
+        if (PrimitiveKinds.IsPhoneCollectionStep(step.Kind.Value, step.Payload))
+        {
+            var gate = await ResolveConsentGateAsync(conversation.SiteId, conversation.VisitorId, cancellationToken);
+            if (gate.Status == ConsentGateStatus.Unavailable)
+            {
+                // `applyStep` still has to run before CloseModuleTask - reached from TryStartTaskAsync,
+                // this task does not exist on `conversation` yet at all, so closing one that was never
+                // started would throw InvalidConversationStateException; reached from
+                // ContinueActiveTaskAsync, `applyStep` is RecordModuleStep against the task that is
+                // already open. Either way this is the identical "apply the already-decided mutation,
+                // then close" order every ungated close in this method already uses.
+                return await EscalateForUnavailableConsentAsync(conversation, locale, now, command, applyStep, cancellationToken);
+            }
+
+            if (gate.Status == ConsentGateStatus.Pending)
+            {
+                // `step.Kind.Value` is a phone-collection kind here (the branch above already asked),
+                // never PrimitiveKinds.Escalate - so this task only ever closes below if the module
+                // itself said `complete`, the same condition FinishStepAsync's own ungated path applies.
+                return await SendConsentPromptAsync(
+                    conversation, gate, locale, explainDecline: false, nonEscalationOutcome, now, command,
+                    c =>
+                    {
+                        // The real step is recorded exactly as an ungated task would record it - only the
+                        // *rendered message* differs. Recording it now, unshown, is what lets an eventual
+                        // accept reveal this same, already-decided step without a second call to the
+                        // module - see ContinueActiveTaskAsync's own gate branch.
+                        applyStep(c);
+                        if (moduleSaysComplete)
+                        {
+                            c.CloseModuleTask(now);
+                        }
+                    },
+                    cancellationToken);
+            }
+        }
+
         var isEscalation = step.Kind.Value == PrimitiveKinds.Escalate;
         // `25-66`: `locale` - already resolved once by each of this method's two callers
         // (`TryStartTaskAsync`'s own `ResolveLocaleAsync`, `ContinueActiveTaskAsync`'s own

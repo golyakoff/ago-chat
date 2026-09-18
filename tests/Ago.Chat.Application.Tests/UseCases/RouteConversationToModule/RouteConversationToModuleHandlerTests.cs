@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Tests.Fakes;
+using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -27,7 +28,8 @@ public class RouteConversationToModuleHandlerTests
     private sealed record Fixture(
         RouteConversationToModuleHandler Handler, Conversation Conversation, FakeModuleGateway Gateway,
         FakeOutboxWriter Outbox, FakeInboxChecker Inbox, FakeChannelIdentityRepository ChannelIdentities,
-        FakeVisitorContactDetailRepository ContactDetails);
+        FakeVisitorContactDetailRepository ContactDetails, FakeAcceptanceRepository Acceptances,
+        FakeDocumentRepository Documents);
 
     /// <summary>`25-37`/`25-39`: a freshly registered `Site` at this fixture's own `SiteId`, `Locale.En`
     /// and `WidgetConfig.Default` (so `AcceptUnverifiedPhone` is off) - the same "every existing
@@ -40,7 +42,8 @@ public class RouteConversationToModuleHandlerTests
         bool moduleEnabled = true, Action<Conversation>? arrange = null,
         FakeModuleGateway? gateway = null, FakeInboxChecker? inbox = null,
         FakeChannelIdentityRepository? channelIdentities = null, Site? site = null,
-        FakeVisitorContactDetailRepository? contactDetails = null, bool seedSite = true)
+        FakeVisitorContactDetailRepository? contactDetails = null, bool seedSite = true,
+        FakeAcceptanceRepository? acceptances = null, FakeDocumentRepository? documents = null)
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         arrange?.Invoke(conversation);
@@ -62,6 +65,8 @@ public class RouteConversationToModuleHandlerTests
         inbox ??= new FakeInboxChecker();
         channelIdentities ??= new FakeChannelIdentityRepository();
         contactDetails ??= new FakeVisitorContactDetailRepository();
+        acceptances ??= new FakeAcceptanceRepository();
+        documents ??= new FakeDocumentRepository();
 
         var sites = new FakeSiteRepository();
         if (seedSite)
@@ -71,9 +76,10 @@ public class RouteConversationToModuleHandlerTests
 
         var handler = new RouteConversationToModuleHandler(
             conversations, readStore, gateway, channelIdentities, outbox, inbox, new FakeClock(Now),
-            new FakeIdGenerator(), sites, contactDetails);
+            new FakeIdGenerator(), sites, contactDetails, acceptances, documents,
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
 
-        return new Fixture(handler, conversation, gateway, outbox, inbox, channelIdentities, contactDetails);
+        return new Fixture(handler, conversation, gateway, outbox, inbox, channelIdentities, contactDetails, acceptances, documents);
     }
 
     private static Ago.Chat.Application.UseCases.RouteConversationToModule.RouteConversationToModule Trigger(
@@ -93,6 +99,40 @@ public class RouteConversationToModuleHandlerTests
         new MessageContentKind(PrimitiveKinds.Escalate),
         prompt is null ? null : new MessagePayload($$"""{"prompt":"{{prompt}}"}"""),
         []);
+
+    /// <summary>`25-153`: a real module's own phone-collection step - a plain <see cref="PrimitiveKinds.Form"/>
+    /// (rather than <see cref="PrimitiveKinds.VerifiedPhoneForm"/>, deliberately: that kind also trips
+    /// `ContinueActiveTaskAsync`'s own, unrelated `14-15` phone-verification gate, which would entangle
+    /// two independent gates in one test) whose `fieldId` is `"phone"` - the one fact this item's own
+    /// consent gate actually keys on, via <see cref="PrimitiveKinds.IsPhoneCollectionStep"/>, wire-shaped
+    /// exactly like `Ago.Calendar`'s own <c>ModuleStepFactory.PhoneForm</c>.</summary>
+    private static ModuleStep PhoneStep(string prompt) => new(
+        new MessageContentKind(PrimitiveKinds.Form),
+        new MessagePayload($$"""{"prompt":"{{prompt}}","fieldId":"phone","fieldLabel":"Phone"}"""),
+        []);
+
+    /// <summary>`25-153`: a site with `WidgetConfig.RequireContactConsent` on - the one fact this item's
+    /// gate keys on, the identical construction `ConsentGateDoesNotBlockConversationTests`/
+    /// `GetConsentRequirementHandlerTests` already use for themselves.</summary>
+    private static Site ConsentRequiredSite()
+    {
+        var site = new Site(SiteId, $"pk-{SiteId.Value:N}", ["https://example.test"], "Test Site", Now);
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, requireContactConsent: true), Now);
+        return site;
+    }
+
+    /// <summary>`25-153`: publishes this fixture's own `Contact`-purpose consent document - the identical
+    /// <see cref="Document.Create"/>/<see cref="Document.Publish"/> pair `GetConsentRequirementHandlerTests`'s
+    /// own `PublishAsync` already uses, so the version this seeds and the version
+    /// <see cref="ResolveConsentGateAsync"/> (`RouteConversationToModuleHandler`'s own private read) later
+    /// resolves are provably the same row, not a coincidence of two independently-typed literals.</summary>
+    private static async Task PublishContactConsentDocumentAsync(FakeDocumentRepository documents, string title = "Contact Policy")
+    {
+        var documentKey = SiteConsentDocumentKey.For(SiteId, VisitorConsentPurpose.Contact);
+        var document = Document.Create(new DocumentId(Guid.NewGuid()), documentKey);
+        document.Publish(new PublishedDocumentVersionId(Guid.NewGuid()), title, "Body", Now);
+        await documents.SaveAsync(document, CancellationToken.None);
+    }
 
     // ------------------------------------------------------------------------------------------
     // Trigger match -> start task
@@ -865,6 +905,160 @@ public class RouteConversationToModuleHandlerTests
     }
 
     // ------------------------------------------------------------------------------------------
+    // `25-153`: the PD-consent gate in front of any phone-collection step - general, not
+    // calendar-specific, and proven against the item's own named risk: that the gate actually closes
+    // the compliance gap (a booking cannot reach `BookEventHandler`, ago-calendar, without consent),
+    // not merely that a new step renders.
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task HandleAsync_APhoneCollectionStep_OnASiteRequiringConsentWithNoneOnFile_ShowsTheTenantsConsentChoiceInstead()
+    {
+        var documents = new FakeDocumentRepository();
+        await PublishContactConsentDocumentAsync(documents, "Contact Policy");
+        var fixture = CreateFixture(site: ConsentRequiredSite(), documents: documents);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        // Done-when #1: seen before any phone question, rendered as an ordinary numbered choice.
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.DoesNotContain("What's your phone?", reply.Body.Value);
+        Assert.Contains("Contact Policy", reply.Body.Value);
+        Assert.Contains("https://console.example.test/policies/", reply.Body.Value);
+        Assert.Contains("1) Accept", reply.Body.Value);
+        Assert.Contains("2) Decline", reply.Body.Value);
+        Assert.NotNull(reply.Content);
+        Assert.Equal(PrimitiveKinds.ChoiceList, reply.Content!.Kind.Value);
+        // The real step was recorded even though it was never shown - see FinishStepAsync's own
+        // remarks for why an eventual accept needs no second call to the module to reveal it.
+        Assert.Equal(PrimitiveKinds.Form, fixture.Conversation.ActiveModuleTask!.LastStepKind!.Value.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ConsentGate_NeverForwardsAnythingToTheModuleUntilAccepted_ThenLetsTheRealReplyThrough()
+    {
+        var documents = new FakeDocumentRepository();
+        await PublishContactConsentDocumentAsync(documents, "Contact Policy");
+        var fixture = CreateFixture(site: ConsentRequiredSite(), documents: documents);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+
+        // Turn 1: the trigger starts the task; the module's own phone step is withheld behind consent.
+        var started = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+        Assert.True(started.IsSuccess);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+
+        // Turn 2: the visitor types a real phone number anyway, before ever answering the consent
+        // choice. It is not "1" or "2", so it resolves to neither accept nor decline - the compliance
+        // claim itself: this cannot leak through to the module as if it were an answer.
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+15550101"), Now);
+        var typedEarly = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+        Assert.Equal(RouteConversationToModuleOutcome.ReplyNotResolved, typedEarly.Value);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+        Assert.Empty(fixture.Acceptances.Saved);
+
+        // Turn 3: accept - Done-when #2, records the identical acceptance fact 24-01's own mechanism
+        // produces for the widget, and reveals the real phone step - still no call to the module.
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        var accepted = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+        Assert.Equal(RouteConversationToModuleOutcome.ConsentGranted, accepted.Value);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+        var acceptance = Assert.Single(fixture.Acceptances.Saved);
+        Assert.Equal(AcceptanceSubjectKind.Visitor, acceptance.SubjectKind);
+        Assert.Equal(VisitorId.Value, acceptance.SubjectId);
+        Assert.Equal(SiteConsentDocumentKey.For(SiteId, VisitorConsentPurpose.Contact), acceptance.DocumentKey);
+        var revealed = fixture.Conversation.Messages.Last();
+        Assert.Contains("What's your phone?", revealed.Body.Value);
+
+        // Turn 4: Done-when #4, the actual compliance closure - only now, after consent, does a real
+        // phone number ever reach `gateway.SubmitReplyAsync` (the one call this entire scenario could
+        // ever use to reach `BookEventHandler` in `ago-calendar`), and this is the first and only time
+        // it is called anywhere in this test.
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("+15550101"), Now);
+        var completed = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskCompleted, completed.Value);
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal("+15550101", call.Request.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DecliningConsent_DoesNotCancelTheTask_AndReoffersWithAnExplanation_UntilAcceptedOnALaterAttempt()
+    {
+        var documents = new FakeDocumentRepository();
+        await PublishContactConsentDocumentAsync(documents, "Contact Policy");
+        var fixture = CreateFixture(site: ConsentRequiredSite(), documents: documents);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        // Decline: Done-when #3 - the task is not cancelled, and the same choice is re-offered with an
+        // explanation of why consent is required.
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("2"), Now);
+        var declined = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.ConsentDeclined, declined.Value);
+        Assert.NotNull(fixture.Conversation.ActiveModuleTask);
+        Assert.Equal(ModuleTaskState.Open, fixture.Conversation.ActiveModuleTask!.State);
+        Assert.Empty(fixture.Acceptances.Saved);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+        var reoffer = fixture.Conversation.Messages.Last();
+        Assert.Contains("Without your consent", reoffer.Body.Value);
+        Assert.Contains("1) Accept", reoffer.Body.Value);
+        Assert.Contains("2) Decline", reoffer.Body.Value);
+
+        // A visitor who declined once can still accept on a later attempt.
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("1"), Now);
+        var accepted = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.ConsentGranted, accepted.Value);
+        Assert.Single(fixture.Acceptances.Saved);
+        Assert.Contains("What's your phone?", fixture.Conversation.Messages.Last().Body.Value);
+    }
+
+    [Fact]
+    public async Task HandleAsync_APhoneCollectionStep_OnASiteRequiringConsent_WithNoDocumentEverPublished_Escalates()
+    {
+        // The one gate outcome with nothing to ask about at all - required, but the tenant has never
+        // published a document under this purpose's own key. Never a thrown exception or a consent
+        // step with a blank title: the identical "an escape to a human always exists" posture this
+        // codebase already gives an unreachable module.
+        var fixture = CreateFixture(site: ConsentRequiredSite());
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.Escalated, result.Value);
+        Assert.Null(fixture.Conversation.ActiveModuleTask);
+        Assert.Empty(fixture.Acceptances.Saved);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+    }
+
+    [Fact]
+    public async Task HandleAsync_APhoneCollectionStep_OnASiteWithConsentRequirementOff_IsCompletelyUnaffected()
+    {
+        // Done-when #5: the common case (the default, RequireContactConsent off) sees zero new step
+        // and zero behaviour change - DefaultSite() carries WidgetConfig.Default, the same fixture every
+        // other test in this file already uses.
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+
+        var result = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.TaskStarted, result.Value);
+        var reply = fixture.Conversation.Messages.Last();
+        Assert.Equal("What's your phone?", reply.Body.Value);
+        Assert.Equal(PrimitiveKinds.Form, reply.Content!.Kind.Value);
+        Assert.Empty(fixture.Acceptances.Saved);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // `25-34`: retry-once-on-conflict, at the level a real Postgres race is expensive to exercise
     // for every branch - CloseConversationHandler's own established shape, reused here. The real
     // `xmin`/message-sequence race itself is Ago.Chat.Concurrency.Tests.RouteConversationToModuleConcurrencyTests's
@@ -897,7 +1091,9 @@ public class RouteConversationToModuleHandlerTests
         sites.Seed(DefaultSite());
         var handler = new RouteConversationToModuleHandler(
             repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
-            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository());
+            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository(),
+            new FakeAcceptanceRepository(), new FakeDocumentRepository(),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RouteConversationToModule.RouteConversationToModule(
@@ -925,7 +1121,9 @@ public class RouteConversationToModuleHandlerTests
         sites.Seed(DefaultSite());
         var handler = new RouteConversationToModuleHandler(
             repository, readStore, gateway, new FakeChannelIdentityRepository(), new FakeOutboxWriter(), new FakeInboxChecker(),
-            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository());
+            new FakeClock(Now), new FakeIdGenerator(), sites, new FakeVisitorContactDetailRepository(),
+            new FakeAcceptanceRepository(), new FakeDocumentRepository(),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
 
         var result = await handler.HandleAsync(
             new Application.UseCases.RouteConversationToModule.RouteConversationToModule(

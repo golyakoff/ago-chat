@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -249,7 +250,10 @@ public sealed class RouteConversationToModuleConcurrencyTests(ConcurrencyTestFix
             new SystemClock(),
             new UuidV7Generator(),
             new SiteRepository(db),
-            new VisitorContactDetailRepository(db));
+            new VisitorContactDetailRepository(db),
+            new AcceptanceRepository(db),
+            new DocumentRepository(db),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
 
         return await handler.HandleAsync(
             new RouteConversationToModule(triggerMessageId, siteId, conversationId, MessageAuthorKind.Visitor, triggerSequence),
