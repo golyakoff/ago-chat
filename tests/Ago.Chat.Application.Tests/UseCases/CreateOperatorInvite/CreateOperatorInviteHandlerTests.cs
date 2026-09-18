@@ -5,6 +5,7 @@ using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Ago.Chat.Application.Tests.UseCases.CreateOperatorInvite;
 
@@ -21,13 +22,15 @@ public class CreateOperatorInviteHandlerTests
         FakeOperatorInviteRepository Invites,
         FakePermissionChecker Permissions,
         FakeRoleRepository Roles,
-        FakeOperatorInviteEmailProvisioner EmailProvisioner);
+        FakeOperatorInviteEmailProvisioner EmailProvisioner,
+        FakeNotificationMailSender MailSender);
 
     private static Fixture CreateFixture(
         bool grantPermission = true,
         TimeSpan? validFor = null,
         Ago.Platform.Abstractions.IRateLimiter? rateLimiter = null,
-        OperatorInviteProvisionOutcome? provisionOutcome = null)
+        OperatorInviteProvisionOutcome? provisionOutcome = null,
+        Exception? fallbackMailThrows = null)
     {
         var invites = new FakeOperatorInviteRepository();
         var permissions = new FakePermissionChecker();
@@ -40,14 +43,16 @@ public class CreateOperatorInviteHandlerTests
         roles.Seed(SiteId, "Operator", OperatorRoleId);
 
         var emailProvisioner = new FakeOperatorInviteEmailProvisioner(provisionOutcome);
+        var mailSender = new FakeNotificationMailSender(fallbackMailThrows);
 
         var handler = new Application.UseCases.CreateOperatorInvite.CreateOperatorInviteHandler(
             invites, roles, permissions, new FakeOperatorInviteCodeGenerator("invite_abc123"),
-            emailProvisioner, new FakeSiteRepository(), rateLimiter ?? new FakeRateLimiter(),
+            emailProvisioner, mailSender, new FakeSiteRepository(), rateLimiter ?? new FakeRateLimiter(),
             new OperatorInviteOptions { ValidFor = validFor ?? TimeSpan.FromDays(7), ConsoleBaseUrl = "https://console.example.test" },
-            new OperatorInviteCreationRateLimitOptions(), new FakeIdGenerator(), new FakeClock(Now));
+            new OperatorInviteCreationRateLimitOptions(), new FakeIdGenerator(), new FakeClock(Now),
+            NullLogger<Application.UseCases.CreateOperatorInvite.CreateOperatorInviteHandler>.Instance);
 
-        return new Fixture(handler, invites, permissions, roles, emailProvisioner);
+        return new Fixture(handler, invites, permissions, roles, emailProvisioner, mailSender);
     }
 
     private static Application.UseCases.CreateOperatorInvite.CreateOperatorInvite Command(string? roleName = null, string? email = null) =>
@@ -229,5 +234,85 @@ public class CreateOperatorInviteHandlerTests
         Assert.Equal(InviteeEmail, fixture.EmailProvisioner.LastRequest.Email);
         Assert.Equal(TimeSpan.FromDays(7), fixture.EmailProvisioner.LastRequest.Lifespan);
         Assert.Contains("invite_abc123", fixture.EmailProvisioner.LastRequest.RedirectUri);
+    }
+
+    /// <summary>`25-90`'s own Done-when: "a second `NotificationMailSender` email fires from
+    /// `CreateOperatorInviteHandler`, carrying the invite code as plain, copyable text with accurate
+    /// instructions for where it goes." This is the second, independent channel investigated (and
+    /// deliberately not built) in `25-85`, and settled by the author's own 2026-09-18 decision in
+    /// `docs/backlog/25-90-*.md`'s Scope: the plaintext code must never sit in Keycloak's own storage, so
+    /// it travels through this codebase's own <see cref="INotificationMailSender"/> instead, to the
+    /// invitee's own address - never the inviting admin's.</summary>
+    [Fact]
+    public async Task HandleAsync_SendsASecondFallbackEmailToTheInviteeCarryingTheCodeAsPlainText()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        var sent = Assert.Single(fixture.MailSender.Sent);
+        Assert.Equal(InviteeEmail, sent.To);
+        Assert.Contains("invite_abc123", sent.Subject + sent.Body);
+    }
+
+    /// <summary>`25-90`'s own Done-when: "Both `en` and `ru` render correctly." This port's only two
+    /// existing callers (`InactivityWatchdogJob`/`DownloadThresholdWatchdogJob`, both `ago-chat`) render
+    /// one bilingual message rather than selecting a single language per recipient -
+    /// `OperatorInviteCodeMailTemplate`'s own doc comment has the full reasoning for following that exact
+    /// convention here rather than inventing a per-`Locale` switch for this one new caller. Both language
+    /// blocks are asserted present in the same send, in the same code's own real value, not a template
+    /// constant read in isolation - this is `25-90`'s own explicit bar ("proven against a real send, not
+    /// asserted from a template file"), read as "the real handler path", the level this test operates at
+    /// without a live SMTP relay.</summary>
+    [Fact]
+    public async Task HandleAsync_TheFallbackEmailRendersBothEnglishAndRussianWithTheRealCode()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        var sent = Assert.Single(fixture.MailSender.Sent);
+        Assert.Contains("Your AGO Chat backup invite code", sent.Subject);
+        Assert.Contains("Резервный код приглашения AGO Chat", sent.Subject);
+        Assert.Contains("invite_abc123", sent.Body);
+        Assert.Contains("Invite code", sent.Body);
+        Assert.Contains("Код приглашения", sent.Body);
+    }
+
+    /// <summary>`25-90`'s own Scope: "The two emails... are independent; neither should depend on the
+    /// other succeeding." A Keycloak-side SMTP failure (recorded on the invite itself, per `25-73`'s own
+    /// point 6) must not suppress this codebase's own second channel - the whole reason a second channel
+    /// exists at all is to reach the invitee even when the first one did not.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenKeycloaksOwnEmailFailsToSend_StillSendsTheFallbackInviteCodeEmail()
+    {
+        var fixture = CreateFixture(provisionOutcome: new OperatorInviteProvisionOutcome.SendFailed("550"));
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.SendFailed);
+        var sent = Assert.Single(fixture.MailSender.Sent);
+        Assert.Equal(InviteeEmail, sent.To);
+    }
+
+    /// <summary>`25-90`'s own Scope, the other half of "neither should depend on the other succeeding":
+    /// a fault in this codebase's own second channel (the same transient/connection-stage throw
+    /// `NotificationMailSender`'s own doc comment says it never swallows) must not fail invite creation -
+    /// the Keycloak email is the load-bearing one, this is a redundant, best-effort channel, and
+    /// `CreateOperatorInviteHandler.SendInviteCodeFallbackEmailAsync`'s own catch is this handler's fault
+    /// boundary for it, the identical "one candidate's mail failure is logged and does not stop the rest"
+    /// posture `InactivityWatchdogJob`/`DownloadThresholdWatchdogJob` already hold for this exact
+    /// port.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheFallbackMailSenderThrows_StillCreatesTheInviteSuccessfully()
+    {
+        var fixture = CreateFixture(fallbackMailThrows: new InvalidOperationException("relay unreachable"));
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.SendFailed);
+        Assert.Equal(1, fixture.Invites.Count);
     }
 }

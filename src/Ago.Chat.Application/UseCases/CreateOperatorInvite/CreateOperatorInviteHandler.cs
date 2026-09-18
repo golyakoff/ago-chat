@@ -5,6 +5,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Microsoft.Extensions.Logging;
 
 namespace Ago.Chat.Application.UseCases.CreateOperatorInvite;
 
@@ -34,6 +35,19 @@ namespace Ago.Chat.Application.UseCases.CreateOperatorInvite;
 /// `SiteManageOperators` permission must never be able to spend a share of the site's own five-a-day
 /// invite allowance finding that out. The rate limit runs before ever calling Keycloak so a caller who
 /// has already exhausted today's budget costs this deployment no outbound Admin API call at all.</para>
+///
+/// <para><b>`25-90`: a second, independent email carrying the code as plain text.</b> Keycloak's own
+/// `execute-actions-email` template has no parameter through which this codebase could hand it the
+/// plaintext code, and the only way to give the template something to render - a Keycloak user
+/// attribute - was rejected outright: the code must never sit in Keycloak's own storage
+/// (`docs/backlog/25-90-*.md`'s own Scope). <see cref="SendInviteCodeFallbackEmailAsync"/> fires a
+/// second, independent <see cref="INotificationMailSender"/> call instead, right after the Keycloak
+/// send - deliberately best-effort and never allowed to fail this handler's own request: the Keycloak
+/// email is the load-bearing one, this is a redundant second channel, and a failure here is logged and
+/// swallowed the same way <c>InactivityWatchdogJob</c>/<c>DownloadThresholdWatchdogJob</c> already treat
+/// this exact port's own failures (this handler's one caller-side fault boundary, since
+/// <c>NotificationMailSender</c> itself only swallows a *permanent* SMTP refusal, not a
+/// transient/connection-stage fault, which it throws).</para>
 /// </summary>
 public sealed class CreateOperatorInviteHandler(
     IOperatorInviteRepository invites,
@@ -41,12 +55,14 @@ public sealed class CreateOperatorInviteHandler(
     IPermissionChecker permissions,
     IOperatorInviteCodeGenerator codeGenerator,
     IOperatorInviteEmailProvisioner emailProvisioner,
+    INotificationMailSender mailSender,
     ISiteRepository sites,
     IRateLimiter rateLimiter,
     OperatorInviteOptions options,
     OperatorInviteCreationRateLimitOptions rateLimitOptions,
     IIdGenerator idGenerator,
-    IClock clock)
+    IClock clock,
+    ILogger<CreateOperatorInviteHandler> logger)
 {
     public async Task<Result<CreatedOperatorInvite>> HandleAsync(CreateOperatorInvite command, CancellationToken cancellationToken)
     {
@@ -113,7 +129,36 @@ public sealed class CreateOperatorInviteHandler(
             await invites.SaveAsync(invite, cancellationToken);
         }
 
+        // `25-90`: fired regardless of `outcome` above - this second channel is independent of the
+        // Keycloak send, not a fallback triggered only when that one failed (both emails always go out;
+        // whichever one a given inbox actually receives is what makes this a redundant channel at all).
+        await SendInviteCodeFallbackEmailAsync(email, code, cancellationToken);
+
         return new CreatedOperatorInvite(id.Value, code, invite.ExpiresAt, sendFailed);
+    }
+
+    // `25-90`: this handler's own fault boundary for the second, independent invite-code email - see
+    // this class's own doc comment for why a failure here is logged and swallowed rather than thrown or
+    // folded into `OperatorInviteProvisionOutcome.SendFailed` above (that field is Keycloak's own send
+    // status; this one is a different port entirely, with its own, deliberately silent failure mode).
+    // `NotificationMailSender.SendAsync` itself only swallows a *permanent* SMTP refusal (its own doc
+    // comment) - a transient/connection-stage fault is thrown, and this is the only place in this call
+    // chain positioned to catch it without also swallowing a genuine Keycloak-side fault above.
+    private async Task SendInviteCodeFallbackEmailAsync(string email, string code, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var redeemUrl = $"{options.ConsoleBaseUrl.TrimEnd('/')}/redeem-invite";
+            var (subject, body) = OperatorInviteCodeMailTemplate.Build(code, redeemUrl);
+            await mailSender.SendAsync(new NotificationMailMessage(email, subject, body), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to send the invite-code fallback email for an operator invite; Keycloak's own " +
+                "action email is unaffected and this invite is still created.");
+        }
     }
 
     // `System.Net.Mail.MailAddress`'s own constructor is the standard BCL shape-validator this codebase
