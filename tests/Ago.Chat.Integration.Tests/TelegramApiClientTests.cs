@@ -155,6 +155,38 @@ public sealed class TelegramApiClientTests
         Assert.True(result.Ok);
     }
 
+    /// <summary>`25-147`: the field this call was always fetching and throwing away -
+    /// <see cref="TelegramApiClient.GetMeAsync"/>'s own remarks on why this is the one new fact this
+    /// item's own connect-time capture needs.</summary>
+    [Fact]
+    public async Task GetMeAsync_WhenTelegramAnswersOk_ReturnsTheBotsOwnUsername()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapGet($"/bot{Token}/getMe", () =>
+                Results.Json(new { ok = true, result = new { id = 1, is_bot = true, username = "shop_support_bot" } })));
+
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.GetMeAsync(Token, CancellationToken.None);
+
+        Assert.Equal("shop_support_bot", result.Username);
+    }
+
+    /// <summary>A bot with no username configured is real (Telegram allows creating one without setting
+    /// a public handle) - this must not throw or fabricate a value, only report nothing is known.</summary>
+    [Fact]
+    public async Task GetMeAsync_WhenTelegramAnswersOkWithNoUsername_ReturnsNullUsername()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapGet($"/bot{Token}/getMe", () => Results.Json(new { ok = true, result = new { id = 1, is_bot = true } })));
+
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.GetMeAsync(Token, CancellationToken.None);
+
+        Assert.Null(result.Username);
+    }
+
     /// <summary>401 is Telegram's own well-known shape for an invalid token - the exact case
     /// <see cref="Api.Channels.TelegramChannelEndpoints"/> relies on to reject a bad token immediately at
     /// registration.</summary>

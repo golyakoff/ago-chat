@@ -51,7 +51,9 @@ public static class TelegramLiveTokenCheck
         try
         {
             var result = await client.GetMeAsync(token, linkedCts.Token);
-            return result.Ok ? TelegramLiveCheckOutcome.Verified() : TelegramLiveCheckOutcome.Refused(result.RefusalReason!);
+            return result.Ok
+                ? TelegramLiveCheckOutcome.Verified(result.Username)
+                : TelegramLiveCheckOutcome.Refused(result.RefusalReason!);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -71,7 +73,7 @@ public static class TelegramLiveTokenCheck
     }
 }
 
-/// <summary>Exactly three shapes, never a fourth: <see cref="Verified()"/> (the token works),
+/// <summary>Exactly three shapes, never a fourth: <see cref="Verified"/> (the token works),
 /// <see cref="Refused"/> (the provider looked at the token and said no - <see cref="RefusalReason"/>
 /// is always set), <see cref="ProviderUnreachable()"/> (the provider was never actually asked in time,
 /// or the call could not complete at all - <see cref="RefusalReason"/> is always
@@ -80,10 +82,15 @@ public static class TelegramLiveTokenCheck
 /// <para>The static factory is named <c>ProviderUnreachable</c>, not <c>Unreachable</c>, purely to
 /// avoid colliding with the <see cref="Unreachable"/> property this record's own positional parameter
 /// already generates (CS0102) - the property is what every caller outside this file actually reads.</para>
+///
+/// <para><b>`25-147`: <see cref="Username"/> rides along on <see cref="Verified"/> only.</b> A refused or
+/// unreachable check has nothing to say about the bot's own handle - <see cref="Username"/> is always
+/// <see langword="null"/> on either of those two outcomes, the same "nothing about the token is known"
+/// discipline <see cref="RefusalReason"/> already follows for <see cref="ProviderUnreachable()"/>.</para>
 /// </summary>
-public sealed record TelegramLiveCheckOutcome(bool Ok, bool Unreachable, string? RefusalReason)
+public sealed record TelegramLiveCheckOutcome(bool Ok, bool Unreachable, string? RefusalReason, string? Username = null)
 {
-    public static TelegramLiveCheckOutcome Verified() => new(true, false, null);
+    public static TelegramLiveCheckOutcome Verified(string? username) => new(true, false, null, username);
 
     public static TelegramLiveCheckOutcome Refused(string reason) => new(false, false, reason);
 

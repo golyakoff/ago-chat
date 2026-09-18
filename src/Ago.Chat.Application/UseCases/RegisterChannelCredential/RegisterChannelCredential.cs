@@ -14,10 +14,17 @@ namespace Ago.Chat.Application.UseCases.RegisterChannelCredential;
 /// null, only one channel's own connect endpoint ever populates it" shape - see
 /// <see cref="Domain.ChannelCredential.RefreshTokenCiphertext"/>'s own remarks for why Avito's OAuth
 /// credential needs it where every other channel's static token does not.</para>
+///
+/// <para><paramref name="PublicHandle"/> is `25-147`'s own addition, the identical optional/defaults-to-
+/// null shape - populated only by VK's and WhatsApp's own connect endpoints, both of which discover their
+/// channel's public handle *before* calling this handler (<see cref="Domain.ChannelCredential.PublicHandle"/>'s
+/// own remarks). Telegram's own handle is captured after this handler returns instead, and MAX's is
+/// captured best-effort in the same place - neither channel's connect endpoint ever passes this
+/// argument.</para>
 /// </summary>
 public sealed record RegisterChannelCredential(
     OperatorId RequestedBy, SiteId SiteId, ChannelKind Kind, string Token, string? ProviderAccountId = null,
-    string? RefreshToken = null);
+    string? RefreshToken = null, string? PublicHandle = null);
 
 /// <summary>
 /// <see cref="WebhookSecret"/> is the plaintext value AGO itself generated for this credential - not

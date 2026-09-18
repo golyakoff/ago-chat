@@ -120,9 +120,16 @@ public static class WhatsAppChannelEndpoints
             return ConversationErrors.ChannelInvalidToken(ex.Message).ToProblem(httpContext);
         }
 
+        // `25-147`: `display_phone_number` was already fetched by GetPhoneNumberAsync above and, before
+        // this item, simply discarded - phoneNumberInfo.Id (Meta's own phone_number_id, an
+        // inbound-routing key) is never a fact to expose, but the display number is exactly the public
+        // fact a deep link (`wa.me/<number>`) needs. Passed straight into Register, unlike Telegram: this
+        // endpoint's own call to GetPhoneNumberAsync already ran before Register, matching VK's own
+        // "validate, then register" ordering.
         var registered = await registerHandler.HandleAsync(
             new RegisterChannelCredential(
-                user.GetOperatorId(), site, ChannelKind.WhatsApp, request.Token, phoneNumberInfo.Id),
+                user.GetOperatorId(), site, ChannelKind.WhatsApp, request.Token, phoneNumberInfo.Id,
+                PublicHandle: phoneNumberInfo.DisplayPhoneNumber),
             cancellationToken);
         if (registered.IsFailure)
         {

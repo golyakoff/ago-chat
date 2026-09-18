@@ -114,6 +114,11 @@ public static class VkChannelEndpoints
             return ConversationErrors.ChannelInvalidToken(ex.Message).ToProblem(httpContext);
         }
 
+        // `25-147`: no PublicHandle is ever passed here, deliberately - unlike WhatsApp, VK's own public
+        // deep link (`vk.me/club<id>`) is fully derivable from ProviderAccountId alone, with nothing else
+        // that could ever need to change independently of it. Storing a second, redundant column would
+        // only invite the two to drift; `Ago.Chat.Infrastructure.Postgres.PublicChannelLinkReadStore`
+        // computes the link at read time instead (`docs/backlog/25-147-*.md`'s own decision).
         var registered = await registerHandler.HandleAsync(
             new RegisterChannelCredential(
                 user.GetOperatorId(), site, ChannelKind.Vk, request.Token, groupInfo.GroupId.ToString()),

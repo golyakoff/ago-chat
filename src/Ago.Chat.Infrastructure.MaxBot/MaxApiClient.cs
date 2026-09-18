@@ -81,6 +81,54 @@ public sealed class MaxApiClient(HttpClient httpClient)
         }
     }
 
+    /// <summary>
+    /// `25-147`: MAX's own <c>GET /me</c> - stale doc note this item corrects, not a new discovery about
+    /// MAX itself: <c>Ago.Chat.Api.Channels.MaxChannelEndpoints</c>' own remarks used to claim MAX exposes
+    /// only <c>POST /subscriptions</c> and <c>GET /updates</c>, which was wrong even before this item -
+    /// MAX's Bot API has always had this method, needing only the bot token
+    /// <see cref="AddAuthorization"/> already attaches. Mirrors <see cref="SubscribeWebhookAsync"/>'s own
+    /// shape (a bare authorized GET/POST, no query parameters), but modelled as a result the caller
+    /// inspects rather than a void call that throws - the identical "no side effect, so return a result
+    /// instead of throwing on a terminal refusal" reasoning <see cref="TelegramApiClient.GetMeAsync"/>'s
+    /// own remarks give for itself, since this call, like Telegram's, is a plain read a tenant merely
+    /// looking at the connect screen should not be able to break anything by triggering.
+    ///
+    /// <para><b>Called best-effort, never as a connect-time gate.</b> Unlike Telegram (where `getMe` was
+    /// already a hard gate this item merely rides along on) and unlike VK/WhatsApp (whose own discovery
+    /// calls run *before* <c>RegisterChannelCredentialHandler</c> and can refuse a bad token outright),
+    /// this is a genuinely new provider round trip MAX's connect flow never made before. Making it a hard
+    /// gate would be a real behaviour change this item was not asked to make - a MAX credential with no
+    /// public webhook base URL configured is already accepted "on the strength of nothing yet"
+    /// (<see cref="SubscribeWebhookAsync"/>'s own remarks on the compose-loop skip), and this call must
+    /// not become a second, stricter gate that flow does not have today. So a refusal or a transient
+    /// fault here costs the tenant nothing but a missing public handle, never a failed connect - see
+    /// <c>MaxChannelEndpoints.HandleConnectAsync</c>'s own try/catch around this call.</para>
+    /// </summary>
+    public async Task<MaxGetMeResult> GetMeAsync(string token, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "me");
+        AddAuthorization(request, token);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadFromJsonAsync<MaxGetMeResponse>(cancellationToken);
+            return MaxGetMeResult.Success(body?.Username);
+        }
+
+        if (TerminalRefusalStatusCodes.Contains(response.StatusCode))
+        {
+            var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
+            return MaxGetMeResult.Refused($"MAX refused the token ({(int)response.StatusCode}): {Truncate(errorText)}");
+        }
+
+        var transientErrorText = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException(
+            $"MAX API returned {(int)response.StatusCode} for GET /me: {Truncate(transientErrorText)}",
+            null, response.StatusCode);
+    }
+
     /// <summary>The dev-only loop (`14-02`'s backlog note): MAX's own documentation calls this
     /// "limited by speed and event retention" - fine for the local compose loop, which this project's
     /// runbook is the only caller of.</summary>
@@ -114,4 +162,11 @@ public sealed record MaxSendResult(bool Success, string? ProviderMessageId, stri
     public static MaxSendResult Sent(string? providerMessageId) => new(true, providerMessageId, null);
 
     public static MaxSendResult Refused(string reason) => new(false, null, reason);
+}
+
+public sealed record MaxGetMeResult(bool Ok, string? Username, string? RefusalReason)
+{
+    public static MaxGetMeResult Success(string? username) => new(true, username, null);
+
+    public static MaxGetMeResult Refused(string reason) => new(false, null, reason);
 }

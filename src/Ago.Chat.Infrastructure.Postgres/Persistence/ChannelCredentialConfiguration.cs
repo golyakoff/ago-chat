@@ -35,6 +35,11 @@ internal sealed class ChannelCredentialConfiguration : IEntityTypeConfiguration<
         // system has ever created, this one is populated on exactly one channel's own rows.
         builder.Property(c => c.RefreshTokenCiphertext).HasColumnName("refresh_token_ciphertext");
 
+        // `25-147`: nullable - a fact discovered by a provider round trip, not always known at
+        // Register time (ChannelCredential.PublicHandle's own remarks), and never populated for VK
+        // (derived at read time from ProviderAccountId) or Avito (no public deep-link exists at all).
+        builder.Property(c => c.PublicHandle).HasColumnName("public_handle");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
 
         // `adr/0069`'s "one bot per tenant per channel" - the storage-level backstop for the check

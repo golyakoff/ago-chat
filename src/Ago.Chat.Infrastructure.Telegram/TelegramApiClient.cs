@@ -100,6 +100,14 @@ public sealed class TelegramApiClient(HttpClient httpClient)
     /// for a token Telegram has actually looked at and rejected, never for a call that could not reach
     /// Telegram at all - revoking a possibly-good credential because of an outage the operator did
     /// nothing to cause would be the wrong failure mode.
+    ///
+    /// <para><b>`25-147`: <see cref="TelegramGetMeResult.Username"/> reads the one field this call was
+    /// always fetching and throwing away</b> - Telegram's `getMe` response is a <see cref="TelegramUser"/>,
+    /// and its own `username` field is the bot's public handle a deep link (`t.me/&lt;username&gt;`)
+    /// needs. <see langword="null"/> on a refusal (nothing is known about a token Telegram rejected) and
+    /// also <see langword="null"/> if Telegram's own response carried no username at all - a bot with no
+    /// username configured is real (Telegram allows creating one without setting a public handle) and is
+    /// simply a credential this item's own read store will never surface a link for.</para>
     /// </summary>
     public async Task<TelegramGetMeResult> GetMeAsync(string token, CancellationToken cancellationToken)
     {
@@ -109,7 +117,8 @@ public sealed class TelegramApiClient(HttpClient httpClient)
 
         if (response.IsSuccessStatusCode)
         {
-            return TelegramGetMeResult.Success();
+            var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse<TelegramUser>>(cancellationToken);
+            return TelegramGetMeResult.Success(body?.Result?.Username);
         }
 
         if (TerminalRefusalStatusCodes.Contains(response.StatusCode))
@@ -154,9 +163,9 @@ public sealed record TelegramSendResult(bool Success, string? ProviderMessageId,
 
 public sealed record TelegramUpdatesResult(IReadOnlyList<TelegramUpdate> Updates);
 
-public sealed record TelegramGetMeResult(bool Ok, string? RefusalReason)
+public sealed record TelegramGetMeResult(bool Ok, string? Username, string? RefusalReason)
 {
-    public static TelegramGetMeResult Success() => new(true, null);
+    public static TelegramGetMeResult Success(string? username) => new(true, username, null);
 
-    public static TelegramGetMeResult Refused(string reason) => new(false, reason);
+    public static TelegramGetMeResult Refused(string reason) => new(false, null, reason);
 }

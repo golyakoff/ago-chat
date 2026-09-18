@@ -50,3 +50,12 @@ public sealed record MaxSubscribeRequest(
     [property: JsonPropertyName("url")] string Url,
     [property: JsonPropertyName("secret")] string Secret,
     [property: JsonPropertyName("update_types")] IReadOnlyList<string> UpdateTypes);
+
+/// <summary>
+/// `25-147`: <c>GET /me</c>'s own success shape - MAX's Bot API documentation (dev.max.ru/docs-api)
+/// describes the full response as <c>{user_id, first_name, username, is_bot, description, avatar_url,
+/// commands}</c>; only <see cref="Username"/> has a caller (<see cref="MaxApiClient.GetMeAsync"/>'s own
+/// remarks on why the rest is not modelled - "do not model what nothing reads",
+/// <c>VkCallbackEvent.Type</c>'s own restraint applied here).
+/// </summary>
+public sealed record MaxGetMeResponse([property: JsonPropertyName("username")] string? Username);
