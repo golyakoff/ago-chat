@@ -149,8 +149,8 @@ public sealed class CreateOperatorInviteHandler(
         try
         {
             var redeemUrl = $"{options.ConsoleBaseUrl.TrimEnd('/')}/redeem-invite";
-            var (subject, body) = OperatorInviteCodeMailTemplate.Build(code, redeemUrl);
-            await mailSender.SendAsync(new NotificationMailMessage(email, subject, body), cancellationToken);
+            var (subject, body, htmlBody) = OperatorInviteCodeMailTemplate.Build(code, redeemUrl);
+            await mailSender.SendAsync(new NotificationMailMessage(email, subject, body, htmlBody), cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

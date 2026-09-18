@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using Ago.Chat.Application.Emailing;
 
 namespace Ago.Chat.Worker;
 
@@ -15,7 +16,13 @@ namespace Ago.Chat.Worker;
 /// </summary>
 internal static class DownloadThresholdWarningMailTemplate
 {
-    public static (string Subject, string Body) Build(
+    /// <summary>
+    /// `25-155`: <paramref name="Body"/> is byte-for-byte the same string this method has always
+    /// returned - the plain-text wording is unchanged, only a third, HTML rendering of the identical
+    /// content through <see cref="EmailHtmlShell"/> (`docs/backlog/25-155-*.md`'s own "same wording, new
+    /// rendering") is new.
+    /// </summary>
+    public static (string Subject, string Body, string HtmlBody) Build(
         string siteName, long bytesOut, long softThresholdBytes, long hardThresholdBytes, string consoleUrl)
     {
         var usedMiB = FormatMiB(bytesOut);
@@ -57,7 +64,28 @@ internal static class DownloadThresholdWarningMailTemplate
 
         var subject = $"{ruSubject} / {enSubject}";
         var body = $"{ruBody}\n\n----------\n\n{enBody}\n\n{consoleUrl}".TrimEnd();
-        return (subject, body);
+
+        var htmlBody = EmailHtmlShell.Render(new EmailShellContent(
+            Heading: $"Аккаунт {siteName} приближается к лимиту скачиваний / Approaching its monthly download limit",
+            HeroIcon: "\U0001F4E5", // inbox tray / download
+            BodyParagraphs:
+            [
+                $"В этом месяце аккаунт {siteName} скачал уже {usedMiB} МиБ вложений - это больше " +
+                $"предупреждающего порога вашего тарифа ({softMiB} МиБ).",
+                $"Если скачивания продолжатся в том же темпе, по достижении {hardMiB} МиБ аккаунт будет " +
+                "заблокирован для скачивания любых вложений - как для сотрудников, так и для клиентов - до " +
+                "начала следующего месяца.",
+                $"This month, account {siteName} has already downloaded {usedMiB} MiB of attachments - past " +
+                $"your plan's own warning threshold ({softMiB} MiB).",
+                $"If downloads continue at this rate, once the account reaches {hardMiB} MiB every " +
+                "attachment download will be blocked - for operators and customers alike - until next month begins.",
+            ],
+            CallToAction: new EmailShellCallToAction("Открыть Офис / Open the Office console", consoleUrl),
+            SecondaryNote:
+                "Ничего делать прямо сейчас не обязательно - это предупреждение, а не блокировка. / No " +
+                "action is required right now - this is a warning, not a block."));
+
+        return (subject, body, htmlBody);
     }
 
     private static string FormatMiB(long bytes) =>

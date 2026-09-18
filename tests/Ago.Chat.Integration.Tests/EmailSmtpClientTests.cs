@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Text.RegularExpressions;
 using Ago.Chat.Infrastructure.Email;
 
 namespace Ago.Chat.Integration.Tests;
@@ -159,5 +160,77 @@ public sealed class EmailSmtpClientTests
 
         Assert.DoesNotContain("In-Reply-To:", transcript.DataPayload);
         Assert.DoesNotContain("References:", transcript.DataPayload);
+    }
+
+    /// <summary>
+    /// `25-155`: <see cref="EmailMimeMessageBuilder.BuildMultipartAlternative"/> is <c>internal</c>, so
+    /// this proves it the same way every other MIME behaviour in this file is proven - over the real TCP
+    /// boundary <see cref="FakeSmtpServer"/> stands in for, through the one public entry point
+    /// (<see cref="EmailSmtpClient.SendAsync"/>) that branches to it whenever
+    /// <see cref="EmailMessageToSend.HtmlBody"/> is set. Checks the one thing every HTML-incapable mail
+    /// client depends on: the <c>text/plain</c> part comes first, so a client with no HTML support falls
+    /// back to it rather than to the <c>text/html</c> part.
+    /// </summary>
+    [Fact]
+    public async Task SendAsync_WithAnHtmlBody_SendsAMultipartAlternativeMessageWithThePlainPartFirst()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var client = new EmailSmtpClient(server.Options);
+        var message = Message() with { HtmlBody = "<html><body><p>Your order ships tomorrow.</p></body></html>" };
+
+        await client.SendAsync(message, CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        Assert.Contains("Content-Type: multipart/alternative; boundary=", transcript.DataPayload);
+
+        var plainIndex = transcript.DataPayload.IndexOf("Content-Type: text/plain; charset=utf-8", StringComparison.Ordinal);
+        var htmlIndex = transcript.DataPayload.IndexOf("Content-Type: text/html; charset=utf-8", StringComparison.Ordinal);
+        Assert.True(plainIndex >= 0, "expected a text/plain part");
+        Assert.True(htmlIndex >= 0, "expected a text/html part");
+        Assert.True(plainIndex < htmlIndex, "the text/plain part must come before the text/html part");
+
+        // Base64 wraps at 76 characters (RFC 2045), so the transmitted payload is not one flat base64
+        // run - strip the wrap points back out before comparing, the same shape a real MIME parser's own
+        // unfolding step would produce.
+        var unwrapped = transcript.DataPayload.Replace("\r\n", "");
+        Assert.Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(message.Body)), unwrapped);
+        Assert.Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(message.HtmlBody)), unwrapped);
+    }
+
+    /// <summary>Both parts are still base64, and the boundary itself opens and closes correctly - the
+    /// structural shape RFC 2046 requires for <c>multipart/alternative</c>.</summary>
+    [Fact]
+    public async Task SendAsync_WithAnHtmlBody_UsesBase64ForBothPartsAndClosesTheBoundary()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var client = new EmailSmtpClient(server.Options);
+        var message = Message() with { HtmlBody = "<html><body>Where is my order?</body></html>" };
+
+        await client.SendAsync(message, CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        var boundaryMatch = Regex.Match(transcript.DataPayload, "boundary=\"(?<boundary>[^\"]+)\"");
+        Assert.True(boundaryMatch.Success, "expected a quoted boundary parameter");
+        var boundary = boundaryMatch.Groups["boundary"].Value;
+
+        Assert.Contains($"--{boundary}\r\n", transcript.DataPayload);
+        Assert.Contains($"--{boundary}--", transcript.DataPayload);
+        Assert.Equal(2, transcript.DataPayload.Split("Content-Transfer-Encoding: base64").Length - 1);
+    }
+
+    /// <summary>Without an HTML body, <see cref="EmailSmtpClient.SendAsync"/> keeps taking the original,
+    /// untouched plain-only path - the exact call <see cref="EmailChannelAdapter"/> always makes, since it
+    /// never sets <see cref="EmailMessageToSend.HtmlBody"/>.</summary>
+    [Fact]
+    public async Task SendAsync_WithNoHtmlBody_NeverProducesAMultipartContentType()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var client = new EmailSmtpClient(server.Options);
+
+        await client.SendAsync(Message(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        Assert.Contains("Content-Type: text/plain; charset=utf-8", transcript.DataPayload);
+        Assert.DoesNotContain("multipart/alternative", transcript.DataPayload);
     }
 }

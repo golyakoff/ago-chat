@@ -61,6 +61,80 @@ internal static class EmailMimeMessageBuilder
         return headers + WrapBase64(Convert.ToBase64String(Encoding.UTF8.GetBytes(message.Body)));
     }
 
+    /// <summary>
+    /// `25-155`: an additive twin of <see cref="Build"/>, not a replacement - produces a real
+    /// <c>multipart/alternative</c> body (a <c>text/plain</c> part first, a <c>text/html</c> part second,
+    /// the order every mail client expects, so a client with no HTML rendering support falls back cleanly
+    /// to the first part it understands) for a caller that has an HTML rendering of the same message to
+    /// offer alongside the plain-text one (<see cref="EmailMessageToSend.HtmlBody"/>).
+    /// <see cref="EmailChannelAdapter"/> never sets <see cref="EmailMessageToSend.HtmlBody"/> and keeps
+    /// calling <see cref="Build"/> unchanged - only <see cref="EmailSmtpClient.SendAsync"/>'s own branch on
+    /// whether <see cref="EmailMessageToSend.HtmlBody"/> is set decides which of the two methods runs, and
+    /// that branch is the only thing routing <see cref="NotificationMailSender"/>'s own calls to this
+    /// method instead.
+    ///
+    /// <para>Each part is base64-encoded exactly as <see cref="Build"/>'s own single part already is - the
+    /// identical wrap-every-76-characters rule, for the identical reason (this class's own remarks above):
+    /// byte-safe with no client-negotiated extension needed, and never itself produces a line starting with
+    /// <c>.</c>. The boundary line itself starts with two hyphens, never a dot, but nothing about this
+    /// method's own output is exempted from <see cref="EmailSmtpClient"/>'s own dot-stuffing step, which
+    /// still runs over the whole payload this method returns exactly as it does for <see cref="Build"/>'s
+    /// own output.</para>
+    /// </summary>
+    public static string BuildMultipartAlternative(EmailMessageToSend message)
+    {
+        if (message.HtmlBody is not { Length: > 0 } htmlBody)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildMultipartAlternative)} requires {nameof(EmailMessageToSend.HtmlBody)} to be " +
+                $"set; use {nameof(Build)} for a plain-text-only message.");
+        }
+
+        // A random-per-message boundary, not a fixed constant - RFC 2046's own requirement that a
+        // boundary string never collide with anything that can legitimately appear inside either part.
+        // Guid.NewGuid() is fine here (unlike in Domain/Application - CLAUDE.md rule 2): this class lives
+        // in Infrastructure, the one layer that rule allows it in.
+        var boundary = $"AgoChatBoundary{Guid.NewGuid():N}";
+
+        var headers = new StringBuilder();
+        headers.Append("MIME-Version: 1.0\r\n");
+        headers.Append($"Date: {FormatDate(message.Date)}\r\n");
+        headers.Append($"From: AGO Chat <{message.From}>\r\n");
+        headers.Append($"To: <{message.To}>\r\n");
+        headers.Append($"Subject: {EncodeHeaderWord(message.Subject)}\r\n");
+        headers.Append($"Message-ID: {message.MessageId}\r\n");
+
+        if (message.InReplyTo is { Length: > 0 } inReplyTo)
+        {
+            headers.Append($"In-Reply-To: {inReplyTo}\r\n");
+        }
+
+        if (message.References is { Length: > 0 } references)
+        {
+            headers.Append($"References: {references}\r\n");
+        }
+
+        headers.Append($"Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n");
+        headers.Append("\r\n");
+
+        var body = new StringBuilder();
+        body.Append($"--{boundary}\r\n");
+        body.Append("Content-Type: text/plain; charset=utf-8\r\n");
+        body.Append("Content-Transfer-Encoding: base64\r\n");
+        body.Append("\r\n");
+        body.Append(WrapBase64(Convert.ToBase64String(Encoding.UTF8.GetBytes(message.Body))));
+        body.Append("\r\n");
+        body.Append($"--{boundary}\r\n");
+        body.Append("Content-Type: text/html; charset=utf-8\r\n");
+        body.Append("Content-Transfer-Encoding: base64\r\n");
+        body.Append("\r\n");
+        body.Append(WrapBase64(Convert.ToBase64String(Encoding.UTF8.GetBytes(htmlBody))));
+        body.Append("\r\n");
+        body.Append($"--{boundary}--");
+
+        return headers.ToString() + body;
+    }
+
     /// <summary>RFC 5322's own required <c>date-time</c> shape (e.g. <c>Tue, 03 Jan 2017 08:00:00
     /// +0000</c>) - not ISO-8601, unlike every other timestamp this codebase transports
     /// (`date-and-time.md`). This is a protocol-mandated exception, not a deviation from that rule's own
@@ -129,7 +203,16 @@ internal static class EmailMimeMessageBuilder
 /// <paramref name="References"/> are <see langword="null"/> only in the "should not happen" case
 /// <see cref="EmailChannelAdapter"/>'s own remarks describe (no <see cref="Domain.EmailThreadState"/> row
 /// for a conversation that must already have received an inbound message before any reply could exist).
+///
+/// <para><paramref name="HtmlBody"/> is `25-155`'s own addition - <see langword="null"/> by construction
+/// for every message <see cref="EmailChannelAdapter"/> builds (it never sets it), and non-null only for a
+/// <see cref="NotificationMailSender"/> call whose caller supplied an HTML rendering alongside
+/// <paramref name="Body"/>. <see cref="EmailSmtpClient.SendAsync"/> is the one place that branches on it -
+/// <see cref="EmailMimeMessageBuilder.Build"/> when it is <see langword="null"/>,
+/// <see cref="EmailMimeMessageBuilder.BuildMultipartAlternative"/> when it is not - so adding this optional,
+/// defaulted parameter changes nothing about the plain-text-only path <see cref="EmailChannelAdapter"/>'s
+/// own tests already pin byte-for-byte.</para>
 /// </summary>
 public sealed record EmailMessageToSend(
     string From, string To, string Subject, string Body, string MessageId, string? InReplyTo,
-    string? References, DateTimeOffset Date);
+    string? References, DateTimeOffset Date, string? HtmlBody = null);

@@ -26,5 +26,15 @@ public interface INotificationMailSender
 
 /// <summary>One outbound notification email, already fully composed (subject and body resolved, no
 /// further templating left to do) - the caller decides *what* to say, this port only decides *how* to
-/// get it there.</summary>
-public sealed record NotificationMailMessage(string To, string Subject, string Body);
+/// get it there.
+///
+/// <para><paramref name="HtmlBody"/> is `25-155`'s own addition, optional and defaulted to
+/// <see langword="null"/> so every existing positional call
+/// (<c>new NotificationMailMessage(to, subject, body)</c>) keeps compiling unchanged.
+/// <paramref name="Body"/> stays the plain-text rendering, not renamed to something like
+/// <c>PlainTextBody</c>, precisely so it stays that unchanged rendering - the same wording this item's
+/// own Scope requires ("same wording, new rendering"), now threaded through to
+/// <c>Ago.Chat.Infrastructure.Email.NotificationMailSender</c> alongside an HTML rendering of the
+/// identical content, built through <c>Ago.Chat.Application.Emailing.EmailHtmlShell</c>.</para>
+/// </summary>
+public sealed record NotificationMailMessage(string To, string Subject, string Body, string? HtmlBody = null);

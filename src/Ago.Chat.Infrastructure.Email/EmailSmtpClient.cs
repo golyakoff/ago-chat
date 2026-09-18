@@ -95,7 +95,13 @@ public sealed class EmailSmtpClient(EmailBotApiOptions options)
         await SendLineAsync(writer, "DATA", cancellationToken);
         EnsureSuccess(await ReadReplyAsync(reader, cancellationToken), "DATA", expectedCode: 354);
 
-        var payload = DotStuff(EmailMimeMessageBuilder.Build(message));
+        // `25-155`: the one branch point between the plain-only and multipart/alternative build paths -
+        // EmailMessageToSend.HtmlBody's own remarks explain why this is the only place that needs to
+        // know about the new method at all. EmailChannelAdapter never sets HtmlBody, so every message it
+        // builds still takes the exact same Build(message) branch it always has.
+        var payload = DotStuff(message.HtmlBody is not null
+            ? EmailMimeMessageBuilder.BuildMultipartAlternative(message)
+            : EmailMimeMessageBuilder.Build(message));
         await writer.WriteAsync(payload.AsMemory(), cancellationToken);
         await writer.WriteAsync("\r\n.\r\n".AsMemory(), cancellationToken);
         await writer.FlushAsync(cancellationToken);
