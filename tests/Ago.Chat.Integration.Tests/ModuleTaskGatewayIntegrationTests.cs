@@ -2,6 +2,7 @@
 using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Modules;
@@ -273,12 +274,26 @@ public class ModuleTaskGatewayIntegrationTests
         var readStore = new FixedEnabledModuleReadStore(Calendar, ["/booking"], entryPoint, credential);
         var outbox = new FixedOutboxWriter();
         var inbox = new FixedInboxChecker();
+        var sites = new FixedSiteRepository();
+        var contactDetailsRepository = new FixedVisitorContactDetailRepository();
+        var acceptances = new FixedAcceptanceRepository();
+        var clock = new FixedClock(Now);
+        var idGenerator = new FixedIdGenerator();
+
+        // `25-138`: RouteConversationToModuleHandler's own new contact gate reuses this write path -
+        // never exercised by this suite (none of its visitors are gated Telegram/Max channels, `25-138`'s
+        // own FixedChannelIdentityRepository remarks), so a permission checker that is never actually
+        // called is enough, the identical "constructed but never invoked on this path" posture
+        // NoteLeakProofTests already documents for an unrelated handler.
+        var recordContactDetail = new RecordVisitorContactDetailHandler(
+            conversations, contactDetailsRepository, sites, acceptances, new NeverCalledPermissionChecker(),
+            new FakeRateLimiter(), new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
 
         var handler = new RouteConversationToModuleHandler(
             conversations, readStore, gateway, channelIdentities ?? new FixedChannelIdentityRepository(),
-            outbox, inbox, new FixedClock(Now), new FixedIdGenerator(), new FixedSiteRepository(),
-            new FixedVisitorContactDetailRepository(), new FixedAcceptanceRepository(), new FixedDocumentRepository(),
-            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });
+            outbox, inbox, clock, idGenerator, sites,
+            contactDetailsRepository, acceptances, new FixedDocumentRepository(),
+            new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" }, recordContactDetail);
 
         var command = new RouteConversationToModule(
             Guid.NewGuid(), conversation.SiteId, conversation.Id, MessageAuthorKind.Visitor, conversation.LastSequence);
@@ -352,8 +367,14 @@ public class ModuleTaskGatewayIntegrationTests
                 ? identity
                 : null);
 
+        // `25-138`: now called unconditionally by RouteConversationToModuleHandler's own contact gate on
+        // every first reply, not merely by a test that opts into a verified-phone scenario - so, unlike
+        // every other member here, this one can no longer throw for a test that never seeds an identity.
+        // Filtered to Active and by VisitorId, the identical shape the real repository's own method
+        // documents for itself; none of this suite's own visitors are gated Telegram/Max channels, so
+        // this always resolves Clear for every existing test here.
         public Task<ChannelIdentity?> FindMostRecentForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(seeded is { Active: true } identity && identity.VisitorId == visitorId ? identity : null);
 
         public Task<IReadOnlyList<ChannelIdentity>> ListActiveForVisitorAsync(
             VisitorId visitorId, CancellationToken cancellationToken) =>
@@ -363,6 +384,24 @@ public class ModuleTaskGatewayIntegrationTests
             throw new NotSupportedException();
 
         public Task SaveAsync(ChannelIdentity identity, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>`25-138`: <see cref="RecordVisitorContactDetailHandler.HandleAsVisitorAsync"/> never
+    /// consults <see cref="IPermissionChecker"/> at all (that port is the operator path's own concern) -
+    /// this suite has no Postgres to construct a real one against anyway, so every member throws, the
+    /// identical "unused member throws" shape every other fixed stand-in in this file already uses.</summary>
+    private sealed class NeverCalledPermissionChecker : IPermissionChecker
+    {
+        public Task<bool> HasPermissionAsync(
+            OperatorId operatorId, SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<string>> GetPermissionsAsync(
+            OperatorId operatorId, SiteId siteId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 
