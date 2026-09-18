@@ -32,6 +32,10 @@ public sealed class AvitoChannelAdapterTests
         ChannelKind.Avito, new ExternalChannelAddress(chatId), ConversationId, new MessageId(messageId),
         new MessageBody("an operator's answer"));
 
+    private static OutboundChannelMessage Reply(Guid messageId, bool requestContactIfSupported) => new(
+        ChannelKind.Avito, new ExternalChannelAddress("chat-1"), ConversationId, new MessageId(messageId),
+        new MessageBody("an operator's answer"), requestContactIfSupported);
+
     [Fact]
     public async Task SendAsync_WhenAvitoAnswers_ReturnsSentWithTheProviderMessageId()
     {
@@ -132,6 +136,31 @@ public sealed class AvitoChannelAdapterTests
 
         Assert.False(outcome.Delivered);
         Assert.Contains("refused to refresh", outcome.FailureReason);
+    }
+
+    /// <summary>`25-152`'s own Done-when: Avito has no contact-sharing affordance, so
+    /// <see cref="OutboundChannelMessage.RequestContactIfSupported"/> must change nothing this adapter
+    /// sends - the identical byte-for-byte proof <see cref="VkChannelAdapterTests"/>'s own equivalent
+    /// test makes, using the same <see cref="OutboundChannelMessage.MessageId"/> for both calls.</summary>
+    [Fact]
+    public async Task SendAsync_IgnoresRequestContactIfSupported_TheRequestBodyIsByteIdenticalEitherWay()
+    {
+        var capturedBodies = new List<string>();
+        await using var fakeAvito = await BuildFakeAvitoHostAsync(app =>
+            app.MapPost("/messenger/v1/accounts/{userId}/chats/{chatId}/messages", async (HttpContext ctx) =>
+            {
+                using var reader = new StreamReader(ctx.Request.Body);
+                capturedBodies.Add(await reader.ReadToEndAsync());
+                return Results.Json(new { id = "msg-1" });
+            }));
+        var adapter = BuildAdapter(fakeAvito.BaseUrl, providerAccountId: "94235311");
+        var messageId = Guid.NewGuid();
+
+        await adapter.SendAsync(Reply(messageId, requestContactIfSupported: false), CancellationToken.None);
+        await adapter.SendAsync(Reply(messageId, requestContactIfSupported: true), CancellationToken.None);
+
+        Assert.Equal(2, capturedBodies.Count);
+        Assert.Equal(capturedBodies[0], capturedBodies[1]);
     }
 
     private static Action<WebApplication> SendRespondsWith(Func<IResult> respond) =>

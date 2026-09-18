@@ -29,6 +29,10 @@ public sealed class VkChannelAdapterTests
         ChannelKind.Vk, new ExternalChannelAddress(recipient), ConversationId, new MessageId(messageId),
         new MessageBody("an operator's answer"));
 
+    private static OutboundChannelMessage Reply(Guid messageId, bool requestContactIfSupported) => new(
+        ChannelKind.Vk, new ExternalChannelAddress("194525157"), ConversationId, new MessageId(messageId),
+        new MessageBody("an operator's answer"), requestContactIfSupported);
+
     [Fact]
     public async Task SendAsync_WhenVkAnswers_ReturnsSentWithTheProviderMessageId()
     {
@@ -98,6 +102,31 @@ public sealed class VkChannelAdapterTests
         Assert.Equal(2, capturedRandomIds.Count);
         Assert.Equal(capturedRandomIds[0], capturedRandomIds[1]);
         Assert.False(string.IsNullOrEmpty(capturedRandomIds[0]));
+    }
+
+    /// <summary>`25-152`'s own Done-when: VK has no contact-sharing affordance, so
+    /// <see cref="OutboundChannelMessage.RequestContactIfSupported"/> must change nothing this adapter
+    /// sends - proven here by capturing the identical raw request body VK receives with the flag set and
+    /// unset, for the same <see cref="OutboundChannelMessage.MessageId"/> (so <c>random_id</c> cannot
+    /// itself introduce a difference), and asserting the two are byte-for-byte equal.</summary>
+    [Fact]
+    public async Task SendAsync_IgnoresRequestContactIfSupported_TheRequestBodyIsByteIdenticalEitherWay()
+    {
+        var capturedBodies = new List<string>();
+        await using var fakeVk = await BuildFakeVkHostAsync(async httpContext =>
+        {
+            using var reader = new StreamReader(httpContext.Request.Body);
+            capturedBodies.Add(await reader.ReadToEndAsync());
+            return Results.Json(new { response = 1 });
+        });
+        var adapter = BuildAdapter(fakeVk.BaseUrl, providerAccountId: "1");
+        var messageId = Guid.NewGuid();
+
+        await adapter.SendAsync(Reply(messageId, requestContactIfSupported: false), CancellationToken.None);
+        await adapter.SendAsync(Reply(messageId, requestContactIfSupported: true), CancellationToken.None);
+
+        Assert.Equal(2, capturedBodies.Count);
+        Assert.Equal(capturedBodies[0], capturedBodies[1]);
     }
 
     private static VkChannelAdapter BuildAdapter(string vkBaseUrl, string? providerAccountId, bool hasActiveCredential = true)

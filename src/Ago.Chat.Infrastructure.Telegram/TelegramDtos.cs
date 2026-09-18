@@ -66,4 +66,34 @@ public sealed record TelegramChat([property: JsonPropertyName("id")] long? Id);
 
 public sealed record TelegramSendMessageRequest(
     [property: JsonPropertyName("chat_id")] long ChatId,
-    [property: JsonPropertyName("text")] string Text);
+    [property: JsonPropertyName("text")] string Text,
+    // `25-152`: WhenWritingNull, not the default "always write" - an ordinary reply (every channel this
+    // item does not touch, and Telegram itself before this item) must serialize byte-identically to what
+    // this client has always sent, and a bare `null` reply_markup key is a field Telegram's own
+    // sendMessage never saw from this codebase before today.
+    [property: JsonPropertyName("reply_markup")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TelegramReplyKeyboardMarkup? ReplyMarkup = null);
+
+/// <summary>
+/// `25-152`: Telegram's own reply-keyboard shape (core.telegram.org/bots/api#replykeyboardmarkup) - a
+/// keyboard, not the inline buttons `sendMessage` never uses today, confirmed against the public Bot API
+/// documentation the same standing this file's own top-level remarks already give Telegram's wire shapes
+/// in general (no honesty caveat needed, unlike MAX's own reconstruction below <c>MaxDtos.cs</c>).
+/// <see cref="ResizeKeyboard"/>/<see cref="OneTimeKeyboard"/> are both set <see langword="true"/> by
+/// <see cref="TelegramChannelAdapter"/> - a full-size custom keyboard left open after the one tap it
+/// exists for would outlive its own usefulness and crowd out the visitor's own text input.
+/// </summary>
+public sealed record TelegramReplyKeyboardMarkup(
+    [property: JsonPropertyName("keyboard")] IReadOnlyList<IReadOnlyList<TelegramKeyboardButton>> Keyboard,
+    [property: JsonPropertyName("resize_keyboard")] bool ResizeKeyboard,
+    [property: JsonPropertyName("one_time_keyboard")] bool OneTimeKeyboard);
+
+/// <summary>`25-152`: one button of a <see cref="TelegramReplyKeyboardMarkup"/> row -
+/// <see cref="RequestContact"/> is the one field this item needs; Telegram's own documentation lists
+/// several sibling request types (<c>request_location</c>, <c>request_poll</c>, a Web App button) this
+/// codebase has no caller for and does not model ("do not model what nothing reads", the same restraint
+/// <c>MaxGetMeResponse</c>'s own remarks state).</summary>
+public sealed record TelegramKeyboardButton(
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("request_contact")] bool RequestContact = false);

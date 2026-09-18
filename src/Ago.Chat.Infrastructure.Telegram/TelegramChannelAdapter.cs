@@ -27,6 +27,12 @@ namespace Ago.Chat.Infrastructure.Telegram;
 /// up the site's active Telegram <see cref="ChannelCredential"/>. A missing credential is a
 /// <em>terminal</em> outcome, not a fault - `adr/0069`'s "surfaces as a rejected call at use time",
 /// mapped to <see cref="ChannelSendOutcome.Refused"/> so it is never retried.</para>
+///
+/// <para><b>`25-152`: <see cref="OutboundChannelMessage.RequestContactIfSupported"/> is honored here,
+/// never above.</b> This class is the only place that knows Telegram's own affordance is a
+/// <c>ReplyKeyboardMarkup</c> with a <c>request_contact</c> button - the flag itself crosses the port as
+/// a plain <c>bool</c> (`docs/adr/0176-*`), and <see cref="TelegramApiClient.SendMessageAsync"/> is where
+/// that bool becomes Telegram's own vocabulary, one layer below even this adapter.</para>
 /// </summary>
 public sealed class TelegramChannelAdapter(
     TelegramApiClient client, IServiceScopeFactory scopeFactory, ILogger<TelegramChannelAdapter> logger)
@@ -78,7 +84,8 @@ public sealed class TelegramChannelAdapter(
             token = cipher.Decrypt(credential.TokenCiphertext);
         }
 
-        var result = await client.SendMessageAsync(token, chatId, message.Body.Value, cancellationToken);
+        var result = await client.SendMessageAsync(
+            token, chatId, message.Body.Value, message.RequestContactIfSupported, cancellationToken);
 
         if (result.Success)
         {

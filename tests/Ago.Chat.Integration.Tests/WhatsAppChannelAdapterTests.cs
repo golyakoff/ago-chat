@@ -28,6 +28,10 @@ public sealed class WhatsAppChannelAdapterTests
         ChannelKind.WhatsApp, new ExternalChannelAddress(recipient), ConversationId, new MessageId(messageId),
         new MessageBody("an operator's answer"));
 
+    private static OutboundChannelMessage Reply(Guid messageId, bool requestContactIfSupported) => new(
+        ChannelKind.WhatsApp, new ExternalChannelAddress("16505551234"), ConversationId, new MessageId(messageId),
+        new MessageBody("an operator's answer"), requestContactIfSupported);
+
     [Fact]
     public async Task SendAsync_WhenWhatsAppAnswers_ReturnsSentWithTheProviderMessageId()
     {
@@ -85,6 +89,31 @@ public sealed class WhatsAppChannelAdapterTests
         Assert.Contains("131047", outcome.FailureReason);
     }
 
+    /// <summary>`25-152`'s own Done-when: WhatsApp has no contact-sharing affordance, so
+    /// <see cref="OutboundChannelMessage.RequestContactIfSupported"/> must change nothing this adapter
+    /// sends - the identical byte-for-byte proof <see cref="VkChannelAdapterTests"/>'s own equivalent
+    /// test makes, using the same <see cref="OutboundChannelMessage.MessageId"/> for both calls so
+    /// nothing message-id-derived could itself introduce a difference.</summary>
+    [Fact]
+    public async Task SendAsync_IgnoresRequestContactIfSupported_TheRequestBodyIsByteIdenticalEitherWay()
+    {
+        var capturedBodies = new List<string>();
+        await using var fakeWhatsApp = await BuildFakeWhatsAppHostAsync(async (HttpContext ctx) =>
+        {
+            using var reader = new StreamReader(ctx.Request.Body);
+            capturedBodies.Add(await reader.ReadToEndAsync());
+            return Results.Json(new { messages = new[] { new { id = "wamid.abc123" } } });
+        });
+        var adapter = BuildAdapter(fakeWhatsApp.BaseUrl, providerAccountId: PhoneNumberId);
+        var messageId = Guid.NewGuid();
+
+        await adapter.SendAsync(Reply(messageId, requestContactIfSupported: false), CancellationToken.None);
+        await adapter.SendAsync(Reply(messageId, requestContactIfSupported: true), CancellationToken.None);
+
+        Assert.Equal(2, capturedBodies.Count);
+        Assert.Equal(capturedBodies[0], capturedBodies[1]);
+    }
+
     private static WhatsAppChannelAdapter BuildAdapter(string whatsAppBaseUrl, string? providerAccountId, bool hasActiveCredential = true)
     {
         var services = new ServiceCollection();
@@ -104,7 +133,10 @@ public sealed class WhatsAppChannelAdapterTests
         public async ValueTask DisposeAsync() => await App.DisposeAsync();
     }
 
-    private static async Task<FakeWhatsAppHost> BuildFakeWhatsAppHostAsync(Func<IResult> respond)
+    private static async Task<FakeWhatsAppHost> BuildFakeWhatsAppHostAsync(Func<IResult> respond) =>
+        await BuildFakeWhatsAppHostAsync(_ => Task.FromResult(respond()));
+
+    private static async Task<FakeWhatsAppHost> BuildFakeWhatsAppHostAsync(Func<HttpContext, Task<IResult>> respond)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");

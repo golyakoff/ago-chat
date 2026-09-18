@@ -70,13 +70,24 @@ public interface IInboundChannelAdapter
 /// <para>There is no timestamp field, and that is not an oversight: see <c>ReceiveChannelMessage</c>'s
 /// own remarks and `adr/0055`. Nothing about when a message happened travels on a channel boundary in
 /// either direction.</para>
+///
+/// <para><b>`25-152`: <see cref="RequestContactIfSupported"/> is intent, never a rendering
+/// instruction.</b> It asks a channel to "offer a contact-sharing affordance if you have one" - it says
+/// nothing about what that affordance looks like, because this port must not know that Telegram's is a
+/// <c>ReplyKeyboardMarkup</c> and MAX's is an <c>inline_keyboard</c> attachment; see `docs/adr/0176-*`
+/// for the alternative this rejected (passing the full structured <c>MessageContent</c> to every
+/// adapter, which would drag `adr/0065`'s whole primitive vocabulary across a boundary six adapters
+/// currently stay ignorant of). Defaults to <see langword="false"/> so the four adapters with no such
+/// affordance (VK, WhatsApp, Avito, Email) need not change a single call site to keep behaving exactly
+/// as before this flag existed.</para>
 /// </summary>
 public sealed record OutboundChannelMessage(
     ChannelKind Kind,
     ExternalChannelAddress Recipient,
     ConversationId ConversationId,
     MessageId MessageId,
-    MessageBody Body);
+    MessageBody Body,
+    bool RequestContactIfSupported = false);
 
 /// <summary>The terminal result of one <see cref="IInboundChannelAdapter.SendAsync"/> call - see that
 /// method's remarks on why a transient fault never appears here.

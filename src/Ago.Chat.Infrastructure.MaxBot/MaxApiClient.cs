@@ -21,6 +21,15 @@ namespace Ago.Chat.Infrastructure.MaxBot;
 /// reach; 400/401/403/404 is this item's own reasoned default (client-shaped errors are refusals,
 /// server-shaped errors are transient), stated here so it is easy to correct once a real bot's real
 /// error responses are observed.</para>
+///
+/// <para><b>`25-152`: the outbound <c>request_contact</c> button, and the identical caveat `25-151`
+/// already names for the inbound side.</b> <see cref="SendMessageAsync"/>'s <c>requestContact</c>
+/// parameter builds a <see cref="MaxOutboundAttachment"/> from MAX's documented outline (button
+/// vocabulary and the "at most three per row" rule are both stated plainly in the public docs) rather
+/// than a captured request/response pair - no live MAX bot or token was available while this item was
+/// built, the same gap `25-151`'s own report and `MaxDtos.cs`'s own top-level note already state for the
+/// inbound half. This is shipped as the best-effort implementation against the documented shape, flagged
+/// here and in this item's own report, not blocked on and not claimed verified.</para>
 /// </summary>
 public sealed class MaxApiClient(HttpClient httpClient)
 {
@@ -30,11 +39,24 @@ public sealed class MaxApiClient(HttpClient httpClient)
     ];
 
     public async Task<MaxSendResult> SendMessageAsync(
-        string token, long chatId, string text, CancellationToken cancellationToken)
+        string token, long chatId, string text, bool requestContact, CancellationToken cancellationToken)
     {
+        // `25-152`: the inline-keyboard attachment is built here, at the wire boundary, rather than
+        // handed in pre-built - MaxChannelAdapter has no business constructing a MaxOutboundAttachment
+        // itself, the identical split TelegramApiClient.SendMessageAsync's own remarks establish for its
+        // reply keyboard. One row, one button - MAX's own documented "at most three per row" ceiling
+        // (MaxOutboundAttachment's own remarks) is not approached by this item's single button.
+        var attachments = requestContact
+            ? new MaxOutboundAttachment[]
+            {
+                new("inline_keyboard", new MaxInlineKeyboardPayload(
+                    [[new MaxInlineKeyboardButton("request_contact", "Share phone number")]])),
+            }
+            : null;
+
         using var request = new HttpRequestMessage(HttpMethod.Post, $"messages?chat_id={chatId}")
         {
-            Content = JsonContent.Create(new MaxSendMessageRequest(text)),
+            Content = JsonContent.Create(new MaxSendMessageRequest(text, attachments)),
         };
         AddAuthorization(request, token);
 

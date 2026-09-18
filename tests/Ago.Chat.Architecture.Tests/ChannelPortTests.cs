@@ -196,6 +196,52 @@ public class ChannelPortTests
             + "or token/secret-shaped value (docs/adr/0175-*.md).");
     }
 
+    /// <summary>
+    /// `25-152`'s own Done-when: no provider-specific button/keyboard vocabulary crosses above
+    /// Infrastructure - <see cref="OutboundChannelMessage.RequestContactIfSupported"/> is the one thing
+    /// that crosses this boundary to express "offer a contact affordance if you can", and it is a plain
+    /// <c>bool</c>, never a shape that says *how* (`docs/adr/0176-*`). This is deliberately two separate
+    /// assertions rather than one: the first is the positive claim (the flag exists, and is boolean), the
+    /// second is <see cref="NoProviderVocabulary_AppearsAboveInfrastructure"/>'s own sibling scan, but for
+    /// generic button/keyboard words rather than provider names - a future adapter author could invent a
+    /// vendor-neutral-sounding <c>ReplyKeyboardMarkup</c> or <c>InlineKeyboardAttachment</c> type in
+    /// Application without ever typing "Telegram" or "Max", and the provider-word scan alone would not
+    /// catch it.
+    /// </summary>
+    [Fact]
+    public void OutboundChannelMessage_CarriesTheContactFlagAsAPlainBool()
+    {
+        var type = TestAssemblies.Application.Reflection.GetTypes().Single(t => t.Name == "OutboundChannelMessage");
+        var property = type.GetProperty("RequestContactIfSupported");
+
+        Assert.True(property is not null, "OutboundChannelMessage must carry RequestContactIfSupported");
+        Assert.Equal(typeof(bool), property!.PropertyType);
+    }
+
+    [Fact]
+    public void NoButtonOrKeyboardVocabulary_AppearsAboveInfrastructure()
+    {
+        string[] renderingWords = ["Keyboard", "InlineKeyboard", "Markup"];
+
+        foreach (var assembly in new[]
+                 {
+                     TestAssemblies.Domain, TestAssemblies.Application, TestAssemblies.Contracts,
+                 })
+        {
+            var offenders = assembly.Reflection.GetTypes()
+                .Where(type => renderingWords.Any(word => type.Name.Contains(word, StringComparison.Ordinal)))
+                .Select(type => type.FullName)
+                .ToList();
+
+            Assert.True(offenders.Count == 0,
+                $"{assembly.Name} names a provider's own button/keyboard rendering shape directly: "
+                + $"{string.Join(", ", offenders)}. Only OutboundChannelMessage.RequestContactIfSupported - a "
+                + "plain bool expressing intent - may cross above Infrastructure; how a channel renders that "
+                + "intent (a ReplyKeyboardMarkup, an inline_keyboard attachment) is Infrastructure's own "
+                + "vocabulary (docs/adr/0176-*).");
+        }
+    }
+
     [Fact]
     public void ChannelPort_DoesNotKnowHowItIsProtected() =>
         Types.InAssembly(TestAssemblies.Application.Reflection)

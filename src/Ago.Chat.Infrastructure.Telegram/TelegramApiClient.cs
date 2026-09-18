@@ -28,6 +28,16 @@ namespace Ago.Chat.Infrastructure.Telegram;
 /// deliberately <em>not</em> terminal: Telegram's own rate limiting is exactly the kind of transient,
 /// retry-worthy condition the wrapping resilience pipeline's backoff exists for, unlike a
 /// permanently-blocked chat.</para>
+///
+/// <para><b>`25-152`: the reply-keyboard button's own label is a fixed English string, a named and not
+/// silently-accepted gap.</b> <see cref="SendMessageAsync"/> has no locale to render it in -
+/// <c>DeliverChannelMessageHandler</c> resolves the site's own <see cref="Domain.Locale"/> only for
+/// <c>PrimitiveTextRenderer.Render</c>'s prose prompt, and <see cref="Application.Abstractions.OutboundChannelMessage"/>
+/// carries no locale of its own (`14-01`'s own shape) for this class to read instead. Threading one
+/// through for a single button caption was judged out of proportion to what this item asked for; the
+/// prose prompt above the button is already localized, so this is a cosmetic-only gap on a
+/// Russian-language site, not a functional one - the button still requests and returns a contact either
+/// way.</para>
 /// </summary>
 public sealed class TelegramApiClient(HttpClient httpClient)
 {
@@ -37,11 +47,22 @@ public sealed class TelegramApiClient(HttpClient httpClient)
     ];
 
     public async Task<TelegramSendResult> SendMessageAsync(
-        string token, long chatId, string text, CancellationToken cancellationToken)
+        string token, long chatId, string text, bool requestContact, CancellationToken cancellationToken)
     {
+        // `25-152`: the reply keyboard is built here, right at the wire boundary, rather than handed in
+        // pre-built - TelegramChannelAdapter has no business constructing a TelegramReplyKeyboardMarkup
+        // itself, since this class is the one place this file's own top-level remarks say Telegram's wire
+        // vocabulary is allowed to live.
+        var replyMarkup = requestContact
+            ? new TelegramReplyKeyboardMarkup(
+                Keyboard: [[new TelegramKeyboardButton("Share phone number", RequestContact: true)]],
+                ResizeKeyboard: true,
+                OneTimeKeyboard: true)
+            : null;
+
         using var request = new HttpRequestMessage(HttpMethod.Post, RelativePath($"bot{token}/sendMessage"))
         {
-            Content = JsonContent.Create(new TelegramSendMessageRequest(chatId, text)),
+            Content = JsonContent.Create(new TelegramSendMessageRequest(chatId, text, replyMarkup)),
         };
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
