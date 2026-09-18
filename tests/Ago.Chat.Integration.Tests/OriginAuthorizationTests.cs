@@ -1,7 +1,9 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Cors;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Platform.Caching.Redis;
@@ -114,6 +116,13 @@ public sealed class OriginAuthorizationTests(SiteCachingFixture fixture)
     private RedisCache CreateCache() => new(
         fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(), NullLogger<RedisCache>.Instance);
 
+    /// <summary>`25-148`: <see cref="AuthEndpoints.HandleVisitorSessionAsync"/>'s own new dependency -
+    /// a real, Postgres-backed handler, the same "real dependency, not a fake" posture this file's own
+    /// direct-invocation calls already take for every other port.</summary>
+    private MintVisitorChannelLinkCodeHandler CreateMintChannelLinkCodeHandler() => new(
+        new VisitorRepository(fixture.CreateDbContext()), new PendingChannelLinkRequestRepository(fixture.CreateDbContext()), new PendingChannelLinkCodeGenerator(),
+        new PendingChannelLinkRequestOptions(), new UuidV7Generator(), new SystemClock());
+
     private async Task<int> InvokeVisitorSessionAsync(string publicKey, string? origin)
     {
         var getSite = new GetSiteConfigByPublicKeyHandler(new SiteRepository(fixture.CreateDbContext()), CreateCache());
@@ -136,7 +145,9 @@ public sealed class OriginAuthorizationTests(SiteCachingFixture fixture)
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
             new AuthEndpoints.VisitorSessionRequest(publicKey),
-            getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource), new SiteSuspensionReadStore(fixture.DataSource),
+            getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource),
+            new PublicChannelLinkReadStore(fixture.DataSource), CreateMintChannelLinkCodeHandler(),
+            new SiteSuspensionReadStore(fixture.DataSource),
             rateLimiter, rateLimitOptions, new UuidV7Generator(), new SystemClock(), tokens, httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);
         return httpContext.Response.StatusCode;

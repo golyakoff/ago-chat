@@ -94,4 +94,46 @@ public class TelegramInboundMessageParserTests
 
         Assert.Null(TelegramInboundMessageParser.TryParse(update));
     }
+
+    /// <summary>`25-148`: the exact wire form Telegram sends when a visitor opens
+    /// `t.me/&lt;bot&gt;?start=4821` - this is what has to become the bare code "4821" for
+    /// `ReceiveChannelMessageHandler`'s own exact-equality confirmation branch to ever match it.</summary>
+    [Fact]
+    public void TryParse_ForAStartDeepLinkMessage_StripsThePrefix_LeavingOnlyThePayload()
+    {
+        var update = MessageUpdate(updateId: 1, senderId: 12345, chatId: 999, messageId: 1, text: "/start 4821");
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("4821", parsed.Text);
+    }
+
+    /// <summary>A visitor who manually starts the bot with no deep-link payload sends a bare "/start" -
+    /// no trailing space, so nothing here matches the prefix, and the text passes through unchanged
+    /// (it will simply fail to match any pending code downstream, an unremarkable outcome).</summary>
+    [Fact]
+    public void TryParse_ForABareStartWithNoPayload_LeavesTheTextUnchanged()
+    {
+        var update = MessageUpdate(updateId: 1, senderId: 12345, chatId: 999, messageId: 1, text: "/start");
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("/start", parsed.Text);
+    }
+
+    /// <summary>A command that merely shares "/start" as a text prefix, with no separating space
+    /// (Telegram never actually sends this shape, but the check itself must not be a loose
+    /// <c>StartsWith("/start")</c>) must not be mistaken for a deep-link payload.</summary>
+    [Fact]
+    public void TryParse_ForTextStartingWithStartButNoSeparatingSpace_LeavesTheTextUnchanged()
+    {
+        var update = MessageUpdate(updateId: 1, senderId: 12345, chatId: 999, messageId: 1, text: "/startsomething");
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("/startsomething", parsed.Text);
+    }
 }

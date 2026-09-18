@@ -122,6 +122,7 @@ using Ago.Chat.Application.UseCases.ListMyTenancies;
 using Ago.Chat.Application.UseCases.ListSitesForOwner;
 using Ago.Chat.Application.UseCases.ListWebhookEndpoints;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
@@ -457,6 +458,10 @@ public sealed class ChatModule : IProductModule
         // Resolved by Ago.Chat.Worker's own LinkIdentityCommandConsumer, off MessageAccepted - the
         // identical shape RouteConversationToModuleHandler/SendOfflineAutoReplyHandler already establish.
         services.AddScoped<HandleLinkIdentityCommandHandler>();
+        // `25-148`: the third originator of a PendingChannelLinkRequest - resolved by Ago.Chat.Api's own
+        // AuthEndpoints, sharing this same PendingChannelLinkRequestOptions group (its own remarks on
+        // why reusing the existing mechanism, not a second one, is the point).
+        services.AddScoped<MintVisitorChannelLinkCodeHandler>();
         services.AddScoped<UnlinkChannelIdentityHandler>();
         // Resolved only by Ago.Chat.Api's own owner-scoped route - the identical "registered here like
         // every other handler, resolved by exactly one host" shape ListSitesForOwnerHandler's own

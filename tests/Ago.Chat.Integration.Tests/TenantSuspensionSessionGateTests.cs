@@ -1,6 +1,8 @@
 ﻿using System.Diagnostics;
 using Ago.Chat.Api.Auth;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
+using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Platform.Caching.Redis;
@@ -121,6 +123,12 @@ public sealed class TenantSuspensionSessionGateTests(SiteCachingFixture fixture)
     private RedisCache CreateCache() => new(
         fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(), NullLogger<RedisCache>.Instance);
 
+    /// <summary>`25-148`: the identical real-Postgres-backed construction
+    /// <see cref="OriginAuthorizationTests.CreateMintChannelLinkCodeHandler"/> already uses.</summary>
+    private MintVisitorChannelLinkCodeHandler CreateMintChannelLinkCodeHandler() => new(
+        new VisitorRepository(fixture.CreateDbContext()), new PendingChannelLinkRequestRepository(fixture.CreateDbContext()), new PendingChannelLinkCodeGenerator(),
+        new PendingChannelLinkRequestOptions(), new UuidV7Generator(), new SystemClock());
+
     /// <summary>The identical direct-invocation shape <see cref="OriginAuthorizationTests.InvokeVisitorSessionAsync"/>
     /// uses for the same endpoint - not shared, the same "each integration file owns its own small
     /// plumbing" precedent that file's own remarks (and the wire-test files) already establish.</summary>
@@ -143,7 +151,8 @@ public sealed class TenantSuspensionSessionGateTests(SiteCachingFixture fixture)
 
         var result = await AuthEndpoints.HandleVisitorSessionAsync(
             new AuthEndpoints.VisitorSessionRequest(publicKey),
-            getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource), suspensions,
+            getSite, new SiteInstallationSignalRepository(fixture.DataSource), new EnabledModuleReadStore(fixture.DataSource),
+            new PublicChannelLinkReadStore(fixture.DataSource), CreateMintChannelLinkCodeHandler(), suspensions,
             rateLimiter, rateLimitOptions, new UuidV7Generator(), new SystemClock(), tokens, httpContext, CancellationToken.None);
         await result.ExecuteAsync(httpContext);
         return httpContext.Response.StatusCode;

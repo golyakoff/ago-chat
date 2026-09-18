@@ -83,6 +83,20 @@ public static class TenantScopeExemptions
             "Visitor path, and the one that mints the pairing every other visitor check relies on: both SiteId and "
             + "VisitorId come from the signed visitor token, so a visitor cannot name a site their token was not "
             + "issued for. There is no prior object to check ownership of - this is where ownership begins.",
+        ["Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode.MintVisitorChannelLinkCodeHandler.HandleAsync"] =
+            "`25-148`. Visitor session path, resolved by AuthEndpoints.HandleVisitorSessionAsync/HandleVisitorSessionRenewalAsync "
+            + "at the identical points StartConversationHandler's own entry above describes: SiteId is the site the "
+            + "handshake already resolved (by public key on a mint, or from the token claim on a renewal), and "
+            + "VisitorId is either freshly minted by this same trusted issuer (mint) or read off the signed visitor "
+            + "token (renewal) - never a caller-suppliable value either way. There is no operator or other second "
+            + "party to check a permission for: the only actor is the visitor's own already-authenticated session, "
+            + "the same 'no principal to check a permission for' category HandleLinkIdentityCommandHandler's own "
+            + "entry below is in for its visitor-initiated /linkidentity path - this handler is structurally its "
+            + "third, symmetric originator (adr/0079 decision 2), just reached at session-handshake time instead of "
+            + "a typed command or a console click. The one write it makes (a PendingChannelLinkRequest) is scoped to "
+            + "exactly the (SiteId, VisitorId) pair the caller passed in, and is skipped outright - see this "
+            + "handler's own remarks - when no persisted Visitor row exists yet for that id, so there is no state to "
+            + "reach beyond what the caller's own already-verified identity already names.",
 
         // ---------------------------------------------------------------------------------------
         // Public, pre-authentication surface. These serve a site's *public* configuration - the same

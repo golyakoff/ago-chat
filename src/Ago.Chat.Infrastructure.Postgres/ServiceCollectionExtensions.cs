@@ -259,6 +259,9 @@ public static class ServiceCollectionExtensions
         // shape every other repository/read-store pair on this page follows.
         services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
         services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
+        // `25-148`: the visitor handshake's own read - IPublicChannelLinkReadStore's own remarks on why
+        // this is a read store rather than a fifth method on IChannelCredentialRepository right above.
+        services.AddScoped<IPublicChannelLinkReadStore, PublicChannelLinkReadStore>();
         // `22-07`/`adr/0093`: "site X's module K has quantity Q" - the calendar add-on's own granted
         // masters count. One implicit-transaction port, not a repository + a separate outbox call -
         // see IModuleQuantityGrantStore's own remarks.

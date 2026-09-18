@@ -166,6 +166,36 @@ public class ChannelPortTests
         }
     }
 
+    /// <summary>
+    /// `25-148`: <c>AuthEndpoints.ChannelLinkResponse</c> is a genuinely new carrier of channel-shaped
+    /// facts on a *visitor-facing* response - the widget handshake, reachable by anyone who knows a
+    /// site's public key. <see cref="MaxChannelResponses_CarryNoTokenOrSecretProperty"/>'s own two-word
+    /// forbidden list (<c>Token</c>, <c>Secret</c>) is not the whole guarantee this type needs: this
+    /// item's own backlog is explicit that this type must never carry
+    /// <c>ChannelCredentialId</c>/<c>ProviderAccountId</c> either - operator-console-shaped identifiers
+    /// with no business being on a response a stranger with the public key can request. A regression that
+    /// "just echoes the credential id back so the widget can reference it" fails this test the moment the
+    /// property is added.
+    /// </summary>
+    [Fact]
+    public void ChannelLinkResponse_CarriesNoTokenSecretCredentialOrAccountIdProperty()
+    {
+        string[] forbiddenFragments = ["Token", "Secret", "Credential", "AccountId"];
+
+        var type = TestAssemblies.Api.Reflection.GetTypes().SingleOrDefault(t => t.Name == "ChannelLinkResponse");
+        Assert.True(type is not null, "ChannelLinkResponse must exist in Ago.Chat.Api.Auth.AuthEndpoints");
+
+        var offendingProperties = type!.GetProperties()
+            .Where(p => forbiddenFragments.Any(fragment => p.Name.Contains(fragment, StringComparison.Ordinal)))
+            .Select(p => p.Name)
+            .ToList();
+
+        Assert.True(offendingProperties.Count == 0,
+            $"ChannelLinkResponse carries {string.Join(", ", offendingProperties)} - a visitor-facing "
+            + "response reachable by anyone with a site's public key must never carry a credential-shaped "
+            + "or token/secret-shaped value (docs/adr/0175-*.md).");
+    }
+
     [Fact]
     public void ChannelPort_DoesNotKnowHowItIsProtected() =>
         Types.InAssembly(TestAssemblies.Application.Reflection)

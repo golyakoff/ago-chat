@@ -30,6 +30,14 @@
 /// </summary>
 public static class TelegramInboundMessageParser
 {
+    /// <summary>
+    /// `25-148`: Telegram's own literal wire form for a deep-link tap - opening `t.me/&lt;bot&gt;?start=X`
+    /// makes the client send exactly this text, one space, then the payload, as this chat's first
+    /// message. Confirmed against Telegram's own Bot API documentation
+    /// (core.telegram.org/bots/api#message, the `/start` deep-linking section).
+    /// </summary>
+    private const string StartCommandPrefix = "/start ";
+
     public static ParsedTelegramMessage? TryParse(TelegramUpdate update)
     {
         if (update.Message is null)
@@ -56,6 +64,23 @@ public static class TelegramInboundMessageParser
         if (string.IsNullOrWhiteSpace(text))
         {
             return null;
+        }
+
+        // `25-148`: strip Telegram's own `/start ` prefix off a deep-link payload before it ever reaches
+        // ReceiveChannelMessageHandler - this is the entire mechanism that lets a visitor tapping
+        // `AuthEndpoints`' own minted `t.me/<bot>?start=<code>` link confirm a pending channel-identity
+        // link (`14-12`/`adr/0079`) exactly the way typing the bare code by hand already does, with no
+        // second, parallel verification mechanism: ReceiveChannelMessageHandler's own confirmation branch
+        // compares the message body to a live pending code by *exact* equality, never a command parse
+        // (that handler's own remarks), so "/start 4821" has to become "4821" here, at the one place this
+        // codebase already translates Telegram's own wire vocabulary into a plain message body, or it
+        // would never match. A bare "/start" with no payload (a visitor manually starting the bot, not
+        // following a link) has no trailing space to strip and is left exactly as it is - it will simply
+        // fail to match any pending code, the identical, unremarkable outcome any other non-code text
+        // already produces.
+        if (text.StartsWith(StartCommandPrefix, StringComparison.Ordinal))
+        {
+            text = text[StartCommandPrefix.Length..];
         }
 
         var externalMessageId = $"{chatId}:{messageId}";
