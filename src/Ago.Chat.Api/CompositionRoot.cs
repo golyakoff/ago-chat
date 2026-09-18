@@ -428,6 +428,11 @@ public static class CompositionRoot
         // just because this route happened to share a folder" reasoning `MapAccessRecordsEndpoint` already
         // states for itself further down this file.
         app.MapVisitorRestrictionsEndpoints();
+        // `25-143`: own Map call, the identical "a test host mapping only MapConversationsEndpoints
+        // must never be made to resolve a route with a different auth shape just because it shares a
+        // folder" reasoning MapVisitorRestrictionsEndpoints' own remarks give right above - here in the
+        // opposite direction (visitor-only beside an operator-only file).
+        app.MapUnreadCountEndpoints();
         app.MapOperatorsEndpoints();
         // `13-07`/`adr/0068`
         app.MapMeEndpoints();

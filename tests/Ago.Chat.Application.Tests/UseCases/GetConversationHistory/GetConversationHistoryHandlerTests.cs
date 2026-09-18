@@ -142,6 +142,62 @@ public class GetConversationHistoryHandlerTests
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
     }
 
+    // `25-143`: the widget's own reload-time badge seed - see
+    // GetConversationHistoryHandler.HandleUnreadCountAsVisitorAsync's own remarks for why this is a
+    // count-only sibling to HandleDeltaAsVisitorAsync rather than that method's result, counted.
+    [Fact]
+    public async Task HandleUnreadCountAsVisitorAsync_CountsOnlyMessagesAfterTheGivenSequence_NotAuthoredByTheVisitor()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+
+        // CreateHandlerWithHistory seeds sequence 1 (visitor) then sequence 2 (operator) - asking from
+        // sequence 0 must count only the operator's own message, never the visitor's own.
+        var result = await handler.HandleUnreadCountAsVisitorAsync(
+            new GetUnreadCountAsVisitor(conversation.Id, VisitorId, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, result.Value);
+    }
+
+    [Fact]
+    public async Task HandleUnreadCountAsVisitorAsync_WhenNothingIsNewerThanTheGivenSequence_ReturnsZero()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+
+        var result = await handler.HandleUnreadCountAsVisitorAsync(
+            new GetUnreadCountAsVisitor(conversation.Id, VisitorId, AfterSequence: 2), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(0, result.Value);
+    }
+
+    [Fact]
+    public async Task HandleUnreadCountAsVisitorAsync_WhenTheRequesterIsNotThisConversationsVisitor_ReturnsForbidden()
+    {
+        var (handler, _, conversation) = CreateHandlerWithHistory();
+        var someoneElse = new VisitorId(Guid.NewGuid());
+
+        var result = await handler.HandleUnreadCountAsVisitorAsync(
+            new GetUnreadCountAsVisitor(conversation.Id, someoneElse, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleUnreadCountAsVisitorAsync_WhenConversationDoesNotExist_ReturnsNotFound()
+    {
+        var conversations = new FakeConversationRepository();
+        var readStore = new FakeConversationReadStore();
+        var handler = new GetConversationHistoryHandler(conversations, readStore, new FakePermissionChecker());
+
+        var result = await handler.HandleUnreadCountAsVisitorAsync(
+            new GetUnreadCountAsVisitor(new ConversationId(Guid.NewGuid()), VisitorId, AfterSequence: 0), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.NotFound", result.Error!.Value.Code);
+    }
+
     [Fact]
     public async Task HandleDeltaAsOperatorAsync_ReturnsOnlyMessagesAfterTheGivenSequence_OldestFirst()
     {

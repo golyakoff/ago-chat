@@ -33,6 +33,18 @@ public interface IConversationReadStore
         ConversationId conversationId, SiteId siteId, int afterSequence, CancellationToken cancellationToken);
 
     /// <summary>
+    /// `25-143`: <see cref="GetDeltaAsync"/>'s count-only sibling - every message strictly after
+    /// <paramref name="afterSequence"/> not authored by the visitor, counted rather than fetched. The
+    /// widget's closed-launcher badge (`25-141`) needs "how many" on every page load, before the panel
+    /// opens and before any hub connection exists to ask a live question - <see cref="GetDeltaAsync"/>
+    /// would answer the same question at the cost of materialising every message body over the wire
+    /// just to discard them, which is exactly the per-load cost `adr/0148`'s lazy-connect design exists
+    /// to avoid paying for a visitor who has not engaged.
+    /// </summary>
+    Task<int> GetUnreadCountAsync(
+        ConversationId conversationId, SiteId siteId, int afterSequence, CancellationToken cancellationToken);
+
+    /// <summary>
     /// `5-08`: the admin/supervisor view's own read - every conversation for a site regardless of
     /// state or assignment, unlike <see cref="IConversationRepository.GetWaitingForSiteAsync"/>/
     /// <see cref="IConversationRepository.GetAssignedToOperatorAsync"/> (bounded, state-filtered
