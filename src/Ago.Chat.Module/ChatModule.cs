@@ -126,6 +126,7 @@ using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.RecordUnread;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
@@ -442,6 +443,10 @@ public sealed class ChatModule : IProductModule
         // remarks for why a shared contact gets its own command rather than a field on
         // ReceiveChannelMessage.
         services.AddScoped<Ago.Chat.Application.UseCases.RecordChannelVisitorContact.RecordChannelVisitorContactHandler>();
+        // `25-161`: the attachment-carrying sibling of both of the above - composes
+        // CreateAttachmentHandler/ConfirmAttachmentHandler/SendVisitorMessageHandler, all three already
+        // registered below, so registration order does not matter here (DI resolves each lazily).
+        services.AddScoped<ReceiveChannelAttachmentHandler>();
         // `14-02`: the outbound half - relays an operator's already-committed reply through whichever
         // channel the visitor was reached by. See DeliverChannelMessageHandler's own remarks for why it
         // is driven off MessageAccepted rather than the send path.

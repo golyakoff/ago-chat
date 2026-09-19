@@ -151,6 +151,58 @@ public sealed class MaxApiClient(HttpClient httpClient)
             null, response.StatusCode);
     }
 
+    /// <summary>
+    /// `25-161`: fetches the actual bytes of an inbound photo attachment - the download half of this
+    /// item's diagnosis, alongside <see cref="MaxInboundMessageParser"/>'s parsing half.
+    /// <see cref="MaxAttachmentPayload.Url"/> is, per MAX's own documented outline, "a direct link to
+    /// image in internet" - a plain HTTPS URL, not a second authenticated MAX API call, so this method
+    /// does not go through <see cref="AddAuthorization"/> at all: <paramref name="url"/> already comes
+    /// from an update this codebase authenticated on the way in (the webhook's own secret header, or a
+    /// long-poll answered against a real bot token), and attaching this bot's own token as a bare
+    /// header to a request against an arbitrary MAX-supplied host would leak it to whatever that host
+    /// actually is - a needless widening of what this token is ever sent to, for a call that does not
+    /// need it.
+    ///
+    /// <para>Only an absolute, <c>https</c> URL is ever fetched - a defensive floor this class's own
+    /// terminal/transient split does not otherwise need (every other method here calls a URL this
+    /// codebase itself constructed), because this is the one method whose target is a value read
+    /// straight off an inbound payload. Anything else - relative, <c>http</c>, or another scheme
+    /// entirely - is treated the same as "MAX gave us nothing usable," not attempted.</para>
+    ///
+    /// <para>Shares <see cref="SendMessageAsync"/>'s own terminal/transient split
+    /// (<see cref="TerminalRefusalStatusCodes"/>): a 400/401/403/404 is <see langword="null"/> - this
+    /// image cannot be fetched, full stop, no retry would change that - and everything else throws, so
+    /// a transient failure here rides the same retry this codebase already gives an inbound webhook
+    /// (MAX's own 200-or-retry contract) or long-poll iteration (<see cref="MaxLongPollingService"/>'s
+    /// own backoff-and-retry catch), rather than being swallowed as if it were a permanent refusal.</para>
+    /// </summary>
+    public async Task<MaxImageDownloadResult?> DownloadImageAsync(string url, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            return null;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            return new MaxImageDownloadResult(bytes, contentType);
+        }
+
+        if (TerminalRefusalStatusCodes.Contains(response.StatusCode))
+        {
+            return null;
+        }
+
+        throw new HttpRequestException(
+            $"MAX image download returned {(int)response.StatusCode} for a URL this update supplied.",
+            null, response.StatusCode);
+    }
+
     /// <summary>The dev-only loop (`14-02`'s backlog note): MAX's own documentation calls this
     /// "limited by speed and event retention" - fine for the local compose loop, which this project's
     /// runbook is the only caller of.</summary>
@@ -192,3 +244,10 @@ public sealed record MaxGetMeResult(bool Ok, string? Username, string? RefusalRe
 
     public static MaxGetMeResult Refused(string reason) => new(false, null, reason);
 }
+
+/// <summary>`25-161`: what <see cref="MaxApiClient.DownloadImageAsync"/> actually found - the real
+/// bytes, and the content type MAX's own response declared for them (never the declared type of
+/// anything the sending visitor claimed; this is read off the HTTP response itself, the same "verify,
+/// never trust the claim" posture <c>ConfirmAttachmentHandler</c>'s own HEAD-verify already holds for a
+/// widget upload).</summary>
+public sealed record MaxImageDownloadResult(byte[] Content, string ContentType);

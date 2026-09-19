@@ -20,8 +20,13 @@ public static class MaxInboundMessageParser
     private const string MessageCreatedUpdateType = "message_created";
 
     /// <summary>`25-151`: MAX's own best-effort-reconstructed attachment type name for a shared contact
-    /// - <c>MaxContactAttachmentPayload</c>'s own remarks carry the full honesty note.</summary>
+    /// - <c>MaxAttachmentPayload</c>'s own remarks carry the full honesty note.</summary>
     private const string ContactAttachmentType = "contact";
+
+    /// <summary>`25-161`: MAX's own attachment type name for a sent photo - confirmed against the MAX
+    /// Bot API's own published Go client schema (<c>MaxAttachmentPayload</c>'s own remarks), unlike
+    /// <see cref="ContactAttachmentType"/>'s guesswork.</summary>
+    private const string ImageAttachmentType = "image";
 
     /// <summary>
     /// `25-151`: <paramref name="botToken"/> joins this method's own signature - still a pure function
@@ -64,7 +69,14 @@ public static class MaxInboundMessageParser
         // instead.
         var contact = TryVerifyContact(update.Message.Body, botToken);
 
-        if (string.IsNullOrWhiteSpace(text) && contact is null)
+        // `25-161`: the identical widening, for a sent photo - confirmed live, 2026-09-19, against a
+        // real bot: a MAX visitor sending only a photo (no caption) carries no `text` at all, and this
+        // parser used to bail out right here, dropping the entire message - not just the attachment it
+        // did not understand, the whole inbound fact that anything was sent. See this class's own
+        // report for the full diagnosis.
+        var image = TryExtractImage(update.Message.Body);
+
+        if (string.IsNullOrWhiteSpace(text) && contact is null && image is null)
         {
             return null;
         }
@@ -77,15 +89,15 @@ public static class MaxInboundMessageParser
         var externalMessageId = update.Message.Body?.Mid
             ?? $"{chatId}:{update.Message.Timestamp ?? update.Timestamp ?? 0}";
 
-        return new ParsedMaxMessage(chatId, senderId, externalMessageId, text, contact);
+        return new ParsedMaxMessage(chatId, senderId, externalMessageId, text, contact, image);
     }
 
     /// <summary>
     /// `25-151`: MAX's own substitute for Telegram's `user_id` equality check - MAX attaches no sender
     /// identity to a contact attachment at all (this item's own honesty note: the public documentation
     /// does not confirm one exists), so the trust question here is answered entirely by
-    /// <see cref="MaxContactAttachmentPayload.Hash"/>, an HMAC-SHA256 of
-    /// <see cref="MaxContactAttachmentPayload.VcfInfo"/> keyed with the receiving site's own bot token -
+    /// <see cref="MaxAttachmentPayload.Hash"/>, an HMAC-SHA256 of
+    /// <see cref="MaxAttachmentPayload.VcfInfo"/> keyed with the receiving site's own bot token -
     /// present, per MAX's own documentation outline, only when the visitor shared their own contact
     /// through a `request_contact`-type button (or shared it unprompted, the identical payload shape).
     /// A missing or non-matching hash is rejected here - returned as <see langword="null"/>,
@@ -97,7 +109,7 @@ public static class MaxInboundMessageParser
     /// <para><b>Honesty note, repeated once more because this is the one part of this file with no
     /// public documentation and no live capture behind it at all</b> (unlike this file's own
     /// message-shape assumptions, which at least draw on third-party integration write-ups): the exact
-    /// digest encoding MAX compares <see cref="MaxContactAttachmentPayload.Hash"/> against - lowercase
+    /// digest encoding MAX compares <see cref="MaxAttachmentPayload.Hash"/> against - lowercase
     /// hex, uppercase hex, or base64 - is this method's own guess (lowercase hex, the most common convention
     /// for an HMAC signature header across the providers this codebase already integrates with,
     /// <c>WhatsAppInboundMessageParser</c>'s own signature check included). A real MAX bot token and a
@@ -146,6 +158,35 @@ public static class MaxInboundMessageParser
 
         return new ParsedMaxContact(phone, payload.MaxInfo?.FirstName, payload.MaxInfo?.LastName);
     }
+
+    /// <summary>
+    /// `25-161`: the inbound half of this item's own diagnosis - before this method existed, nothing in
+    /// this file ever looked past <see cref="ContactAttachmentType"/>, so a sent photo's own attachment
+    /// entry was invisible to <see cref="TryParse"/> no matter what it carried; a caption-less photo (no
+    /// `text` at all) then failed the blank-body bail-out too, dropping the entire inbound message.
+    ///
+    /// <para>Reads only <see cref="MaxAttachmentPayload.Url"/> - see that type's own remarks for why
+    /// <see cref="MaxAttachmentPayload.PhotoId"/>/<see cref="MaxAttachmentPayload.Token"/> are MAX-internal
+    /// references this codebase has no confirmed way to resolve to bytes, and only <c>url</c> is a plain
+    /// link this parser's caller can actually fetch. A payload with no <c>url</c> - token-only, or the
+    /// attachment absent entirely - degrades to <see langword="null"/>, the same "an unconfirmed shape
+    /// is skipped, never guessed at" posture <see cref="TryVerifyContact"/> already established for its
+    /// own attachment type.</para>
+    ///
+    /// <para>No trust check the way <see cref="TryVerifyContact"/> needs one: MAX itself is the one
+    /// giving this system the URL (inside an update this parser's own caller already authenticated -
+    /// the webhook's own secret header, or a long-poll answered against a real bot token), the identical
+    /// trust boundary <see cref="MaxIncomingMessage.Body"/>'s own <c>Text</c> already crosses with no
+    /// separate verification of its own.</para>
+    /// </summary>
+    private static ParsedMaxImage? TryExtractImage(MaxMessageBody? body)
+    {
+        var url = body?.Attachments?
+            .FirstOrDefault(a => a.Type == ImageAttachmentType)?
+            .Payload?.Url;
+
+        return string.IsNullOrWhiteSpace(url) ? null : new ParsedMaxImage(url);
+    }
 }
 
 /// <summary>
@@ -160,14 +201,20 @@ public static class MaxInboundMessageParser
 ///
 /// <para><b>`25-151`:</b> <paramref name="Text"/> is nullable since this item - a contact-attachment
 /// message may carry none at all (this type's own remarks on
-/// <see cref="MaxInboundMessageParser.TryParse"/>'s new behaviour). <paramref name="Text"/> and
-/// <paramref name="Contact"/> are not mutually exclusive the way Telegram's own two fields are (MAX's
-/// documentation gives no reason to assume they cannot coexist on one message), so the caller
-/// (<see cref="MaxLongPollingService"/>/<c>MaxWebhookEndpoints</c>) acts on whichever of the two is
-/// present, independently.</para>
+/// <see cref="MaxInboundMessageParser.TryParse"/>'s new behaviour). <paramref name="Text"/>,
+/// <paramref name="Contact"/> and <paramref name="Image"/> are not mutually exclusive the way Telegram's
+/// own text/contact fields are (MAX's documentation gives no reason to assume any two cannot coexist on
+/// one message - a captioned photo is exactly text-plus-image), so the caller
+/// (<see cref="MaxLongPollingService"/>/<c>MaxWebhookEndpoints</c>) acts on whichever are present,
+/// independently.</para>
+///
+/// <para><b>`25-161`:</b> <paramref name="Image"/> is this same widening, for a sent photo - see
+/// <see cref="MaxInboundMessageParser.TryParse"/>'s own remarks for the live symptom this closes (a
+/// caption-less photo used to vanish entirely, not just lose its attachment).</para>
 /// </summary>
 public sealed record ParsedMaxMessage(
-    long ChatId, long SenderId, string ExternalMessageId, string? Text, ParsedMaxContact? Contact = null);
+    long ChatId, long SenderId, string ExternalMessageId, string? Text, ParsedMaxContact? Contact = null,
+    ParsedMaxImage? Image = null);
 
 /// <summary>
 /// `25-151`: a MAX contact that has already passed <see cref="MaxInboundMessageParser"/>'s own
@@ -175,3 +222,14 @@ public sealed record ParsedMaxMessage(
 /// this contact" is already answered, so nothing downstream needs to re-ask it.
 /// </summary>
 public sealed record ParsedMaxContact(string Phone, string? FirstName, string? LastName);
+
+/// <summary>
+/// `25-161`: a MAX photo attachment this parser could actually resolve to a fetchable location - see
+/// <see cref="MaxInboundMessageParser"/>'s own <c>TryExtractImage</c> remarks for why <see cref="Url"/>
+/// is the only field of <see cref="MaxAttachmentPayload"/> this record carries forward. The caller
+/// (<see cref="MaxLongPollingService"/>/<c>MaxWebhookEndpoints</c>) is what actually downloads the bytes
+/// (<see cref="MaxApiClient.DownloadImageAsync"/>) and hands them to
+/// <c>Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler</c> - this
+/// type itself carries no bytes and does no I/O, matching every other type in this file.
+/// </summary>
+public sealed record ParsedMaxImage(string Url);
