@@ -1,10 +1,12 @@
 ﻿using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Vk;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Ago.Chat.Api.Channels;
 
@@ -41,6 +43,13 @@ namespace Ago.Chat.Api.Channels;
 /// segment is routing, not authentication on its own - a request whose secret does not match this
 /// specific credential is rejected regardless of how the id was obtained, the identical info-hiding shape
 /// <c>MaxWebhookEndpoints</c>' own remarks state.</para>
+///
+/// <para><b>`25-166`: an inbound photo, dispatched to <see cref="VkInboundAttachmentDispatch"/> rather
+/// than <see cref="ReceiveChannelMessageHandler"/>.</b> The same reasoning <c>MaxWebhookEndpoints</c>'s
+/// own remarks already state for their own channel: routing through the shared, channel-agnostic
+/// <see cref="ReceiveChannelAttachmentHandler"/> means the `23-78` upload grant, rate limits and storage
+/// budgets all apply to a VK-sourced image identically to a widget-sourced one, with no second copy of
+/// any of those rules.</para>
 /// </summary>
 public static class VkWebhookEndpoints
 {
@@ -58,6 +67,8 @@ public static class VkWebhookEndpoints
         IChannelCredentialCipher cipher,
         VkApiClient vkApiClient,
         ReceiveChannelMessageHandler receiveHandler,
+        ReceiveChannelAttachmentHandler receiveAttachmentHandler,
+        ILogger<ReceiveChannelAttachmentHandler> logger,
         CancellationToken cancellationToken)
     {
         var credential = await credentials.GetByIdAsync(new ChannelCredentialId(credentialId), cancellationToken);
@@ -118,15 +129,39 @@ public static class VkWebhookEndpoints
             return Results.Text(OkResponseBody);
         }
 
-        var result = await receiveHandler.HandleAsync(
-            new ReceiveChannelMessage(
-                credential.SiteId,
-                ChannelKind.Vk,
+        if (!string.IsNullOrWhiteSpace(parsed.Text))
+        {
+            var result = await receiveHandler.HandleAsync(
+                new ReceiveChannelMessage(
+                    credential.SiteId,
+                    ChannelKind.Vk,
+                    new ExternalChannelAddress(parsed.PeerId.ToString()),
+                    new ExternalMessageId(parsed.ExternalMessageId),
+                    parsed.Text),
+                cancellationToken);
+
+            if (result.IsFailure)
+            {
+                return result.Error!.Value.ToProblem(httpContext);
+            }
+        }
+
+        // `25-166`: a sent photo, dispatched the same way a captioned MAX/Telegram photo already is -
+        // its own sibling command, never folded into ReceiveChannelMessage above. See
+        // VkInboundAttachmentDispatch's own remarks for the full download-prepare-upload-complete
+        // protocol this one call hides. Never turned into a non-"ok" response for its own internal
+        // failures, matching MaxWebhookEndpoints' own identical branch: this is downstream of "the event
+        // parsed fine," the same territory the text branch's own `result.IsFailure` check above is
+        // reserved for.
+        if (parsed.Image is { } image)
+        {
+            await VkInboundAttachmentDispatch.DispatchImageAsync(
+                receiveAttachmentHandler, vkApiClient, logger, credential.SiteId, image,
                 new ExternalChannelAddress(parsed.PeerId.ToString()),
                 new ExternalMessageId(parsed.ExternalMessageId),
-                parsed.Text),
-            cancellationToken);
+                cancellationToken);
+        }
 
-        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Text(OkResponseBody);
+        return Results.Text(OkResponseBody);
     }
 }

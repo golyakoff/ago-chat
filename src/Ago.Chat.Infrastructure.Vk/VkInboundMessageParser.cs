@@ -29,6 +29,10 @@ namespace Ago.Chat.Infrastructure.Vk;
 /// </summary>
 public static class VkInboundMessageParser
 {
+    /// <summary>`25-166`: VK's own attachment-type discriminator for a photo - confirmed against VK's
+    /// own published API reference, <c>VkAttachment</c>'s own remarks.</summary>
+    private const string PhotoAttachmentType = "photo";
+
     public static ParsedVkMessage? TryParse(VkCallbackEvent callbackEvent)
     {
         if (callbackEvent.Type != VkCallbackEventTypes.MessageNew || callbackEvent.Object is not { } payload)
@@ -70,7 +74,16 @@ public static class VkInboundMessageParser
         }
 
         var text = message.Text;
-        if (string.IsNullOrWhiteSpace(text))
+
+        // `25-166`: a VK photo message may carry no `text` at all - the identical "these two are not
+        // mutually exclusive on this provider's own wire shape" reasoning `ParsedMaxMessage`'s own
+        // remarks give for MAX's captioned photo (VK's own message object carries `text` and
+        // `attachments` as independent fields, both populated together for a captioned photo) - so this
+        // can no longer bail out on blank text alone; it must also ask whether a resolvable photo rode
+        // along instead.
+        var image = TryExtractImage(message.Attachments);
+
+        if (string.IsNullOrWhiteSpace(text) && image is null)
         {
             return null;
         }
@@ -82,7 +95,46 @@ public static class VkInboundMessageParser
         // `body.mid`).
         var externalMessageId = message.Id is > 0 ? message.Id.Value.ToString() : $"{peerId}:{message.Date ?? 0}";
 
-        return new ParsedVkMessage(peerId, fromId, externalMessageId, text);
+        return new ParsedVkMessage(peerId, fromId, externalMessageId, text, image);
+    }
+
+    /// <summary>
+    /// `25-166`: the inbound half of this item's own diagnosis - before this method existed, nothing in
+    /// this file ever read <see cref="VkMessage.Attachments"/> at all, so a sent photo's own attachment
+    /// entry was invisible to <see cref="TryParse"/> no matter what it carried; a caption-less photo (no
+    /// `text`) then failed the blank-body bail-out too, dropping the entire inbound message - the
+    /// identical live symptom `25-161`'s own report found for MAX.
+    ///
+    /// <para>Picks the highest resolution by <see cref="VkPhotoSize.Width"/> explicitly, not by array
+    /// position or <see cref="VkPhotoSize.Type"/>'s own letter code - <see cref="VkPhoto"/>'s own remarks
+    /// on why neither is a documented ordering guarantee. A size with no <see cref="VkPhotoSize.Url"/> at
+    /// all is skipped defensively, the same "an unconfirmed shape degrades to skipped, never guessed at"
+    /// posture <c>MaxInboundMessageParser</c>/<c>TelegramInboundMessageParser</c> already hold for their
+    /// own equivalents.</para>
+    ///
+    /// <para>No trust check the way <c>TelegramInboundMessageParser.TryVerifyContact</c> needs one for a
+    /// contact: VK itself is the one giving this system the photo URL, inside an event this parser's own
+    /// caller already authenticated (<c>VkWebhookEndpoints</c>' own <c>secret</c> field check), the
+    /// identical trust boundary <see cref="VkMessage.Text"/> already crosses with no separate
+    /// verification of its own.</para>
+    /// </summary>
+    private static ParsedVkImage? TryExtractImage(IReadOnlyList<VkAttachment>? attachments)
+    {
+        var sizes = attachments?
+            .FirstOrDefault(a => a.Type == PhotoAttachmentType)?
+            .Photo?.Sizes;
+
+        if (sizes is null || sizes.Count == 0)
+        {
+            return null;
+        }
+
+        var best = sizes
+            .Where(size => !string.IsNullOrWhiteSpace(size.Url))
+            .OrderByDescending(size => size.Width ?? 0)
+            .FirstOrDefault();
+
+        return best?.Url is { } url ? new ParsedVkImage(url) : null;
     }
 }
 
@@ -95,5 +147,24 @@ public static class VkInboundMessageParser
 /// item only ever sees the 1:1 case. <paramref name="FromId"/> is kept for whichever future caller needs
 /// to know who specifically wrote a message (nothing does yet) - the identical shape
 /// <c>ParsedMaxMessage.SenderId</c> already establishes.
+///
+/// <para><b>`25-166`:</b> <paramref name="Text"/> is nullable since this item - a caption-less photo
+/// carries none at all (this type's own remarks on <see cref="VkInboundMessageParser.TryParse"/>'s new
+/// behaviour). <paramref name="Image"/> is not mutually exclusive with <paramref name="Text"/> - a
+/// captioned photo produces both, independently, the same shape <c>ParsedMaxMessage</c>/
+/// <c>ParsedTelegramMessage</c> already establish for their own captioned photo.</para>
 /// </summary>
-public sealed record ParsedVkMessage(long PeerId, long FromId, string ExternalMessageId, string Text);
+public sealed record ParsedVkMessage(
+    long PeerId, long FromId, string ExternalMessageId, string? Text, ParsedVkImage? Image = null);
+
+/// <summary>
+/// `25-166`: a VK photo attachment this parser could actually resolve to a directly fetchable URL - see
+/// <see cref="VkInboundMessageParser"/>'s own <c>TryExtractImage</c> remarks for why the highest
+/// resolution's URL is the only field this record carries forward. The caller
+/// (<c>Ago.Chat.Api.Channels.VkWebhookEndpoints</c>) is what actually downloads the bytes
+/// (<see cref="VkApiClient.DownloadImageAsync"/>) and hands them to
+/// <c>Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler</c> - this
+/// type itself carries no bytes and does no I/O, matching <c>ParsedMaxImage</c>'s/<c>ParsedTelegramImage</c>'s
+/// own shape.
+/// </summary>
+public sealed record ParsedVkImage(string Url);

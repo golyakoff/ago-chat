@@ -1,4 +1,5 @@
-﻿using System.Net.Http.Json;
+﻿using System.Net;
+using System.Net.Http.Json;
 
 namespace Ago.Chat.Infrastructure.Vk;
 
@@ -157,6 +158,55 @@ public sealed class VkApiClient(HttpClient httpClient, string apiVersion)
         throw new VkApiCallException("VK's groups.getCallbackConfirmationCode returned no code.");
     }
 
+    /// <summary>
+    /// `25-166`: fetches the actual bytes of an inbound photo attachment - unlike every other method in
+    /// this class, this is not a call to <c>api.vk.com/method</c> at all: <see cref="VkPhotoSize.Url"/> is,
+    /// per VK's own published API reference, a directly fetchable link to VK's own CDN, needing no
+    /// <c>access_token</c>/<c>v</c> form parameters and no JSON envelope to unwrap - the one respect in
+    /// which this attachment is simpler than Telegram's/WhatsApp's own two-step, authenticated download,
+    /// closer to MAX's single-URL shape (<c>MaxApiClient.DownloadImageAsync</c>'s own remarks). So this
+    /// method shares that method's own shape wholesale rather than this class's own
+    /// form-POST-plus-JSON-envelope convention: a plain anonymous GET, the identical terminal/transient
+    /// split by real HTTP status code (400/401/403/404 is <see langword="null"/>, everything else throws)
+    /// - VK's own <c>{"error":...}</c>-in-a-200-body convention has no bearing here, because this request
+    /// never reaches <c>api.vk.com</c> at all.
+    ///
+    /// <para>Only an absolute, <c>https</c> URL is ever fetched - <c>MaxApiClient.DownloadImageAsync</c>'s
+    /// own defensive floor, applied for the identical reason: this is the one method whose target is a
+    /// value read straight off an inbound payload, not a URL this codebase itself constructed.</para>
+    /// </summary>
+    public async Task<VkImageDownloadResult?> DownloadImageAsync(string url, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            return null;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            return new VkImageDownloadResult(bytes, contentType);
+        }
+
+        if (DownloadTerminalRefusalStatusCodes.Contains(response.StatusCode))
+        {
+            return null;
+        }
+
+        throw new HttpRequestException(
+            $"VK image download returned {(int)response.StatusCode} for a URL this update supplied.",
+            null, response.StatusCode);
+    }
+
+    private static readonly HttpStatusCode[] DownloadTerminalRefusalStatusCodes =
+    [
+        HttpStatusCode.BadRequest, HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden, HttpStatusCode.NotFound,
+    ];
+
     private static string Truncate(string? text) =>
         text is null ? "(no message)" : text.Length > 500 ? text[..500] : text;
 }
@@ -169,3 +219,8 @@ public sealed record VkSendResult(bool Success, string? ProviderMessageId, strin
 }
 
 public sealed record VkGroupInfo(long GroupId, string? Name);
+
+/// <summary>`25-166`: what <see cref="VkApiClient.DownloadImageAsync"/> actually found - the real bytes,
+/// and the content type VK's own CDN response declared for them, the identical "verify, never trust the
+/// claim" posture <c>MaxImageDownloadResult</c>'s own remarks already state for MAX's equivalent.</summary>
+public sealed record VkImageDownloadResult(byte[] Content, string ContentType);
