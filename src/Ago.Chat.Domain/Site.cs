@@ -354,6 +354,61 @@ public sealed class Site
     /// <see cref="OfflineAutoReply"/> already established for its own rules.</summary>
     public IReadOnlyList<CannedResponse> CannedResponses => _cannedResponses ?? [];
 
+    // `25-160`: the tenant's own reply-email brand - a company name and a logo, neither of which
+    // Site.Name/WidgetConfig carried before this item (this backlog item's own "What is actually true
+    // today"). Four flat backing fields, the same "no wrapping value object" shape Tier/SeatLimit/
+    // ContactVisibility/SuspendedUntil already establish on this same aggregate - see each property's
+    // own remarks below for why the cross-field relationship between the logo fields still does not
+    // need one.
+    private string? _brandCompanyName;
+
+    /// <summary>The public object key of this site's current, servable logo - <see langword="null"/>
+    /// until a first upload is ever validated and promoted. Deliberately independent of
+    /// <see cref="LogoStatus"/>: a *replacement* upload that fails validation leaves this field
+    /// completely untouched (<see cref="RejectLogoUpload"/>'s own remarks), so a tenant's working logo
+    /// never disappears from outbound email just because their next upload attempt was rejected. Every
+    /// reader that decides whether to render a logo - <c>EmailChannelAdapter</c> included - checks
+    /// <see cref="HasLogo"/> (this field), never <see cref="LogoStatus"/> alone.</summary>
+    private string? _logoObjectKey;
+
+    /// <summary>The object key of the upload currently awaiting `Ago.Chat.Worker`'s validating
+    /// consumer, or <see langword="null"/> when nothing is in flight. Never read by anything outside
+    /// this aggregate - the validating consumer already carries its own copy of this same key in the
+    /// integration event that woke it (<c>Ago.Chat.Contracts.SiteLogoUploadSubmitted.ObjectKey</c>), so
+    /// this field exists purely so <see cref="PromoteLogo"/>/<see cref="RejectLogoUpload"/> can tell a
+    /// current outcome apart from a stale one - see both methods' own remarks.</summary>
+    private string? _pendingLogoObjectKey;
+
+    private LogoStatus _logoStatus = LogoStatus.None;
+
+    private string? _logoRejectionReason;
+
+    /// <summary>The tenant's own display name for its outbound reply email, distinct from
+    /// <see cref="Name"/> - a tenant may want its email brand to read differently from whatever
+    /// internal or historical name this aggregate was registered under.
+    /// <c>EmailChannelAdapter</c>/`TenantReplyEmailShell` render <see langword="null"/> as "fall back to
+    /// <see cref="Name"/>", the identical "an unset value is a legitimate choice, not an error" posture
+    /// <see cref="WidgetConfig.NoticeText"/> already takes for a free-text field on this same
+    /// aggregate.</summary>
+    public string? BrandCompanyName => _brandCompanyName;
+
+    /// <summary>See <see cref="_logoObjectKey"/>'s own remarks.</summary>
+    public string? LogoObjectKey => _logoObjectKey;
+
+    /// <summary>Whether this site currently has a servable logo - the one fact
+    /// <c>EmailChannelAdapter</c> actually branches on, never <see cref="LogoStatus"/> directly (see
+    /// <see cref="_logoObjectKey"/>'s own remarks on why the two can legitimately disagree).</summary>
+    public bool HasLogo => _logoObjectKey is not null;
+
+    /// <summary>The outcome of this site's *most recent* logo upload attempt - console-facing, not
+    /// email-facing (`_logoObjectKey`'s own remarks explain the split). <see cref="Domain.LogoStatus.None"/>
+    /// for every row that predates this column.</summary>
+    public LogoStatus LogoStatus => _logoStatus;
+
+    /// <summary>Why the most recent upload was rejected - non-null exactly when
+    /// <see cref="LogoStatus"/> is <see cref="Domain.LogoStatus.Rejected"/>.</summary>
+    public string? LogoRejectionReason => _logoRejectionReason;
+
     private readonly List<IDomainEvent> _domainEvents = [];
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
@@ -728,6 +783,103 @@ public sealed class Site
         }
 
         _cannedResponses = [.. responses];
+    }
+
+    /// <summary>
+    /// `25-160`: `Site`'s own write for its reply-email brand name - the console's "Почта @" screen's
+    /// only mutation besides the logo upload flow. No validation beyond what the Application boundary
+    /// already applies (a length ceiling, `UpdateSiteBrandingHandler`'s own job, matching the
+    /// "validate once, at the Application boundary" split every other <see cref="Site"/> write method
+    /// on this aggregate already draws) - a free-text field has nothing else for this method to guard.
+    /// Raises <see cref="SiteBrandCompanyNameUpdated"/>, mapped to the same `SiteSettingsChanged`
+    /// integration event every other settings write on this aggregate converges on.
+    /// </summary>
+    public void UpdateBrandCompanyName(string? companyName, DateTimeOffset now)
+    {
+        _brandCompanyName = companyName;
+        _domainEvents.Add(new SiteBrandCompanyNameUpdated(Id, PublicKey, now));
+    }
+
+    /// <summary>
+    /// `25-160`: records that a new logo upload was accepted (the cheap, synchronous checks already ran
+    /// in `Ago.Chat.Api`'s own upload endpoint) and is now waiting on `Ago.Chat.Worker`'s validating
+    /// consumer. Deliberately does not touch <see cref="_logoObjectKey"/> - see that field's own
+    /// remarks: a tenant's currently-working logo must keep rendering in outbound email for the whole
+    /// window this upload is being validated, even if it turns out to be rejected.
+    ///
+    /// <para>Raises <see cref="SiteLogoUploadSubmitted"/>, mapped to its own integration event (not
+    /// `SiteSettingsChanged` - see that domain event's own remarks) - the one real trigger
+    /// `Ago.Chat.Worker`'s new consumer subscribes to.</para>
+    /// </summary>
+    public void SubmitLogoUpload(string pendingObjectKey, string contentType, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(pendingObjectKey))
+        {
+            throw new ArgumentException("Pending logo object key cannot be empty.", nameof(pendingObjectKey));
+        }
+
+        _pendingLogoObjectKey = pendingObjectKey;
+        _logoStatus = LogoStatus.Pending;
+        _logoRejectionReason = null;
+        // contentType is not persisted on this aggregate - Ago.Chat.Worker.SiteLogoValidator is its
+        // only reader, off this same event, and nothing about Site's own state needs to remember it
+        // once validation finishes (the branding cache, not Site, is what remembers a promoted logo's
+        // content type - Ago.Chat.Application.Caching.SiteBrandingLogoPayload's own remarks).
+        _domainEvents.Add(new SiteLogoUploadSubmitted(Id, PublicKey, pendingObjectKey, contentType, now));
+    }
+
+    /// <summary>
+    /// `25-160`: the validating consumer's own success path - <paramref name="validatedPendingObjectKey"/>
+    /// is the exact key it was asked to validate (carried on the triggering
+    /// <see cref="SiteLogoUploadSubmitted"/> event, never re-read from this aggregate), checked against
+    /// <see cref="_pendingLogoObjectKey"/> before applying anything.
+    ///
+    /// <para><b>Why the guard.</b> This item's own 5-per-day rate limit means two validations can
+    /// genuinely be in flight for the same site at once and finish out of order - without this check, a
+    /// slow validation of an *older* upload could complete after a newer one and silently overwrite the
+    /// newer upload's own already-applied outcome. Comparing against the current
+    /// <see cref="_pendingLogoObjectKey"/> makes a stale outcome a silent no-op instead: only the
+    /// validation result for whichever upload is *still* the one in flight is ever applied.</para>
+    ///
+    /// <para>Raises <see cref="SiteLogoPromoted"/>, mapped to `SiteSettingsChanged` - see that domain
+    /// event's own remarks for why, even though the cache warm-up this item's own Done-when cares about
+    /// happens through the validating consumer's own write-through, not through a consumer of this
+    /// event.</para>
+    /// </summary>
+    public void PromoteLogo(string validatedPendingObjectKey, string publicObjectKey, DateTimeOffset now)
+    {
+        if (!string.Equals(_pendingLogoObjectKey, validatedPendingObjectKey, StringComparison.Ordinal))
+        {
+            // Superseded by a newer upload already - a stale outcome, applied to nothing.
+            return;
+        }
+
+        _logoObjectKey = publicObjectKey;
+        _pendingLogoObjectKey = null;
+        _logoStatus = LogoStatus.Ready;
+        _logoRejectionReason = null;
+        _domainEvents.Add(new SiteLogoPromoted(Id, PublicKey, now));
+    }
+
+    /// <summary>
+    /// `25-160`: the validating consumer's own failure path - the identical staleness guard
+    /// <see cref="PromoteLogo"/>'s own remarks describe, for the identical reason. Deliberately raises
+    /// no domain event - the same "no real consumer, so nothing to tell" reasoning
+    /// <see cref="GrantDownloadBlockExemption"/>'s own remarks give for itself: a rejection is read only
+    /// by the console's own uncached settings screen (the identical low-frequency, operator-authenticated
+    /// read <see cref="UpdateCannedResponses"/>'s own remarks describe for its sibling), which sees this
+    /// write on its very next call with nothing for an event to invalidate.
+    /// </summary>
+    public void RejectLogoUpload(string validatedPendingObjectKey, string reason, DateTimeOffset now)
+    {
+        if (!string.Equals(_pendingLogoObjectKey, validatedPendingObjectKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _pendingLogoObjectKey = null;
+        _logoStatus = LogoStatus.Rejected;
+        _logoRejectionReason = reason;
     }
 
     public void ClearDomainEvents() => _domainEvents.Clear();

@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Caching;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -57,8 +59,18 @@ namespace Ago.Chat.Infrastructure.Email;
 /// </summary>
 public sealed class EmailChannelAdapter(
     EmailSmtpClient client, IOptions<EmailBotApiOptions> options, IServiceScopeFactory scopeFactory,
-    IClock clock, ILogger<EmailChannelAdapter> logger) : IInboundChannelAdapter
+    ICache cache, IFileStorage fileStorage, IClock clock, ILogger<EmailChannelAdapter> logger) : IInboundChannelAdapter
 {
+    // `25-160`: the branding cache's own TTL - the identical value `Ago.Chat.Worker.SiteLogoValidator`'s
+    // own write-through uses, so a cache-aside miss here (cold Redis, an entry that outlived its TTL)
+    // re-populates it for the same duration the validating consumer would have.
+    private static readonly CacheEntryOptions LogoCacheOptions = new(TimeSpan.FromHours(24));
+
+    // Ephemeral, immediately-consumed - the identical AttachmentThumbnailGenerator.UrlLifetime shape,
+    // for the identical reason (a cache-aside miss's own internal transfer, never client-facing).
+    private static readonly TimeSpan LogoDownloadUrlLifetime = TimeSpan.FromMinutes(2);
+    private static readonly HttpClient LogoHttp = new();
+
     public ChannelKind Kind => ChannelKind.Email;
 
     public async Task<ChannelSendOutcome> SendAsync(OutboundChannelMessage message, CancellationToken cancellationToken)
@@ -119,6 +131,13 @@ public sealed class EmailChannelAdapter(
             ? thread.RootMessageId
             : $"{thread.RootMessageId} {thread.LastInboundMessageId}";
 
+        // `25-160`: resolved before the shell renders, so the shell can decide whether to draw the
+        // `<img>` row at all - null exactly when this site has no Ready logo (Site.HasLogo's own
+        // remarks), the identical "falls back to 25-156's text-only shell" behaviour this item's own
+        // Scope requires.
+        var logo = site.HasLogo ? await GetLogoAsync(site.Id, site.LogoObjectKey!, cancellationToken) : null;
+        var logoContentId = logo is not null ? $"logo-{site.Id.Value:N}@{options.Value.Domain}" : null;
+
         // `25-156`: the reply's own plain-text body (message.Body.Value) is carried into
         // EmailMessageToSend.Body completely unchanged from what this adapter always sent before this
         // item - only the new HtmlBody is added alongside it. EmailMimeMessageBuilder.BuildMultipartAlternative
@@ -135,7 +154,11 @@ public sealed class EmailChannelAdapter(
             InReplyTo: thread.LastInboundMessageId,
             References: references,
             Date: clock.UtcNow,
-            HtmlBody: TenantReplyEmailShell.Render(site.Name, message.Body.Value, site.WidgetConfig.PrimaryColorHex));
+            HtmlBody: TenantReplyEmailShell.Render(
+                site.BrandCompanyName ?? site.Name, message.Body.Value, site.WidgetConfig.PrimaryColorHex, logoContentId),
+            InlineLogo: logo is not null
+                ? new InlineLogoAttachment(logoContentId!, logo.ContentType, Convert.FromBase64String(logo.Base64))
+                : null);
 
         var result = await client.SendAsync(outbound, cancellationToken);
 
@@ -148,4 +171,33 @@ public sealed class EmailChannelAdapter(
             "Email send refused for conversation {ConversationId}: {Reason}", message.ConversationId.Value, result.RefusalReason);
         return ChannelSendOutcome.Refused(result.RefusalReason!);
     }
+
+    /// <summary>
+    /// `25-160`: the "email writer" half of this item's own double-cached read path - cache-aside via
+    /// <see cref="ICache.GetOrCreateAsync{T}"/>, the identical mechanism
+    /// `GetSiteConfigByPublicKeyHandler` already uses for its own hot cache. On a warm cache (the
+    /// ordinary case - `Ago.Chat.Worker.SiteLogoValidator`'s own write-through populates it the moment a
+    /// logo is promoted), <paramref name="fileStorage"/> is never called - <see cref="ICache.GetOrCreateAsync{T}"/>'s
+    /// own contract, proven directly by this item's own
+    /// <c>SendAsync_WithAWarmLogoCache_NeverCallsFileStorage</c> test. On a cold miss (Redis restarted,
+    /// or this entry's TTL lapsed), falls back to object storage - the identical download shape
+    /// <see cref="Worker.AttachmentThumbnailGenerator"/> already proves in production, inferring the
+    /// content type from the object's own stored <c>Content-Type</c> (the S3 API returns exactly what
+    /// was declared at upload time) rather than adding a second image-decoding dependency to this
+    /// project just to re-derive a fact <see cref="Worker.SiteLogoValidator"/> already decided once.
+    /// </summary>
+    private async Task<SiteBrandingLogoPayload> GetLogoAsync(SiteId siteId, string logoObjectKey, CancellationToken cancellationToken) =>
+        await cache.GetOrCreateAsync(
+            SiteBrandingCacheKeys.ForLogo(siteId),
+            async ct =>
+            {
+                var downloadUrl = await fileStorage.CreateDownloadUrlAsync(new ObjectKey(logoObjectKey), LogoDownloadUrlLifetime, ct);
+                using var response = await LogoHttp.GetAsync(downloadUrl, ct);
+                response.EnsureSuccessStatusCode();
+                var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/png";
+                return new SiteBrandingLogoPayload(Convert.ToBase64String(bytes), contentType);
+            },
+            LogoCacheOptions,
+            cancellationToken);
 }

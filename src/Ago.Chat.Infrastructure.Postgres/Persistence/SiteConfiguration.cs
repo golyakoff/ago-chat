@@ -36,6 +36,10 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             // ck_sites_widget_position/ck_sites_widget_locale already state for themselves.
             t.HasCheckConstraint(
                 "ck_sites_widget_auto_open_delay", "widget_auto_open_delay_seconds IN (15, 30, 45, 60, 90, 120)");
+            // `25-160`: a fifth check constraint on this table, the same "HasCheckConstraint can be
+            // called any number of times against the same t" shape every constraint above already
+            // uses - LogoStatus's own remarks on why this is a closed, SQL-enumerable set.
+            t.HasCheckConstraint("ck_sites_logo_status", "logo_status IN ('None', 'Pending', 'Ready', 'Rejected')");
         });
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id).HasColumnName("id").HasConversion(IdConverters.Site).ValueGeneratedNever();
@@ -356,5 +360,31 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // aggregate itself. No index: read only as part of the one atomic UPDATE that already locates
         // the row by primary key (`SiteAttachmentStorageBudgetStore`), never filtered or ordered on.
         builder.Property<long>("AttachmentBytesReserved").HasColumnName("attachment_bytes_reserved").HasDefaultValue(0L);
+
+        // `25-160`: the tenant's own reply-email brand - Site.BrandCompanyName/LogoObjectKey/LogoStatus/
+        // LogoRejectionReason's own remarks explain why these are four flat columns with no wrapping
+        // value object, the same shape Tier/SeatLimit/ContactVisibility already establish on this table.
+        // brand_company_name has no CHECK constraint, the identical "free text is not a closed set SQL
+        // can enumerate" reasoning widget_notice_text/widget_notice_url already state for themselves.
+        builder.Property<string?>("_brandCompanyName").HasColumnName("brand_company_name");
+        builder.Ignore(s => s.BrandCompanyName);
+
+        // logo_object_key/pending_logo_object_key are both free text (an S3 object key), no CHECK
+        // constraint for the identical reason. logo_status is the one closed enum-like set on this
+        // group, stored as its own member name (LogoStatus's own remarks on why a CHECK constraint
+        // backstops it) - the same `HasConversion<string>()` shape `ContactVisibility`'s own comment
+        // above already establishes rather than a dedicated PositionConverter-style type, since this
+        // enum's wire/storage spelling is identical to its C# member name.
+        builder.Property<string?>("_logoObjectKey").HasColumnName("logo_object_key");
+        builder.Ignore(s => s.LogoObjectKey);
+        builder.Property<string?>("_pendingLogoObjectKey").HasColumnName("pending_logo_object_key");
+        builder.Property<LogoStatus>("_logoStatus")
+            .HasColumnName("logo_status")
+            .HasConversion<string>()
+            .HasDefaultValue(LogoStatus.None);
+        builder.Ignore(s => s.LogoStatus);
+        builder.Property<string?>("_logoRejectionReason").HasColumnName("logo_rejection_reason");
+        builder.Ignore(s => s.LogoRejectionReason);
+        builder.Ignore(s => s.HasLogo);
     }
 }

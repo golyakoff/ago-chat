@@ -134,6 +134,85 @@ internal static class EmailMimeMessageBuilder
         return headers.ToString() + body;
     }
 
+    /// <summary>
+    /// `25-160`: an additive third build method, not a third caller-visible branch inside
+    /// <see cref="BuildMultipartAlternative"/> - the same "additive twin, not a replacement" shape that
+    /// method's own remarks describe itself as being to <see cref="Build"/>. Wraps the identical
+    /// `multipart/alternative` body <see cref="BuildMultipartAlternative"/> already produces inside an
+    /// outer `multipart/related` part, with the tenant's logo as a fourth MIME part carrying
+    /// `Content-ID`/`Content-Disposition: inline` - the standard shape a mail client needs to resolve an
+    /// HTML `&lt;img src="cid:...">` reference to bytes riding in the same message, per RFC 2392. Only
+    /// <see cref="EmailSmtpClient.SendAsync"/>'s own branch on <see cref="EmailMessageToSend.InlineLogo"/>
+    /// decides which of the three build methods on this class runs.
+    /// </summary>
+    public static string BuildMultipartRelatedWithInlineLogo(EmailMessageToSend message)
+    {
+        if (message.InlineLogo is not { } logo)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildMultipartRelatedWithInlineLogo)} requires {nameof(EmailMessageToSend.InlineLogo)} to be set.");
+        }
+
+        if (message.HtmlBody is not { Length: > 0 })
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildMultipartRelatedWithInlineLogo)} requires {nameof(EmailMessageToSend.HtmlBody)} to be set.");
+        }
+
+        var relatedBoundary = $"AgoChatRelatedBoundary{Guid.NewGuid():N}";
+        var alternativeBoundary = $"AgoChatBoundary{Guid.NewGuid():N}";
+
+        var headers = new StringBuilder();
+        headers.Append("MIME-Version: 1.0\r\n");
+        headers.Append($"Date: {FormatDate(message.Date)}\r\n");
+        headers.Append($"From: AGO Chat <{message.From}>\r\n");
+        headers.Append($"To: <{message.To}>\r\n");
+        headers.Append($"Subject: {EncodeHeaderWord(message.Subject)}\r\n");
+        headers.Append($"Message-ID: {message.MessageId}\r\n");
+
+        if (message.InReplyTo is { Length: > 0 } inReplyTo)
+        {
+            headers.Append($"In-Reply-To: {inReplyTo}\r\n");
+        }
+
+        if (message.References is { Length: > 0 } references)
+        {
+            headers.Append($"References: {references}\r\n");
+        }
+
+        headers.Append($"Content-Type: multipart/related; boundary=\"{relatedBoundary}\"\r\n");
+        headers.Append("\r\n");
+
+        var body = new StringBuilder();
+        body.Append($"--{relatedBoundary}\r\n");
+        body.Append($"Content-Type: multipart/alternative; boundary=\"{alternativeBoundary}\"\r\n");
+        body.Append("\r\n");
+        body.Append($"--{alternativeBoundary}\r\n");
+        body.Append("Content-Type: text/plain; charset=utf-8\r\n");
+        body.Append("Content-Transfer-Encoding: base64\r\n");
+        body.Append("\r\n");
+        body.Append(WrapBase64(Convert.ToBase64String(Encoding.UTF8.GetBytes(message.Body))));
+        body.Append("\r\n");
+        body.Append($"--{alternativeBoundary}\r\n");
+        body.Append("Content-Type: text/html; charset=utf-8\r\n");
+        body.Append("Content-Transfer-Encoding: base64\r\n");
+        body.Append("\r\n");
+        body.Append(WrapBase64(Convert.ToBase64String(Encoding.UTF8.GetBytes(message.HtmlBody))));
+        body.Append("\r\n");
+        body.Append($"--{alternativeBoundary}--\r\n");
+        body.Append($"--{relatedBoundary}\r\n");
+        body.Append($"Content-Type: {logo.ContentType}\r\n");
+        body.Append("Content-Transfer-Encoding: base64\r\n");
+        body.Append($"Content-ID: <{logo.ContentId}>\r\n");
+        body.Append("Content-Disposition: inline\r\n");
+        body.Append("\r\n");
+        body.Append(WrapBase64(Convert.ToBase64String(logo.Bytes)));
+        body.Append("\r\n");
+        body.Append($"--{relatedBoundary}--");
+
+        return headers.ToString() + body;
+    }
+
     /// <summary>RFC 5322's own required <c>date-time</c> shape (e.g. <c>Tue, 03 Jan 2017 08:00:00
     /// +0000</c>) - not ISO-8601, unlike every other timestamp this codebase transports
     /// (`date-and-time.md`). This is a protocol-mandated exception, not a deviation from that rule's own
@@ -216,4 +295,21 @@ internal static class EmailMimeMessageBuilder
 /// </summary>
 public sealed record EmailMessageToSend(
     string From, string To, string Subject, string Body, string MessageId, string? InReplyTo,
-    string? References, DateTimeOffset Date, string? HtmlBody = null);
+    string? References, DateTimeOffset Date, string? HtmlBody = null, InlineLogoAttachment? InlineLogo = null);
+
+/// <summary>
+/// `25-160`: a tenant's own ready logo, to be embedded inline (<c>Content-ID</c>) in
+/// <see cref="EmailMessageToSend.HtmlBody"/> rather than remote-fetched - the author's own point behind
+/// this item's Design decisions: "mail clients are typically shown inline-embedded images, not
+/// remote-fetched ones, regardless of image-loading settings." Non-null only when
+/// <c>EmailChannelAdapter</c> resolved a <c>Ready</c> logo through the branding cache-aside read; every
+/// other message on this codebase's own `EmailMessageToSend` call sites leaves it at its default
+/// (<see langword="null"/>), which is exactly what routes them past this new branch in
+/// <see cref="EmailSmtpClient.SendAsync"/> with no change of their own required.
+///
+/// <para><paramref name="ContentId"/> is the bare identifier the <c>Content-ID</c> header and the HTML
+/// part's own <c>cid:</c> reference must agree on byte-for-byte - <c>TenantReplyEmailShell.Render</c>'s
+/// own caller is what actually generates it, so the same value reaches both places without this record
+/// computing anything of its own.</para>
+/// </summary>
+public sealed record InlineLogoAttachment(string ContentId, string ContentType, byte[] Bytes);

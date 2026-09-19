@@ -241,6 +241,16 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<AttachmentThumbnailConsumer>();
 
+// `25-160`: the sibling of the pair right above - SiteLogoOptions itself is already bound by
+// ChatModule (every host, since the upload endpoint needs it too); this is just the validating
+// consumer's own retry shape.
+builder.Services.AddScoped<SiteLogoValidator>();
+builder.Services
+    .AddOptions<SiteLogoValidationConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(SiteLogoValidationConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<SiteLogoValidationConsumer>();
+
 // `23-76`: the dedup consumer - a second, independent subscription to the same AttachmentConfirmed
 // event (see AttachmentDeduplicationConsumer's own remarks on why this is a sibling, not a change to
 // the thumbnail consumer above).

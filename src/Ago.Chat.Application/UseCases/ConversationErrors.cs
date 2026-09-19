@@ -1158,4 +1158,27 @@ public static class ConversationErrors
     /// group in <c>ErrorExtensions</c>.</summary>
     public static Error DownloadOverageBillingModeReasonRequired(string reason) =>
         new("Site.DownloadOverageBillingModeReasonRequired", reason);
+
+    /// <summary>`25-160`: <c>SubmitLogoUploadHandler</c>'s own cheap, decode-nothing check - a
+    /// content type outside <c>SiteLogoOptions.AllowedContentTypes</c>. The caller's own mistake to
+    /// fix, the identical shape <see cref="AttachmentInvalidContentType"/> already gives its own
+    /// upload endpoint.</summary>
+    public static Error SiteLogoInvalidContentType(string contentType) =>
+        new("Site.LogoInvalidContentType", $"'{contentType}' is not an allowed logo content type.");
+
+    /// <summary>`25-160`: the identical shape <see cref="AttachmentTooLarge"/> already gives its own
+    /// upload endpoint - the declared byte size exceeds <c>SiteLogoOptions.MaxSizeBytes</c>, checked
+    /// before anything is decoded.</summary>
+    public static Error SiteLogoTooLarge(long declaredSizeBytes, long maxSizeBytes) =>
+        new("Site.LogoTooLarge", $"Logo size {declaredSizeBytes} bytes exceeds the {maxSizeBytes}-byte limit.");
+
+    /// <summary>`25-160`: more than 5 logo uploads for one site in a day - `LogoUploadRateLimitOptions`'s
+    /// own remarks on the bucket shape.</summary>
+    public static Error SiteLogoUploadRateLimited(TimeSpan retryAfter) =>
+        new("Site.LogoUploadRateLimited", $"Too many logo uploads for this site. Retry after {retryAfter}.");
+
+    /// <summary>`25-160`: the caller's own mistake to fix - a brand company name longer than
+    /// <c>UpdateSiteBrandingHandler.MaxLength</c> allows.</summary>
+    public static Error SiteBrandCompanyNameTooLong(int length, int maxLength) =>
+        new("Site.BrandCompanyNameTooLong", $"Brand company name is {length} characters; the limit is {maxLength}.");
 }

@@ -67,9 +67,20 @@ public static class TenantReplyEmailShell
     /// uses (<c>#9aa3ba</c>), reused here rather than inventing a second "neutral grey".</summary>
     public const string NeutralAccentColorHex = "#9AA3BA";
 
-    public static string Render(string tenantName, string replyBody, string? accentColorHex)
+    /// <summary>
+    /// `25-160`: <paramref name="logoContentId"/> - non-null exactly when <c>EmailChannelAdapter</c>
+    /// resolved a <c>Ready</c> logo, in which case it renders a small <c>&lt;img
+    /// src="cid:{logoContentId}"&gt;</c> beside the tenant name instead of the bare text label this
+    /// shell rendered before this item. <see langword="null"/> renders exactly the `25-156` markup this
+    /// method produced before this item shipped - byte-for-byte, so every existing
+    /// <c>TenantReplyEmailShellTests</c> case with no logo keeps passing unchanged.
+    /// </summary>
+    public static string Render(string tenantName, string replyBody, string? accentColorHex, string? logoContentId = null)
     {
         var accent = accentColorHex is { Length: > 0 } ? accentColorHex : NeutralAccentColorHex;
+        var nameRow = logoContentId is { Length: > 0 }
+            ? $@"<img src=""cid:{Encode(logoContentId)}"" alt=""{Encode(tenantName)}"" width=""28"" height=""28"" style=""display:inline-block; vertical-align:middle; border-radius:6px; margin-right:8px;"" /><span style=""font-family:'Onest', Arial, sans-serif; font-weight:800; font-size:15px; color:#0f1728; vertical-align:middle;"">{Encode(tenantName)}</span>"
+            : $@"<span style=""font-family:'Onest', Arial, sans-serif; font-weight:800; font-size:15px; color:#0f1728;"">{Encode(tenantName)}</span>";
 
         return $@"<!DOCTYPE html PUBLIC ""-//W3C//DTD XHTML 1.0 Transitional//EN"" ""http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"">
 <html xmlns=""http://www.w3.org/1999/xhtml"">
@@ -106,7 +117,7 @@ public static class TenantReplyEmailShell
     </tr>
     <tr>
       <td class=""px-24"" style=""padding:28px 40px 6px 40px;"" bgcolor=""#ffffff"">
-        <span style=""font-family:'Onest', Arial, sans-serif; font-weight:800; font-size:15px; color:#0f1728;"">{Encode(tenantName)}</span>
+        {nameRow}
       </td>
     </tr>
     <tr>
