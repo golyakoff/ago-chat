@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.RecordChannelVisitorContact;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.DependencyInjection;
@@ -196,7 +197,7 @@ public sealed class TelegramLongPollingService(
                     // edited_message or a callback_query) must still be acknowledged, or Telegram would
                     // hand it back forever and this bot's own getUpdates stream would never advance.
                     offset = update.UpdateId + 1;
-                    await DispatchIfMessageAsync(siteId, update, cancellationToken);
+                    await DispatchIfMessageAsync(siteId, update, token, cancellationToken);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -250,7 +251,8 @@ public sealed class TelegramLongPollingService(
         }
     }
 
-    private async Task DispatchIfMessageAsync(SiteId siteId, TelegramUpdate update, CancellationToken cancellationToken)
+    private async Task DispatchIfMessageAsync(
+        SiteId siteId, TelegramUpdate update, string botToken, CancellationToken cancellationToken)
     {
         var parsed = TelegramInboundMessageParser.TryParse(update);
         if (parsed is null)
@@ -313,6 +315,21 @@ public sealed class TelegramLongPollingService(
                     "Could not record a shared Telegram contact for site {SiteId}: {Code} {Message}",
                     siteId.Value, contactResult.Error!.Value.Code, contactResult.Error!.Value.Message);
             }
+        }
+
+        // `25-164`: a sent photo, dispatched the same way a shared contact already is - its own sibling
+        // command, never folded into ReceiveChannelMessage above. See TelegramInboundAttachmentDispatch's
+        // own remarks for the full download-prepare-upload-complete protocol this one call hides, and
+        // MaxLongPollingService's own identical branch for the precedent this mirrors.
+        if (parsed.Image is { } image)
+        {
+            var attachmentHandler = scope.ServiceProvider.GetRequiredService<ReceiveChannelAttachmentHandler>();
+
+            await TelegramInboundAttachmentDispatch.DispatchImageAsync(
+                attachmentHandler, client, logger, siteId, botToken, image,
+                new ExternalChannelAddress(parsed.ChatId.ToString()),
+                new ExternalMessageId(parsed.ExternalMessageId),
+                cancellationToken);
         }
     }
 

@@ -29,6 +29,11 @@ public sealed class TelegramTokenRedactingLoggingHandlerTests
     [InlineData("./bot123456:AAExampleToken/getUpdates?timeout=30", "./bot***/getUpdates?timeout=30")]
     [InlineData("./bot123456:AAExampleToken/sendMessage", "./bot***/sendMessage")]
     [InlineData("./bot123456:AAExampleToken/getMe", "./bot***/getMe")]
+    [InlineData("./bot123456:AAExampleToken/getFile?file_id=abc", "./bot***/getFile?file_id=abc")]
+    // `25-164`: DownloadImageAsync's second request - the token segment is not the URL's first path
+    // segment here (`file` is), so this proves RedactToken's own by-shape search (every segment, not
+    // just segments[0]) actually covers it, not merely the getFile call above.
+    [InlineData("./file/bot123456:AAExampleToken/photos/file_1.jpg", "./file/bot***/photos/file_1.jpg")]
     public void RedactToken_ForAUriTelegramApiClientActuallyBuilds_ReplacesOnlyTheTokenSegment(
         string input, string expected)
     {

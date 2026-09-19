@@ -155,6 +155,77 @@ public sealed class TelegramApiClient(HttpClient httpClient)
     }
 
     /// <summary>
+    /// `25-164`: fetches the actual bytes of an inbound photo attachment - Telegram's own two-step
+    /// download, confirmed against Telegram's own public Bot API documentation
+    /// (core.telegram.org/bots/api#getfile). Unlike MAX's own single-URL shape
+    /// (<c>MaxApiClient.DownloadImageAsync</c>'s own remarks), a Telegram <c>file_id</c> resolves only to
+    /// a <c>file_path</c> via <c>getFile</c> - the actual bytes live at a second, distinct URL shape,
+    /// <c>{BaseUrl}/file/bot&lt;token&gt;/{file_path}</c>, not the <c>bot&lt;token&gt;/{method}</c> shape
+    /// every other call in this class uses. Telegram's own documentation caps a bot's <c>getFile</c> at
+    /// 20 MB; this method does not itself enforce that ceiling - a file over it simply comes back from
+    /// <c>getFile</c> with no <c>file_path</c> at all (Telegram's own documented behaviour), which this
+    /// method already treats as "nothing to download."
+    ///
+    /// <para>Shares <see cref="SendMessageAsync"/>'s own terminal/transient split
+    /// (<see cref="TerminalRefusalStatusCodes"/>) for both requests: a 400/401/403/404 from either step
+    /// is <see langword="null"/> - this image cannot be fetched, full stop, no retry would change that -
+    /// and everything else throws, so a transient failure here rides the same retry
+    /// <see cref="TelegramLongPollingService"/>'s own backoff-and-retry catch already gives a long-poll
+    /// iteration.</para>
+    /// </summary>
+    public async Task<TelegramImageDownloadResult?> DownloadImageAsync(
+        string token, string fileId, CancellationToken cancellationToken)
+    {
+        using var fileRequest = new HttpRequestMessage(
+            HttpMethod.Get, RelativePath($"bot{token}/getFile?file_id={Uri.EscapeDataString(fileId)}"));
+
+        using var fileResponse = await httpClient.SendAsync(fileRequest, cancellationToken);
+
+        string? filePath;
+        if (fileResponse.IsSuccessStatusCode)
+        {
+            var fileBody = await fileResponse.Content.ReadFromJsonAsync<TelegramApiResponse<TelegramFile>>(cancellationToken);
+            filePath = fileBody?.Result?.FilePath;
+        }
+        else if (TerminalRefusalStatusCodes.Contains(fileResponse.StatusCode))
+        {
+            return null;
+        }
+        else
+        {
+            var transientErrorText = await fileResponse.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"Telegram API returned {(int)fileResponse.StatusCode} for GET getFile: {Truncate(transientErrorText)}",
+                null, fileResponse.StatusCode);
+        }
+
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return null;
+        }
+
+        using var downloadRequest = new HttpRequestMessage(HttpMethod.Get, RelativePath($"file/bot{token}/{filePath}"));
+        using var downloadResponse = await httpClient.SendAsync(downloadRequest, cancellationToken);
+
+        if (downloadResponse.IsSuccessStatusCode)
+        {
+            var bytes = await downloadResponse.Content.ReadAsByteArrayAsync(cancellationToken);
+            var contentType = downloadResponse.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            return new TelegramImageDownloadResult(bytes, contentType);
+        }
+
+        if (TerminalRefusalStatusCodes.Contains(downloadResponse.StatusCode))
+        {
+            return null;
+        }
+
+        var transientDownloadErrorText = await downloadResponse.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException(
+            $"Telegram file download returned {(int)downloadResponse.StatusCode} for a file_path this API resolved.",
+            null, downloadResponse.StatusCode);
+    }
+
+    /// <summary>
     /// Found live while writing <c>TelegramApiClientTests</c>, 2026-08-28: a bare
     /// <c>$"bot{token}/sendMessage"</c> handed to <see cref="HttpRequestMessage"/>'s string constructor
     /// throws <see cref="NotSupportedException"/> ("The 'bot123456' scheme is not supported") the moment
@@ -190,3 +261,9 @@ public sealed record TelegramGetMeResult(bool Ok, string? Username, string? Refu
 
     public static TelegramGetMeResult Refused(string reason) => new(false, null, reason);
 }
+
+/// <summary>`25-164`: what <see cref="TelegramApiClient.DownloadImageAsync"/> actually found - the real
+/// bytes, and the content type Telegram's own file-download response declared for them (never a claim
+/// this codebase itself made up), the identical "verify, never trust the claim" posture
+/// <c>MaxImageDownloadResult</c>'s own remarks already state for MAX's equivalent.</summary>
+public sealed record TelegramImageDownloadResult(byte[] Content, string ContentType);

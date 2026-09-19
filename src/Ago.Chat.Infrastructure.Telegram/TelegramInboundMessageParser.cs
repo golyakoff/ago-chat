@@ -60,7 +60,15 @@ public static class TelegramInboundMessageParser
             return null;
         }
 
-        var text = update.Message.Text;
+        // `25-164`: Telegram never populates `text` on a photo message - the caption (if any) is a
+        // separate `caption` field (core.telegram.org/bots/api#message, confirmed against the public
+        // documentation). Falling back to `caption` here, rather than teaching every downstream caller a
+        // second "or maybe it's a caption" field, means a captioned photo still produces a plain-text
+        // ReceiveChannelMessage alongside its own attachment dispatch below - the identical two-message
+        // shape `ParsedMaxMessage`'s own remarks already document for MAX's captioned photo, reached by a
+        // different wire route (MAX carries both in one `text` field; Telegram never lets one message
+        // carry both, so the two are combined here instead).
+        var text = update.Message.Text ?? update.Message.Caption;
 
         // `25-151`: a Telegram "share contact" message carries no `text` at all - the two are mutually
         // exclusive on Telegram's own wire shape - so this can no longer bail out just because `text` is
@@ -68,7 +76,12 @@ public static class TelegramInboundMessageParser
         // TryVerifyContact's own remarks for what "trustworthy" means here.
         var contact = TryVerifyContact(update.Message.Contact, senderId);
 
-        if (string.IsNullOrWhiteSpace(text) && contact is null)
+        // `25-164`: the identical widening, for a sent photo - confirmed live symptom this closes (a
+        // caption-less photo used to vanish entirely, not just lose its attachment) mirrors `25-161`'s
+        // own MAX diagnosis exactly; see that item's report for the shared root cause.
+        var image = TryExtractImage(update.Message.Photo);
+
+        if (string.IsNullOrWhiteSpace(text) && contact is null && image is null)
         {
             return null;
         }
@@ -95,7 +108,7 @@ public static class TelegramInboundMessageParser
 
         var externalMessageId = $"{chatId}:{messageId}";
 
-        return new ParsedTelegramMessage(chatId, senderId, externalMessageId, text, contact);
+        return new ParsedTelegramMessage(chatId, senderId, externalMessageId, text, contact, image);
     }
 
     /// <summary>
@@ -123,6 +136,43 @@ public static class TelegramInboundMessageParser
 
         return new ParsedTelegramContact(contact.PhoneNumber, contact.FirstName, contact.LastName);
     }
+
+    /// <summary>
+    /// `25-164`: the inbound half of this item's own diagnosis - before this method existed, nothing in
+    /// this file ever read <see cref="TelegramMessage.Photo"/> at all, so a sent photo's own attachment
+    /// was invisible to <see cref="TryParse"/> no matter what it carried; a caption-less photo (no
+    /// `text`, and now no `caption` either) then failed the blank-body bail-out too, dropping the entire
+    /// inbound message - the identical live symptom `25-161`'s own report already found for MAX.
+    ///
+    /// <para>Picks the highest resolution by <see cref="TelegramPhotoSize.Width"/> explicitly, not by
+    /// array position - Telegram's own documentation describes the array as ordered smallest-to-largest
+    /// but does not make that an enforced guarantee of the schema itself, so trusting position would be
+    /// an assumption this method does not need to make. A size with no <c>file_id</c> at all is not
+    /// something Telegram's own documentation describes happening, but is skipped defensively rather than
+    /// crashing, the same "an unconfirmed shape degrades to skipped, never guessed at" posture
+    /// <see cref="TryVerifyContact"/> already established for its own attachment.</para>
+    ///
+    /// <para>No trust check the way <see cref="TryVerifyContact"/> needs one: Telegram itself is the one
+    /// giving this system the <c>file_id</c>, inside an update this parser's own caller already
+    /// authenticated (a long-poll answered against a real bot token - Telegram has no webhook receiver
+    /// for this channel at all, <see cref="TelegramBotApiOptions"/>'s own remarks), the identical trust
+    /// boundary <see cref="TelegramMessage.Text"/> already crosses with no separate verification of its
+    /// own.</para>
+    /// </summary>
+    private static ParsedTelegramImage? TryExtractImage(IReadOnlyList<TelegramPhotoSize>? photo)
+    {
+        if (photo is null || photo.Count == 0)
+        {
+            return null;
+        }
+
+        var best = photo
+            .Where(size => !string.IsNullOrWhiteSpace(size.FileId))
+            .OrderByDescending(size => size.Width ?? 0)
+            .FirstOrDefault();
+
+        return best?.FileId is { } fileId ? new ParsedTelegramImage(fileId) : null;
+    }
 }
 
 /// <summary>
@@ -142,9 +192,16 @@ public static class TelegramInboundMessageParser
 /// practice (Telegram's own wire shape makes the two mutually exclusive on one message), but nothing
 /// here enforces that as an invariant - the caller (<see cref="TelegramLongPollingService"/>) simply
 /// acts on whichever is present.
+///
+/// <para><b>`25-164`:</b> <paramref name="Image"/> is not mutually exclusive with <paramref name="Text"/>
+/// the way <paramref name="Contact"/> is - a captioned photo produces both (<paramref name="Text"/>
+/// carrying the caption, via <see cref="TelegramInboundMessageParser.TryParse"/>'s own
+/// <c>Text ?? Caption</c> fallback), the same "acts on whichever is present, independently" shape
+/// <c>ParsedMaxMessage</c>'s own remarks already document for MAX's captioned photo.</para>
 /// </summary>
 public sealed record ParsedTelegramMessage(
-    long ChatId, long SenderId, string ExternalMessageId, string? Text, ParsedTelegramContact? Contact = null);
+    long ChatId, long SenderId, string ExternalMessageId, string? Text, ParsedTelegramContact? Contact = null,
+    ParsedTelegramImage? Image = null);
 
 /// <summary>
 /// `25-151`: a Telegram contact that has already passed <see cref="TelegramInboundMessageParser"/>'s own
@@ -152,3 +209,14 @@ public sealed record ParsedTelegramMessage(
 /// already answered, so nothing downstream needs to re-ask it.
 /// </summary>
 public sealed record ParsedTelegramContact(string PhoneNumber, string? FirstName, string? LastName);
+
+/// <summary>
+/// `25-164`: a Telegram photo attachment this parser could actually resolve to a <c>file_id</c> - see
+/// <see cref="TelegramInboundMessageParser"/>'s own <c>TryExtractImage</c> remarks for why the highest
+/// resolution's id is the only field this record carries forward. The caller
+/// (<see cref="TelegramLongPollingService"/>) is what actually resolves and downloads the bytes
+/// (<see cref="TelegramApiClient.DownloadImageAsync"/>'s own two-step protocol) and hands them to
+/// <c>Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler</c> - this
+/// type itself carries no bytes and does no I/O, matching <c>ParsedMaxImage</c>'s own shape.
+/// </summary>
+public sealed record ParsedTelegramImage(string FileId);

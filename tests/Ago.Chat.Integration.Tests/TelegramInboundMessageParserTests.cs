@@ -219,4 +219,97 @@ public class TelegramInboundMessageParserTests
         Assert.Null(parsed.Contact.FirstName);
         Assert.Null(parsed.Contact.LastName);
     }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-164`: a sent photo - this item's own confirmed root cause for "the image never arrives even
+    // with a grant": before TryExtractImage existed, a caption-less photo (no `text`, and Telegram never
+    // populates `text` for a photo message at all) failed the blank-body bail-out and the *entire*
+    // inbound message vanished, the identical live symptom `25-161`'s own report found for MAX.
+    // -----------------------------------------------------------------------------------------
+
+    private static TelegramUpdate PhotoUpdate(
+        long senderId, long chatId, long messageId, string? caption, params TelegramPhotoSize[] photo) =>
+        new(
+            1,
+            new TelegramMessage(
+                messageId, new TelegramUser(senderId), new TelegramChat(chatId), Text: null,
+                Photo: photo, Caption: caption));
+
+    /// <summary>The live symptom, reproduced: a photo with no caption used to produce nothing at all. It
+    /// now produces a message with no text and a resolvable image.</summary>
+    [Fact]
+    public void TryParse_ACaptionLessPhoto_IsAcceptedWithNoTextAndAResolvableImage()
+    {
+        var update = PhotoUpdate(
+            senderId: 1, chatId: 999, messageId: 1, caption: null,
+            new TelegramPhotoSize("small-file-id", Width: 90, Height: 90),
+            new TelegramPhotoSize("large-file-id", Width: 1280, Height: 1280));
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Null(parsed.Text);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("large-file-id", parsed.Image.FileId);
+    }
+
+    /// <summary>Telegram never populates `text` on a photo message - a captioned photo's own prose lives
+    /// in the separate `caption` field (`TelegramDtos.cs`'s own remarks), confirmed against Telegram's
+    /// public documentation. This parser folds it into <see cref="ParsedTelegramMessage.Text"/> so a
+    /// captioned photo still produces both a plain-text message and its own attachment, independently -
+    /// the same shape a captioned MAX photo already produces, reached by a different wire route.</summary>
+    [Fact]
+    public void TryParse_ACaptionedPhoto_CarriesBothTheCaptionAsTextAndTheImage()
+    {
+        var update = PhotoUpdate(
+            senderId: 1, chatId: 999, messageId: 1, caption: "look at this",
+            new TelegramPhotoSize("only-file-id", Width: 800, Height: 600));
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("look at this", parsed.Text);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("only-file-id", parsed.Image.FileId);
+    }
+
+    /// <summary>Telegram's own documentation describes the `photo` array as ordered smallest-to-largest
+    /// but does not make that an enforced schema guarantee - <see cref="TelegramInboundMessageParser"/>'s
+    /// own `TryExtractImage` picks the highest resolution by `width` explicitly, proven here by handing
+    /// it the sizes in descending, not ascending, order.</summary>
+    [Fact]
+    public void TryParse_APhotoWithSizesOutOfDocumentedOrder_StillPicksTheHighestResolution()
+    {
+        var update = PhotoUpdate(
+            senderId: 1, chatId: 999, messageId: 1, caption: null,
+            new TelegramPhotoSize("largest-file-id", Width: 1280, Height: 1280),
+            new TelegramPhotoSize("smallest-file-id", Width: 90, Height: 90));
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("largest-file-id", parsed.Image.FileId);
+    }
+
+    [Fact]
+    public void TryParse_AnEmptyPhotoArray_IsTreatedAsNoImage()
+    {
+        var update = PhotoUpdate(senderId: 1, chatId: 999, messageId: 1, caption: "no sizes at all");
+
+        var parsed = TelegramInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("no sizes at all", parsed.Text);
+        Assert.Null(parsed.Image);
+    }
+
+    [Fact]
+    public void TryParse_NoPhotoAndNoTextAndNoContact_ReturnsNull()
+    {
+        var update = new TelegramUpdate(
+            1, new TelegramMessage(1, new TelegramUser(1), new TelegramChat(999), Text: null));
+
+        Assert.Null(TelegramInboundMessageParser.TryParse(update));
+    }
 }
