@@ -4,8 +4,10 @@ using System.Text.Json;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.WhatsApp;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Api.Channels;
@@ -52,6 +54,15 @@ namespace Ago.Chat.Api.Channels;
 /// must be signed exactly as delivered, before any JSON parsing, so this handler buffers the body once and
 /// signs/deserializes from the identical bytes rather than re-serializing a parsed object (which could
 /// legitimately produce different bytes and always fail the check).</para>
+///
+/// <para><b>`25-165`: an inbound image, dispatched to <see cref="WhatsAppInboundAttachmentDispatch"/>
+/// rather than <see cref="ReceiveChannelMessageHandler"/>.</b> The same reasoning
+/// <c>MaxWebhookEndpoints</c>/<c>TelegramLongPollingService</c> already state for their own channel:
+/// routing through the shared, channel-agnostic
+/// <see cref="ReceiveChannelAttachmentHandler"/> means the `23-78` upload grant, rate limits and
+/// storage budgets all apply to a WhatsApp-sourced image identically to a widget-sourced one, with no
+/// second copy of any of those rules. This is this endpoint's only inbound mechanism for the attachment
+/// path too - Meta's Cloud API offers no polling alternative to pair it with.</para>
 /// </summary>
 public static class WhatsAppWebhookEndpoints
 {
@@ -96,7 +107,11 @@ public static class WhatsAppWebhookEndpoints
         HttpContext httpContext,
         IOptions<WhatsAppBotApiOptions> options,
         IChannelCredentialRepository credentials,
+        IChannelCredentialCipher cipher,
         ReceiveChannelMessageHandler receiveHandler,
+        ReceiveChannelAttachmentHandler receiveAttachmentHandler,
+        WhatsAppApiClient whatsAppApiClient,
+        ILogger<ReceiveChannelAttachmentHandler> logger,
         CancellationToken cancellationToken)
     {
         var appSecret = options.Value.AppSecret;
@@ -148,22 +163,42 @@ public static class WhatsAppWebhookEndpoints
                 continue;
             }
 
-            var result = await receiveHandler.HandleAsync(
-                new ReceiveChannelMessage(
-                    credential.SiteId,
-                    ChannelKind.WhatsApp,
+            if (!string.IsNullOrWhiteSpace(parsed.Text))
+            {
+                var result = await receiveHandler.HandleAsync(
+                    new ReceiveChannelMessage(
+                        credential.SiteId,
+                        ChannelKind.WhatsApp,
+                        new ExternalChannelAddress(parsed.From),
+                        new ExternalMessageId(parsed.ExternalMessageId),
+                        parsed.Text),
+                    cancellationToken);
+
+                if (result.IsFailure)
+                {
+                    // A genuine processing failure (not "unrecognised message") - Meta's own retry-on-non-2xx
+                    // behaviour is the correct response here, and ReceiveChannelMessageHandler's own
+                    // idempotency (ExternalMessageId.ToClientMessageId) makes a retried redelivery of a
+                    // multi-message batch safe even for the messages already processed successfully above.
+                    return result.Error!.Value.ToProblem(httpContext);
+                }
+            }
+
+            // `25-165`: a sent image, dispatched the same way a captioned MAX/Telegram photo already is -
+            // its own sibling command, never folded into ReceiveChannelMessage above. See
+            // WhatsAppInboundAttachmentDispatch's own remarks for the full download-prepare-upload-complete
+            // protocol this one call hides. Never turned into a non-2xx response for its own internal
+            // failures, matching MaxWebhookEndpoints'/TelegramLongPollingService's own identical branch:
+            // this is downstream of "the update parsed fine," the same territory the text branch's own
+            // `result.IsFailure` check above is reserved for.
+            if (parsed.Image is { } image)
+            {
+                var token = cipher.Decrypt(credential.TokenCiphertext);
+                await WhatsAppInboundAttachmentDispatch.DispatchImageAsync(
+                    receiveAttachmentHandler, whatsAppApiClient, logger, credential.SiteId, token, image,
                     new ExternalChannelAddress(parsed.From),
                     new ExternalMessageId(parsed.ExternalMessageId),
-                    parsed.Text),
-                cancellationToken);
-
-            if (result.IsFailure)
-            {
-                // A genuine processing failure (not "unrecognised message") - Meta's own retry-on-non-2xx
-                // behaviour is the correct response here, and ReceiveChannelMessageHandler's own
-                // idempotency (ExternalMessageId.ToClientMessageId) makes a retried redelivery of a
-                // multi-message batch safe even for the messages already processed successfully above.
-                return result.Error!.Value.ToProblem(httpContext);
+                    cancellationToken);
             }
         }
 

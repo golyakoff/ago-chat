@@ -22,12 +22,19 @@
 /// <see cref="WhatsAppChangeValue.Messages"/>, the WhatsApp-shaped answer to the same hazard
 /// <c>VkInboundMessageParser</c>'s own <c>out == 1</c> check solves for VK.</para>
 ///
-/// <para>Only <see cref="WhatsAppMessage.Type"/> <c>"text"</c> is recognised - <see cref="WhatsAppMessage"/>'s
-/// own remarks explain the scope cut; every other type (image, audio, location, an interactive reply) is
-/// skipped rather than coerced into a text-shaped stand-in.</para>
+/// <para><see cref="WhatsAppMessage.Type"/> <c>"text"</c> and (`25-165`) <c>"image"</c> are recognised -
+/// <see cref="WhatsAppMessage"/>'s own remarks explain both the original scope cut and why "image"
+/// specifically no longer belongs on the skip list; audio, location, an interactive reply and every
+/// other type are still skipped rather than coerced into a text-shaped stand-in.</para>
 /// </summary>
 public static class WhatsAppInboundMessageParser
 {
+    private const string TextMessageType = "text";
+
+    /// <summary>`25-165`: WhatsApp's own type discriminator for an inbound image - confirmed against
+    /// Meta's own Cloud API webhooks documentation, <c>WhatsAppMediaObject</c>'s own remarks.</summary>
+    private const string ImageMessageType = "image";
+
     public static IReadOnlyList<ParsedWhatsAppMessage> Parse(WhatsAppWebhookEnvelope envelope)
     {
         var results = new List<ParsedWhatsAppMessage>();
@@ -59,18 +66,12 @@ public static class WhatsAppInboundMessageParser
 
     private static ParsedWhatsAppMessage? TryParseOne(string phoneNumberId, WhatsAppMessage message)
     {
-        if (message.Type != "text")
+        if (message.Type != TextMessageType && message.Type != ImageMessageType)
         {
             return null;
         }
 
         if (message.From is not { Length: > 0 } from)
-        {
-            return null;
-        }
-
-        var text = message.Text?.Body;
-        if (string.IsNullOrWhiteSpace(text))
         {
             return null;
         }
@@ -86,8 +87,51 @@ public static class WhatsAppInboundMessageParser
             return null;
         }
 
-        return new ParsedWhatsAppMessage(phoneNumberId, from, externalMessageId, text);
+        string? text;
+        ParsedWhatsAppImage? image = null;
+
+        if (message.Type == TextMessageType)
+        {
+            text = message.Text?.Body;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return null;
+            }
+        }
+        else
+        {
+            // `25-165`: WhatsApp never populates `text` on an image message - a captioned image's own
+            // prose lives in the image object's own `caption` field (`WhatsAppMediaObject`'s own
+            // remarks). Folded into `Text` here so a captioned image still produces a plain-text
+            // message alongside its own attachment, independently - the same shape a captioned
+            // MAX/Telegram photo already produces, reached by a different wire route.
+            image = TryExtractImage(message.Image);
+            if (image is null)
+            {
+                // An "image" type whose own payload carries no usable media_id is not something Meta's
+                // own documentation describes happening, but there is nothing this parser could do with
+                // it either way - skipped, the same "an unconfirmed shape degrades to skipped, never
+                // guessed at" posture MaxInboundMessageParser/TelegramInboundMessageParser already hold
+                // for their own equivalents.
+                return null;
+            }
+
+            text = message.Image?.Caption;
+        }
+
+        return new ParsedWhatsAppMessage(phoneNumberId, from, externalMessageId, text, image);
     }
+
+    /// <summary>`25-165`: the inbound half of this item's own diagnosis - before this method existed,
+    /// nothing in this file ever read <see cref="WhatsAppMessage.Image"/> at all
+    /// (<see cref="WhatsAppMessage"/>'s own remarks on the original, deliberate scope cut this method
+    /// addresses). No trust check the way <c>TelegramInboundMessageParser.TryVerifyContact</c> needs one
+    /// for a contact: Meta itself is the one giving this system the <c>media_id</c>, inside a delivery
+    /// this parser's own caller already authenticated (<c>WhatsAppWebhookEndpoints</c>' own
+    /// <c>X-Hub-Signature-256</c> check), the identical trust boundary <see cref="WhatsAppMessage.Text"/>
+    /// already crosses with no separate verification of its own.</summary>
+    private static ParsedWhatsAppImage? TryExtractImage(WhatsAppMediaObject? image) =>
+        image?.Id is { Length: > 0 } mediaId ? new ParsedWhatsAppImage(mediaId) : null;
 }
 
 /// <summary>
@@ -97,5 +141,27 @@ public static class WhatsAppInboundMessageParser
 /// channel does. <paramref name="From"/> is the visitor's own WhatsApp phone number - what this system
 /// stores as the <see cref="Domain.ExternalChannelAddress"/> and what every outbound reply is sent back
 /// to.
+///
+/// <para><b>`25-165`:</b> <paramref name="Text"/> is nullable since this item - an image message with no
+/// caption carries none at all (this type's own remarks on <see cref="WhatsAppInboundMessageParser.TryParseOne"/>'s
+/// new behaviour). <paramref name="Image"/> is not mutually exclusive with <paramref name="Text"/> the
+/// way it would be if WhatsApp's own wire shape allowed one message to carry both a `"text"`-type body
+/// and an `"image"`-type payload (it does not - <see cref="WhatsAppMessage.Type"/> is one discriminator,
+/// never both at once), but a captioned image folds its caption into <paramref name="Text"/>
+/// (<see cref="WhatsAppInboundMessageParser.TryParseOne"/>'s own remarks), so the caller acts on
+/// whichever is present, independently - the same shape <c>ParsedMaxMessage</c>/<c>ParsedTelegramMessage</c>
+/// already establish for their own captioned photo.</para>
 /// </summary>
-public sealed record ParsedWhatsAppMessage(string PhoneNumberId, string From, string ExternalMessageId, string Text);
+public sealed record ParsedWhatsAppMessage(
+    string PhoneNumberId, string From, string ExternalMessageId, string? Text, ParsedWhatsAppImage? Image = null);
+
+/// <summary>
+/// `25-165`: a WhatsApp image attachment this parser could actually resolve to a <c>media_id</c> - see
+/// <see cref="WhatsAppInboundMessageParser"/>'s own <c>TryExtractImage</c> remarks. The caller
+/// (<c>Ago.Chat.Api.Channels.WhatsAppWebhookEndpoints</c>) is what actually resolves and downloads the
+/// bytes (<see cref="WhatsAppApiClient.DownloadImageAsync"/>'s own two-step protocol) and hands them to
+/// <c>Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler</c> - this
+/// type itself carries no bytes and does no I/O, matching <c>ParsedMaxImage</c>'s/<c>ParsedTelegramImage</c>'s
+/// own shape.
+/// </summary>
+public sealed record ParsedWhatsAppImage(string MediaId);

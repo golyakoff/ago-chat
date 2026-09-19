@@ -78,17 +78,106 @@ public sealed class WhatsAppInboundMessageParserTests
         Assert.Empty(WhatsAppInboundMessageParser.Parse(envelope));
     }
 
-    /// <summary>WhatsAppMessage's own remarks: only <c>"text"</c> is recognised - a non-text message
-    /// (image, audio, location, an interactive reply) is skipped rather than coerced into a text-shaped
-    /// stand-in, `14-06`'s own scope, not this item's.</summary>
+    /// <summary>`25-165`: <c>WhatsAppMessage</c>'s own remarks - "image" moved out of this list once
+    /// this item gave it somewhere real to go (<c>ReceiveChannelAttachmentHandler</c>); this
+    /// theory used to include "image" in its own negative cases (`14-10`) and no longer does, a
+    /// deliberate change to an existing test, not an oversight - the dedicated image tests below prove
+    /// what replaced it. Audio/location/an interactive reply remain skipped, `14-06`'s own scope, not
+    /// this item's.</summary>
     [Theory]
-    [InlineData("image")]
     [InlineData("audio")]
     [InlineData("location")]
     [InlineData("interactive")]
-    public void Parse_ForANonTextMessageType_ReturnsNoMessages(string type)
+    public void Parse_ForANonTextNonImageMessageType_ReturnsNoMessages(string type)
     {
         var envelope = SingleTextMessage(type: type);
+
+        Assert.Empty(WhatsAppInboundMessageParser.Parse(envelope));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-165`: a sent image - this item's own confirmed scope-cut reversal for exactly this one type.
+    // Before TryExtractImage existed, an "image" message was indistinguishable from any other
+    // unrecognised type and vanished entirely, deliberately (WhatsAppMessage's own `14-10` remarks) -
+    // this item gives it a real destination and stops skipping it, alone among the non-text types.
+    // -----------------------------------------------------------------------------------------
+
+    private static WhatsAppWebhookEnvelope SingleImageMessage(
+        string phoneNumberId = "106540352242922", string from = "16505551234", string? caption = null,
+        string? mediaId = "wamid-media-id-123", string? id = "wamid.image-message-1") =>
+        new(
+            "whatsapp_business_account",
+            [
+                new WhatsAppEntry(
+                    "entry-1",
+                    [
+                        new WhatsAppChange(
+                            "messages",
+                            new WhatsAppChangeValue(
+                                "whatsapp",
+                                new WhatsAppMetadata("15555555555", phoneNumberId),
+                                [
+                                    new WhatsAppMessage(
+                                        from, id, "1700000000", "image", Text: null,
+                                        Image: new WhatsAppMediaObject(mediaId, caption)),
+                                ],
+                                Statuses: null)),
+                    ]),
+            ]);
+
+    /// <summary>WhatsApp never populates `text` on an image message - the live symptom this item closes:
+    /// a caption-less image used to vanish entirely. It now produces a message with no text and a
+    /// resolvable image.</summary>
+    [Fact]
+    public void Parse_ACaptionLessImage_IsAcceptedWithNoTextAndAResolvableImage()
+    {
+        var envelope = SingleImageMessage(caption: null);
+
+        var parsed = WhatsAppInboundMessageParser.Parse(envelope);
+
+        var message = Assert.Single(parsed);
+        Assert.Null(message.Text);
+        Assert.NotNull(message.Image);
+        Assert.Equal("wamid-media-id-123", message.Image.MediaId);
+    }
+
+    /// <summary>A captioned image's own prose lives in the image object's own `caption` field, confirmed
+    /// against Meta's own documentation - folded into <c>Text</c> so a captioned image still produces
+    /// both a plain-text message and its own attachment, independently, the same shape a captioned
+    /// MAX/Telegram photo already produces over a different wire route.</summary>
+    [Fact]
+    public void Parse_ACaptionedImage_CarriesBothTheCaptionAsTextAndTheImage()
+    {
+        var envelope = SingleImageMessage(caption: "look at this");
+
+        var parsed = WhatsAppInboundMessageParser.Parse(envelope);
+
+        var message = Assert.Single(parsed);
+        Assert.Equal("look at this", message.Text);
+        Assert.NotNull(message.Image);
+        Assert.Equal("wamid-media-id-123", message.Image.MediaId);
+    }
+
+    [Fact]
+    public void Parse_AnImageMessageWithNoMediaId_ReturnsNoMessages()
+    {
+        var envelope = SingleImageMessage(mediaId: null);
+
+        Assert.Empty(WhatsAppInboundMessageParser.Parse(envelope));
+    }
+
+    [Fact]
+    public void Parse_AnImageMessageWithNoFrom_ReturnsNoMessages()
+    {
+        var envelope = SingleImageMessage(from: "");
+
+        Assert.Empty(WhatsAppInboundMessageParser.Parse(envelope));
+    }
+
+    [Fact]
+    public void Parse_AnImageMessageWithNoId_ReturnsNoMessages()
+    {
+        var envelope = SingleImageMessage(id: null);
 
         Assert.Empty(WhatsAppInboundMessageParser.Parse(envelope));
     }
