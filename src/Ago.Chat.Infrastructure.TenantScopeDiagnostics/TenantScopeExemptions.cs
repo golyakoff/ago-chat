@@ -253,6 +253,30 @@ public static class TenantScopeExemptions
             + "RecordVisitorContactDetailHandler.HandleAsVisitorAsync, whose own entry above already argues "
             + "its visitor-participant check; this handler supplies that check's own inputs (a ConversationId "
             + "and VisitorId it just resolved or minted itself), never a caller-suppliable pair.",
+        ["Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler.PrepareAsync"] =
+            "`25-161`, adapter side (AGO Inbox) - the identical category and reasoning as "
+            + "ReceiveChannelMessageHandler/RecordChannelVisitorContactHandler above, its own attachment-carrying "
+            + "sibling: SiteId comes off the same concrete-adapter resolution (the site whose MAX credentials "
+            + "received the update), never a claim a channel provider's payload could make. There is also no "
+            + "principal to check a permission for, for the identical reason - a MAX visitor sending a file is "
+            + "outside the RBAC model exactly as an ordinary channel message is (adr/0016). What replaces both "
+            + "checks is the same structural guarantee RecordChannelVisitorContactHandler's own entry describes "
+            + "(every write goes to the Visitor this site's own ChannelIdentity row resolves to, or a freshly "
+            + "minted one on the identical first-contact branch), plus the one check that is this method's own "
+            + "reason to exist: it composes CreateAttachmentHandler.HandleAsVisitorAsync, whose own listed entry "
+            + "already argues its visitor-participant check (`conversation.VisitorId == command.RequestedBy`) "
+            + "and its `23-78` attachment-upload-grant gate - both against the ConversationId/VisitorId this "
+            + "method just resolved or minted itself, never a caller-suppliable pair.",
+        ["Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler.CompleteAsync"] =
+            "`25-161`, adapter side (AGO Inbox) - the second phase of PrepareAsync's own two-phase protocol "
+            + "(that entry's own remarks explain why a presigned-URL upload needs one), never reachable on its "
+            + "own: the calling adapter (Ago.Chat.Infrastructure.MaxBot's MaxInboundAttachmentDispatch) only ever "
+            + "calls this with the AttachmentId/VisitorId/ConversationId that PrepareAsync's own success just "
+            + "handed back a moment earlier in the same request, not a caller-suppliable triple. No SiteId is "
+            + "carried because none is needed: it composes ConfirmAttachmentHandler.HandleAsVisitorAsync (its own "
+            + "listed entry already argues the visitor-participant check that structurally prevents this AttachmentId "
+            + "from resolving to a different site's row) and then SendVisitorMessageHandler (StartConversationHandler's "
+            + "own entry above covers that visitor-token category directly).",
         ["Ago.Chat.Application.UseCases.DeliverChannelMessage.DeliverChannelMessageHandler.HandleAsync"] =
             "`14-02`, consumer side (Ago.Chat.Worker). SiteId comes off the same MessageAccepted envelope "
             + "SendOfflineAutoReplyHandler/RecordUnreadMessageHandler already read it from - a fact the triggering "

@@ -42,35 +42,59 @@ public sealed record MaxMessageBody(
     [property: JsonPropertyName("attachments")] IReadOnlyList<MaxAttachment>? Attachments = null);
 
 /// <summary>
-/// `25-151`: one entry of <see cref="MaxMessageBody.Attachments"/> - shares this file's own top-level
-/// honesty note in full: MAX's public documentation describes an attachment only in outline, so this
-/// shape (and <see cref="MaxContactAttachmentPayload"/>/<see cref="MaxContactInfo"/> beneath it) is this
-/// item's own best-effort reconstruction from public third-party write-ups, not a confirmed capture
+/// `25-151`/`25-161`: one entry of <see cref="MaxMessageBody.Attachments"/> - shares this file's own
+/// top-level honesty note in full: MAX's public documentation describes an attachment only in outline,
+/// so this shape (and <see cref="MaxAttachmentPayload"/>/<see cref="MaxContactInfo"/> beneath it) is
+/// this item's own best-effort reconstruction from public third-party write-ups, not a confirmed capture
 /// against a live bot - flagged again, explicitly, in this item's own report rather than left to be
 /// rediscovered the way this file's own top-level note already warns a "wrong guess" should be.
 /// </summary>
 public sealed record MaxAttachment(
     [property: JsonPropertyName("type")] string? Type,
-    [property: JsonPropertyName("payload")] MaxContactAttachmentPayload? Payload);
+    [property: JsonPropertyName("payload")] MaxAttachmentPayload? Payload);
 
 /// <summary>
-/// `25-151`: MAX's own "shared contact" attachment payload, present only when the visitor shared their
-/// own contact via a `request_contact`-type button or shared it unprompted - the same payload shape
-/// either way (`25-152`'s own outbound half is the only thing that differs, not this shape). <see
-/// cref="Hash"/> is MAX's substitute for Telegram's `user_id` equality check
-/// (<c>TelegramContact</c>'s own remarks): an HMAC-SHA256 of <see cref="VcfInfo"/>, keyed with the
-/// receiving site's own bot token - see <c>MaxInboundMessageParser.TryVerifyContact</c>'s own remarks for
-/// the verification itself, and this item's own report for why the exact digest encoding (hex vs
-/// base64) is an assumption a real capture must settle.
+/// `25-151`/`25-161`: one attachment's payload, whatever <see cref="MaxAttachment.Type"/> says it is -
+/// named for the property, not for either kind it carries, because <c>System.Text.Json</c> binds one
+/// property to one CLR type and MAX's own wire shape puts every attachment kind's fields on the same
+/// <c>payload</c> object. This was <c>MaxContactAttachmentPayload</c> before `25-161` added
+/// <see cref="PhotoId"/>/<see cref="Token"/>/<see cref="Url"/> beside the original contact fields - a
+/// rename, not a new type, because a type called "the contact payload" that also carries a photo's own
+/// fields would actively mislead the next reader. Only the fields matching the actual attachment's own
+/// kind ever populate; the rest simply deserialize to <see langword="null"/>, the identical "read
+/// defensively, degrade rather than throw" discipline this file's own top-level note already states for
+/// every field here.
+///
+/// <para><see cref="Hash"/> is MAX's substitute for Telegram's `user_id` equality check
+/// (<c>TelegramContact</c>'s own remarks) for a <c>"contact"</c> attachment: an HMAC-SHA256 of
+/// <see cref="VcfInfo"/>, keyed with the receiving site's own bot token - see
+/// <c>MaxInboundMessageParser.TryVerifyContact</c>'s own remarks for the verification itself, and this
+/// item's own report for why the exact digest encoding (hex vs base64) is an assumption a real capture
+/// must settle.</para>
+///
+/// <para><b>`25-161`: <see cref="PhotoId"/>/<see cref="Token"/>/<see cref="Url"/>, for an
+/// <c>"image"</c> attachment.</b> Confirmed (unlike this file's own contact-payload guesswork above)
+/// against the MAX Bot API's own published Go client schema
+/// (<c>github.com/max-messenger/max-bot-api-client-go/schemes</c>, <c>PhotoAttachmentPayload</c>):
+/// <c>photo_id</c>/<c>token</c> are MAX-internal references usable only when re-sending a photo through
+/// MAX's own API, and <c>url</c> is, in MAX's own words, "a direct link to image in internet" - the one
+/// field this codebase can actually fetch bytes from without a second, undocumented MAX endpoint.
+/// <see cref="MaxInboundMessageParser"/> reads only <see cref="Url"/> for exactly that reason; an
+/// inbound photo whose payload has no <c>url</c> (token-only) cannot be downloaded by anything this
+/// class currently has - the same "an unconfirmed shape degrades to skipped, not guessed at" posture the
+/// contact half already established.</para>
 /// </summary>
-public sealed record MaxContactAttachmentPayload(
+public sealed record MaxAttachmentPayload(
     [property: JsonPropertyName("vcf_info")] string? VcfInfo,
     [property: JsonPropertyName("max_info")] MaxContactInfo? MaxInfo,
-    [property: JsonPropertyName("hash")] string? Hash);
+    [property: JsonPropertyName("hash")] string? Hash,
+    [property: JsonPropertyName("photo_id")] long? PhotoId = null,
+    [property: JsonPropertyName("token")] string? Token = null,
+    [property: JsonPropertyName("url")] string? Url = null);
 
 /// <summary>
 /// `25-151`: the structured half of a shared-contact attachment - alongside <see
-/// cref="MaxContactAttachmentPayload.VcfInfo"/>'s own vCard-formatted string, this is this item's own
+/// cref="MaxAttachmentPayload.VcfInfo"/>'s own vCard-formatted string, this is this item's own
 /// assumption that MAX also echoes the same facts as plain fields (the same "documentation is only an
 /// outline" honesty note this file's own top level note already states), since parsing a vCard blob just
 /// to re-extract what a structured sibling field would already give directly is exactly the kind of

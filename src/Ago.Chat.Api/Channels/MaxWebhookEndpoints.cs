@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.RecordChannelVisitorContact;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Domain;
@@ -48,6 +49,8 @@ public static class MaxWebhookEndpoints
         IChannelCredentialCipher cipher,
         ReceiveChannelMessageHandler receiveHandler,
         RecordChannelVisitorContactHandler recordContactHandler,
+        ReceiveChannelAttachmentHandler receiveAttachmentHandler,
+        MaxApiClient maxApiClient,
         ILogger<RecordChannelVisitorContactHandler> logger,
         CancellationToken cancellationToken)
     {
@@ -148,6 +151,20 @@ public static class MaxWebhookEndpoints
                     "Could not record a shared MAX contact for site {SiteId}: {Code} {Message}",
                     credential.SiteId.Value, contactResult.Error!.Value.Code, contactResult.Error!.Value.Message);
             }
+        }
+
+        // `25-161`: a sent photo, dispatched the same way a shared contact already is - see
+        // MaxInboundAttachmentDispatch's own remarks for the full download-prepare-upload-complete
+        // protocol this one call hides. Never turned into a non-2xx response, matching the contact
+        // branch above: this is downstream of "the update parsed fine," the same territory `problem`
+        // above is reserved for the ordinary-message failure, not this one.
+        if (parsed.Image is { } image)
+        {
+            await MaxInboundAttachmentDispatch.DispatchImageAsync(
+                receiveAttachmentHandler, maxApiClient, logger, credential.SiteId, image,
+                new ExternalChannelAddress(parsed.ChatId.ToString()),
+                new ExternalMessageId(parsed.ExternalMessageId),
+                cancellationToken);
         }
 
         return problem ?? Results.Ok();

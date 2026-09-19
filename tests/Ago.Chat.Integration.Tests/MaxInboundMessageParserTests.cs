@@ -133,7 +133,7 @@ public class MaxInboundMessageParserTests
                     [
                         new MaxAttachment(
                             "contact",
-                            new MaxContactAttachmentPayload(
+                            new MaxAttachmentPayload(
                                 vcfInfo, new MaxContactInfo(senderId, phone, firstName, lastName), hash)),
                     ]),
                 1_700_000_000_000));
@@ -208,8 +208,11 @@ public class MaxInboundMessageParserTests
         Assert.Null(MaxInboundMessageParser.TryParse(update, BotToken));
     }
 
+    /// <summary>`25-161`: <c>"image"</c> is no longer one of the types this parser ignores outright -
+    /// see the dedicated image tests below for that. A type this parser genuinely has no use case for
+    /// at all (a sticker) is the honest stand-in for "not a type this parser understands."</summary>
     [Fact]
-    public void TryParse_AnAttachmentThatIsNotAContactType_IsIgnored()
+    public void TryParse_AnAttachmentOfAnUnhandledType_IsIgnored()
     {
         var update = new MaxUpdate(
             "message_created", 1,
@@ -217,9 +220,91 @@ public class MaxInboundMessageParserTests
                 new MaxUser(1), new MaxRecipient(999),
                 new MaxMessageBody(
                     Mid: "m", Text: null,
-                    Attachments: [new MaxAttachment("image", Payload: null)]),
+                    Attachments: [new MaxAttachment("sticker", Payload: null)]),
                 1));
 
         Assert.Null(MaxInboundMessageParser.TryParse(update, BotToken));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-161`: a sent photo - this item's own confirmed root cause for "the image never arrives even
+    // once granted." Before this item, TryParse had no branch for MaxAttachmentPayload.Url at all, so a
+    // caption-less photo (no `text`) failed the blank-body bail-out and the *entire* inbound message
+    // vanished - not merely its attachment.
+    // -----------------------------------------------------------------------------------------
+
+    private static MaxUpdate ImageUpdate(long senderId, long chatId, string? text, string? url) =>
+        new(
+            "message_created", 1_700_000_000_000,
+            new MaxIncomingMessage(
+                new MaxUser(senderId), new MaxRecipient(chatId),
+                new MaxMessageBody(
+                    Mid: "provider-mid-1", Text: text,
+                    Attachments: [new MaxAttachment("image", new MaxAttachmentPayload(null, null, null, Url: url))]),
+                1_700_000_000_000));
+
+    /// <summary>The live symptom, reproduced: a photo with no caption used to produce nothing at all.
+    /// It now produces a message with no text and a resolvable image.</summary>
+    [Fact]
+    public void TryParse_ACaptionLessPhoto_IsAcceptedWithNoTextAndAResolvableImage()
+    {
+        var update = ImageUpdate(senderId: 1, chatId: 999, text: null, url: "https://cdn.max.example/photo.jpg");
+
+        var parsed = MaxInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Null(parsed.Text);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("https://cdn.max.example/photo.jpg", parsed.Image.Url);
+    }
+
+    /// <summary>A captioned photo carries both, independently - MAX's own documentation gives no reason
+    /// to treat text and an image attachment as mutually exclusive the way Telegram's text/contact split
+    /// is (this class's own ParsedMaxMessage remarks).</summary>
+    [Fact]
+    public void TryParse_ACaptionedPhoto_CarriesBothTextAndImage()
+    {
+        var update = ImageUpdate(senderId: 1, chatId: 999, text: "look at this", url: "https://cdn.max.example/photo.jpg");
+
+        var parsed = MaxInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("look at this", parsed.Text);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("https://cdn.max.example/photo.jpg", parsed.Image.Url);
+    }
+
+    /// <summary>`25-161`: MAX's own token-only reference this codebase has no confirmed way to resolve
+    /// to bytes (MaxAttachmentPayload's own remarks) - a caption-less photo whose payload carries no
+    /// `url` degrades to the same "nothing this parser understood" outcome a caption-less message
+    /// always has, rather than a guess.</summary>
+    [Fact]
+    public void TryParse_ACaptionLessPhotoWithNoUrl_IsIgnored()
+    {
+        var update = new MaxUpdate(
+            "message_created", 1,
+            new MaxIncomingMessage(
+                new MaxUser(1), new MaxRecipient(999),
+                new MaxMessageBody(
+                    Mid: "m", Text: null,
+                    Attachments: [new MaxAttachment("image", new MaxAttachmentPayload(null, null, null, Token: "opaque-token"))]),
+                1));
+
+        Assert.Null(MaxInboundMessageParser.TryParse(update));
+    }
+
+    /// <summary>A captioned photo with no resolvable URL still keeps its caption - the same "this parser
+    /// acts on whichever fields it actually understood" posture the rest of this file already
+    /// establishes for a rejected contact.</summary>
+    [Fact]
+    public void TryParse_ACaptionedPhotoWithNoUrl_KeepsTheCaptionButNoImage()
+    {
+        var update = ImageUpdate(senderId: 1, chatId: 999, text: "look at this", url: null);
+
+        var parsed = MaxInboundMessageParser.TryParse(update);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("look at this", parsed.Text);
+        Assert.Null(parsed.Image);
     }
 }

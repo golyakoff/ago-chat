@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.RecordChannelVisitorContact;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.DependencyInjection;
@@ -315,6 +316,21 @@ public sealed class MaxLongPollingService(
                     "Could not record a shared MAX contact for site {SiteId}: {Code} {Message}",
                     siteId.Value, contactResult.Error!.Value.Code, contactResult.Error!.Value.Message);
             }
+        }
+
+        // `25-161`: a sent photo, dispatched the same way a shared contact already is - its own
+        // sibling command, never folded into ReceiveChannelMessage above. See
+        // MaxInboundAttachmentDispatch's own remarks for the full download-prepare-upload-complete
+        // protocol this one call hides.
+        if (parsed.Image is { } image)
+        {
+            var attachmentHandler = scope.ServiceProvider.GetRequiredService<ReceiveChannelAttachmentHandler>();
+
+            await MaxInboundAttachmentDispatch.DispatchImageAsync(
+                attachmentHandler, client, logger, siteId, image,
+                new ExternalChannelAddress(parsed.ChatId.ToString()),
+                new ExternalMessageId(parsed.ExternalMessageId),
+                cancellationToken);
         }
     }
 
