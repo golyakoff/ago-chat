@@ -140,6 +140,107 @@ public sealed class WhatsAppApiClient(HttpClient httpClient)
         throw new WhatsAppApiCallException(reason);
     }
 
+    /// <summary>
+    /// `25-165`: fetches the actual bytes of an inbound image attachment - WhatsApp's own two-step
+    /// download, confirmed against Meta's own Cloud API media documentation
+    /// (developers.facebook.com/docs/whatsapp/cloud-api/reference/media). A `media_id` resolves only to
+    /// a short-lived signed URL via <c>GET /{media-id}</c> (this same Graph API host, this same Bearer
+    /// token) - the same "the id needs its own resolve call" shape as Telegram's `file_id`, unlike MAX's
+    /// single direct URL.
+    ///
+    /// <para><b>The genuine divergence from both MAX's and Telegram's own download step.</b> Meta's own
+    /// documentation is explicit that the returned URL "requires you to use your access token" - fetching
+    /// it needs the identical <c>Authorization: Bearer</c> header the first request used, not a bare
+    /// anonymous GET the way MAX's direct URL and Telegram's own file-download URL both are. Omitting the
+    /// header here would not degrade gracefully to a smaller image or a slower path; per Meta's own
+    /// access-control model for this endpoint it would simply refuse the request outright.</para>
+    ///
+    /// <para>The first request reuses this class's own <see cref="TerminalRefusalErrorCodes"/> Graph API
+    /// error-code split (a real Graph API endpoint, on this same host). The second request - against a
+    /// URL that is not itself a Graph API endpoint at all, so there is no <see cref="WhatsAppErrorEnvelope"/>
+    /// to read - falls back to a plain HTTP-status-based terminal/transient split instead, the identical
+    /// shape <c>MaxApiClient.DownloadImageAsync</c>/<c>TelegramApiClient.DownloadImageAsync</c> already use
+    /// for their own single download requests: 400/401/403/404 is <see langword="null"/> (this image
+    /// cannot be fetched, full stop), everything else throws, so a transient failure rides the same retry
+    /// this codebase already gives an inbound webhook (Meta's own retry-on-non-2xx contract, the identical
+    /// contract <c>WhatsAppWebhookEndpoints</c>' own remarks already describe).</para>
+    ///
+    /// <para><b>The absolute-URL floor accepts <c>http</c> as well as <c>https</c> - a deliberate,
+    /// narrower check than <c>MaxApiClient.DownloadImageAsync</c>'s own <c>https</c>-only floor, not an
+    /// oversight.</b> MAX's own check defends a URL read directly off an inbound webhook payload -
+    /// content this codebase never generated, crossing a real trust boundary. This URL is the response to
+    /// a call this class itself just made, authenticated with this same request's own Bearer token,
+    /// against Meta's own Graph API - Meta's own documentation states it is always <c>https</c> in
+    /// production, so this floor exists only to reject a malformed or unexpected scheme (never a bare
+    /// <c>file:</c> or similar), not to enforce transport security against an adversarial value the way
+    /// MAX's check does.</para>
+    /// </summary>
+    public async Task<WhatsAppImageDownloadResult?> DownloadImageAsync(
+        string token, string mediaId, CancellationToken cancellationToken)
+    {
+        using var infoRequest = new HttpRequestMessage(HttpMethod.Get, mediaId);
+        infoRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        using var infoResponse = await httpClient.SendAsync(infoRequest, cancellationToken);
+
+        string? mediaUrl;
+        if (infoResponse.IsSuccessStatusCode)
+        {
+            var info = await infoResponse.Content.ReadFromJsonAsync<WhatsAppMediaInfo>(cancellationToken);
+            mediaUrl = info?.Url;
+        }
+        else
+        {
+            var envelope = await infoResponse.Content.ReadFromJsonAsync<WhatsAppErrorEnvelope>(cancellationToken);
+            if (envelope?.Error is { } error)
+            {
+                if (TerminalRefusalErrorCodes.Contains(error.Code))
+                {
+                    return null;
+                }
+
+                throw new HttpRequestException(
+                    $"WhatsApp API returned error {error.Code} (HTTP {(int)infoResponse.StatusCode}) for the media lookup: {Truncate(error.Message)}");
+            }
+
+            throw new HttpRequestException(
+                $"WhatsApp API returned HTTP {(int)infoResponse.StatusCode} for the media lookup with no parseable error body.");
+        }
+
+        if (!Uri.TryCreate(mediaUrl, UriKind.Absolute, out var mediaUri)
+            || (mediaUri.Scheme != Uri.UriSchemeHttps && mediaUri.Scheme != Uri.UriSchemeHttp))
+        {
+            return null;
+        }
+
+        using var downloadRequest = new HttpRequestMessage(HttpMethod.Get, mediaUri);
+        downloadRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        using var downloadResponse = await httpClient.SendAsync(downloadRequest, cancellationToken);
+
+        if (downloadResponse.IsSuccessStatusCode)
+        {
+            var bytes = await downloadResponse.Content.ReadAsByteArrayAsync(cancellationToken);
+            var contentType = downloadResponse.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            return new WhatsAppImageDownloadResult(bytes, contentType);
+        }
+
+        if (DownloadTerminalRefusalStatusCodes.Contains(downloadResponse.StatusCode))
+        {
+            return null;
+        }
+
+        throw new HttpRequestException(
+            $"WhatsApp media download returned {(int)downloadResponse.StatusCode} for a URL this API resolved.",
+            null, downloadResponse.StatusCode);
+    }
+
+    private static readonly System.Net.HttpStatusCode[] DownloadTerminalRefusalStatusCodes =
+    [
+        System.Net.HttpStatusCode.BadRequest, System.Net.HttpStatusCode.Unauthorized,
+        System.Net.HttpStatusCode.Forbidden, System.Net.HttpStatusCode.NotFound,
+    ];
+
     private static string Truncate(string? text) =>
         text is null ? "(no message)" : text.Length > 500 ? text[..500] : text;
 }
@@ -150,3 +251,9 @@ public sealed record WhatsAppSendResult(bool Success, string? ProviderMessageId,
 
     public static WhatsAppSendResult Refused(string reason) => new(false, null, reason);
 }
+
+/// <summary>`25-165`: what <see cref="WhatsAppApiClient.DownloadImageAsync"/> actually found - the real
+/// bytes, and the content type the media-download response declared for them, the identical "verify,
+/// never trust the claim" posture <c>MaxImageDownloadResult</c>/<c>TelegramImageDownloadResult</c>'s own
+/// remarks already state for their own equivalents.</summary>
+public sealed record WhatsAppImageDownloadResult(byte[] Content, string ContentType);

@@ -122,6 +122,115 @@ public sealed class WhatsAppApiClientTests
         Assert.Contains("190", ex.Message);
     }
 
+    // -----------------------------------------------------------------------------------------
+    // `25-165`: DownloadImageAsync's own two-step protocol - GET /{media-id} resolves a media_id to a
+    // short-lived signed URL, then a second, still-authenticated request against that URL fetches the
+    // actual bytes. Both steps proven against a real Kestrel host, the same standard every other method
+    // in this class already gets.
+    // -----------------------------------------------------------------------------------------
+
+    private const string MediaId = "wamid-media-id-123";
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheMediaLookupAndDownloadBothSucceed_ReturnsTheBytesAndContentType()
+    {
+        await using var host = await BuildFakeWhatsAppHostAsync(app =>
+        {
+            app.MapGet($"/{MediaId}", (HttpContext ctx) =>
+                Results.Json(new { url = $"http://{ctx.Request.Host}/cdn/{MediaId}" }));
+            app.MapGet($"/cdn/{MediaId}", () => Results.File([1, 2, 3, 4], "image/jpeg"));
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, MediaId, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal([1, 2, 3, 4], result.Content);
+        Assert.Equal("image/jpeg", result.ContentType);
+    }
+
+    /// <summary>Meta's own documentation is explicit that the signed media URL still requires the
+    /// identical Bearer token the lookup call used - proven here by refusing the download unless the
+    /// header is actually present.</summary>
+    [Fact]
+    public async Task DownloadImageAsync_TheSecondRequestCarriesTheSameBearerToken()
+    {
+        string? capturedAuthHeader = null;
+        await using var host = await BuildFakeWhatsAppHostAsync(app =>
+        {
+            app.MapGet($"/{MediaId}", (HttpContext ctx) =>
+                Results.Json(new { url = $"http://{ctx.Request.Host}/cdn/{MediaId}" }));
+            app.MapGet($"/cdn/{MediaId}", (HttpContext ctx) =>
+            {
+                capturedAuthHeader = ctx.Request.Headers.Authorization.ToString();
+                return Results.File([9], "image/png");
+            });
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        await client.DownloadImageAsync(Token, MediaId, CancellationToken.None);
+
+        Assert.Equal($"Bearer {Token}", capturedAuthHeader);
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheMediaLookupRefusesWithATerminalErrorCode_ReturnsNullRatherThanThrowing()
+    {
+        await using var host = await BuildFakeWhatsAppHostAsync(app =>
+            app.MapGet($"/{MediaId}", () => Results.Json(
+                new { error = new { message = "Unsupported get request", type = "GraphMethodException", code = 100, error_subcode = (int?)null } },
+                statusCode: 400)));
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, MediaId, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheMediaLookupReturnsAThroughputLimitErrorCode_Throws()
+    {
+        await using var host = await BuildFakeWhatsAppHostAsync(app =>
+            app.MapGet($"/{MediaId}", () => Results.Json(
+                new { error = new { message = "Message throughput limit reached", type = "OAuthException", code = 130429, error_subcode = (int?)null } },
+                statusCode: 429)));
+        var client = BuildClient(host.BaseUrl);
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.DownloadImageAsync(Token, MediaId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheDownloadItselfRefusesWith404_ReturnsNull()
+    {
+        await using var host = await BuildFakeWhatsAppHostAsync(app =>
+        {
+            app.MapGet($"/{MediaId}", (HttpContext ctx) =>
+                Results.Json(new { url = $"http://{ctx.Request.Host}/cdn/{MediaId}" }));
+            app.MapGet($"/cdn/{MediaId}", () => Results.StatusCode(StatusCodes.Status404NotFound));
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, MediaId, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheDownloadItselfReturns500_Throws()
+    {
+        await using var host = await BuildFakeWhatsAppHostAsync(app =>
+        {
+            app.MapGet($"/{MediaId}", (HttpContext ctx) =>
+                Results.Json(new { url = $"http://{ctx.Request.Host}/cdn/{MediaId}" }));
+            app.MapGet($"/cdn/{MediaId}", () => Results.StatusCode(StatusCodes.Status500InternalServerError));
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.DownloadImageAsync(Token, MediaId, CancellationToken.None));
+    }
+
     private static WhatsAppApiClient BuildClient(string baseUrl) =>
         new(new HttpClient { BaseAddress = new Uri(baseUrl) });
 

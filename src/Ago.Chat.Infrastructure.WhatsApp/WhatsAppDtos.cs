@@ -82,20 +82,63 @@ public sealed record WhatsAppMetadata(
     [property: JsonPropertyName("display_phone_number")] string? DisplayPhoneNumber,
     [property: JsonPropertyName("phone_number_id")] string? PhoneNumberId);
 
-/// <summary>One inbound message. <see cref="Type"/> is checked and only <c>"text"</c> is accepted -
-/// WhatsApp's Cloud API delivers a dozen other message types (image, audio, location, an interactive
-/// button reply) this item has no use case for, the identical "recognise the one shape this item
-/// handles, skip the rest" restraint <c>VkInboundMessageParser</c>'s own remarks state for VK's own
-/// event-type breadth. `14-06`'s structured-content item is the one that would give a non-text type
-/// anywhere real to go; nothing here invents a text-only stand-in for a photo.</summary>
+/// <summary>One inbound message. <see cref="Type"/> is checked and only <c>"text"</c> and (`25-165`)
+/// <c>"image"</c> are accepted - WhatsApp's Cloud API delivers a dozen other message types (audio,
+/// location, an interactive button reply) this item still has no use case for, the identical
+/// "recognise the one shape this item handles, skip the rest" restraint <c>VkInboundMessageParser</c>'s
+/// own remarks state for VK's own event-type breadth.
+///
+/// <para><b>`25-165`: why "image" moved from that skip list into the recognised set, while the rest did
+/// not.</b> This type's own original remarks (`14-10`) named the reason every non-text type was
+/// skipped as "this item has no use case for it," pointing at `14-06`'s own structured-content item as
+/// "the one that would give a non-text type anywhere real to go" - a scope statement, not a technical
+/// constraint (WhatsApp's own media-fetch mechanics are no harder here than MAX's or Telegram's own
+/// two-step downloads). `25-161` built exactly that missing destination -
+/// <c>Ago.Chat.Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler</c> - so the
+/// stated reason for skipping an image specifically no longer holds; audio/location/interactive remain
+/// skipped for the identical original reason, since nothing has yet given any of them a destination
+/// either.</para>
+/// </summary>
 public sealed record WhatsAppMessage(
     [property: JsonPropertyName("from")] string? From,
     [property: JsonPropertyName("id")] string? Id,
     [property: JsonPropertyName("timestamp")] string? Timestamp,
     [property: JsonPropertyName("type")] string? Type,
-    [property: JsonPropertyName("text")] WhatsAppMessageText? Text);
+    [property: JsonPropertyName("text")] WhatsAppMessageText? Text,
+    [property: JsonPropertyName("image")] WhatsAppMediaObject? Image = null);
 
 public sealed record WhatsAppMessageText([property: JsonPropertyName("body")] string? Body);
+
+/// <summary>
+/// `25-165`: an inbound image's own object - confirmed against Meta's own Cloud API webhooks
+/// documentation (developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples#image-messages),
+/// reachable from this environment the same standing this file's own top-level honesty note already
+/// gives every other WhatsApp shape here. <see cref="Id"/> is the opaque <c>media_id</c> this parser's
+/// own caller resolves through the two-step <see cref="WhatsAppApiClient.DownloadImageAsync"/> protocol
+/// - never a directly fetchable URL, the identical "the id needs its own resolve call" shape Telegram's
+/// own `file_id` has (<c>TelegramPhotoSize</c>'s own remarks), distinct from MAX's single direct URL.
+/// <see cref="Caption"/> is optional prose alongside the image - WhatsApp's own equivalent of a
+/// captioned MAX/Telegram photo, folded into <see cref="ParsedWhatsAppMessage.Text"/> by
+/// <see cref="WhatsAppInboundMessageParser"/> for the identical "produces a plain-text message
+/// alongside its own attachment, independently" reason those two channels' own parsers already state.
+/// <c>mime_type</c>/<c>sha256</c> are not modelled - "do not model what nothing reads", the same
+/// restraint this file's own top-level note already applies elsewhere.
+/// </summary>
+public sealed record WhatsAppMediaObject(
+    [property: JsonPropertyName("id")] string? Id,
+    [property: JsonPropertyName("caption")] string? Caption = null);
+
+/// <summary>
+/// `25-165`: <c>GET /{media-id}</c>'s own success shape - confirmed against Meta's own Cloud API media
+/// documentation (developers.facebook.com/docs/whatsapp/cloud-api/reference/media#retrieve-media-url).
+/// <see cref="Url"/> is a short-lived (Meta's own documentation: roughly five minutes), Meta-hosted,
+/// authenticated URL - fetching it still requires the identical <c>Authorization: Bearer</c> token this
+/// same lookup call used, a genuine divergence from MAX's/Telegram's own download step (neither needs
+/// any credential on its second request) that <see cref="WhatsAppApiClient.DownloadImageAsync"/>'s own
+/// remarks state plainly. <c>mime_type</c>/<c>sha256</c>/<c>file_size</c>/<c>messaging_product</c> are
+/// not modelled - only <see cref="Url"/> has a caller.
+/// </summary>
+public sealed record WhatsAppMediaInfo([property: JsonPropertyName("url")] string? Url);
 
 // --- Outbound: POST /{version}/{phone-number-id}/messages ---
 //

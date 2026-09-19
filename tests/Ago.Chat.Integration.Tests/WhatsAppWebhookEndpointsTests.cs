@@ -3,6 +3,9 @@ using System.Security.Cryptography;
 using System.Text;
 using Ago.Chat.Api.Channels;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.ConfirmAttachment;
+using Ago.Chat.Application.UseCases.CreateAttachment;
+using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
@@ -14,6 +17,7 @@ using Ago.Chat.Infrastructure.WhatsApp;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -357,6 +361,34 @@ public sealed class WhatsAppWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddSingleton(Options.Create(configureWhatsApp
             ? new WhatsAppBotApiOptions { AppSecret = AppSecret, VerifyToken = VerifyToken }
             : new WhatsAppBotApiOptions()));
+
+        // `25-165`: ReceiveChannelAttachmentHandler's own dependency chain - registered here purely so
+        // this hand-rolled host's DI graph resolves (none of this file's own test cases send an image;
+        // ASP.NET Core still builds endpoint metadata eagerly for every mapped route the first time any
+        // request is authorized, FakeFileStorage's own remarks, so a handler's constructor dependency
+        // must resolve even for a path a given test never exercises). ReceiveChannelAttachmentHandlerTests
+        // (Ago.Chat.Application.Tests) is where this handler's own real behaviour is proven; FakeFileStorage
+        // stands in for a real S3FileStorage the identical way it already does for SitesEndpoints' own
+        // export routes, since standing up a MinIO fixture here would test infrastructure this file's own
+        // scope (the webhook route's wire shape) has nothing to do with.
+        builder.Services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+        builder.Services.AddSingleton<IFileStorage, FakeFileStorage>();
+        builder.Services.AddScoped<IConversationAttachmentBudget, ConversationAttachmentBudgetStore>();
+        builder.Services.AddScoped<ISiteAttachmentStorageBudget, SiteAttachmentStorageBudgetStore>();
+        builder.Services.AddScoped<IBillingSubscriptionRepository, BillingSubscriptionRepository>();
+        builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
+        builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
+        builder.Services.AddSingleton(new AttachmentOptions());
+        builder.Services.AddSingleton(new AttachmentRateLimitOptions());
+        builder.Services.AddSingleton(new AttachmentStorageQuotaOptions());
+        builder.Services.AddScoped<CreateAttachmentHandler>();
+        builder.Services.AddScoped<ConfirmAttachmentHandler>();
+        builder.Services.AddScoped<ReceiveChannelAttachmentHandler>();
+        // Never actually called by this file's own existing test cases (none send an image) - a bare
+        // typed HttpClient with no real base URL is enough to satisfy DI resolution, the identical
+        // "resolvable, not functional" standard FakeFileStorage's own remarks already state.
+        builder.Services.AddHttpClient<WhatsAppApiClient>(client => client.BaseAddress = new Uri("http://127.0.0.1:1/"));
 
         var app = builder.Build();
 
