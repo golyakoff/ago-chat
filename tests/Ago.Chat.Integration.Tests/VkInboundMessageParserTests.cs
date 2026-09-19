@@ -149,4 +149,114 @@ public class VkInboundMessageParserTests
         Assert.NotNull(parsed);
         Assert.Equal("777:42", parsed.ExternalMessageId);
     }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-166`: a sent photo - this item's own confirmed root cause for "the image never arrives": before
+    // TryExtractImage existed, nothing in this file ever read `attachments` at all, so a caption-less
+    // photo (no `text`) failed the blank-body bail-out and the *entire* inbound message vanished, the
+    // identical live symptom `25-161`'s own report found for MAX.
+    // -----------------------------------------------------------------------------------------
+
+    private static VkCallbackEvent MessageNewWithPhoto(
+        long fromId, string? text, IReadOnlyList<object>? attachments, long peerId = 999, long? id = 1001) =>
+        new(
+            "message_new", GroupId: 1, Secret: "s", EventId: "1",
+            Object: JsonSerializer.SerializeToElement(new
+            {
+                message = new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["date"] = 1_700_000_000,
+                    ["from_id"] = fromId,
+                    ["peer_id"] = peerId,
+                    ["text"] = text,
+                    ["out"] = 0,
+                    ["attachments"] = attachments,
+                },
+            }));
+
+    private static object PhotoAttachment(params (string type, string url, int width, int height)[] sizes) => new
+    {
+        type = "photo",
+        photo = new { sizes = sizes.Select(s => new { type = s.type, url = s.url, width = s.width, height = s.height }) },
+    };
+
+    /// <summary>The live symptom, reproduced: a photo with no caption used to produce nothing at all. It
+    /// now produces a message with no text and a resolvable image.</summary>
+    [Fact]
+    public void TryParse_ACaptionLessPhoto_IsAcceptedWithNoTextAndAResolvableImage()
+    {
+        var callbackEvent = MessageNewWithPhoto(
+            fromId: 1, text: null,
+            attachments:
+            [
+                PhotoAttachment(
+                    ("s", "https://sun9-1.userapi.com/small.jpg", 90, 90),
+                    ("w", "https://sun9-1.userapi.com/large.jpg", 1280, 1024)),
+            ]);
+
+        var parsed = VkInboundMessageParser.TryParse(callbackEvent);
+
+        Assert.NotNull(parsed);
+        Assert.Null(parsed.Text);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("https://sun9-1.userapi.com/large.jpg", parsed.Image.Url);
+    }
+
+    /// <summary>A captioned photo carries both, independently - VK's own message object carries `text`
+    /// and `attachments` as separate fields, not mutually exclusive the way Telegram's own text/photo
+    /// split is at the wire level.</summary>
+    [Fact]
+    public void TryParse_ACaptionedPhoto_CarriesBothTextAndImage()
+    {
+        var callbackEvent = MessageNewWithPhoto(
+            fromId: 1, text: "look at this",
+            attachments: [PhotoAttachment(("x", "https://sun9-1.userapi.com/photo.jpg", 604, 604))]);
+
+        var parsed = VkInboundMessageParser.TryParse(callbackEvent);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("look at this", parsed.Text);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("https://sun9-1.userapi.com/photo.jpg", parsed.Image.Url);
+    }
+
+    /// <summary>VK's own documentation describes the `sizes` array as smallest-to-largest but does not
+    /// make that an enforced schema guarantee - this parser picks the highest resolution by `width`
+    /// explicitly, proven here by handing it the sizes in descending, not ascending, order.</summary>
+    [Fact]
+    public void TryParse_APhotoWithSizesOutOfDocumentedOrder_StillPicksTheHighestResolution()
+    {
+        var callbackEvent = MessageNewWithPhoto(
+            fromId: 1, text: null,
+            attachments:
+            [
+                PhotoAttachment(
+                    ("w", "https://sun9-1.userapi.com/largest.jpg", 1280, 1024),
+                    ("s", "https://sun9-1.userapi.com/smallest.jpg", 90, 90)),
+            ]);
+
+        var parsed = VkInboundMessageParser.TryParse(callbackEvent);
+
+        Assert.NotNull(parsed);
+        Assert.NotNull(parsed.Image);
+        Assert.Equal("https://sun9-1.userapi.com/largest.jpg", parsed.Image.Url);
+    }
+
+    [Fact]
+    public void TryParse_ANonPhotoAttachment_IsIgnored()
+    {
+        var callbackEvent = MessageNewWithPhoto(
+            fromId: 1, text: null, attachments: [new { type = "sticker", sticker = new { } }]);
+
+        Assert.Null(VkInboundMessageParser.TryParse(callbackEvent));
+    }
+
+    [Fact]
+    public void TryParse_NoTextAndNoAttachmentsAtAll_ReturnsNull()
+    {
+        var callbackEvent = MessageNewWithPhoto(fromId: 1, text: null, attachments: null);
+
+        Assert.Null(VkInboundMessageParser.TryParse(callbackEvent));
+    }
 }

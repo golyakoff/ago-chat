@@ -73,7 +73,52 @@ public sealed record VkMessage(
     [property: JsonPropertyName("from_id")] long? FromId,
     [property: JsonPropertyName("peer_id")] long? PeerId,
     [property: JsonPropertyName("text")] string? Text,
-    [property: JsonPropertyName("out")] int? Out);
+    [property: JsonPropertyName("out")] int? Out,
+    // `25-166`: an inbound message's own attachments - confirmed against VK's own published API
+    // reference (dev.vk.com/reference/objects/message, the `attachments` field of a message object).
+    [property: JsonPropertyName("attachments")] IReadOnlyList<VkAttachment>? Attachments = null);
+
+/// <summary>
+/// `25-166`: one entry of <see cref="VkMessage.Attachments"/> - confirmed against VK's own published
+/// API reference (dev.vk.com/reference/objects/attachments_message): every attachment is a
+/// <c>{ type, &lt;type&gt; }</c> pair where <see cref="Type"/> names which sibling field is populated
+/// (VK's own object list includes photo, video, audio, doc, a shared post, a sticker, ...). Only
+/// <see cref="Photo"/> is modelled - "do not model what nothing reads", the same restraint this file's
+/// own honesty note already applies elsewhere; every other attachment kind is simply not read.
+/// </summary>
+public sealed record VkAttachment(
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("photo")] VkPhoto? Photo);
+
+/// <summary>
+/// `25-166`: a VK photo object - confirmed against VK's own published API reference
+/// (dev.vk.com/reference/objects/photo). <see cref="Sizes"/> is the current, documented shape (API
+/// v5.77 and later): an array of resolution variants, each with its own directly fetchable
+/// <see cref="VkPhotoSize.Url"/> - unlike the older fixed-name fields this same reference page
+/// documents as still present for backward compatibility (<c>photo_75</c>/<c>photo_130</c>/<c>photo_604</c>/...,
+/// deprecated since that same version), which this parser deliberately does not read: this deployment
+/// registers a community's own token against a current API version (<c>VkBotApiOptions.ApiVersion</c>'s
+/// own remarks - this item pins a version well past 5.77), so <see cref="Sizes"/> is what a real
+/// delivery actually carries, not a guess between two coexisting shapes.
+/// </summary>
+public sealed record VkPhoto([property: JsonPropertyName("sizes")] IReadOnlyList<VkPhotoSize>? Sizes);
+
+/// <summary>
+/// `25-166`: one resolution variant of a <see cref="VkPhoto"/> - confirmed against VK's own published
+/// API reference. <see cref="Type"/> is VK's own single-letter size code (<c>s</c>/<c>m</c>/<c>x</c>/.../<c>w</c>,
+/// smallest to largest, but not a strict width ordering the reference itself documents), which
+/// <see cref="VkInboundMessageParser"/> does not read at all - it picks the highest resolution by
+/// <see cref="Width"/> explicitly, the identical "do not trust array position or a type code's own
+/// implied ordering" discipline <c>TelegramPhotoSize</c>'s own remarks already state for Telegram's
+/// equivalent case. <see cref="Url"/> is directly fetchable with no authentication and no separate
+/// resolve step - VK's own CDN, not a second API call - the one respect in which this attachment is
+/// simpler than Telegram's/WhatsApp's own two-step download, closer to MAX's single-URL shape.
+/// </summary>
+public sealed record VkPhotoSize(
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("url")] string? Url,
+    [property: JsonPropertyName("width")] int? Width,
+    [property: JsonPropertyName("height")] int? Height);
 
 // --- Outbound: messages.send, groups.getById, groups.getCallbackConfirmationCode ---
 //

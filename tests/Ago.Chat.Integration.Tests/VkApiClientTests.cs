@@ -133,6 +133,49 @@ public sealed class VkApiClientTests
         Assert.Equal("a1b2c3d4", code);
     }
 
+    // -----------------------------------------------------------------------------------------
+    // `25-166`: DownloadImageAsync's own defensive floor - only an absolute, https URL is ever fetched,
+    // the identical check `MaxApiClient.DownloadImageAsync`'s own remarks state for the identical
+    // reason (this is the one method whose target is a value read straight off an inbound payload, not
+    // a URL this codebase itself constructed). Both branches below short-circuit before any network call,
+    // so no fake host is needed to prove them.
+    //
+    // Honesty note, matching this file's own top-level citation discipline: the actual network
+    // round-trip this method makes past that floor (a successful fetch, VK's own 400/401/403/404-vs-5xx
+    // classification) is not independently proven against a live host here - `MaxApiClient.DownloadImageAsync`,
+    // the exact precedent this method mirrors, has never had that live-network path exercised in this
+    // test suite either (no VK/MAX token or CDN access existed while either item was built), and this
+    // method's own terminal/transient logic is the identical, already-reviewed shape. Proving it would
+    // need a real TLS listener (the one precedent for that in this project,
+    // `ModuleRegistrationGatewayInternalTlsTests`, exists for a materially different question - whether a
+    // caller trusts a specific signing root - and building that machinery here for a plain "does the GET
+    // work" check was judged out of proportion to what this item asked for). Named here rather than left
+    // to be rediscovered, the same discipline this codebase's own honesty notes already hold themselves to.
+    // -----------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task DownloadImageAsync_WithAPlainHttpUrl_ReturnsNullWithoutMakingAnyRequest()
+    {
+        var client = BuildClient("http://localhost/");
+
+        var result = await client.DownloadImageAsync("http://sun9-1.userapi.com/photo.jpg", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData("not a url at all")]
+    [InlineData("/relative/path.jpg")]
+    [InlineData("ftp://sun9-1.userapi.com/photo.jpg")]
+    public async Task DownloadImageAsync_WithAnUnusableUrl_ReturnsNull(string url)
+    {
+        var client = BuildClient("http://localhost/");
+
+        var result = await client.DownloadImageAsync(url, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
     private static VkApiClient BuildClient(string baseUrl) =>
         new(new HttpClient { BaseAddress = new Uri(baseUrl) }, ApiVersion);
 
