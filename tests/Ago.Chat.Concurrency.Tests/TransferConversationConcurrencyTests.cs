@@ -543,7 +543,7 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
     {
         await using var db = fixture.CreateDbContext();
         var handler = new TransferConversationHandler(
-            new ConversationRepository(db), new OperatorRepository(db), new ConversationAssignmentLog(db),
+            new ConversationRepository(db), new OperatorRepository(db), new OperatorRoleRepository(db), new ConversationAssignmentLog(db),
             new PermissionChecker(db), new OperatorCapacityStore(db), new EfUnitOfWork(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock());
 

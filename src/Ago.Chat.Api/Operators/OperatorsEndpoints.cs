@@ -88,7 +88,7 @@ public static class OperatorsEndpoints
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new ToggleOperatorSeat(user.GetOperatorId(), new SiteId(siteId), new OperatorId(operatorId), request.HoldsSeat),
+            new ToggleOperatorSeat(user.GetOperatorId(), new SiteId(siteId), new OperatorId(operatorId), request.RoleName, request.HoldsSeat),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
@@ -142,7 +142,9 @@ public static class OperatorsEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
-    public sealed record ToggleOperatorSeatRequest(bool HoldsSeat);
+    /// <summary>`25-170`: <see cref="RoleName"/> - which role's own seat, since "holds a seat" is now a
+    /// fact about one `(operator, role)` pairing (`"Operator"` or `"Admin"` today).</summary>
+    public sealed record ToggleOperatorSeatRequest(string RoleName, bool HoldsSeat);
 
     public sealed record ChangeOperatorRoleRequest(string RoleName);
 }

@@ -25,13 +25,15 @@ public class AssignConversationHandlerTests
         }
 
         var operators = new FakeOperatorRepository();
-        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5, holdsSeat: holdsSeat));
+        operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5));
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(OperatorId, "Operator", holdsSeat);
 
         var assignmentLog = new FakeConversationAssignmentLog();
         var capacity = new FakeOperatorCapacity();
         var unitOfWork = new FakeUnitOfWork();
         var handler = new AssignConversationHandler(
-            conversations, assignmentLog, permissions, operators, capacity, unitOfWork, new FakeIdGenerator(), new FakeClock(Now));
+            conversations, assignmentLog, permissions, operators, operatorRoles, capacity, unitOfWork, new FakeIdGenerator(), new FakeClock(Now));
         return (handler, conversations, permissions, assignmentLog, capacity, unitOfWork, conversation);
     }
 
@@ -139,8 +141,10 @@ public class AssignConversationHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.ConversationAssign);
         var operators = new FakeOperatorRepository();
         operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5));
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(OperatorId, "Operator", holdsSeat: true);
         var handler = new AssignConversationHandler(
-            conversations, new FakeConversationAssignmentLog(), permissions, operators, new FakeOperatorCapacity(),
+            conversations, new FakeConversationAssignmentLog(), permissions, operators, operatorRoles, new FakeOperatorCapacity(),
             new FakeUnitOfWork(), new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
@@ -181,9 +185,11 @@ public class AssignConversationHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.ConversationAssign);
         var operators = new FakeOperatorRepository();
         operators.Seed(new Operator(OperatorId, SiteId, OperatorStatus.Online, capacity: 5));
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(OperatorId, "Operator", holdsSeat: true);
         var assignmentLog = new FakeConversationAssignmentLog();
         var handler = new AssignConversationHandler(
-            conversations, assignmentLog, permissions, operators, new FakeOperatorCapacity(), new FakeUnitOfWork(),
+            conversations, assignmentLog, permissions, operators, operatorRoles, new FakeOperatorCapacity(), new FakeUnitOfWork(),
             new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(

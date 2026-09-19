@@ -226,6 +226,9 @@ public class ClaimConversationEndpointTests(PostgresFixture fixture)
         builder.Services.AddSingleton(new ModuleFlowReportOptions { ModuleKey = "test-module" });
         builder.Services.AddScoped<GetModuleFlowReportForSiteHandler>();
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: AssignConversationHandler/TransferConversationHandler now both compose
+        // IOperatorRoleRepository (a self-seat check against operator_roles, not IOperatorRepository).
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<TransferConversationHandler>();
         builder.Services.AddScoped<IConversionReportReadStore, ConversionReportReadStore>();
         builder.Services.AddScoped<GetConversionReportForSiteHandler>();

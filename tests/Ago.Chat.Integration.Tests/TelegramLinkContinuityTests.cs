@@ -97,6 +97,8 @@ public sealed class TelegramLinkContinuityTests(PostgresFixture fixture)
                 new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
+            new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(),
             clock,
             idGenerator,
             emojiPairs);
@@ -184,6 +186,8 @@ public sealed class TelegramLinkContinuityTests(PostgresFixture fixture)
                 new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
+            new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(),
             clock,
             idGenerator,
             emojiPairs);

@@ -5,6 +5,7 @@ using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -69,6 +70,8 @@ public sealed class ReceiveChannelAttachmentHandler(
     ConfirmAttachmentHandler confirmAttachment,
     SendVisitorMessageHandler sendVisitorMessage,
     GetSiteConfigByIdHandler siteConfig,
+    IBillingOptionEntitlementProvider entitlements,
+    IModuleQuantityGrantStore grants,
     IOutboxWriter outbox,
     IClock clock,
     IIdGenerator idGenerator,
@@ -103,6 +106,15 @@ public sealed class ReceiveChannelAttachmentHandler(
     public async Task<Result<PreparedChannelAttachmentUpload>> PrepareAsync(
         PrepareChannelAttachmentUpload command, CancellationToken cancellationToken)
     {
+        // `25-170`: the identical entitlement guard `ReceiveChannelMessageHandler`'s own remarks
+        // describe in full - a second, redundant check alongside the watchdog's own long-polling pause,
+        // checked here (at prepare time) rather than only at complete time, since a lapsed entitlement
+        // should refuse the upload before this method ever reserves budget or presigns a URL.
+        if (!await ChannelEntitlement.IsEntitledAsync(entitlements, grants, command.SiteId, command.Kind, cancellationToken))
+        {
+            return Result<PreparedChannelAttachmentUpload>.Failure(ChannelEntitlement.Refusal(command.Kind));
+        }
+
         var now = clock.UtcNow;
 
         var identity = await identities.FindAsync(command.SiteId, command.Kind, command.Sender, cancellationToken);

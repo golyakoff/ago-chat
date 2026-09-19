@@ -51,6 +51,12 @@ public sealed class RedisLockAssignmentContainerFailureTests
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // `25-170`: a real Operator-role seat, so this test genuinely exercises the Redis-lock
+            // failure path (a real candidate found, then refused by Redis) rather than short-circuiting
+            // on an empty candidate list for an unrelated reason.
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
             await db.SaveChangesAsync();
         }

@@ -22,8 +22,8 @@ namespace Ago.Chat.Application.UseCases.UpdateCannedResponses;
 /// aggregate's own row, and EF's <c>SaveChangesAsync</c> is still one transaction - "writes go through
 /// the outbox" (`CLAUDE.md` rule 4) governs the case where a state change has an integration event to
 /// publish atomically with it; this state change genuinely has none, the same shape
-/// <c>Operator.GoOnline</c>/<c>GoOffline</c>/<c>ToggleSeat</c> already establish elsewhere in this
-/// codebase for a mutation with no consumer waiting on it.</para>
+/// <c>Operator.GoOnline</c>/<c>GoOffline</c>/<c>IOperatorRoleRepository.SetHoldsSeatAsync</c> already
+/// establish elsewhere in this codebase for a mutation with no consumer waiting on it.</para>
 /// </summary>
 public sealed class UpdateCannedResponsesHandler(ISiteRepository sites, IPermissionChecker permissions)
 {

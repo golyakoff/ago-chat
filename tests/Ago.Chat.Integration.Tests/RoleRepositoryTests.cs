@@ -373,7 +373,7 @@ public sealed class RoleRepositoryTests(PostgresFixture fixture)
             seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             seed.Operators.Add(new Operator(
                 removedOperatorId, siteId, OperatorStatus.Offline, capacity: 5, removedSubject,
-                holdsSeat: false, removedAt: Now.AddDays(-1)));
+                removedAt: Now.AddDays(-1)));
             seed.Roles.Add(new RoleRecord
             {
                 Id = roleId,

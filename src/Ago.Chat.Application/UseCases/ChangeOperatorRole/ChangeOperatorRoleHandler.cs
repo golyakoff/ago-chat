@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -32,9 +33,11 @@ namespace Ago.Chat.Application.UseCases.ChangeOperatorRole;
 /// is ever decided (`Site.ActivateSubscription`), and this handler only ever reads that already-resolved
 /// number back. `adr/0151`'s own line still holds and is not being crossed a second time: this handler
 /// still infers nothing about pricing itself, and still never talks to a permission the way the rejected
-/// draft did - it counts by role name (<see cref="IOperatorRoleRepository.CountNonRemovedHoldersAsync(SiteId,string,System.Threading.CancellationToken)"/>),
-/// the same distinction that repository's own remarks draw against <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/>.
-/// Refused with <see cref="ConversationErrors.OperatorAdminLimitReached"/>, the identical `402` shape
+/// draft did - it counts by role name, now through <see cref="OperatorRoleSeatCapacity"/>
+/// (`25-170`'s own unified capacity-check procedure, replacing this handler's previously hand-written
+/// count), the same distinction <see cref="IOperatorRoleRepository"/>'s own remarks draw against
+/// <see cref="IPermissionChecker.CountNonRemovedHoldersAsync"/>. Refused with
+/// <see cref="ConversationErrors.OperatorAdminLimitReached"/>, the identical `402` shape
 /// <see cref="ConversationErrors.OperatorSeatLimitReached"/> already gives the analogous seat-capacity
 /// refusal on a different write path.</para>
 ///
@@ -58,19 +61,23 @@ namespace Ago.Chat.Application.UseCases.ChangeOperatorRole;
 /// two roles at once, because nothing in its own Scope asked for that and the console has no UI today
 /// that could offer "add a role" as distinct from "change to this role" without inventing one.</para>
 ///
-/// <para><b><see cref="Operator.HoldsSeat"/> is untouched.</b> `23-71` made "may sign in and administer"
-/// and "may be routed a conversation" two different facts about a person - a role change answers only
-/// the first, so this handler never reads or writes <see cref="Operator.HoldsSeat"/> at all. A colleague
-/// promoted to Admin keeps whatever seat they already held (or did not); nothing here revokes or grants
-/// one, the identical separation <see cref="OperatorInviteRedemptionRepository"/>'s own remarks describe
-/// for a freshly redeemed administrator.</para>
+/// <para><b>Seat-holding carries forward, deliberately, rather than resetting.</b> `23-71` made "may sign
+/// in and administer" and "may be routed a conversation" two different facts about a person - a role
+/// change answers only the first, so this handler still never decides seat-holding itself. `25-170`
+/// moved "holds a seat" onto the `(operator, role)` pairing `ReplaceRoleAsync` itself deletes and
+/// re-inserts, so that method - not this handler - is what carries the operator's existing seat status
+/// onto the freshly assigned role rather than resetting it (<see cref="IOperatorRoleRepository.ReplaceRoleAsync"/>'s
+/// own remarks on exactly how). A colleague promoted to Admin keeps whatever seat they already held (or
+/// did not); nothing here revokes or grants one, the identical separation
+/// <see cref="OperatorInviteRedemptionRepository"/>'s own remarks describe for a freshly redeemed
+/// administrator.</para>
 /// </summary>
 public sealed class ChangeOperatorRoleHandler(
     IOperatorRepository operators,
     IRoleRepository roles,
     IOperatorRoleRepository operatorRoles,
     IPermissionChecker permissions,
-    ISiteRepository sites,
+    OperatorRoleSeatCapacity roleSeatCapacity,
     IUnitOfWork unitOfWork,
     IRoleChangeRecordRepository roleChangeRecords,
     IOutboxWriter outbox,
@@ -146,30 +153,21 @@ public sealed class ChangeOperatorRoleHandler(
         // any other role, or a change that touches neither role name.
         if (!wasAdmin && command.NewRoleName == AdminRoleName)
         {
-            var adminCount = await operatorRoles.CountNonRemovedHoldersAsync(command.SiteId, AdminRoleName, cancellationToken);
-            var site = await sites.GetByIdAsync(command.SiteId, cancellationToken);
-            if (site is null)
-            {
-                // A foreign key (OperatorConfiguration.HasOne<Site>) should make this unreachable - the
-                // same "should have prevented this" throw this codebase's other site-row locks already
-                // raise for the identical impossible case (OperatorInviteRedemptionRepository.
-                // LockSiteAndReadCapacityAsync's own remarks).
-                throw new InvalidOperationException(
-                    $"Site {command.SiteId.Value} was not found while changing an operator's role - " +
-                    "a foreign key should have prevented this.");
-            }
-
-            if (adminCount >= site.AdminLimit)
+            // `25-170`: OperatorRoleSeatCapacity.CheckAsync, replacing this handler's own previously
+            // hand-written count - the identical row-locked read, unified with
+            // OperatorInviteRedemptionRepository's own Admin-invite check rather than duplicated.
+            var check = await roleSeatCapacity.CheckAsync(command.SiteId, AdminRoleName, cancellationToken);
+            if (check.IsAtCapacity)
             {
                 // The count does not yet include the target (its own role has not changed yet, and it
                 // was not already an Administrator) - "at or above the limit" already means no room
                 // for one more. Disposed without a commit below - rolls back.
-                return ConversationErrors.OperatorAdminLimitReached(site.AdminLimit);
+                return ConversationErrors.OperatorAdminLimitReached(check.Limit);
             }
         }
 
         var now = clock.UtcNow;
-        await operatorRoles.ReplaceRoleAsync(target.Id, newRole.Id, cancellationToken);
+        await operatorRoles.ReplaceRoleAsync(target.Id, newRole.Id, now, cancellationToken);
         await roleChangeRecords.RecordAsync(
             new RoleChangeRecordToWrite(
                 idGenerator.NewId(now), command.SiteId, command.RequestedBy, target.Id,

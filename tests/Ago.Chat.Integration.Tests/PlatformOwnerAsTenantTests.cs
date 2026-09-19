@@ -185,6 +185,9 @@ public sealed class PlatformOwnerAsTenantTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         // `24-03`: RegisterSiteHandler's own two new dependencies - SiteRegistrationTests' own

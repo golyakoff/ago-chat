@@ -26,15 +26,14 @@ namespace Ago.Chat.Application.UseCases.ListMyTenancies;
 /// that runs once per console session, for a handful of rows, would be the same premature
 /// generalisation this codebase avoids elsewhere.</para>
 ///
-/// <para>`23-71`: a tenancy this identity may not actually sign into is not offered as a switchable
-/// one - <see cref="OperatorSignInEligibility.CanSignInAsync"/>, the identical eligibility rule
-/// <see cref="ResolveOperatorIdentity.ResolveOperatorIdentityHandler"/> applies for the same reason
-/// (a switcher entry the token cannot actually resolve to would be a dead link). The one further
-/// N+1 this adds - a permission lookup per *seatless* row only, the ordinary seated case still costs
-/// nothing extra - is the same acceptable size this handler's own remarks already give for the
-/// per-tenancy site lookup right below it.</para>
+/// <para>`23-71`/`25-170`: a tenancy this identity may not actually sign into is not offered as a
+/// switchable one - <see cref="OperatorSignInEligibility.CanSignInAsync"/>, the identical eligibility
+/// rule <see cref="ResolveOperatorIdentity.ResolveOperatorIdentityHandler"/> applies for the same reason
+/// (a switcher entry the token cannot actually resolve to would be a dead link). The one further N+1
+/// this adds - one <c>operator_roles</c> lookup per row - is the same acceptable size this handler's own
+/// remarks already give for the per-tenancy site lookup right below it.</para>
 /// </summary>
-public sealed class ListMyTenanciesHandler(IOperatorRepository operators, ISiteRepository sites, IPermissionChecker permissions)
+public sealed class ListMyTenanciesHandler(IOperatorRepository operators, ISiteRepository sites, IOperatorRoleRepository operatorRoles)
 {
     public async Task<IReadOnlyList<Tenancy>> HandleAsync(ListMyTenanciesQuery query, CancellationToken cancellationToken)
     {
@@ -47,7 +46,7 @@ public sealed class ListMyTenanciesHandler(IOperatorRepository operators, ISiteR
         var tenancies = new List<Tenancy>(operatorRows.Count);
         foreach (var operatorRow in operatorRows)
         {
-            if (!await OperatorSignInEligibility.CanSignInAsync(operatorRow, permissions, cancellationToken))
+            if (!await OperatorSignInEligibility.CanSignInAsync(operatorRow, operatorRoles, cancellationToken))
             {
                 continue;
             }

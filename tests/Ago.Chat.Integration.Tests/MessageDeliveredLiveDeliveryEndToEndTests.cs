@@ -332,6 +332,9 @@ public sealed class MessageDeliveredLiveDeliveryEndToEndTests(ConnectionFanoutFi
         // unrelated dependencies (StartConversationHandler and friends, above).
         builder.Services.AddScoped<IConversationAssignmentLog, ConversationAssignmentLog>();
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: AssignConversationHandler now also composes IOperatorRoleRepository (a self-seat
+        // check against operator_roles).
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         builder.Services.AddScoped<ISiteSuspensionReadStore>(_ => new SiteSuspensionReadStore(fixture.DataSource));
         builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();

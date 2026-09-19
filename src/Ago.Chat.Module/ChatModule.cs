@@ -104,6 +104,7 @@ using Ago.Chat.Application.UseCases.GetSiteForOwner;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.GetSiteExportHistory;
@@ -1186,13 +1187,20 @@ public sealed class ChatModule : IProductModule
         // live pod's first policy-gated request enumerated every endpoint and failed to classify
         // `handler` as a service. Found live on `ago-demo`, 2026-09-09.
         services.AddScoped<PreviewOperatorInviteHandler>();
+        // `25-170`: the unified role-seat capacity-check and reconciliation procedures - plain
+        // Application classes composing IOperatorRoleRepository/ISiteRepository, the identical
+        // registration shape AiProcessingGate's own remarks give a few lines up for the analogous
+        // "no port of its own" case. Scoped, matching every other Application class registered here
+        // (there is no reason for either to outlive one request/tick).
+        services.AddScoped<OperatorRoleSeatCapacity>();
+        services.AddScoped<OperatorRoleSeatReconciler>();
         // `13-03`: the seat-assignment and operator-removal mechanism `13-01` named but did not build -
         // see each handler's own remarks.
         services.AddScoped<ToggleOperatorSeatHandler>();
         services.AddScoped<RemoveOperatorHandler>();
-        // `23-68`: the platform owner's own recovery write - a second caller of Operator.ToggleSeat,
-        // gated entirely by RequirePlatformOwner at the route rather than by IPermissionChecker
-        // (RestoreOperatorSeatAsOwner's own remarks).
+        // `23-68`: the platform owner's own recovery write - a second caller of
+        // IOperatorRoleRepository.SetHoldsSeatAsync (`25-170`), gated entirely by RequirePlatformOwner
+        // at the route rather than by IPermissionChecker (RestoreOperatorSeatAsOwner's own remarks).
         services.AddScoped<RestoreOperatorSeatAsOwnerHandler>();
         services.AddScoped<GetSeatAssignmentSummaryHandler>();
         // `23-22`: the team screen's own bootstrap read - see the handler's own remarks.

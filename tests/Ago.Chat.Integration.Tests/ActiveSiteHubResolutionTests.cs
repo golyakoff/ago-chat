@@ -114,13 +114,21 @@ public sealed class ActiveSiteHubResolutionTests(OperatorOidcFixture fixture)
 
         var siteA = new SiteId(Guid.NewGuid());
         var siteB = new SiteId(Guid.NewGuid());
+        var operatorA = new Domain.OperatorId(Guid.NewGuid());
+        var operatorB = new Domain.OperatorId(Guid.NewGuid());
+        var roleA = Guid.NewGuid();
+        var roleB = Guid.NewGuid();
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Domain.Site(siteA, $"site_{siteA.Value:N}", []));
         db.Sites.Add(new Domain.Site(siteB, $"site_{siteB.Value:N}", []));
-        db.Operators.Add(new Domain.Operator(
-            new Domain.OperatorId(Guid.NewGuid()), siteA, Domain.OperatorStatus.Online, 5, externalSubjectId));
-        db.Operators.Add(new Domain.Operator(
-            new Domain.OperatorId(Guid.NewGuid()), siteB, Domain.OperatorStatus.Online, 5, externalSubjectId));
+        db.Operators.Add(new Domain.Operator(operatorA, siteA, Domain.OperatorStatus.Online, 5, externalSubjectId));
+        db.Operators.Add(new Domain.Operator(operatorB, siteB, Domain.OperatorStatus.Online, 5, externalSubjectId));
+        // `25-170`: CanSignIn now requires holding a seat on some role (operator_roles.HoldsSeat) -
+        // a role-less operator, as both of these were before this item, can no longer sign in at all.
+        db.Roles.Add(new RoleRecord { Id = roleA, SiteId = siteA, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
+        db.Roles.Add(new RoleRecord { Id = roleB, SiteId = siteB, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorA, RoleId = roleA });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorB, RoleId = roleB });
         await db.SaveChangesAsync();
 
         // Silence "unused variable" for username - kept for parity with CreateFreshUserAccessTokenAsync's
@@ -155,13 +163,13 @@ public sealed class ActiveSiteHubResolutionTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<Application.Abstractions.IOperatorRepository, Infrastructure.Postgres.OperatorRepository>();
-        // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - a seatless
-        // operator's own site:manage_operators grant is what lets them sign in at all, so this
-        // stripped-down host must resolve it too (this file's own real, un-piped test failure - a
-        // `500` on hub negotiate from the missing registration, not a genuine refusal - is what a
-        // properly redirected verification run actually caught, restated here as the reason this line
-        // exists rather than left silent).
-        builder.Services.AddScoped<Application.Abstractions.IPermissionChecker, Infrastructure.Postgres.PermissionChecker>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat"
+        // form, so this stripped-down host must resolve the role repository instead (this file's own
+        // real, un-piped test failure - a `500` on hub negotiate from the missing registration, not a
+        // genuine refusal - is what a properly redirected verification run actually caught, restated
+        // here as the reason this line exists rather than left silent).
+        builder.Services.AddScoped<Application.Abstractions.IOperatorRoleRepository, Infrastructure.Postgres.OperatorRoleRepository>();
         builder.Services.AddScoped<Application.UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler>();
         builder.Services.AddHttpContextAccessor();
         // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog

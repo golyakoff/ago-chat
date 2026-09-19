@@ -34,8 +34,8 @@ public class ResolveTeamMessageDeliveryTargetsHandlerTests
         readStore.Seed(SiteId, new TeamMessageHistoryItem(MessageId, 1, Sender, "Sender", null, false, "hi team", DateTimeOffset.UtcNow, null));
         team.Seed(
             SiteId,
-            new OperatorTeamMemberItem(Sender, "Sender", null, HoldsSeat: true),
-            new OperatorTeamMemberItem(Colleague, "Colleague", null, HoldsSeat: true));
+            new OperatorTeamMemberItem(Sender, "Sender", null),
+            new OperatorTeamMemberItem(Colleague, "Colleague", null));
 
         var correlationId = Guid.NewGuid();
         var result = await handler.HandleAsync(
@@ -54,7 +54,7 @@ public class ResolveTeamMessageDeliveryTargetsHandlerTests
     public async Task HandleAsync_WhenTheMessageDoesNotExist_ReturnsNotFound_WithoutPublishing()
     {
         var (handler, _, team, fanout) = CreateHandler();
-        team.Seed(SiteId, new OperatorTeamMemberItem(Sender, "Sender", null, HoldsSeat: true));
+        team.Seed(SiteId, new OperatorTeamMemberItem(Sender, "Sender", null));
 
         var result = await handler.HandleAsync(
             new ResolveTeamMessageDeliveryTargets(SiteId, 999, Guid.NewGuid()), CancellationToken.None);

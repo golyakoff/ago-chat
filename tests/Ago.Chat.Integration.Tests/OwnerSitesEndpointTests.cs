@@ -405,6 +405,9 @@ public sealed class OwnerSitesEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - see
         // OfflineAutoReplyDeliveryEndToEndTests' own remarks on this same addition.
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();

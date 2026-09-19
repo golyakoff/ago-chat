@@ -40,7 +40,7 @@ public class GetBillingStatusHandlerTests
             permissions.Grant(RequestedBy, SiteId, Permission.SiteConfigure);
         }
 
-        var handler = new GetBillingStatusHandler(sites, operators, subscriptions, operatorRoles, prices, permissions);
+        var handler = new GetBillingStatusHandler(sites, subscriptions, operatorRoles, prices, permissions);
         return new Fixture(handler, subscriptions, operators, operatorRoles, prices);
     }
 
@@ -59,7 +59,11 @@ public class GetBillingStatusHandlerTests
     public async Task HandleAsync_WhenSiteHasNeverCheckedOut_ReturnsFreeTierWithNoLatestSubscription()
     {
         var fixture = CreateFixture(tier: "free", seatLimit: 1);
-        fixture.Operators.Seed(new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5));
+        var seatedOperator = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
+        fixture.Operators.Seed(seatedOperator);
+        // `25-170`: SeatsUsed now counts the Operator role's own held seats, not the removed
+        // account-level Operator.HoldsSeat - this operator must hold that role for the count below.
+        fixture.OperatorRoles.Seed(seatedOperator.Id, "Operator");
 
         var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
 
@@ -149,7 +153,7 @@ public class GetBillingStatusHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(RequestedBy, SiteId, Permission.SiteConfigure);
         var handler = new GetBillingStatusHandler(
-            sites, new FakeOperatorRepository(), new FakeBillingSubscriptionRepository(),
+            sites, new FakeBillingSubscriptionRepository(),
             new FakeOperatorRoleRepository(), new FakePriceCatalogRepository(), permissions);
 
         await Assert.ThrowsAsync<InvalidOperationException>(

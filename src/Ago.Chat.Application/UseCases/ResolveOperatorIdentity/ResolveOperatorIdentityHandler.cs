@@ -40,18 +40,20 @@ namespace Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 /// <see cref="IOperatorRepository.GetByExternalSubjectIdAndSiteIdAsync"/>/
 /// <see cref="IOperatorRepository.ListByExternalSubjectIdAsync"/> answer the first (does a real,
 /// non-removed `operators` row exist) - this handler is where the second is decided, via
-/// <see cref="OperatorSignInEligibility.CanSignInAsync"/>: a row that holds no seat still resolves,
-/// provided it holds this site's own <see cref="Permission.SiteManageOperators"/>
-/// (`decisions/0006`'s "the owner and as many operators as are paid for", restored - the owner is
-/// additional to the paid seats, not one of them). This is deliberately still only a sign-in
-/// decision: the `operator_id` claim this resolution ultimately produces (`Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`)
-/// must no longer be read anywhere as "therefore routable" - see this item's own commit-prep report
-/// for the full list of call sites re-read for that conflation, and `IOperatorRepository.AnyOnlineForSiteAsync`/
-/// `SkipLockedAssignmentClaimer`/`RedisLockAssignmentClaimer`/`AssignConversationHandler` for where
-/// <see cref="Operator.HoldsSeat"/> alone, never this claim's mere presence, keeps deciding
+/// <see cref="OperatorSignInEligibility.CanSignInAsync"/>: `decisions/0006`'s "the owner and as many
+/// operators as are paid for", restored - the owner is additional to the paid seats, not one of them.
+/// `25-170`: that decision is now the one-rule form - a row may sign in whenever <em>any</em> role it
+/// holds has its own seat (<see cref="IOperatorRoleRepository.HoldsAnySeatAsync"/>), the seeded Admin
+/// role's own row included, with no separate permission-based exemption left to compute. This is
+/// deliberately still only a sign-in decision: the `operator_id` claim this resolution ultimately
+/// produces (`Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`) must no longer be read anywhere
+/// as "therefore routable" - see this item's own commit-prep report for the full list of call sites
+/// re-read for that conflation, and `IOperatorRoleRepository.HoldsRoleSeatAsync`/
+/// `SkipLockedAssignmentClaimer`/`RedisLockAssignmentClaimer`/`AssignConversationHandler` for where the
+/// seeded Operator role's own seat specifically, never this claim's mere presence, keeps deciding
 /// it.</para>
 /// </summary>
-public sealed class ResolveOperatorIdentityHandler(IOperatorRepository operators, IPermissionChecker permissions)
+public sealed class ResolveOperatorIdentityHandler(IOperatorRepository operators, IOperatorRoleRepository operatorRoles)
 {
     public async Task<OperatorIdentity?> HandleAsync(ResolveOperatorIdentityQuery query, CancellationToken cancellationToken)
     {
@@ -59,7 +61,7 @@ public sealed class ResolveOperatorIdentityHandler(IOperatorRepository operators
         {
             var requested = await operators.GetByExternalSubjectIdAndSiteIdAsync(
                 query.ExternalSubjectId, requestedSiteId, cancellationToken);
-            if (requested is null || !await OperatorSignInEligibility.CanSignInAsync(requested, permissions, cancellationToken))
+            if (requested is null || !await OperatorSignInEligibility.CanSignInAsync(requested, operatorRoles, cancellationToken))
             {
                 return null;
             }
@@ -71,7 +73,7 @@ public sealed class ResolveOperatorIdentityHandler(IOperatorRepository operators
         var eligible = new List<Operator>(tenancies.Count);
         foreach (var candidate in tenancies)
         {
-            if (await OperatorSignInEligibility.CanSignInAsync(candidate, permissions, cancellationToken))
+            if (await OperatorSignInEligibility.CanSignInAsync(candidate, operatorRoles, cancellationToken))
             {
                 eligible.Add(candidate);
             }

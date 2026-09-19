@@ -297,6 +297,8 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             new SendVisitorMessageHandler(
                 new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
                 new SynchronousMessagePipeline(fixture.DataSource)),
+            new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(),
             new SystemClock(),
             new UuidV7Generator(),
             new VisitorEmojiPairGenerator());

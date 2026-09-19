@@ -40,6 +40,13 @@ internal sealed class ChannelCredentialConfiguration : IEntityTypeConfiguration<
         // (derived at read time from ProviderAccountId) or Avito (no public deep-link exists at all).
         builder.Property(c => c.PublicHandle).HasColumnName("public_handle");
 
+        // `25-170`: nullable - null for every row not currently paused for a lapsed channel
+        // entitlement (ChannelCredential.EntitlementPausedAt's own remarks). Never populated by this
+        // migration's own backfill: a pre-existing credential's polling status is exactly as entitled
+        // as it was before this item shipped, and the new watchdog's own first tick decides afresh
+        // rather than this column guessing at a history it was never asked to reconstruct.
+        builder.Property(c => c.EntitlementPausedAt).HasColumnName("entitlement_paused_at");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(c => c.SiteId);
 
         // `adr/0069`'s "one bot per tenant per channel" - the storage-level backstop for the check

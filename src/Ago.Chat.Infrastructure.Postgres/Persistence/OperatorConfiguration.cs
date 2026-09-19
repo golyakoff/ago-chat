@@ -42,11 +42,10 @@ internal sealed class OperatorConfiguration : IEntityTypeConfiguration<Operator>
         builder.Property(o => o.DisplayName).HasColumnName("display_name");
         builder.Property(o => o.Email).HasColumnName("email");
 
-        // `13-03`: the seat-assignment and operator-removal columns - see each property's own remarks
-        // on Operator for who writes them and why. HoldsSeat defaults true at the database level too,
-        // matching the CLR default (`Operator`'s own constructor default) - belt and braces for any
-        // future raw-SQL insert that bypasses the aggregate.
-        builder.Property(o => o.HoldsSeat).HasColumnName("holds_seat").HasDefaultValue(true);
+        // `13-03`: the operator-removal column - see Operator.RemovedAt's own remarks for who writes it
+        // and why. `25-170`: `holds_seat` moved off this table entirely, onto `operator_roles` -
+        // see OperatorRoleRecord's own remarks; Stage25RemoveOperatorHoldsSeat drops the column from
+        // `operators` once every reader had moved off it.
         builder.Property(o => o.RemovedAt).HasColumnName("removed_at");
 
         // `13-03`: serves OperatorInviteRedemptionRepository's own fixed regression

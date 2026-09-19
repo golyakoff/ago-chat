@@ -97,6 +97,8 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
                     clock, idGenerator, emojiPairs),
                 new SendVisitorMessageHandler(
                     conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
+                new AlwaysEntitledBillingOptionEntitlementProvider(),
+                new AlwaysEntitledModuleQuantityGrantStore(),
                 clock,
                 idGenerator,
                 emojiPairs);

@@ -41,9 +41,22 @@ public sealed class OperatorRepository(AgoChatDbContext db) : IOperatorRepositor
     /// queue. The identical filter `Ago.Chat.Worker`'s own `SkipLockedAssignmentClaimer`/
     /// `RedisLockAssignmentClaimer` now apply to their own candidate queries, for the same reason -
     /// see each one's own remarks.</para></summary>
-    public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
-        db.Operators.AsNoTracking()
-            .AnyAsync(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null, cancellationToken);
+    /// <para>`25-170`: "holds a seat" now means holding *any* role's own seat
+    /// (<c>operator_roles.HoldsSeat</c>, scoped by role), not the removed account-level
+    /// <c>Domain.Operator.HoldsSeat</c> - deliberately <b>not</b> narrowed to the seeded
+    /// <c>"Operator"</c> role the way conversation-routing eligibility is
+    /// (<c>Ago.Chat.Worker</c>'s own <c>SkipLockedAssignmentClaimer</c>/<c>RedisLockAssignmentClaimer</c>):
+    /// this method answers "is any staff member at all on duty", and an online Admin-role-only holder
+    /// is exactly the "seatless administrator" `23-71`'s own remarks (above) already meant to keep
+    /// counting as staff - only a holder disabled on *every* role they have should stop counting, the
+    /// identical "any role" test <see cref="Domain.Operator.CanSignIn"/> itself applies.</para>
+    public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        var seatHolders = OperatorRoleSeatQueries.HeldAnySeatOperatorIds(db, siteId);
+        return db.Operators.AsNoTracking()
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.RemovedAt == null)
+            .AnyAsync(o => seatHolders.Contains(o.Id), cancellationToken);
+    }
 
     /// <summary>`4-06`: tracked, deliberately - the caller loads this to mutate
     /// <see cref="Operator.Status"/> via <see cref="Operator.GoOnline"/>/<see cref="Operator.GoOffline"/>
@@ -56,12 +69,6 @@ public sealed class OperatorRepository(AgoChatDbContext db) : IOperatorRepositor
     /// the miss case (wrong site or no such id) is deliberately indistinguishable.</summary>
     public Task<Operator?> GetByIdAsync(OperatorId id, SiteId siteId, CancellationToken cancellationToken) =>
         db.Operators.FirstOrDefaultAsync(o => o.Id == id && o.SiteId == siteId, cancellationToken);
-
-    /// <summary>`13-03`: <c>AsNoTracking</c>, the same "read-only yes/no/count question" shape
-    /// <see cref="AnyOnlineForSiteAsync"/> already establishes.</summary>
-    public Task<int> CountHeldSeatsAsync(SiteId siteId, CancellationToken cancellationToken) =>
-        db.Operators.AsNoTracking()
-            .CountAsync(o => o.SiteId == siteId && o.HoldsSeat && o.RemovedAt == null, cancellationToken);
 
     /// <summary>No `EntityState.Detached` branch (contrast `ConversationRepository.SaveAsync`) - every
     /// caller of this port loads the operator through a `GetByIdAsync` overload first, so it is always

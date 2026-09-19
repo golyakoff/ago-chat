@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -34,13 +35,18 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", [], tier: SubscriptionTierBands.Starter, seatLimit: 1));
             db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationRead.Value] });
             db.Operators.Add(new Operator(existingOperatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "sub-existing"));
+            // `25-170`: the seat-limit check now counts operator_roles rows for the Operator role
+            // specifically - this operator needs a real one (HoldsSeat defaults true) to occupy the
+            // site's only seat the way this test's own baseline requires.
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = existingOperatorId, RoleId = roleId });
             await db.SaveChangesAsync();
         }
 
         var (codeHash1, _) = await SeedInviteAsync(siteId, roleId, "new1@example.com");
         await using var repositoryDb = fixture.CreateDbContext();
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(new OperatorRoleRepository(repositoryDb), new SiteRepository(repositoryDb));
         var repository = new OperatorInviteRedemptionRepository(
-            repositoryDb, new Ago.Platform.Kernel.UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(repositoryDb));
+            repositoryDb, new Ago.Platform.Kernel.UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(repositoryDb), roleSeatCapacity);
 
         // At seat_limit=1 with one live operator already occupying the site's only seat, a new
         // identity's redemption is rejected - the baseline every removal must actually change.

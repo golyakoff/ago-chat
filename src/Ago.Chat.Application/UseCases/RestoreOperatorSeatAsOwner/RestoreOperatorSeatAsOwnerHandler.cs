@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -36,11 +37,30 @@ namespace Ago.Chat.Application.UseCases.RestoreOperatorSeatAsOwner;
 /// grants one back - `docs/runbooks/module-grant-and-revoke.md`'s sibling runbook entry for this item
 /// says so explicitly, and the console surface built alongside this handler shows each operator's own
 /// role names so the platform owner can see the gap rather than assume this call closed it.</para>
+///
+/// <para><b>`25-170`: restores the seeded Operator role's own seat, specifically - unchanged in effect,
+/// made explicit by the schema shift.</b> "Holds a seat" moved off the operator account onto one
+/// `(operator, role)` pairing, and every real incident this handler exists for (`23-68`'s own) has been
+/// about the Operator role's own seat - the one this codebase had before this item's own Admin-role seat
+/// existed at all. This handler stays scoped to that one role rather than growing a `RoleName` parameter
+/// nobody has asked the owner-facing recovery screen to offer yet (out of this item's own Scope, which
+/// generalises only the tenant-facing team screen); restoring an Admin-role seat by hand, if ever needed,
+/// goes through the same generalised `ToggleOperatorSeatHandler` a tenant's own operator already uses.
+/// Also gains its own transaction (<see cref="IUnitOfWork"/>) it never had before - a real, previously
+/// latent check-then-act race between the held-seat count below and the write that follows it, closed as
+/// a direct consequence of sharing <see cref="OperatorRoleSeatCapacity"/>'s own row-locked primitive
+/// rather than a separately-scoped fix (<see cref="ToggleOperatorSeat.ToggleOperatorSeatHandler"/>'s own
+/// remarks describe the identical finding for its own sibling).</para>
 /// </summary>
 public sealed class RestoreOperatorSeatAsOwnerHandler(
-    IOperatorRepository operators, ISiteRepository sites, IOperatorSeatRestoreOverrideRepository overrides,
+    IOperatorRepository operators, IOperatorRoleRepository operatorRoles, IUnitOfWork unitOfWork,
+    OperatorRoleSeatCapacity roleSeatCapacity, IOperatorSeatRestoreOverrideRepository overrides,
     IClock clock, IIdGenerator idGenerator)
 {
+    /// <summary>`25-170`: the same bare literal every other seat-scoped handler in this codebase
+    /// declares its own copy of - see this class's own remarks on why this handler stays scoped to it.</summary>
+    private const string OperatorRoleName = "Operator";
+
     /// <summary>The identical "not a measured number, only a mistake-catcher" bound
     /// <see cref="RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler.MaxReasonLength"/> uses,
     /// reusing the same precedent length rather than inventing a second one for the same shape of
@@ -80,32 +100,27 @@ public sealed class RestoreOperatorSeatAsOwnerHandler(
             return ConversationErrors.OperatorAlreadyRemoved(command.TargetOperatorId.Value);
         }
 
-        if (target.HoldsSeat)
+        var alreadyHeldSeat = await operatorRoles.HoldsRoleSeatAsync(
+            target.Id, command.SiteId, OperatorRoleName, cancellationToken);
+        if (alreadyHeldSeat)
         {
             // Already restored - nothing to change, nothing to override. See this class's own remarks
             // on why this is success, not an error.
             return new RestoreOperatorSeatOutcome(AlreadyHeldSeat: true, OverrodeSeatLimit: false);
         }
 
-        var held = await operators.CountHeldSeatsAsync(command.SiteId, cancellationToken);
-        var site = await sites.GetByIdAsync(command.SiteId, cancellationToken);
-        if (site is null)
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        var check = await roleSeatCapacity.CheckAsync(command.SiteId, OperatorRoleName, cancellationToken);
+        if (check.IsAtCapacity && !command.Force)
         {
-            throw new InvalidOperationException(
-                $"Site {command.SiteId.Value} was not found while restoring an operator's seat - a foreign key "
-                + "should have prevented this.");
+            // Disposed without a commit below - rolls back.
+            return ConversationErrors.OperatorSeatRestoreExceedsLimitRequiresForce(check.Limit);
         }
 
-        var exceedsLimit = held + 1 > site.SeatLimit;
-        if (exceedsLimit && !command.Force)
-        {
-            return ConversationErrors.OperatorSeatRestoreExceedsLimitRequiresForce(site.SeatLimit);
-        }
+        await operatorRoles.SetHoldsSeatAsync(target.Id, command.SiteId, OperatorRoleName, holdsSeat: true, cancellationToken);
 
-        target.ToggleSeat(true);
-        await operators.SaveAsync(target, cancellationToken);
-
-        var overrodeSeatLimit = exceedsLimit && command.Force;
+        var overrodeSeatLimit = check.IsAtCapacity && command.Force;
         if (overrodeSeatLimit)
         {
             var now = clock.UtcNow;
@@ -113,6 +128,8 @@ public sealed class RestoreOperatorSeatAsOwnerHandler(
                 idGenerator.NewId(now), command.SiteId, command.TargetOperatorId, command.RestoredBy,
                 command.Reason!.Trim(), now, cancellationToken);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         return new RestoreOperatorSeatOutcome(AlreadyHeldSeat: false, OverrodeSeatLimit: overrodeSeatLimit);
     }

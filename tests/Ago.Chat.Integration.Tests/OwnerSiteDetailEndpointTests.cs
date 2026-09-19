@@ -77,10 +77,10 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         Assert.Empty(body.Operators);
     }
 
-    /// <summary>`23-68`'s own console-reachability claim: the detail read now names every non-removed
-    /// operator this tenant has, with the exact field the platform owner needs to spot the locked-out
-    /// candidate (<c>HoldsSeat: false</c>) and the role-vs-seat gap this item names but does not fix
-    /// (an empty <c>RoleNames</c>).</summary>
+    /// <summary>`23-68`/`25-170`: the detail read now names every non-removed operator this tenant has,
+    /// with the exact field the platform owner needs to spot the locked-out candidate (a role with
+    /// `HoldsSeat: false`, or - the role-vs-seat gap this item names but does not fix - an empty
+    /// <c>Roles</c> list entirely).</summary>
     [Fact]
     public async Task OwnerToken_SeesTheSitesOperatorRoster_WithSeatAndRoleState()
     {
@@ -97,12 +97,11 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
 
         Assert.Equal(2, body.Operators.Count);
         var lockedOut = Assert.Single(body.Operators, o => o.OperatorId == lockedOutOperatorId.Value);
-        Assert.False(lockedOut.HoldsSeat);
         // Seeded through the raw aggregate, with no role assignment - the "stripped their own last
         // role" case this item names as out of scope, made visible rather than hidden.
-        Assert.Empty(lockedOut.RoleNames);
+        Assert.Empty(lockedOut.Roles);
         var seated = Assert.Single(body.Operators, o => o.OperatorId == seatedOperatorId.Value);
-        Assert.True(seated.HoldsSeat);
+        Assert.True(seated.Roles.Single(r => r.RoleName == "Operator").HoldsSeat);
     }
 
     /// <summary>A removed operator is gone from this roster entirely - the identical
@@ -633,12 +632,23 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
     /// role assignment, the minimum this screen needs to show a seat/role state. Written directly
     /// through the aggregate, the same "seed through the mechanism, not around it" posture
     /// <see cref="SeedModuleAsync"/> already follows.</summary>
+    /// <summary>`25-170`: <paramref name="holdsSeat"/> <see langword="true"/> seeds a real
+    /// Operator-role <c>operator_roles</c> row (`HoldsSeat: true`); <see langword="false"/> seeds no
+    /// role assignment at all - "holds a seat" is now a fact about one `(operator, role)` pairing, and a
+    /// roleless operator has no such pairing for a seat to attach to (the identical "stripped their own
+    /// last role" shape this file's own test already names).</summary>
     private async Task<OperatorId> SeedOperatorAsync(SiteId siteId, bool holdsSeat, DateTimeOffset? removedAt = null)
     {
         await using var db = fixture.CreateDbContext();
         var operatorId = new OperatorId(Guid.NewGuid());
-        db.Operators.Add(new Operator(
-            operatorId, siteId, OperatorStatus.Offline, capacity: 5, holdsSeat: holdsSeat, removedAt: removedAt));
+        db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, removedAt: removedAt));
+        if (holdsSeat)
+        {
+            var roleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationRead.Value] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+        }
+
         await db.SaveChangesAsync();
         return operatorId;
     }
@@ -683,6 +693,9 @@ public sealed class OwnerSiteDetailEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - see
         // OfflineAutoReplyDeliveryEndToEndTests' own remarks on this same addition.
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();

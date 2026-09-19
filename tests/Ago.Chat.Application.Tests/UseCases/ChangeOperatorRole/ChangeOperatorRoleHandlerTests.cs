@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.ChangeOperatorRole;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.ChangeOperatorRole;
@@ -46,14 +47,17 @@ public class ChangeOperatorRoleHandlerTests
         }
 
         var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.RegisterRoleId(OperatorRoleName, OperatorRoleId);
+        operatorRoles.RegisterRoleId(AdminRoleName, AdminRoleId);
         var sites = new FakeSiteRepository();
         sites.Seed(site ?? new Site(SiteId, $"site_{SiteId.Value:N}", [], tier: SubscriptionTierBands.Starter, seatLimit: 5));
         var unitOfWork = new FakeUnitOfWork();
         var roleChangeRecords = new FakeRoleChangeRecordRepository();
         var outbox = new FakeOutboxWriter();
 
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites);
         var handler = new Application.UseCases.ChangeOperatorRole.ChangeOperatorRoleHandler(
-            operators, roles, operatorRoles, permissions, sites, unitOfWork, roleChangeRecords, outbox,
+            operators, roles, operatorRoles, permissions, roleSeatCapacity, unitOfWork, roleChangeRecords, outbox,
             new FakeIdGenerator(), new FakeClock(Now));
 
         return new Fixture(handler, operators, roles, operatorRoles, permissions, sites, unitOfWork, roleChangeRecords, outbox);
@@ -133,9 +137,9 @@ public class ChangeOperatorRoleHandlerTests
         fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
         var target = new Operator(
             new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5,
-            externalSubjectId: "sub-target", holdsSeat: true);
+            externalSubjectId: "sub-target");
         fixture.Operators.Seed(target);
-        fixture.OperatorRoles.Seed(target.Id, OperatorRoleName);
+        fixture.OperatorRoles.SeedSeat(target.Id, OperatorRoleName, holdsSeat: true);
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.ChangeOperatorRole.ChangeOperatorRole(RequestedBy, SiteId, target.Id, AdminRoleName),
@@ -143,8 +147,9 @@ public class ChangeOperatorRoleHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(AdminRoleId, fixture.OperatorRoles.CurrentRoleId(target.Id));
-        // `23-71`'s separation: a role change never touches the seat this operator already held.
-        Assert.True(target.HoldsSeat);
+        // `25-170`'s separation: a role change never touches the seat this operator already held - it
+        // carries forward onto the freshly assigned role instead of resetting.
+        Assert.True(await fixture.OperatorRoles.HoldsRoleSeatAsync(target.Id, SiteId, AdminRoleName, CancellationToken.None));
         var record = Assert.Single(fixture.RoleChangeRecords.Recorded);
         Assert.Equal([OperatorRoleName], record.PreviousRoleNames);
         Assert.Equal(AdminRoleName, record.NewRoleName);
@@ -250,25 +255,26 @@ public class ChangeOperatorRoleHandlerTests
     /// never move the site's held-*seat* count, the count `ToggleOperatorSeatHandler`/
     /// `GetSeatAssignmentSummaryHandler` gate <see cref="Site.SeatLimit"/> against - only the
     /// Administrator-role count this file's own promotion tests already exercise. Proven here by
-    /// promoting a seatless colleague to Admin and confirming <see cref="Operator.HoldsSeat"/> is still
-    /// exactly what it was before the call, never flipped to <see langword="true"/> as a side effect of
-    /// becoming an administrator.</summary>
+    /// promoting a seatless colleague to Admin and confirming the freshly assigned Admin role's own seat
+    /// carries the same "seatless" fact forward, never flipped to <see langword="true"/> as a side
+    /// effect of becoming an administrator.</summary>
     [Fact]
     public async Task HandleAsync_WhenPromotingToAdmin_NeverGrantsOrRevokesTheTargetsOwnSeat()
     {
         var fixture = CreateFixture();
         fixture.OperatorRoles.Seed(RequestedBy, AdminRoleName);
-        var target = new Operator(
-            new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5, holdsSeat: false);
+        var target = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
         fixture.Operators.Seed(target);
-        fixture.OperatorRoles.Seed(target.Id, OperatorRoleName);
+        fixture.OperatorRoles.SeedSeat(target.Id, OperatorRoleName, holdsSeat: false);
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.ChangeOperatorRole.ChangeOperatorRole(RequestedBy, SiteId, target.Id, AdminRoleName),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.False(target.HoldsSeat);
+        // `25-170`: the freshly assigned Admin role's own seat carries the same "seatless" fact forward,
+        // never flipped to true as a side effect of becoming an administrator.
+        Assert.False(await fixture.OperatorRoles.HoldsRoleSeatAsync(target.Id, SiteId, AdminRoleName, CancellationToken.None));
     }
 
     [Fact]

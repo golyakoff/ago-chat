@@ -18,6 +18,7 @@ public class TransferConversationHandlerTests
         Application.UseCases.TransferConversation.TransferConversationHandler Handler,
         FakeConversationRepository Conversations,
         FakeOperatorRepository Operators,
+        FakeOperatorRoleRepository OperatorRoles,
         FakePermissionChecker Permissions,
         FakeOutboxWriter Outbox,
         FakeOperatorCapacity Capacity,
@@ -42,10 +43,12 @@ public class TransferConversationHandlerTests
         conversations.Seed(conversation);
 
         var operators = new FakeOperatorRepository();
+        var operatorRoles = new FakeOperatorRoleRepository();
         if (seedTarget)
         {
             operators.Seed(new Operator(
-                ToOperatorId, SiteId, OperatorStatus.Online, capacity: 5, holdsSeat: targetHoldsSeat, removedAt: targetRemovedAt));
+                ToOperatorId, SiteId, OperatorStatus.Online, capacity: 5, removedAt: targetRemovedAt));
+            operatorRoles.SeedSeat(ToOperatorId, "Operator", targetHoldsSeat);
         }
 
         var permissions = new FakePermissionChecker();
@@ -59,8 +62,8 @@ public class TransferConversationHandlerTests
         var unitOfWork = new FakeUnitOfWork();
         var assignmentLog = new FakeConversationAssignmentLog();
         var handler = new Application.UseCases.TransferConversation.TransferConversationHandler(
-            conversations, operators, assignmentLog, permissions, capacity, unitOfWork, outbox, new FakeIdGenerator(), new FakeClock(Now));
-        return new Fixture(handler, conversations, operators, permissions, outbox, capacity, unitOfWork, assignmentLog, conversation);
+            conversations, operators, operatorRoles, assignmentLog, permissions, capacity, unitOfWork, outbox, new FakeIdGenerator(), new FakeClock(Now));
+        return new Fixture(handler, conversations, operators, operatorRoles, permissions, outbox, capacity, unitOfWork, assignmentLog, conversation);
     }
 
     private static Application.UseCases.TransferConversation.TransferConversation Command(
@@ -284,7 +287,7 @@ public class TransferConversationHandlerTests
         var attempt = 0;
         var flakyCapacity = new FlakyOnceCapacity(fixture.Capacity, () => attempt++ == 0);
         var handler = new Application.UseCases.TransferConversation.TransferConversationHandler(
-            fixture.Conversations, fixture.Operators, fixture.AssignmentLog, fixture.Permissions, flakyCapacity,
+            fixture.Conversations, fixture.Operators, fixture.OperatorRoles, fixture.AssignmentLog, fixture.Permissions, flakyCapacity,
             fixture.UnitOfWork, fixture.Outbox, new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(Command(fixture), CancellationToken.None);

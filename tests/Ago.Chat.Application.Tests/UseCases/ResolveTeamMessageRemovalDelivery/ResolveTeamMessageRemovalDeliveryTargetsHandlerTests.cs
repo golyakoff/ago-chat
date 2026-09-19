@@ -45,9 +45,9 @@ public class ResolveTeamMessageRemovalDeliveryTargetsHandlerTests
                 RemovedAt: DateTimeOffset.UtcNow));
         team.Seed(
             SiteId,
-            new OperatorTeamMemberItem(Author, "Author", null, HoldsSeat: true),
-            new OperatorTeamMemberItem(Remover, "Remover", null, HoldsSeat: true),
-            new OperatorTeamMemberItem(Bystander, "Bystander", null, HoldsSeat: true));
+            new OperatorTeamMemberItem(Author, "Author", null),
+            new OperatorTeamMemberItem(Remover, "Remover", null),
+            new OperatorTeamMemberItem(Bystander, "Bystander", null));
 
         var correlationId = Guid.NewGuid();
         var result = await handler.HandleAsync(
@@ -70,7 +70,7 @@ public class ResolveTeamMessageRemovalDeliveryTargetsHandlerTests
     public async Task HandleAsync_WhenTheMessageDoesNotExist_ReturnsNotFound_WithoutPublishing()
     {
         var (handler, _, team, fanout) = CreateHandler();
-        team.Seed(SiteId, new OperatorTeamMemberItem(Author, "Author", null, HoldsSeat: true));
+        team.Seed(SiteId, new OperatorTeamMemberItem(Author, "Author", null));
 
         var result = await handler.HandleAsync(
             new ResolveTeamMessageRemovalDeliveryTargets(SiteId, 999, Guid.NewGuid()), CancellationToken.None);

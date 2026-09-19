@@ -3,6 +3,7 @@ using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 
@@ -73,6 +74,8 @@ public sealed class ReceiveChannelMessageHandler(
     IPendingChannelLinkRequestRepository pendingLinks,
     StartConversationHandler startConversation,
     SendVisitorMessageHandler sendVisitorMessage,
+    IBillingOptionEntitlementProvider entitlements,
+    IModuleQuantityGrantStore grants,
     IClock clock,
     IIdGenerator idGenerator,
     IVisitorEmojiPairGenerator emojiPairs)
@@ -80,6 +83,18 @@ public sealed class ReceiveChannelMessageHandler(
     public async Task<Result<ReceiveChannelMessageResult>> HandleAsync(
         ReceiveChannelMessage command, CancellationToken cancellationToken)
     {
+        // `25-170`: the entitlement guard this handler has never had - see this class's own
+        // "everything after the identity lookup is the widget's own path, unchanged" remarks: this is
+        // the one thing the widget's own path does not need and a channel message does, since a widget
+        // visitor's conversation start already lives entirely inside a tenant's own site. A second,
+        // redundant guard alongside the new watchdog's own long-polling pause (`Ago.Chat.Worker`) -
+        // closing the race between "the tick already ran" and "a message arrives in the same minute it
+        // shouldn't have."
+        if (!await ChannelEntitlement.IsEntitledAsync(entitlements, grants, command.SiteId, command.Kind, cancellationToken))
+        {
+            return Result<ReceiveChannelMessageResult>.Failure(ChannelEntitlement.Refusal(command.Kind));
+        }
+
         var now = clock.UtcNow;
 
         var identity = await identities.FindAsync(

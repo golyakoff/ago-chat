@@ -132,6 +132,27 @@ public sealed class ChannelCredential
     /// </summary>
     public string? PublicHandle { get; private set; }
 
+    /// <summary>
+    /// `25-170`: when this credential's own ambient polling loop was paused for a lapsed channel
+    /// entitlement, or <see langword="null"/> for one currently allowed to poll (never paused, or
+    /// resumed since). Deliberately not <see cref="Active"/>/<see cref="Revoke"/> - those mean "this
+    /// tenant disconnected the channel" and, for <see cref="RevokeForLapsedEntitlement"/> specifically,
+    /// permanently wipe the stored secret; a lapsed entitlement is this item's own "reversible, read-time
+    /// fact" posture instead (<c>Site.SuspendedUntil</c>/<c>Site.DownloadBlockExempt</c>'s own precedent
+    /// for the identical shape), so the credential and its secret stay exactly as they were and only the
+    /// ambient provider-API polling stops.
+    ///
+    /// <para>Written only by <c>Ago.Chat.Worker</c>'s entitlement-reconciliation watchdog
+    /// (<c>PauseForLapsedEntitlement</c>/<c>ResumeAfterEntitlementRestored</c>) - never by a tenant's own
+    /// connect/revoke path, and never checked by the inbound message handlers themselves (their own
+    /// guard reads <c>ModuleQuantityGrant.EffectiveQuantity(now)</c> directly, the same live fact this
+    /// field is only ever a same-tick echo of). <see cref="TelegramLongPollingService"/>/
+    /// <see cref="MaxLongPollingService"/>'s own poller-refresh loops are this field's only readers -
+    /// excluded from the "active" set precisely as if <see cref="Active"/> were <see langword="false"/>,
+    /// without actually being revoked.</para>
+    /// </summary>
+    public DateTimeOffset? EntitlementPausedAt { get; private set; }
+
     private ChannelCredential(
         ChannelCredentialId id, SiteId siteId, ChannelKind kind, byte[] tokenCiphertext,
         byte[] webhookSecretHash, bool active, DateTimeOffset createdAt, string? providerAccountId,
@@ -296,4 +317,25 @@ public sealed class ChannelCredential
             RefreshTokenCiphertext = [];
         }
     }
+
+    /// <summary>
+    /// `25-170`: the watchdog's own "stop polling, entitlement lapsed" write - see
+    /// <see cref="EntitlementPausedAt"/>'s own remarks for why this touches neither <see cref="Active"/>
+    /// nor either stored secret. A no-op (re-stamps the same fact with a fresh timestamp) when already
+    /// paused, the same idempotent posture <see cref="Domain.Operator.GoOnline"/>'s own remarks describe
+    /// for itself - the watchdog runs on a fixed cadence and must be safe to call again on a credential
+    /// it already paused last tick. A revoked credential may still be paused (harmlessly - neither poller
+    /// reads a revoked credential's <see cref="EntitlementPausedAt"/> at all, since <see cref="Active"/>
+    /// already excludes it) rather than refused, since the watchdog has no reason to first check whether a
+    /// credential it is about to pause is still connected.
+    /// </summary>
+    public void PauseForLapsedEntitlement(DateTimeOffset now) => EntitlementPausedAt = now;
+
+    /// <summary>
+    /// The reversal - entitlement restored (a fresh purchase, or the platform owner's own unconditional
+    /// grant), so the watchdog's own next tick lets the poller pick this credential back up. A harmless
+    /// no-op when not currently paused, the same idempotent posture <see cref="PauseForLapsedEntitlement"/>
+    /// itself takes.
+    /// </summary>
+    public void ResumeAfterEntitlementRestored() => EntitlementPausedAt = null;
 }

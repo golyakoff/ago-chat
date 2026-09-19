@@ -7,6 +7,13 @@ public sealed class FakeOperatorRepository : IOperatorRepository
 {
     private readonly List<Operator> _all = [];
 
+    // `25-170`: a fake-only simulation of "holds the Operator role's own seat" - real production code
+    // now answers this through IOperatorRoleRepository (a join against operator_roles/roles this fake
+    // has no model of at all), but AnyOnlineForSiteAsync's own real predicate still depends on it, so a
+    // seeded operator can opt out via Seed(..., holdsSeat: false) the same way a real seatless
+    // administrator's own row would.
+    private readonly Dictionary<OperatorId, bool> _holdsSeat = [];
+
     /// <summary>`13-07`: mirrors <c>OperatorRepository.GetByExternalSubjectIdAndSiteIdAsync</c>
     /// exactly - both columns, never a fallback to a different site for the same identity.
     /// `13-03` added the <c>HoldsSeat</c>/<c>RemovedAt</c> filter; `23-71` mirrors dropping
@@ -30,7 +37,10 @@ public sealed class FakeOperatorRepository : IOperatorRepository
     /// happens to be connected must not count. A fake that quietly used a different rule than the
     /// adapter would let a test pass against a condition production does not implement.</summary>
     public Task<bool> AnyOnlineForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
-        Task.FromResult(_all.Exists(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt is null));
+        Task.FromResult(_all.Exists(
+            o => o.SiteId == siteId && o.Status == OperatorStatus.Online && HoldsSeat(o.Id) && o.RemovedAt is null));
+
+    private bool HoldsSeat(OperatorId operatorId) => _holdsSeat.TryGetValue(operatorId, out var value) ? value : true;
 
     /// <summary>`4-06`: mirrors <c>OperatorRepository.GetByIdAsync</c> - returns the same seeded
     /// reference, so a caller's <c>GoOnline</c>/<c>GoOffline</c> mutation is visible to every other
@@ -43,10 +53,6 @@ public sealed class FakeOperatorRepository : IOperatorRepository
     /// same "wrong site or no such id, deliberately the same answer" shape as the real adapter.</summary>
     public Task<Operator?> GetByIdAsync(OperatorId id, SiteId siteId, CancellationToken cancellationToken) =>
         Task.FromResult(_all.Find(o => o.Id == id && o.SiteId == siteId));
-
-    /// <summary>`13-03`: mirrors <c>OperatorRepository.CountHeldSeatsAsync</c>'s own predicate.</summary>
-    public Task<int> CountHeldSeatsAsync(SiteId siteId, CancellationToken cancellationToken) =>
-        Task.FromResult(_all.Count(o => o.SiteId == siteId && o.HoldsSeat && o.RemovedAt is null));
 
     public Task SaveAsync(Operator operatorEntity, CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -84,5 +90,9 @@ public sealed class FakeOperatorRepository : IOperatorRepository
             ? tracked
             : _all.Find(o => o.Id == operatorId) is { } seeded ? (seeded.DisplayName, seeded.Email) : (null, null);
 
-    public void Seed(Operator @operator) => _all.Add(@operator);
+    public void Seed(Operator @operator, bool holdsSeat = true)
+    {
+        _all.Add(@operator);
+        _holdsSeat[@operator.Id] = holdsSeat;
+    }
 }

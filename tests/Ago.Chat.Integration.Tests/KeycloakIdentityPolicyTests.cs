@@ -94,9 +94,10 @@ public sealed class KeycloakIdentityPolicyTests(OperatorOidcFixture fixture)
                     services.AddDbContext<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>((provider, options) =>
                         options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
                     services.AddScoped<IOperatorRepository, OperatorRepository>();
-                    // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - see
-                    // OfflineAutoReplyDeliveryEndToEndTests' own remarks on this same addition.
-                    services.AddScoped<IPermissionChecker, PermissionChecker>();
+                    // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository
+                    // instead of IPermissionChecker - CanSignIn is the one-rule "does any held role
+                    // still hold its own seat" form.
+                    services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
                     services.AddScoped<ResolveOperatorIdentityHandler>();
                     services.AddHttpContextAccessor();
                     // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog

@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -21,14 +22,17 @@ public class OperatorTeamReadStoreTests(PostgresFixture fixture)
         var named = new OperatorId(Guid.NewGuid());
         var seatless = new OperatorId(Guid.NewGuid());
 
+        var roleId = Guid.NewGuid();
         await using (var db = fixture.CreateDbContext())
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             db.Operators.Add(new Operator(
                 named, siteId, OperatorStatus.Offline, capacity: 5,
                 displayName: "Ada Lovelace", email: "ada@example.invalid"));
-            db.Operators.Add(new Operator(
-                seatless, siteId, OperatorStatus.Offline, capacity: 5, holdsSeat: false));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = named, RoleId = roleId });
+            db.Operators.Add(new Operator(seatless, siteId, OperatorStatus.Offline, capacity: 5));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = seatless, RoleId = roleId, HoldsSeat = false });
             await db.SaveChangesAsync();
         }
 
@@ -39,12 +43,12 @@ public class OperatorTeamReadStoreTests(PostgresFixture fixture)
         var adaRow = Assert.Single(rows, r => r.OperatorId == named);
         Assert.Equal("Ada Lovelace", adaRow.DisplayName);
         Assert.Equal("ada@example.invalid", adaRow.Email);
-        Assert.True(adaRow.HoldsSeat);
+        Assert.True(adaRow.Roles.Single(r => r.RoleName == "Operator").HoldsSeat);
 
         var seatlessRow = Assert.Single(rows, r => r.OperatorId == seatless);
         Assert.Null(seatlessRow.DisplayName);
         Assert.Null(seatlessRow.Email);
-        Assert.False(seatlessRow.HoldsSeat);
+        Assert.False(seatlessRow.Roles.Single(r => r.RoleName == "Operator").HoldsSeat);
     }
 
     /// <summary>The regression this query exists to avoid: a removed operator resolves to no

@@ -427,6 +427,17 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<DownloadThresholdWatchdogJob>();
 
+// `25-170`: the role-capacity and channel-entitlement watchdog - see EntitlementWatchdogJob's own
+// remarks for why this is one job doing two independent things per site, and why the cadence is fixed
+// at one minute by the author's own design rather than measured. Registered here, not ChatModule, the
+// identical "internal Worker-only plumbing" shape InactivityWatchdogJobOptions/DownloadThresholdWatchdogJobOptions
+// just above already take.
+builder.Services
+    .AddOptions<EntitlementWatchdogJobOptions>()
+    .Bind(builder.Configuration.GetSection(EntitlementWatchdogJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<EntitlementWatchdogJob>();
+
 // `23-59`/`adr/0147`: the automatic retroactive contact carry-over - see ContactCarryoverJob's own
 // remarks for why this is a recurring sweep rather than a manually-run tool.
 builder.Services

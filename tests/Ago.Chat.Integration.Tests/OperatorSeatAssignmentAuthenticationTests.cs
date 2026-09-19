@@ -33,13 +33,13 @@ namespace Ago.Chat.Integration.Tests;
 [Collection(OperatorOidcCollection.Name)]
 public sealed class OperatorSeatAssignmentAuthenticationTests(OperatorOidcFixture fixture)
 {
-    /// <summary>`23-71`: the ordinary-operator half of the rule, unchanged from `13-03` - a seat
-    /// released with no `site:manage_operators` grant behind it stays refused. The complementary,
-    /// newly-added case (an administrator, same release, still resolves) is
-    /// <see cref="RealToken_ForAnAdministratorWithNoSeat_SignsIn_AndReachesTheOperatorsTeamScreen"/>
+    /// <summary>`23-71`/`25-170`: the ordinary-operator half of the rule - a seat released with no
+    /// other role's own seat behind it stays refused. The complementary, still-signs-in case (an
+    /// operator whose *other* role still holds a seat) is
+    /// <see cref="RealToken_ForAnOperatorSeatlessOnOneRole_WithTheOtherRolesSeatIntact_SignsIn_AndReachesTheOperatorsTeamScreen"/>
     /// below.</summary>
     [Fact]
-    public async Task RealToken_WhoseOperatorRowHasHoldsSeatToggledOff_ResolvesToNoOperatorIdClaim()
+    public async Task RealToken_WhoseOperatorRoleSeatWasDisabled_ResolvesToNoOperatorIdClaim()
     {
         var (token, externalSubjectId) = await CreateFreshOperatorAsync();
 
@@ -54,8 +54,11 @@ public sealed class OperatorSeatAssignmentAuthenticationTests(OperatorOidcFixtur
         await using (var db = fixture.CreateDbContext())
         {
             var op = await db.Operators.SingleAsync(o => o.ExternalSubjectId == externalSubjectId);
-            op.ToggleSeat(false);
-            await db.SaveChangesAsync();
+            // `25-170`: "holds a seat" lives on operator_roles now - this operator's own single seeded
+            // role (CreateFreshOperatorAsync's own remarks) is disabled directly, the fake-free
+            // real-Postgres equivalent of ToggleOperatorSeatHandler's own write.
+            await db.OperatorRoles.Where(or => or.OperatorId == op.Id).ExecuteUpdateAsync(
+                setters => setters.SetProperty(or => or.HoldsSeat, false));
         }
 
         using (var host = await BuildTestHostAsync())
@@ -94,22 +97,23 @@ public sealed class OperatorSeatAssignmentAuthenticationTests(OperatorOidcFixtur
     }
 
     /// <summary>
-    /// `23-71`: the item's own central proof, demonstrated rather than asserted - both Done-when items
-    /// naming an administrative route, in one real end-to-end pass. A real Keycloak token whose
-    /// `operators` row holds no seat (`HoldsSeat: false`) but does hold this site's own
-    /// `site:manage_operators`, exactly `decisions/0006`'s "the owner and as many operators as are
-    /// paid for" restored: (1) <c>/whoami</c> still returns `200` - the resolution path adds an
-    /// `OperatorId` claim despite the seat, unlike the ordinary-operator case right above; (2) the same
-    /// token then reaches <c>/team</c> - the real <c>GetOperatorTeamHandler</c>, the exact handler
-    /// behind the console's own operators-team screen (`OperatorsTeamPage`, `ago-console`) - and the
-    /// returned roster includes this operator's own row with `HoldsSeat: false`, proving the permission
-    /// check inside that handler passed for real, not merely that the outer policy let the request
-    /// through.
+    /// `23-71`/`25-170`: the item's own central proof, restated for the retired exemption's real
+    /// replacement mechanism - both Done-when items naming an administrative route, in one real
+    /// end-to-end pass. A real Keycloak token whose `operators` row holds *both* seeded roles from
+    /// registration (the founder's own shape, `SiteRegistrationRepository`'s own remarks) has its
+    /// Operator-role seat disabled but keeps the Admin-role seat intact: (1) <c>/whoami</c> still
+    /// returns `200` - the resolution path adds an `OperatorId` claim because *some* held role still has
+    /// a seat, unlike the single-role case right above; (2) the same token then reaches <c>/team</c> -
+    /// the real <c>GetOperatorTeamHandler</c>, the exact handler behind the console's own
+    /// operators-team screen (`OperatorsTeamPage`, `ago-console`) - and the returned roster shows this
+    /// operator's own Operator-role seat as disabled and its Admin-role seat as held, proving the
+    /// permission check inside that handler passed for real, not merely that the outer policy let the
+    /// request through.
     /// </summary>
     [Fact]
-    public async Task RealToken_ForAnAdministratorWithNoSeat_SignsIn_AndReachesTheOperatorsTeamScreen()
+    public async Task RealToken_ForAnOperatorSeatlessOnOneRole_WithTheOtherRolesSeatIntact_SignsIn_AndReachesTheOperatorsTeamScreen()
     {
-        var (token, siteId, operatorId) = await CreateFreshSeatlessAdministratorAsync();
+        var (token, siteId, operatorId) = await CreateFreshFounderSeatlessOnOperatorRoleAsync();
 
         using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
@@ -125,15 +129,54 @@ public sealed class OperatorSeatAssignmentAuthenticationTests(OperatorOidcFixtur
         Assert.Equal(HttpStatusCode.OK, team.StatusCode);
         var roster = await team.Content.ReadFromJsonAsync<OperatorTeamResponse>();
         var self = Assert.Single(roster!.Operators, m => m.OperatorId == operatorId.Value);
-        Assert.False(self.HoldsSeat);
+        Assert.False(self.Roles.Single(r => r.RoleName == "Operator").HoldsSeat);
+        Assert.True(self.Roles.Single(r => r.RoleName == "Admin").HoldsSeat);
     }
 
-    /// <summary>The seatless-administrator twin of <see cref="CreateFreshOperatorAsync"/> - a fresh
-    /// Keycloak identity, a real `operators` row with `HoldsSeat: false`, and a real `Role`/
-    /// `OperatorRoleRecord` granting `site:manage_operators` for its own site (the exact shape
-    /// `RegisterSiteHandler`'s own `AdminRolePermissions` seeds for a real owner, restated by hand
-    /// here since this test host has no registration handler to run).</summary>
-    private async Task<(string Token, SiteId SiteId, OperatorId OperatorId)> CreateFreshSeatlessAdministratorAsync()
+    /// <summary>The founder-shaped twin of <see cref="CreateFreshOperatorAsync"/> - a fresh Keycloak
+    /// identity holding both seeded roles (`SiteRegistrationRepository`'s own shape for a real founder),
+    /// its Operator-role seat disabled but its Admin-role seat left intact.</summary>
+    private async Task<(string Token, SiteId SiteId, OperatorId OperatorId)> CreateFreshFounderSeatlessOnOperatorRoleAsync()
+    {
+        var (token, username) = await fixture.CreateFreshUserAccessTokenAsync();
+        var externalSubjectId = await fixture.GetUserIdAsync(username);
+
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var operatorRoleId = Guid.NewGuid();
+        var adminRoleId = Guid.NewGuid();
+
+        await using var db = fixture.CreateDbContext();
+        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+        db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: externalSubjectId));
+        db.Roles.Add(new RoleRecord
+        {
+            Id = operatorRoleId,
+            SiteId = siteId,
+            Name = "Operator",
+            Permissions = [Permission.ConversationRead.Value],
+        });
+        db.Roles.Add(new RoleRecord
+        {
+            Id = adminRoleId,
+            SiteId = siteId,
+            Name = "Admin",
+            Permissions = [Permission.SiteManageOperators.Value],
+        });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId, HoldsSeat = false });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = adminRoleId });
+        await db.SaveChangesAsync();
+
+        return (token, siteId, operatorId);
+    }
+
+    /// <summary>A brand-new Keycloak user (`OperatorOidcFixture.CreateFreshUserAccessTokenAsync`) plus
+    /// a real <c>operators</c> row this test writes itself, on a site of its own - never the shared
+    /// <c>SeededOperatorId</c>, so this test can freely mutate its own seat/`RemovedAt` without making
+    /// the rest of the collection order-dependent. `25-170`: also seeds a real seeded-Operator-role
+    /// <c>operator_roles</c> row (`HoldsSeat` defaults true) - "holds a seat" is now a fact about that
+    /// row, not the account, so a caller that means to toggle it off needs one to exist first.</summary>
+    private async Task<(string Token, string ExternalSubjectId)> CreateFreshOperatorAsync()
     {
         var (token, username) = await fixture.CreateFreshUserAccessTokenAsync();
         var externalSubjectId = await fixture.GetUserIdAsync(username);
@@ -144,36 +187,9 @@ public sealed class OperatorSeatAssignmentAuthenticationTests(OperatorOidcFixtur
 
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-        db.Operators.Add(new Operator(
-            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: externalSubjectId, holdsSeat: false));
-        db.Roles.Add(new RoleRecord
-        {
-            Id = roleId,
-            SiteId = siteId,
-            Name = "Admin",
-            Permissions = [Permission.SiteManageOperators.Value],
-        });
-        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
-        await db.SaveChangesAsync();
-
-        return (token, siteId, operatorId);
-    }
-
-    /// <summary>A brand-new Keycloak user (`OperatorOidcFixture.CreateFreshUserAccessTokenAsync`) plus
-    /// a real <c>operators</c> row this test writes itself, on a site of its own - never the shared
-    /// <c>SeededOperatorId</c>, so this test can freely mutate <c>HoldsSeat</c>/<c>RemovedAt</c> without
-    /// making the rest of the collection order-dependent.</summary>
-    private async Task<(string Token, string ExternalSubjectId)> CreateFreshOperatorAsync()
-    {
-        var (token, username) = await fixture.CreateFreshUserAccessTokenAsync();
-        var externalSubjectId = await fixture.GetUserIdAsync(username);
-
-        var siteId = new SiteId(Guid.NewGuid());
-        var operatorId = new OperatorId(Guid.NewGuid());
-
-        await using var db = fixture.CreateDbContext();
-        db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
         db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: externalSubjectId));
+        db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationRead.Value] });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
         await db.SaveChangesAsync();
 
         return (token, externalSubjectId);
@@ -192,15 +208,15 @@ public sealed class OperatorSeatAssignmentAuthenticationTests(OperatorOidcFixtur
                     services.AddDbContext<Ago.Chat.Infrastructure.Postgres.Persistence.AgoChatDbContext>((provider, options) =>
                         options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
                     services.AddScoped<IOperatorRepository, OperatorRepository>();
-                    // `23-71`: ResolveOperatorIdentityHandler now composes IPermissionChecker - a
-                    // seatless operator's own site:manage_operators grant is what lets them sign in at
-                    // all, so this class's own new tests need the real permission-resolution path, not
-                    // a stub.
+                    // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository -
+                    // "may sign in" is "does any held role hold its own seat", no permission check left
+                    // in that one handler's own path at all. IPermissionChecker stays registered below
+                    // because GetOperatorTeamHandler's own SiteManageOperators gate still needs it.
+                    services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
                     services.AddScoped<IPermissionChecker, PermissionChecker>();
                     services.AddScoped<ResolveOperatorIdentityHandler>();
-                    // `23-71`: the real handler behind the console's own operators-team screen -
-                    // RealToken_ForAnAdministratorWithNoSeat_SignsIn_AndReachesTheOperatorsTeamScreen's
-                    // own "reaches an administrative route" proof.
+                    // `23-71`/`25-170`: the real handler behind the console's own operators-team screen -
+                    // this class's own "reaches an administrative route" proof.
                     services.AddScoped<IOperatorTeamReadStore, OperatorTeamReadStore>();
                     services.AddScoped<GetOperatorTeamHandler>();
                     services.AddHttpContextAccessor();

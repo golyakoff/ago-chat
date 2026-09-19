@@ -140,7 +140,7 @@ public sealed class RoleAssignmentProjectionBackfillTests(RoleAssignmentProjecti
             // a fact this system already represents correctly by having said nothing at all.
             seed.Operators.Add(new Operator(
                 removedOperatorId, siteId, OperatorStatus.Offline, capacity: 5, removedSubjectId,
-                holdsSeat: false, removedAt: RunStartedAt.AddDays(-30)));
+                removedAt: RunStartedAt.AddDays(-30)));
             await seed.SaveChangesAsync(CancellationToken.None);
         }
 

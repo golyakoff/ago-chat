@@ -60,6 +60,10 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             // Offline, exactly like MintDemoTenantHandler/RegisterSiteHandler - the whole point of
             // this test is that nothing here hand-seeds Online the way most fixtures in this project do.
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5));
+            // `25-170`: a real Operator-role seat - the claimer now requires one regardless of status.
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
             await db.SaveChangesAsync();
@@ -197,6 +201,10 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5));
+            // `25-170`: a real Operator-role seat - the claimer now requires one regardless of status.
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
             await db.SaveChangesAsync();
@@ -294,11 +302,12 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         await using (var db = fixture.CreateDbContext())
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-            // Online with real capacity room, but HoldsSeat: false - the seatless-administrator shape
-            // this item's own routing guarantee exists for, planted directly rather than reached
-            // through a hub connect (which today never sets HoldsSeat either way - this proves the
-            // claimer's own query is the actual backstop, not the connect path's behaviour).
-            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, holdsSeat: false));
+            // Online with real capacity room, but no Operator-role seat at all (`25-170`: no
+            // operator_roles row for this operator - the seatless-administrator shape this item's own
+            // routing guarantee exists for) - planted directly rather than reached through a hub connect
+            // (which today never grants a role either way - this proves the claimer's own query is the
+            // actual backstop, not the connect path's behaviour).
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
             await db.SaveChangesAsync();
@@ -322,7 +331,8 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
         var db = fixture.CreateDbContext();
         var assignConversation = new AssignConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-            new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+            new OperatorRepository(db), new OperatorRoleRepository(db), new OperatorCapacityStore(db),
+            new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
             new PermissionChecker(db), new SiteSuspensionReadStore(fixture.DataSource),
             new SynchronousMessagePipeline(fixture.DataSource), new SystemClock());

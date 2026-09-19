@@ -32,14 +32,17 @@ namespace Ago.Chat.Application.UseCases.AssignConversation;
 /// breaks - an administrator who also happens to hold `conversation:assign` (the Operator role, held
 /// alongside Admin by every account's own registering owner, `RegisterSiteHandler`'s own remarks)
 /// could self-claim a conversation despite holding no seat, putting them in the routing pool by the
-/// back door. <see cref="Domain.Operator.HoldsSeat"/> is checked explicitly here, the same choke-point
-/// role this handler already plays for the cross-tenant guard right below it.</para>
+/// back door. Whether the caller holds the seeded <c>"Operator"</c> role's own seat specifically
+/// (<see cref="IOperatorRoleRepository.HoldsRoleSeatAsync"/> - `25-170`'s per-role successor to the
+/// account-level <c>Operator.HoldsSeat</c> this guard originally checked) is checked explicitly here,
+/// the same choke-point role this handler already plays for the cross-tenant guard right below it.</para>
 /// </summary>
 public sealed class AssignConversationHandler(
     IConversationRepository conversations,
     IConversationAssignmentLog assignmentLog,
     IPermissionChecker permissions,
     IOperatorRepository operators,
+    IOperatorRoleRepository operatorRoles,
     IOperatorCapacity capacity,
     IUnitOfWork unitOfWork,
     IIdGenerator idGenerator,
@@ -60,6 +63,11 @@ public sealed class AssignConversationHandler(
     /// </summary>
     private const int TransactionAttempts = 5;
 
+    /// <summary>`25-170`: the same bare literal `ChangeOperatorRoleHandler`/`OperatorInviteRedemptionRepository`
+    /// each already declare their own copy of - no named-role catalogue exists yet for this codebase to
+    /// reach for instead.</summary>
+    private const string OperatorRoleName = "Operator";
+
     public async Task<Result> HandleAsync(AssignConversation command, CancellationToken cancellationToken)
     {
         var allowed = await permissions.HasPermissionAsync(
@@ -76,7 +84,9 @@ public sealed class AssignConversationHandler(
         // than GetByIdAsync(OperatorId, ...) alone - the identical cross-tenant-misdirection guard this
         // handler already draws below for the conversation itself, applied to the operator row too.
         var self = await operators.GetByIdAsync(command.OperatorId, command.SiteId, cancellationToken);
-        if (self is null || !self.HoldsSeat)
+        var selfHoldsOperatorSeat = self is not null
+            && await operatorRoles.HoldsRoleSeatAsync(self.Id, command.SiteId, OperatorRoleName, cancellationToken);
+        if (self is null || !selfHoldsOperatorSeat)
         {
             // A missing row should be unreachable here (RequireOperatorIdentity already refused a
             // token whose OperatorId claim resolves to nothing), but a caller genuinely holding no
