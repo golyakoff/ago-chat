@@ -1031,6 +1031,63 @@ public class RouteConversationToModuleHandlerTests
         Assert.Contains("What's your phone?", fixture.Conversation.Messages.Last().Body.Value);
     }
 
+    /// <summary>`25-159`: the widget's own reply shape for this gate's choice_list - `Body` carries the
+    /// button's display text (never a bare "1"/"2"), the real answer rides in structured
+    /// `content.value` (`ConsentAcceptValue`'s own remarks). Before this item's fix,
+    /// <c>ContinueConsentGateAsync</c> resolved only via <see cref="ChoiceReplyTextResolver"/> against
+    /// `trigger.Body.Value` - which fails to parse a display-text body - so a widget click here
+    /// silently produced <see cref="RouteConversationToModuleOutcome.ReplyNotResolved"/> and nothing was
+    /// ever saved or pushed back. Mirrors <c>HandleAsync_WithAWidgetShapedReply_SubmitsTheResolvedActionValue</c>'s
+    /// own structured-reply construction, applied to this gate's own step instead of an ordinary
+    /// module's.</summary>
+    [Fact]
+    public async Task HandleAsync_ConsentGate_WithAWidgetShapedAcceptReply_GrantsConsentAndRevealsThePhoneStep()
+    {
+        var documents = new FakeDocumentRepository();
+        await PublishContactConsentDocumentAsync(documents, "Contact Policy");
+        var fixture = CreateFixture(site: ConsentRequiredSite(), documents: documents);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var content = MessageContent.Create(new MessageContentKind(PrimitiveKinds.ChoiceList), new MessagePayload("""{"value":"consent-accept"}"""));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("Согласен(на)"), Now, content: content);
+        var accepted = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.ConsentGranted, accepted.Value);
+        var acceptance = Assert.Single(fixture.Acceptances.Saved);
+        Assert.Equal(SiteConsentDocumentKey.For(SiteId, VisitorConsentPurpose.Contact), acceptance.DocumentKey);
+        Assert.Contains("What's your phone?", fixture.Conversation.Messages.Last().Body.Value);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+    }
+
+    /// <summary>`25-159`: the same widget reply shape as the accept test above, for
+    /// <c>ConsentDeclineValue</c> - the identical re-offer-with-explanation outcome
+    /// <c>HandleAsync_DecliningConsent_...</c>'s own text-channel test already proves, reached this time
+    /// through the structured path a widget click actually uses.</summary>
+    [Fact]
+    public async Task HandleAsync_ConsentGate_WithAWidgetShapedDeclineReply_ReoffersWithAnExplanation()
+    {
+        var documents = new FakeDocumentRepository();
+        await PublishContactConsentDocumentAsync(documents, "Contact Policy");
+        var fixture = CreateFixture(site: ConsentRequiredSite(), documents: documents);
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult("external-1", PhoneStep("What's your phone?"), false);
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var content = MessageContent.Create(new MessageContentKind(PrimitiveKinds.ChoiceList), new MessagePayload("""{"value":"consent-decline"}"""));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("Не согласен(на)"), Now, content: content);
+        var declined = await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Equal(RouteConversationToModuleOutcome.ConsentDeclined, declined.Value);
+        Assert.NotNull(fixture.Conversation.ActiveModuleTask);
+        Assert.Equal(ModuleTaskState.Open, fixture.Conversation.ActiveModuleTask!.State);
+        Assert.Empty(fixture.Acceptances.Saved);
+        Assert.Empty(fixture.Gateway.ReplyCalls);
+        var reoffer = fixture.Conversation.Messages.Last();
+        Assert.Contains("Without your consent", reoffer.Body.Value);
+    }
+
     [Fact]
     public async Task HandleAsync_APhoneCollectionStep_OnASiteRequiringConsent_WithNoDocumentEverPublished_Escalates()
     {

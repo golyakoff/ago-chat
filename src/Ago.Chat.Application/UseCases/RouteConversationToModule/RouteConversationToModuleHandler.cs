@@ -911,7 +911,17 @@ public sealed class RouteConversationToModuleHandler(
                 conversation, locale, now, command, applyStepBeforeClosing: null, cancellationToken);
         }
 
-        var resolved = ChoiceReplyTextResolver.Resolve(trigger.Body.Value, ConsentActions(locale));
+        // `25-159`: structured-first, the same way ResolveReplyValue already does for every ordinary
+        // step - but keyed to this gate's own actual wire kind (PrimitiveKinds.ChoiceList) rather than
+        // `active.LastStepKind`, which `FinishStepAsync` deliberately overwrites with the real, hidden
+        // phone step while this gate's own choice is what the visitor actually sees. A widget reply's
+        // `Body` is the clicked button's own display text ("Согласен(на)"/"Не согласен(на)"), never a
+        // bare number, so falling through to ChoiceReplyTextResolver unconditionally (the pre-fix
+        // shape) silently failed to resolve every widget click - see this method's own remarks and the
+        // backlog item's root cause writeup.
+        var resolved = trigger.Content is { } structured && structured.Kind.Value == PrimitiveKinds.ChoiceList
+            ? TryReadReplyValue(structured.Payload)
+            : ChoiceReplyTextResolver.Resolve(trigger.Body.Value, ConsentActions(locale));
         if (resolved is null)
         {
             // Out-of-range or non-numeric - the identical "module never called, task stays open" shape
