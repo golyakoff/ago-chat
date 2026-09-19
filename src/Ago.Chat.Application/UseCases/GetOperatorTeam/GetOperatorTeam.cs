@@ -12,11 +12,16 @@ namespace Ago.Chat.Application.UseCases.GetOperatorTeam;
 /// </summary>
 public sealed record GetOperatorTeam(OperatorId RequestedBy, SiteId SiteId);
 
+/// <summary>`25-170`: one role on the wire, and whether that specific pairing currently holds a seat -
+/// the wire counterpart of <see cref="Application.Abstractions.OperatorRoleSeatAssignment"/>.</summary>
+public sealed record OperatorRoleSeatDto(string RoleName, bool HoldsSeat);
+
 /// <summary>One row on the wire - see <see cref="Application.Abstractions.OperatorTeamMemberItem"/>
 /// for what each field means and why <see cref="DisplayName"/>/<see cref="Email"/> can be
-/// <see langword="null"/>. `23-72`: <see cref="RoleNames"/> joins the wire shape here too - the console
-/// team screen needs it to show who already administers before offering to change anyone's role.</summary>
+/// <see langword="null"/>. `23-72`/`25-170`: <see cref="Roles"/> is what lets the console show who
+/// already administers before offering to change anyone's role, and render a per-role seat toggle for
+/// whichever roles an operator actually holds.</summary>
 public sealed record OperatorTeamMemberDto(
-    Guid OperatorId, string? DisplayName, string? Email, bool HoldsSeat, IReadOnlyList<string> RoleNames);
+    Guid OperatorId, string? DisplayName, string? Email, IReadOnlyList<OperatorRoleSeatDto> Roles);
 
 public sealed record OperatorTeamResponse(IReadOnlyList<OperatorTeamMemberDto> Operators);

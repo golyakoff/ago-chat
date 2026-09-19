@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -123,10 +124,17 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
             Permissions = [Permission.ConversationRead.Value],
         });
         db.Operators.Add(new Operator(creatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "creator"));
+        // `25-170`: the Operator-role capacity check now counts `operator_roles` rows for this role
+        // specifically, not merely `operators` rows - every seeded operator here needs a real
+        // OperatorRoleRecord (HoldsSeat defaults true) to count toward `seat_limit` the way a real
+        // invite redemption's own write would give it one.
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = creatorId, RoleId = roleId });
         for (var i = 1; i < existingOperators; i++)
         {
+            var extraOperatorId = new OperatorId(Guid.NewGuid());
             db.Operators.Add(new Operator(
-                new OperatorId(Guid.NewGuid()), siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: $"existing-{i}"));
+                extraOperatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: $"existing-{i}"));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = extraOperatorId, RoleId = roleId });
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
@@ -158,7 +166,9 @@ public sealed class OperatorInviteSeatLimitConcurrencyTests(ConcurrencyTestFixtu
     private async Task<OperatorInviteRedemptionResult> RedeemAsync(byte[] codeHash, string email, string externalSubjectId)
     {
         await using var db = fixture.CreateDbContext();
-        var repository = new OperatorInviteRedemptionRepository(db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db));
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(new OperatorRoleRepository(db), new SiteRepository(db));
+        var repository = new OperatorInviteRedemptionRepository(
+            db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db), roleSeatCapacity);
         return await repository.RedeemAsync(
             new RedeemOperatorInviteAttempt(codeHash, externalSubjectId, Now.AddMinutes(1), Email: email), CancellationToken.None);
     }

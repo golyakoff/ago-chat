@@ -143,6 +143,11 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // `25-170`: SkipLockedAssignmentClaimer now filters candidates to Operator-role seat
+            // holders (operator_roles.HoldsSeat) - a role-less operator is not a routing candidate.
+            var roleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
             // `6-09`: holdsCapacityClaim: true - this seed stands in for an engine-made assignment,

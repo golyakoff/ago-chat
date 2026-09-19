@@ -240,32 +240,41 @@ public sealed class RedisLockAssignmentClaimer(
             .Select(c => c.Id)
             .ToListAsync(cancellationToken);
 
-    /// <summary>`23-71`: <c>HoldsSeat &amp;&amp; RemovedAt == null</c> added - the identical gap and
-    /// the identical reasoning <c>SkipLockedAssignmentClaimer.FindCandidateOperatorAsync</c>'s own
-    /// remarks give for mechanism A's twin of this query, restated here rather than cross-referenced
-    /// because the two files intentionally do not share code (this type's own remarks: two independent
-    /// assignment mechanisms).</summary>
+    /// <summary>`23-71`: the Operator-role-own-seat filter added - the identical gap and the identical
+    /// reasoning <c>SkipLockedAssignmentClaimer.FindCandidateOperatorAsync</c>'s own remarks give for
+    /// mechanism A's twin of this query, restated here rather than cross-referenced because the two
+    /// files intentionally do not share code (this type's own remarks: two independent assignment
+    /// mechanisms). `25-170`: a subquery against the seeded <c>"Operator"</c> role's own seat, not the
+    /// removed account-level <c>Domain.Operator.HoldsSeat</c>.</summary>
     private static async Task<List<OperatorId>> GetCandidateOperatorsAsync(
-        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
-        await db.Operators.AsNoTracking()
-            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null)
+        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken)
+    {
+        var operatorRoleSeatHolders = OperatorRoleSeatQueries.HeldSeatOperatorIds(db, siteId, "Operator");
+        return await db.Operators.AsNoTracking()
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.RemovedAt == null)
+            .Where(o => operatorRoleSeatHolders.Contains(o.Id))
             .Where(o => EF.Property<int>(o, "active_chats") < o.Capacity)
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => o.Id)
             .ToListAsync(cancellationToken);
+    }
 
     /// <summary>`23-05`: <see cref="GetCandidateOperatorsAsync"/> with the capacity predicate
     /// dropped - the identical `Status == Online` filter, deliberately not re-derived, so an `Away`
     /// (or `Offline`) operator is excluded from this pass for exactly the same reason it is excluded
     /// from the first: there is one `Online` filter in this file, not two that could drift apart.
-    /// `23-71`: the same is now true of <c>HoldsSeat &amp;&amp; RemovedAt == null</c> -
+    /// `23-71`/`25-170`: the same is now true of the Operator-role-own-seat filter -
     /// <see cref="GetCandidateOperatorsAsync"/>'s own remarks apply identically to this pass.
     /// </summary>
     private static async Task<OperatorId?> FindLeastActiveOnlineOperatorAsync(
-        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
-        await db.Operators.AsNoTracking()
-            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null)
+        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken)
+    {
+        var operatorRoleSeatHolders = OperatorRoleSeatQueries.HeldSeatOperatorIds(db, siteId, "Operator");
+        return await db.Operators.AsNoTracking()
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.RemovedAt == null)
+            .Where(o => operatorRoleSeatHolders.Contains(o.Id))
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => (OperatorId?)o.Id)
             .FirstOrDefaultAsync(cancellationToken);
+    }
 }

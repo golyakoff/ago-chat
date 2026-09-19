@@ -54,7 +54,7 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+                new OperatorRepository(db), new OperatorRoleRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
 
             var result = await handler.HandleAsync(
                 new AssignConversation(conversationId, operatorId, siteId), CancellationToken.None);
@@ -95,7 +95,7 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+                new OperatorRepository(db), new OperatorRoleRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
             Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
         }
 
@@ -103,7 +103,7 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         {
             var handler = new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+                new OperatorRepository(db), new OperatorRoleRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
             Assert.True((await handler.HandleAsync(command, CancellationToken.None)).IsSuccess);
         }
 
@@ -173,6 +173,12 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             db.Operators.Add(new Operator(toOperatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // `25-170`: TransferConversationHandler now requires the target to hold the Operator role's
+            // own seat, not merely exist - the same "Operator" role every other operator in this file's
+            // own SeedWaitingConversationAsync already holds.
+            var toOperatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = toOperatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = toOperatorId, RoleId = toOperatorRoleId });
             var conversation = await db.Conversations.SingleAsync(c => c.Id == conversationId);
             conversation.AssignTo(fromOperatorId, Now);
             conversation.ClearDomainEvents();
@@ -185,7 +191,7 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var handler = new TransferConversationHandler(
-                new ConversationRepository(db), new OperatorRepository(db), new ConversationAssignmentLog(db),
+                new ConversationRepository(db), new OperatorRepository(db), new OperatorRoleRepository(db), new ConversationAssignmentLog(db),
                 new PermissionChecker(db), new OperatorCapacityStore(db), new EfUnitOfWork(db),
                 new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new FixedClock(transferredAt));
 

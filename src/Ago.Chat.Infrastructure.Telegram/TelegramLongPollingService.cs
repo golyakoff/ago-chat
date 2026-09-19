@@ -95,7 +95,13 @@ public sealed class TelegramLongPollingService(
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             var credentials = scope.ServiceProvider.GetRequiredService<IChannelCredentialRepository>();
-            active = await credentials.GetAllActiveAsync(ChannelKind.Telegram, stoppingToken);
+            // `25-170`: EntitlementPausedAt is null added - a credential the entitlement watchdog has
+            // paused for a lapsed channel entitlement is excluded from the poll set exactly as if it
+            // were inactive, without actually being revoked (ChannelCredential.EntitlementPausedAt's own
+            // remarks: the token and every other fact about the connection survive).
+            active = (await credentials.GetAllActiveAsync(ChannelKind.Telegram, stoppingToken))
+                .Where(c => c.EntitlementPausedAt is null)
+                .ToList();
         }
 
         var activeIds = active.Select(c => c.Id).ToHashSet();
@@ -175,11 +181,12 @@ public sealed class TelegramLongPollingService(
                     var cipher = scope.ServiceProvider.GetRequiredService<IChannelCredentialCipher>();
 
                     var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
-                    if (credential is null || !credential.Active)
+                    if (credential is null || !credential.Active || credential.EntitlementPausedAt is not null)
                     {
-                        // Revoked between this iteration starting and now - the next RefreshPollersAsync
-                        // tick will remove this loop from _pollers; exiting now just stops it slightly
-                        // sooner instead of making one more doomed HTTP call.
+                        // Revoked, or paused for a lapsed entitlement (`25-170`), between this iteration
+                        // starting and now - the next RefreshPollersAsync tick will remove this loop from
+                        // _pollers; exiting now just stops it slightly sooner instead of making one more
+                        // doomed HTTP call.
                         return;
                     }
 

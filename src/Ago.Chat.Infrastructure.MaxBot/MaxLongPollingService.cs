@@ -98,7 +98,12 @@ public sealed class MaxLongPollingService(
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             var credentials = scope.ServiceProvider.GetRequiredService<IChannelCredentialRepository>();
-            active = await credentials.GetAllActiveAsync(ChannelKind.Max, stoppingToken);
+            // `25-170`: EntitlementPausedAt is null added - see TelegramLongPollingService's own
+            // identical remarks (restated, not shared - this type's own precedent for two independent
+            // poller implementations).
+            active = (await credentials.GetAllActiveAsync(ChannelKind.Max, stoppingToken))
+                .Where(c => c.EntitlementPausedAt is null)
+                .ToList();
         }
 
         var activeIds = active.Select(c => c.Id).ToHashSet();
@@ -177,11 +182,12 @@ public sealed class MaxLongPollingService(
                     var cipher = scope.ServiceProvider.GetRequiredService<IChannelCredentialCipher>();
 
                     var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
-                    if (credential is null || !credential.Active)
+                    if (credential is null || !credential.Active || credential.EntitlementPausedAt is not null)
                     {
-                        // Revoked between this iteration starting and now - the next RefreshPollersAsync
-                        // tick will remove this loop from _pollers; exiting now just stops it slightly
-                        // sooner instead of making one more doomed HTTP call.
+                        // Revoked, or paused for a lapsed entitlement (`25-170`), between this iteration
+                        // starting and now - the next RefreshPollersAsync tick will remove this loop from
+                        // _pollers; exiting now just stops it slightly sooner instead of making one more
+                        // doomed HTTP call.
                         return;
                     }
 

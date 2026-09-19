@@ -10,6 +10,12 @@ namespace Ago.Chat.Application.Tests.UseCases.ResolveOperatorIdentity;
 /// are this item's own regression proof - "zero behavioural change for an identity that existed
 /// before this item" - kept exactly as they were pre-`13-07` (same method names, same assertions);
 /// everything else is new.
+///
+/// <para><b>`25-170`: <see cref="FakeOperatorRoleRepository"/> replaces <see cref="FakePermissionChecker"/>
+/// as this handler's second dependency</b> - `OperatorSignInEligibility.CanSignInAsync` no longer
+/// composes a permission checker at all, so every operator this file seeds now also seeds its own
+/// `operator_roles` seat via <see cref="FakeOperatorRoleRepository.SeedSeat"/>, the same "holds a seat"
+/// fact `Operator`'s own pre-`25-170` default gave every account for free.</para>
 /// </summary>
 public class ResolveOperatorIdentityHandlerTests
 {
@@ -20,7 +26,9 @@ public class ResolveOperatorIdentityHandlerTests
         var operatorId = new OperatorId(Guid.NewGuid());
         var repository = new FakeOperatorRepository();
         repository.Seed(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "keycloak-sub-123"));
-        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(operatorId, "Operator", holdsSeat: true);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("keycloak-sub-123"), CancellationToken.None);
 
@@ -32,7 +40,7 @@ public class ResolveOperatorIdentityHandlerTests
     [Fact]
     public async Task HandleAsync_WhenNoOperatorMatches_ReturnsNull()
     {
-        var handler = new ResolveOperatorIdentityHandler(new FakeOperatorRepository(), new FakePermissionChecker());
+        var handler = new ResolveOperatorIdentityHandler(new FakeOperatorRepository(), new FakeOperatorRoleRepository());
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("unknown-sub"), CancellationToken.None);
 
@@ -54,7 +62,10 @@ public class ResolveOperatorIdentityHandlerTests
         var operatorB = new OperatorId(Guid.NewGuid());
         repository.Seed(new Operator(operatorA, siteA, OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub"));
         repository.Seed(new Operator(operatorB, siteB, OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub"));
-        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(operatorA, "Operator", holdsSeat: true);
+        operatorRoles.SeedSeat(operatorB, "Operator", holdsSeat: true);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("multi-sub", siteB), CancellationToken.None);
 
@@ -76,9 +87,11 @@ public class ResolveOperatorIdentityHandlerTests
         var repository = new FakeOperatorRepository();
         var siteA = new SiteId(Guid.NewGuid());
         var siteNotAdministered = new SiteId(Guid.NewGuid());
-        repository.Seed(new Operator(
-            new OperatorId(Guid.NewGuid()), siteA, OperatorStatus.Online, capacity: 5, externalSubjectId: "single-tenant-sub"));
-        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        repository.Seed(new Operator(operatorId, siteA, OperatorStatus.Online, capacity: 5, externalSubjectId: "single-tenant-sub"));
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(operatorId, "Operator", holdsSeat: true);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var result = await handler.HandleAsync(
             new ResolveOperatorIdentityQuery("single-tenant-sub", siteNotAdministered), CancellationToken.None);
@@ -98,7 +111,9 @@ public class ResolveOperatorIdentityHandlerTests
         var siteId = new SiteId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
         repository.Seed(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "single-tenant-sub-2"));
-        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(operatorId, "Operator", holdsSeat: true);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("single-tenant-sub-2"), CancellationToken.None);
 
@@ -119,11 +134,14 @@ public class ResolveOperatorIdentityHandlerTests
     public async Task HandleAsync_WhenRequestedSiteIdIsAbsentAndMoreThanOneTenancyExists_ReturnsNull_NeverGuesses()
     {
         var repository = new FakeOperatorRepository();
-        repository.Seed(new Operator(
-            new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub-2"));
-        repository.Seed(new Operator(
-            new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub-2"));
-        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+        var operatorA = new OperatorId(Guid.NewGuid());
+        var operatorB = new OperatorId(Guid.NewGuid());
+        repository.Seed(new Operator(operatorA, new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub-2"));
+        repository.Seed(new Operator(operatorB, new SiteId(Guid.NewGuid()), OperatorStatus.Online, capacity: 5, externalSubjectId: "multi-sub-2"));
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(operatorA, "Operator", holdsSeat: true);
+        operatorRoles.SeedSeat(operatorB, "Operator", holdsSeat: true);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("multi-sub-2"), CancellationToken.None);
 
@@ -131,30 +149,30 @@ public class ResolveOperatorIdentityHandlerTests
     }
 
     /// <summary>
-    /// `23-71`: the fix's own central case - `decisions/0006`'s "the owner and as many operators as
-    /// are paid for can sign in", restored. An operator row with `HoldsSeat: false` used to resolve to
-    /// no claim at all, unconditionally; it now still resolves when the row holds this site's own
-    /// `site:manage_operators` permission, proven against both resolution paths this handler has
-    /// (`RequestedSiteId` present and absent) so neither is left conflating "holds a seat" with "may
-    /// administer this account".
+    /// `23-71`/`25-170`: the fix's own central case, restated for the one-rule form -
+    /// `decisions/0006`'s "the owner and as many operators as are paid for can sign in", still true
+    /// today because the founder holds *two* roles from registration. A seatless Administrator whose
+    /// Admin-role row still holds its own seat still resolves, proven against both resolution paths
+    /// this handler has (`RequestedSiteId` present and absent).
     /// </summary>
     [Fact]
-    public async Task HandleAsync_WhenTheOperatorHoldsNoSeatButManagesOperators_StillResolves()
+    public async Task HandleAsync_WhenTheOperatorsAdminRoleHoldsASeat_StillResolves()
     {
         var siteId = new SiteId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
         var repository = new FakeOperatorRepository();
-        var admin = new Operator(
-            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "seatless-admin", holdsSeat: false);
+        var admin = new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "seatless-operator-role-admin");
         repository.Seed(admin);
-        var permissions = new FakePermissionChecker();
-        permissions.Grant(operatorId, siteId, Permission.SiteManageOperators);
-        var handler = new ResolveOperatorIdentityHandler(repository, permissions);
+        var operatorRoles = new FakeOperatorRoleRepository();
+        // Operator-role seat released, Admin-role seat intact - the founder's own two-role shape.
+        operatorRoles.SeedSeat(operatorId, "Operator", holdsSeat: false);
+        operatorRoles.SeedSeat(operatorId, "Admin", holdsSeat: true);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var withRequestedSite = await handler.HandleAsync(
-            new ResolveOperatorIdentityQuery("seatless-admin", siteId), CancellationToken.None);
+            new ResolveOperatorIdentityQuery("seatless-operator-role-admin", siteId), CancellationToken.None);
         var withoutRequestedSite = await handler.HandleAsync(
-            new ResolveOperatorIdentityQuery("seatless-admin"), CancellationToken.None);
+            new ResolveOperatorIdentityQuery("seatless-operator-role-admin"), CancellationToken.None);
 
         Assert.NotNull(withRequestedSite);
         Assert.Equal(operatorId, withRequestedSite.OperatorId);
@@ -163,19 +181,21 @@ public class ResolveOperatorIdentityHandlerTests
     }
 
     /// <summary>
-    /// The complementary case - an ordinary operator (no `site:manage_operators` grant) whose seat was
-    /// released stays refused, exactly as `13-03` shipped it. `23-71` widens who may sign in without a
-    /// seat; it does not remove the seat requirement for anyone who is not an administrator.
+    /// The complementary case - an operator seatless on *every* role it holds stays refused. `25-170`
+    /// removed the permission-exemption door entirely: unlike the test above (seatless on one role, not
+    /// the other), there is no role left here for a seat to survive on.
     /// </summary>
     [Fact]
-    public async Task HandleAsync_WhenTheOperatorHoldsNoSeatAndDoesNotManageOperators_ReturnsNull()
+    public async Task HandleAsync_WhenTheOperatorHoldsNoSeatOnAnyRole_ReturnsNull()
     {
         var siteId = new SiteId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
         var repository = new FakeOperatorRepository();
         repository.Seed(new Operator(
-            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "seatless-ordinary", holdsSeat: false));
-        var handler = new ResolveOperatorIdentityHandler(repository, new FakePermissionChecker());
+            operatorId, siteId, OperatorStatus.Offline, capacity: 5, externalSubjectId: "seatless-ordinary"));
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(operatorId, "Operator", holdsSeat: false);
+        var handler = new ResolveOperatorIdentityHandler(repository, operatorRoles);
 
         var result = await handler.HandleAsync(new ResolveOperatorIdentityQuery("seatless-ordinary", siteId), CancellationToken.None);
 

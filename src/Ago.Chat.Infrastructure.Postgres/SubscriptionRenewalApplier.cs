@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
@@ -50,7 +51,7 @@ namespace Ago.Chat.Infrastructure.Postgres;
 public sealed class SubscriptionRenewalApplier(
     AgoChatDbContext db, IOutboxWriter outbox, IIdGenerator idGenerator,
     IModuleQuantityGrantStore entitlementGrants, IBillingOptionEntitlementProvider optionEntitlements,
-    IAdministratorLimitEnforcer administratorLimitEnforcer)
+    OperatorRoleSeatReconciler roleSeatReconciler)
     : ISubscriptionRenewalApplier
 {
     /// <summary><see cref="ModuleQuantityGrant.Quantity"/> used to mean "this option's entitlement is
@@ -91,7 +92,10 @@ public sealed class SubscriptionRenewalApplier(
             // practice, unlike its sibling call further down.
             site.ActivateSubscription("free", 1, 0, now);
             StageSiteSettingsChanged(site);
-            await administratorLimitEnforcer.DemoteExcessAdministratorsAsync(subscription.SiteId, site.AdminLimit, now, cancellationToken);
+            // `25-170`: OperatorRoleSeatReconciler, replacing the retired AdministratorLimitEnforcer -
+            // disables the excess (OperatorRoleSeatReconciler's own remarks on why, and on why this
+            // takes `site` directly rather than a fresh SiteId-keyed read).
+            await roleSeatReconciler.ReconcileAsync(site, "Admin", cancellationToken);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -160,7 +164,8 @@ public sealed class SubscriptionRenewalApplier(
             StageSiteSettingsChanged(site);
             if (site.AdminLimit < adminLimitBefore)
             {
-                await administratorLimitEnforcer.DemoteExcessAdministratorsAsync(subscription.SiteId, site.AdminLimit, now, cancellationToken);
+                // `25-170`: OperatorRoleSeatReconciler, replacing the retired AdministratorLimitEnforcer.
+                await roleSeatReconciler.ReconcileAsync(site, "Admin", cancellationToken);
             }
         }
 

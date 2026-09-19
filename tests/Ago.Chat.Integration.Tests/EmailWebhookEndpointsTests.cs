@@ -315,6 +315,11 @@ public sealed class EmailWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
+        // `25-170`: ReceiveChannelMessageHandler now also composes the channel-entitlement guard's
+        // two ports - a permissive stand-in, since this file tests webhook signature/routing, not
+        // entitlement.
+        builder.Services.AddScoped<IBillingOptionEntitlementProvider, AlwaysEntitledBillingOptionEntitlementProvider>();
+        builder.Services.AddScoped<IModuleQuantityGrantStore, AlwaysEntitledModuleQuantityGrantStore>();
         builder.Services.AddScoped<ReceiveChannelMessageHandler>();
         builder.Services.AddSingleton(Options.Create(configureEmail
             ? new EmailBotApiOptions { Domain = Domain, WebhookSecret = WebhookSecret }

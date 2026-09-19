@@ -127,7 +127,8 @@ public sealed class GetSiteForOwnerHandler(
     }
 
     private static OwnerSiteOperatorDto ToOperatorDto(OperatorTeamMemberItem item) => new(
-        item.OperatorId.Value, item.DisplayName, item.Email, item.HoldsSeat, item.RoleNames);
+        item.OperatorId.Value, item.DisplayName, item.Email,
+        item.Roles.Select(role => new OwnerSiteRoleSeatDto(role.RoleName, role.HoldsSeat)).ToList());
 
     private static OwnerSiteRoleDto ToRoleDto(RoleSummary role) => new(role.Name, role.Permissions);
 

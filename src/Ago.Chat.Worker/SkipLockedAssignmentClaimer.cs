@@ -147,7 +147,7 @@ public sealed class SkipLockedAssignmentClaimer(NpgsqlDataSource dataSource, ICl
         return assignedCount;
     }
 
-    /// <summary>`23-71`: <c>HoldsSeat &amp;&amp; RemovedAt == null</c> added alongside the pre-existing
+    /// <summary>`23-71`: the Operator-role-own-seat filter added alongside the pre-existing
     /// `Status == Online` filter - a real gap this item found, not merely reasoned about. Before this
     /// item, "signed in" and "seated" were the same fact (only a seated operator could ever obtain the
     /// `OperatorId` claim needed to connect and go `Online` in the first place), so this filter never
@@ -156,28 +156,40 @@ public sealed class SkipLockedAssignmentClaimer(NpgsqlDataSource dataSource, ICl
     /// nothing about the seat) - without this filter they would be an ordinary candidate here, exactly
     /// the back door `AssignConversationHandler`'s own new seat check closes for a deliberate take;
     /// this closes it for the automatic engine. Proven against real Postgres, not merely read here -
-    /// <c>OperatorConnectAssignabilityTests.AnOnlineOperatorWithNoSeat_IsNeverAssignedAConversation</c>.</summary>
+    /// <c>OperatorConnectAssignabilityTests.AnOnlineOperatorWithNoSeat_IsNeverAssignedAConversation</c>.
+    /// `25-170`: the filter is now a subquery against the seeded <c>"Operator"</c> role's own seat
+    /// (<see cref="OperatorRoleSeatQueries.HeldSeatOperatorIds"/>), not the removed account-level
+    /// <c>Domain.Operator.HoldsSeat</c> - the identical fact, expressed the way the schema now carries
+    /// it.</summary>
     private static async Task<OperatorId?> FindCandidateOperatorAsync(
-        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
-        await db.Operators.AsNoTracking()
-            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null)
+        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken)
+    {
+        var operatorRoleSeatHolders = OperatorRoleSeatQueries.HeldSeatOperatorIds(db, siteId, "Operator");
+        return await db.Operators.AsNoTracking()
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.RemovedAt == null)
+            .Where(o => operatorRoleSeatHolders.Contains(o.Id))
             .Where(o => EF.Property<int>(o, "active_chats") < o.Capacity)
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => (OperatorId?)o.Id)
             .FirstOrDefaultAsync(cancellationToken);
+    }
 
     /// <summary>`23-05`: <see cref="FindCandidateOperatorAsync"/> with the capacity predicate
     /// dropped - the identical `Status == Online` filter, deliberately not re-derived, so an `Away`
     /// (or `Offline`) operator is excluded from this pass for exactly the same reason it is excluded
     /// from the first: there is one `Online` filter in this file, not two that could drift apart.
-    /// `23-71`: the same is now true of <c>HoldsSeat &amp;&amp; RemovedAt == null</c> -
+    /// `23-71`/`25-170`: the same is now true of the Operator-role-own-seat filter -
     /// <see cref="FindCandidateOperatorAsync"/>'s own remarks apply identically to this pass.
     /// </summary>
     private static async Task<OperatorId?> FindLeastActiveOnlineOperatorAsync(
-        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken) =>
-        await db.Operators.AsNoTracking()
-            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.HoldsSeat && o.RemovedAt == null)
+        AgoChatDbContext db, SiteId siteId, CancellationToken cancellationToken)
+    {
+        var operatorRoleSeatHolders = OperatorRoleSeatQueries.HeldSeatOperatorIds(db, siteId, "Operator");
+        return await db.Operators.AsNoTracking()
+            .Where(o => o.SiteId == siteId && o.Status == OperatorStatus.Online && o.RemovedAt == null)
+            .Where(o => operatorRoleSeatHolders.Contains(o.Id))
             .OrderBy(o => EF.Property<int>(o, "active_chats"))
             .Select(o => (OperatorId?)o.Id)
             .FirstOrDefaultAsync(cancellationToken);
+    }
 }

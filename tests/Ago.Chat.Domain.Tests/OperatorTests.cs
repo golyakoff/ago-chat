@@ -148,45 +148,31 @@ public class OperatorTests
         Assert.Equal(OperatorStatus.Away, op.Status);
     }
 
-    // `13-03`: every operator created today is created within `13-01`'s own seat-limit check and
-    // therefore already fits - HoldsSeat defaults true, RemovedAt defaults null.
+    // `13-03`/`25-170`: every operator created today is created within the unified capacity-check
+    // procedure and therefore already fits - RemovedAt defaults null. `HoldsSeat` is no longer a fact
+    // this aggregate carries at all (`operator_roles.HoldsSeat`'s own remarks), so there is nothing left
+    // here for this test to assert about seat-holding.
     [Fact]
-    public void Constructor_WhenValid_DefaultsHoldsSeatTrueAndRemovedAtNull()
+    public void Constructor_WhenValid_DefaultsRemovedAtNull()
     {
         var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
 
-        Assert.True(op.HoldsSeat);
         Assert.Null(op.RemovedAt);
     }
 
+    // `23-71`/`25-170`: decisions/0006's own "the owner and as many operators as are paid for" - the
+    // exemption is gone, and `CanSignIn` is now the one-rule form: an account may sign in whenever any
+    // role it holds has its own seat. The lookup that produces that boolean is the caller's own job
+    // (`IOperatorRoleRepository.HoldsAnySeatAsync`, composed by `OperatorSignInEligibility`) - this
+    // aggregate's own contract is now just the identity rule, both cases asserted.
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void ToggleSeat_SetsHoldsSeat(bool holdsSeat)
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void CanSignIn_IsWhateverTheCallerFoundForAnyHeldRolesSeat(bool anyRoleHoldsSeat, bool expected)
     {
         var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
 
-        op.ToggleSeat(holdsSeat);
-
-        Assert.Equal(holdsSeat, op.HoldsSeat);
-    }
-
-    // `23-71`: decisions/0006's own "the owner and as many operators as are paid for" - a seat is no
-    // longer the only door. Four combinations, all four asserted: the ordinary seated operator (with
-    // or without the permission - a seat alone is always enough), the seatless administrator this item
-    // exists for, and the seatless non-administrator this item must still refuse.
-    [Theory]
-    [InlineData(true, true, true)]
-    [InlineData(true, false, true)]
-    [InlineData(false, true, true)]
-    [InlineData(false, false, false)]
-    public void CanSignIn_IsHoldsSeatOrHoldsManageOperatorsPermission(
-        bool holdsSeat, bool holdsManageOperatorsPermission, bool expected)
-    {
-        var op = new Operator(new OperatorId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), OperatorStatus.Offline, capacity: 5);
-        op.ToggleSeat(holdsSeat);
-
-        Assert.Equal(expected, op.CanSignIn(holdsManageOperatorsPermission));
+        Assert.Equal(expected, op.CanSignIn(anyRoleHoldsSeat));
     }
 
     [Fact]

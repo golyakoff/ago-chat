@@ -11,13 +11,14 @@ namespace Ago.Chat.Application.UseCases.GetBillingStatus;
 /// a billing/tier decision, so a caller who cannot act on this screen cannot see it either.</summary>
 public sealed record GetBillingStatus(OperatorId RequestedBy, SiteId SiteId);
 
-/// <summary><paramref name="SeatsUsed"/> is <see cref="Ago.Chat.Application.Abstractions.IOperatorRepository.CountHeldSeatsAsync"/>'s
-/// own count - operators actually holding an assigned seat right now
-/// (<c>HoldsSeat AND RemovedAt IS NULL</c>), the same number `GetSeatAssignmentSummaryHandler`'s
-/// `HeldSeats` already answers for the operator-management screen, reused here rather than a second,
-/// differently-worded count of the identical thing. <paramref name="LatestSubscription"/> is
-/// <see langword="null"/> only for a site that has never started a checkout - still free by
-/// construction.
+/// <summary><paramref name="SeatsUsed"/> is <see cref="Ago.Chat.Application.Abstractions.IOperatorRoleRepository.GetHeldSeatHolderIdsAsync"/>'s
+/// own count for the seeded <c>"Operator"</c> role - operators actually holding that role's own assigned
+/// seat right now (`25-170`: <c>operator_roles.HoldsSeat AND operators.removed_at IS NULL</c>, no longer
+/// the pre-`25-170` account-level <c>Domain.Operator.HoldsSeat</c>), the same number
+/// `GetSeatAssignmentSummaryHandler`'s own Operator-role `HeldSeats` already answers for the
+/// operator-management screen, reused here rather than a second, differently-worded count of the
+/// identical thing. <paramref name="LatestSubscription"/> is <see langword="null"/> only for a site
+/// that has never started a checkout - still free by construction.
 ///
 /// <para><b>`25-23`: five fields added, all additive - `api-design.md`'s "add within a version, never
 /// remove or rename" (the four original fields keep their original names and positions).</b>
@@ -26,15 +27,15 @@ public sealed record GetBillingStatus(OperatorId RequestedBy, SiteId SiteId);
 /// stop rendering a raw enum and a stale hand-typed seat-count range - `docs/backlog/25-23-*.md`'s own
 /// Scope.</para>
 ///
-/// <para><b><see cref="AdminsUsed"/> is <see cref="Ago.Chat.Application.Abstractions.IOperatorRoleRepository.GetNonRemovedHolderIdsAsync"/>'s
-/// own count - not <see cref="Ago.Chat.Application.Abstractions.IOperatorRoleRepository.CountNonRemovedHoldersAsync"/>.</b>
+/// <para><b><see cref="AdminsUsed"/> is <see cref="Ago.Chat.Application.Abstractions.IOperatorRoleRepository.GetHeldSeatHolderIdsAsync"/>'s
+/// own count for the seeded <c>"Admin"</c> role - not <see cref="Ago.Chat.Application.Abstractions.IOperatorRoleRepository.LockAndGetHeldSeatHolderIdsAsync"/>.</b>
 /// That sibling method takes a `FOR UPDATE` lock on the site row and requires an ambient transaction -
 /// the right tool for a count-then-act write decision (`ChangeOperatorRoleHandler`'s own promotion
 /// guard), the wrong one for a plain display read that would otherwise serialize every concurrent
 /// billing-page load behind a lock nothing here needs to hold (this handler's own remarks: "no lock, no
-/// transaction - nothing here for a lock to protect"). <see cref="GetNonRemovedHolderIdsAsync"/> runs
-/// the identical predicate with no lock of its own, the same trade <see cref="SeatsUsed"/> already makes
-/// against <see cref="Ago.Chat.Application.Abstractions.IOperatorRepository.CountHeldSeatsAsync"/>.</para>
+/// transaction - nothing here for a lock to protect"). `25-170`: also now the Admin role's own held-seat
+/// count specifically, not merely who holds the role - the same question <see cref="SeatsUsed"/> already
+/// answers for the Operator role.</para>
 ///
 /// <para><b><see cref="ExtraAdministratorsPurchased"/> is read straight off the base subscription this
 /// handler already loads</b> (<c>latest</c>), never derived by subtracting

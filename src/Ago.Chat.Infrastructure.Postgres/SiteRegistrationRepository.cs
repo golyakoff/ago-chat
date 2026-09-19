@@ -45,15 +45,24 @@ public sealed class SiteRegistrationRepository(AgoChatDbContext db, IOutboxWrite
             Name = registration.AdminRole.Name,
             Permissions = [.. registration.AdminRole.Permissions],
         });
+        // `25-170`: HoldsSeat: true (the founder occupies both seeded roles' own seat from day one -
+        // Domain.Operator.HoldsSeat's own pre-`25-170` default, restated per role) and GrantedAt: a real
+        // timestamp (this registration's own moment), not the epoch-sentinel backfill
+        // Stage25AddOperatorRoleSeatColumns gives every row that predates this column.
+        var now = clock.UtcNow;
         db.OperatorRoles.Add(new OperatorRoleRecord
         {
             OperatorId = registration.Operator.Id,
             RoleId = registration.OperatorRole.Id,
+            HoldsSeat = true,
+            GrantedAt = now,
         });
         db.OperatorRoles.Add(new OperatorRoleRecord
         {
             OperatorId = registration.Operator.Id,
             RoleId = registration.AdminRole.Id,
+            HoldsSeat = true,
+            GrantedAt = now,
         });
 
         // `24-03`: zero or more AcceptanceRecord rows, staged onto the same DbContext so they land
@@ -78,7 +87,7 @@ public sealed class SiteRegistrationRepository(AgoChatDbContext db, IOutboxWrite
                 .Distinct()
                 .ToList();
             outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
-                ownerSubject, registration.Site.Id.Value, permissions, clock.UtcNow, idGenerator));
+                ownerSubject, registration.Site.Id.Value, permissions, now, idGenerator));
         }
 
         try

@@ -62,6 +62,8 @@ public class ReceiveChannelMessageHandlerTests
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
+            new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(),
             clock,
             idGenerator,
             emojiPairs);
@@ -455,6 +457,8 @@ public class ReceiveChannelMessageHandlerTests
             idGenerator, emojiPairs),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
+            new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(),
             clock, idGenerator, emojiPairs);
 
         var first = await handler.HandleAsync(
@@ -468,6 +472,52 @@ public class ReceiveChannelMessageHandlerTests
 
         var conversation = await conversations.GetByIdAsync(first.Value.ConversationId, CancellationToken.None);
         Assert.Equal(["first", "second"], conversation!.Messages.Select(m => m.Body.Value));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-170`: the entitlement guard - a channel this site is no longer entitled to must refuse
+    // what arrives, not process it identically to an entitled one.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>This item's own Done-when: "a channel whose `ModuleQuantityGrant` has expired stops
+    /// being processed." Proven by actually letting a real, previously-positive grant lapse to zero
+    /// (never merely asserting the guard exists) and confirming this handler refuses the next inbound
+    /// message rather than minting a visitor for it.</summary>
+    [Fact]
+    public async Task WhenTheSitesChannelEntitlementHasLapsedToZero_RefusesTheMessage_AndCreatesNoVisitor()
+    {
+        var site = new SiteId(Guid.NewGuid());
+        var identities = new FakeChannelIdentityRepository();
+        var visitors = new FakeVisitorRepository();
+        var conversations = new FakeConversationRepository();
+        var clock = new FakeClock(Now);
+        var idGenerator = new FakeIdGenerator();
+        var emojiPairs = new FakeVisitorEmojiPairGenerator();
+        var pipeline = new FakeApplyingMessagePipeline(conversations, clock, idGenerator);
+
+        var entitlements = new FakeBillingOptionEntitlementProvider();
+        var moduleKey = new ModuleKey("channel-telegram");
+        entitlements.Map(ChannelEntitlementOptionKeys.For(ChannelKind.Telegram), moduleKey);
+        var grants = new FakeModuleQuantityGrantStore();
+        // The grant lapsed to zero - a real subscription-lapse shape, not merely "never granted".
+        grants.Grants[(site, moduleKey)] = 0;
+
+        var handler = new ReceiveChannelMessageHandler(
+            identities, visitors, new FakePendingChannelLinkRequestRepository(),
+            new StartConversationHandler(
+            visitors, conversations, new FakeVisitorRestrictionRepository(),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
+            idGenerator, emojiPairs),
+            new SendVisitorMessageHandler(
+                conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
+            entitlements, grants, clock, idGenerator, emojiPairs);
+
+        var result = await handler.HandleAsync(Inbound(site, ChannelKind.Telegram), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.NotEntitled", result.Error!.Value.Code);
+        Assert.Empty(identities.All);
     }
 
     // -----------------------------------------------------------------------------------------
@@ -502,6 +552,8 @@ public class ReceiveChannelMessageHandlerTests
                 new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5)),
                 new MessageSendRateLimitOptions(),
                 new FakeApplyingMessagePipeline(conversations, clock, idGenerator)),
+            new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(),
             clock, idGenerator, emojiPairs);
 
         var result = await handler.HandleAsync(Inbound(site), CancellationToken.None);

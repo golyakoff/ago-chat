@@ -1,11 +1,11 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 
 namespace Ago.Chat.Infrastructure.Postgres;
@@ -15,27 +15,24 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// `data-model.md`'s `active_chats` shadow property uses a denormalized counter with an atomic
 /// `UPDATE ... WHERE ... &lt; capacity` because operator assignment is a high-frequency, contended path
 /// where a per-row lock would itself become the bottleneck. Operator invitation is the opposite - rare,
-/// low-contention, at most a handful of calls ever per site - so this locks the `sites` row directly
-/// (<c>SELECT seat_limit FROM sites WHERE id = @siteId FOR UPDATE</c>) and counts real `operators` rows
-/// inside that lock, rather than adding a second denormalized counter that would need a symmetric
-/// decrement path that does not exist yet (`13-01`'s own Out of scope: no operator-removal flow exists
-/// anywhere in this codebase today).
+/// low-contention, at most a handful of calls ever per site - so this locks the `sites` row directly and
+/// counts real `operator_roles` rows inside that lock, rather than adding a second denormalized counter
+/// that would need a symmetric decrement path that does not exist yet (`13-01`'s own Out of scope: no
+/// operator-removal flow exists anywhere in this codebase today).
 ///
-/// <para><b>Why raw SQL for the lock, through the same <see cref="AgoChatDbContext"/> connection.</b>
-/// EF has no LINQ shape for <c>FOR UPDATE</c> on a scalar read, and the lock only means anything if the
-/// count read and the eventual `operators` insert happen on the *same* Postgres connection and
-/// transaction as the lock itself - the identical reasoning <c>OperatorCapacityStore</c>'s own remarks
-/// give for issuing its compare-and-set through <c>ExecuteSqlInterpolatedAsync</c> rather than a
-/// separate connection. Unlike that compare-and-set (an `UPDATE` with no result set),
-/// <see cref="LockSiteAndReadSeatLimitAsync"/> needs a value back, so this reaches for
-/// <see cref="AgoChatDbContext.Database"/>'s own open <see cref="NpgsqlConnection"/>/
-/// <see cref="NpgsqlTransaction"/> directly with a plain <see cref="NpgsqlCommand"/> - the same
-/// raw-Npgsql-inside-an-EF-transaction shape `4-02`'s <c>SkipLockedAssignmentClaimer</c> established for
-/// its own <c>Database.UseTransactionAsync</c> combination, mirrored here from the opposite direction
-/// (an EF-opened transaction lending its connection to raw SQL, rather than a raw transaction lending
-/// itself to EF).</para>
+/// <para><b>`25-170`: the lock and the count are no longer this class's own raw SQL.</b> Before this
+/// item, this class held its own private `LockSiteAndReadCapacityAsync` (raw Npgsql against
+/// <see cref="AgoChatDbContext.Database"/>'s own open connection/transaction - EF has no LINQ shape for
+/// `FOR UPDATE`) and two hand-written, role-specific capacity branches beside it. Both are now
+/// <see cref="OperatorRoleSeatCapacity"/>'s own job - the unified capacity-check procedure this item's
+/// own design calls for, shared with `ChangeOperatorRoleHandler`'s own Admin-promotion guard rather than
+/// each keeping a separate copy. This class still opens the ambient transaction that check's own lock
+/// participates in (<see cref="RedeemLoadedInviteAsync"/>'s own <c>db.Database.BeginTransactionAsync</c>)
+/// and still commits the actual `Operator`/`operator_roles` write inside it - only the lock-and-count
+/// step itself moved out.</para>
 /// </summary>
-public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdGenerator idGenerator, IOutboxWriter outbox)
+public sealed class OperatorInviteRedemptionRepository(
+    AgoChatDbContext db, IIdGenerator idGenerator, IOutboxWriter outbox, OperatorRoleSeatCapacity roleSeatCapacity)
     : IOperatorInviteRedemptionRepository
 {
     public async Task<OperatorInviteRedemptionResult> RedeemAsync(
@@ -112,8 +109,8 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
         {
             // `25-85`: a real, if rare, case (`OperatorInvite.Email`'s own remarks: "one email can
             // legitimately hold invites to more than one site at once") - refused rather than guessed,
-            // the identical "does not have any legal recourse to a guess" posture this class's own
-            // `LockSiteAndReadCapacityAsync` throw takes for a different genuinely-ambiguous situation.
+            // the identical "does not have any legal recourse to a guess" posture `OperatorRoleSeatCapacity`'s
+            // own missing-site throw takes for a different genuinely-unreachable situation.
             return new OperatorInviteRedemptionResult.Ambiguous();
         }
 
@@ -143,83 +140,52 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-        var capacity = await LockSiteAndReadCapacityAsync(invite.SiteId, cancellationToken);
-
-        // `25-25`: which of the two independent limits this invite's own role counts against - never
-        // both, and (since `25-25`) no longer "seat_limit, regardless of role" the way it was before
-        // this item. `AdminRoleName` is the same bare literal `CreateOperatorInviteHandler`/
-        // `ChangeOperatorRoleHandler` already compare role names against - no named-role catalogue
-        // exists yet for this codebase to reach for instead (`IRoleRepository`'s own remarks: "the only
-        // names any site has today").
-        var isAdminInvite = await db.Roles.AsNoTracking()
+        // `25-25`: which role this invite names, purely to choose the capacity check's own parameter -
+        // never both limits, and no longer "seat_limit, regardless of role" the way it was before that
+        // item. `25-170`: the two hand-written branches this block replaced (an Admin-role count against
+        // `AdminLimit`, a `HoldsSeat`-filtered count against `SeatLimit`) are now one call into
+        // `OperatorRoleSeatCapacity` - the identical row-locked primitive `ChangeOperatorRoleHandler`'s
+        // own Admin-promotion guard shares, unified rather than duplicated.
+        var roleName = await db.Roles.AsNoTracking()
             .Where(r => r.Id == invite.RoleId)
-            .Select(r => r.Name == AdminRoleName)
+            .Select(r => r.Name)
             .SingleAsync(cancellationToken);
 
-        if (isAdminInvite)
+        var check = await roleSeatCapacity.CheckAsync(invite.SiteId, roleName, cancellationToken);
+        if (check.IsAtCapacity)
         {
-            // `25-25`: how many non-removed Administrators this site already has, counted the same
-            // "join operator_roles/roles, filter removed_at" shape `OperatorRoleRepository.
-            // CountNonRemovedHoldersAsync` uses for the identical question against an arbitrary site -
-            // narrowed to `invite.RoleId` directly rather than a second by-name lookup, since this
-            // invite's own role id already *is* this site's "Admin" role.
-            var adminCount = await db.Operators
-                .Where(o => o.SiteId == invite.SiteId && o.RemovedAt == null)
-                .Where(o => db.OperatorRoles.Any(or => or.OperatorId == o.Id && or.RoleId == invite.RoleId))
-                .CountAsync(cancellationToken);
-            if (adminCount >= capacity.AdminLimit)
-            {
-                // Rolled back, nothing committed - the invite stays exactly as it was, the identical
-                // "still redeemable once room opens up" guarantee `13-01`'s own Done-when already gives
-                // SeatLimitReached below.
-                await transaction.RollbackAsync(cancellationToken);
-                return new OperatorInviteRedemptionResult.AdminLimitReached(capacity.AdminLimit);
-            }
-        }
-        else
-        {
-            // `13-03`: `AND removed_at IS NULL` added - a real, necessary fix to this already-shipped
-            // query, named explicitly in `13-03`'s own backlog rather than rediscovered as a surprise.
-            // Without it, a removed operator counted against this site's seat limit forever, since
-            // nothing before that item ever gave `operators` a row a real removal could set.
-            //
-            // `25-25`: `AND holds_seat` added - a genuine change of behaviour, not a restatement.
-            // Before this item, every redeemed invite counted here regardless of role, because every
-            // redeemed invite also defaulted to `HoldsSeat = true`; an Administrator invite (this
-            // branch's own `else`) never reaches this count at all, so the filter this count needs is
-            // now "how many currently hold an assigned seat" - `IOperatorRepository.
-            // CountHeldSeatsAsync`'s own question, restated here rather than reused because that method
-            // has no lock of its own and this count must run inside the lock `LockSiteAndReadCapacityAsync`
-            // above already took.
-            var heldSeats = await db.Operators.CountAsync(
-                o => o.SiteId == invite.SiteId && o.RemovedAt == null && o.HoldsSeat, cancellationToken);
-            if (heldSeats >= capacity.SeatLimit)
-            {
-                // Rolled back, nothing committed - the invite stays exactly as it was. `13-01`'s own
-                // Done-when: "a capacity-rejected invite is confirmed still redeemable afterward once a
-                // seat opens up" - true here by construction, since this method never staged a single
-                // change against it on this path.
-                await transaction.RollbackAsync(cancellationToken);
-                return new OperatorInviteRedemptionResult.SeatLimitReached(capacity.SeatLimit);
-            }
+            // Rolled back, nothing committed - the invite stays exactly as it was. `13-01`'s own
+            // Done-when: "a capacity-rejected invite is confirmed still redeemable afterward once a
+            // seat opens up" - true here by construction, since this method never staged a single
+            // change against it on this path.
+            await transaction.RollbackAsync(cancellationToken);
+            return roleName == AdminRoleName
+                ? new OperatorInviteRedemptionResult.AdminLimitReached(check.Limit)
+                : new OperatorInviteRedemptionResult.SeatLimitReached(check.Limit);
         }
 
         var newOperatorId = new OperatorId(idGenerator.NewId(now));
         // Capacity 5, Offline - the identical starting shape `RegisterSiteHandler` gives a freshly
         // bootstrapped site's own first operator; an invited operator is not structurally different
         // from a self-registered one once the row exists.
-        //
-        // `25-25`: `holdsSeat: !isAdminInvite` - a genuine change from this constructor's previous,
-        // implicit `true` default. `decisions/0006`/`23-71`: an administrator is additional to the
-        // paid seats and consumes none of them, a fact `23-71`/`23-72` already gave the account's own
-        // founder and an existing colleague promoted via `ChangeOperatorRoleHandler` (neither of which
-        // ever touches `HoldsSeat`) but never gave a *freshly invited* Administrator, who had no
-        // existing row for anything to leave untouched. An ordinary Operator invite keeps the exact
-        // default it always had.
         db.Operators.Add(new Operator(
             newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, externalSubjectId,
-            displayName: name, email: email, holdsSeat: !isAdminInvite));
-        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = newOperatorId, RoleId = invite.RoleId });
+            displayName: name, email: email));
+        // `25-170`: HoldsSeat: true unconditionally - no longer `!isAdminInvite`. Under the pre-`25-170`
+        // account-level model, an Administrator invite set the account's own `HoldsSeat` to `false`
+        // because the flag meant "occupies an Operator-role seat," which an Administrator never does;
+        // now that the flag lives on this specific `(operator, role)` pairing, "holds a seat" means
+        // "counts toward this row's own role's own limit" - and every freshly granted role, Operator or
+        // Admin alike, starts out counting, the identical "the correct starting state for every row, not
+        // a special case" default this table's own migration backfill gives every pre-existing row too
+        // (`OperatorRoleRecord`'s own remarks).
+        db.OperatorRoles.Add(new OperatorRoleRecord
+        {
+            OperatorId = newOperatorId,
+            RoleId = invite.RoleId,
+            HoldsSeat = true,
+            GrantedAt = now,
+        });
         invite.Redeem(newOperatorId, now);
 
         // `22-05`/`adr/0093`: the redeemed operator's projected fact - the one role this invite names.
@@ -267,37 +233,6 @@ public sealed class OperatorInviteRedemptionRepository(AgoChatDbContext db, IIdG
     /// under and `CreateOperatorInviteHandler`/`ChangeOperatorRoleHandler` already compare role names
     /// against; no named-role catalogue exists yet for this codebase to reach for instead.</summary>
     private const string AdminRoleName = "Admin";
-
-    /// <summary>`25-25`: reads both of `Site`'s independent capacity ceilings in the one locked
-    /// round trip this method already made for `seat_limit` alone before this item - `AdminLimit`
-    /// costs nothing extra to read once the row is already locked for `SeatLimit`'s own sake, and a
-    /// second, separately-locked read would only double the round trips for no benefit (the two limits
-    /// are read together, never compared against each other).</summary>
-    private sealed record SiteCapacity(int SeatLimit, int AdminLimit);
-
-    private async Task<SiteCapacity> LockSiteAndReadCapacityAsync(SiteId siteId, CancellationToken cancellationToken)
-    {
-        var connection = (NpgsqlConnection)db.Database.GetDbConnection();
-        var transaction = (NpgsqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction();
-
-        await using var command = new NpgsqlCommand(
-            "SELECT seat_limit, admin_limit FROM sites WHERE id = @siteId FOR UPDATE", connection, transaction);
-        command.Parameters.AddWithValue("siteId", siteId.Value);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            // A foreign key (OperatorInviteConfiguration.HasOne<Site>) should make this unreachable -
-            // an invite cannot exist for a site row that has been deleted out from under it, and this
-            // codebase has no site-deletion path at all. Thrown, not translated into a
-            // OperatorInviteRedemptionResult case, because a caller has no legal recourse for "the site
-            // this invite names does not exist" the way it does for every other outcome above.
-            throw new InvalidOperationException(
-                $"Site {siteId.Value} was not found while redeeming an operator invite - a foreign key should have prevented this.");
-        }
-
-        return new SiteCapacity(reader.GetInt32(0), reader.GetInt32(1));
-    }
 
     private static bool IsUniqueViolation(DbUpdateException ex) =>
         ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };

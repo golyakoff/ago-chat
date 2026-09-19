@@ -315,6 +315,9 @@ public sealed class AttachmentDownloadEndpointTests(OperatorOidcFixture fixture)
         // mapped route the moment any request is authorized, not only the one a test happens to call.
         // Transcribed from TokenSchemeSeparationTests' own identical block.
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<ISiteActivityWatchdog, SiteActivityWatchdogRepository>();

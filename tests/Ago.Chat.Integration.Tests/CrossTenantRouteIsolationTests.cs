@@ -518,6 +518,9 @@ public sealed class CrossTenantRouteIsolationTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository (CanSignIn's
+        // one-rule "does any held role still hold its own seat" form) instead of IPermissionChecker.
+        builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.ISiteRepository, SiteRepository>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<Ago.Chat.Application.Abstractions.IWebhookEndpointRepository, WebhookEndpointRepository>();

@@ -70,7 +70,7 @@ public class SendOfflineAutoReplyHandlerTests
             // covering the queue - the identical "on duty means seated" reasoning
             // IOperatorRepository.AnyOnlineForSiteAsync's own remarks give, proven here rather than
             // merely reasoned about: WhenTheOnlyOnlineOperatorHoldsNoSeat_TheReplyIsStillSent below.
-            operators.Seed(new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Online, 5, holdsSeat: false));
+            operators.Seed(new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Online, 5), holdsSeat: false);
         }
 
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);

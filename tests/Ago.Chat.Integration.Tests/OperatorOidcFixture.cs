@@ -101,6 +101,7 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
         SeededOperatorId = new OperatorId(Guid.NewGuid());
         SeededAdminOperatorId = new OperatorId(Guid.NewGuid());
         var adminRoleId = Guid.NewGuid();
+        var operatorRoleId = Guid.NewGuid();
         await using (var db = CreateDbContext())
         {
             db.Sites.Add(new Site(SeededSiteId, $"site_{SeededSiteId.Value:N}", []));
@@ -126,7 +127,21 @@ public sealed class OperatorOidcFixture : IAsyncLifetime
                     Permission.AttachmentDelete.Value,
                 ],
             });
+            // `25-170`: the plain "Operator" role, seeded here for the first time - before this
+            // item, SeededOperatorId held no role at all and still signed in on the strength of the
+            // account-level Operator.HoldsSeat default alone. CanSignIn is now "does any held role
+            // still hold its own seat", so a role-less operator can no longer sign in at all; this
+            // is the same base role every real invited operator gets by default
+            // (OperatorInviteRedemptionRepository), not a reduced test-only stand-in.
+            db.Roles.Add(new RoleRecord
+            {
+                Id = operatorRoleId,
+                SiteId = SeededSiteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationAssign.Value],
+            });
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = SeededAdminOperatorId, RoleId = adminRoleId });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = SeededOperatorId, RoleId = operatorRoleId });
             await db.SaveChangesAsync();
         }
     }

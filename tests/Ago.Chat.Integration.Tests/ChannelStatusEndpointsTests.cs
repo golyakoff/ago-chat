@@ -345,6 +345,9 @@ public sealed class ChannelStatusEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped(_ => new AvitoApiClient(new HttpClient()));
 
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddSingleton<IClock, Ago.Platform.Hosting.SystemClock>();
 

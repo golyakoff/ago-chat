@@ -77,6 +77,7 @@ namespace Ago.Chat.Application.UseCases.TransferConversation;
 public sealed class TransferConversationHandler(
     IConversationRepository conversations,
     IOperatorRepository operators,
+    IOperatorRoleRepository operatorRoles,
     IConversationAssignmentLog assignmentLog,
     IPermissionChecker permissions,
     IOperatorCapacity capacity,
@@ -89,6 +90,11 @@ public sealed class TransferConversationHandler(
     /// <c>OperatorCapacityStore.ReleaseAsync</c>'s own bound, after a bare single retry (this item's
     /// first version) let zero transfers through a real storm, repeatedly.</summary>
     private const int TransactionAttempts = 5;
+
+    /// <summary>`25-170`: the same bare literal `ChangeOperatorRoleHandler`/`OperatorInviteRedemptionRepository`
+    /// each already declare their own copy of - no named-role catalogue exists yet for this codebase to
+    /// reach for instead.</summary>
+    private const string OperatorRoleName = "Operator";
 
     public async Task<Result> HandleAsync(TransferConversation command, CancellationToken cancellationToken)
     {
@@ -106,7 +112,8 @@ public sealed class TransferConversationHandler(
             return ConversationErrors.Forbidden("Operator does not have permission to transfer conversations for this site.");
         }
 
-        // `18-02`'s own HoldsSeat/RemovedAt decision: refused here, visibly, rather than left to
+        // `18-02`'s own seat/RemovedAt decision (`25-170`: the Operator role's own seat specifically,
+        // via IOperatorRoleRepository.HoldsRoleSeatAsync): refused here, visibly, rather than left to
         // capacity or sign-in to make moot. There is no transfer-target-picker endpoint in this
         // codebase yet to have filtered a seat-less or removed operator out of a caller's choices
         // upstream, and a seat-less/removed operator who cannot sign in would never learn a
@@ -121,7 +128,9 @@ public sealed class TransferConversationHandler(
         // backlog item's own Out of scope note - there is no site parameter to get wrong here, unlike
         // a hypothetical id-only lookup a caller would have to remember to double-check.
         var target = await operators.GetByIdAsync(command.ToOperatorId, command.SiteId, cancellationToken);
-        if (target is null || !target.HoldsSeat || target.RemovedAt is not null)
+        var targetHoldsOperatorSeat = target is not null
+            && await operatorRoles.HoldsRoleSeatAsync(target.Id, command.SiteId, OperatorRoleName, cancellationToken);
+        if (target is null || !targetHoldsOperatorSeat || target.RemovedAt is not null)
         {
             return ConversationErrors.TransferTargetNotEligible(command.ToOperatorId.Value);
         }

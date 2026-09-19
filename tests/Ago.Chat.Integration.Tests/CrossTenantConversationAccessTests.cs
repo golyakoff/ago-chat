@@ -78,7 +78,7 @@ public class CrossTenantConversationAccessTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var result = await new AssignConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-                new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
+                new OperatorRepository(db), new OperatorRoleRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
             .HandleAsync(
                 new AssignConversation(scenario.ConversationId, scenario.OperatorId, scenario.AttackerSiteId),
                 CancellationToken.None);
@@ -117,7 +117,7 @@ public class CrossTenantConversationAccessTests(PostgresFixture fixture)
         // Step one of the real sequence: take the conversation. Everything after this depended on it.
         var claim = await new AssignConversationHandler(
                 conversations, new ConversationAssignmentLog(db), permissions, new OperatorRepository(db),
-                new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
+                new OperatorRoleRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new Ago.Platform.Hosting.SystemClock())
             .HandleAsync(
                 new AssignConversation(scenario.ConversationId, scenario.OperatorId, scenario.AttackerSiteId),
                 CancellationToken.None);

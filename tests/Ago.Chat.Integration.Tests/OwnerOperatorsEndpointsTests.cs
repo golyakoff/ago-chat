@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Owner;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RestoreOperatorSeatAsOwner;
 using Ago.Chat.Domain;
@@ -62,9 +63,9 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
 
         // Trying it: the real row, read back through a fresh repository instance - not asserted from
         // the response alone.
-        var reloaded = await GetOperatorAsync(lockedOutId, siteId);
-        Assert.NotNull(reloaded);
-        Assert.True(reloaded.HoldsSeat);
+        var reloadedHoldsSeat = await GetOperatorHoldsOperatorRoleSeatAsync(lockedOutId, siteId);
+        Assert.NotNull(reloadedHoldsSeat);
+        Assert.True(reloadedHoldsSeat);
     }
 
     /// <summary>Restoring an already-seated operator is a harmless no-op over the real route too.</summary>
@@ -98,9 +99,9 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
             $"/api/v1/owner/sites/{siteId.Value}/operators/{lockedOutId.Value}/restore-seat", content: null);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        var reloaded = await GetOperatorAsync(lockedOutId, siteId);
-        Assert.NotNull(reloaded);
-        Assert.False(reloaded.HoldsSeat);
+        var reloadedHoldsSeat = await GetOperatorHoldsOperatorRoleSeatAsync(lockedOutId, siteId);
+        Assert.NotNull(reloadedHoldsSeat);
+        Assert.False(reloadedHoldsSeat);
         _ = alreadyHoldingId;
     }
 
@@ -131,9 +132,9 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
         Assert.NotNull(body);
         Assert.True(body.OverrodeSeatLimit);
 
-        var reloaded = await GetOperatorAsync(lockedOutId, siteId);
-        Assert.NotNull(reloaded);
-        Assert.True(reloaded.HoldsSeat);
+        var reloadedHoldsSeat = await GetOperatorHoldsOperatorRoleSeatAsync(lockedOutId, siteId);
+        Assert.NotNull(reloadedHoldsSeat);
+        Assert.True(reloadedHoldsSeat);
 
         var overrides = await new OperatorSeatRestoreOverrideRepository(fixture.DataSource)
             .ListForSiteAsync(siteId, CancellationToken.None);
@@ -255,25 +256,44 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    /// <summary>Reads the real row back through a fresh <see cref="OperatorRepository"/> instance and
-    /// a fresh <see cref="AgoChatDbContext"/> - never the same context the endpoint's own request used,
-    /// so a passing assertion proves the write actually committed rather than merely appearing to,
-    /// through change-tracking, in the caller's own in-memory copy.</summary>
-    private async Task<Operator?> GetOperatorAsync(OperatorId operatorId, SiteId siteId)
+    /// <summary>`25-170`: reads the Operator role's own held-seat status back through a fresh
+    /// <see cref="AgoChatDbContext"/> - never the same context the endpoint's own request used, so a
+    /// passing assertion proves the write actually committed rather than merely appearing to, through
+    /// change-tracking, in the caller's own in-memory copy.</summary>
+    private async Task<bool?> GetOperatorHoldsOperatorRoleSeatAsync(OperatorId operatorId, SiteId siteId)
     {
         await using var db = fixture.CreateDbContext();
-        return await new OperatorRepository(db).GetByIdAsync(operatorId, siteId, CancellationToken.None);
+        if (await db.Operators.AsNoTracking().AnyAsync(o => o.Id == operatorId && o.SiteId == siteId) is false)
+        {
+            return null;
+        }
+
+        var roleIds = db.Roles.Where(r => r.SiteId == siteId && r.Name == "Operator").Select(r => r.Id);
+        return await db.OperatorRoles.AsNoTracking()
+            .Where(or => or.OperatorId == operatorId && roleIds.Contains(or.RoleId))
+            .Select(or => (bool?)or.HoldsSeat)
+            .SingleOrDefaultAsync();
     }
 
     private async Task<OperatorId> SeedOperatorAsync(bool holdsSeat, DateTimeOffset? removedAt = null) =>
         await SeedOperatorForSiteAsync(fixture.SeededSiteId, holdsSeat, removedAt);
 
+    /// <summary>`25-170`: seeds a real Operator-role <c>operator_roles</c> row with the given seat
+    /// status - "holds a seat" is now a fact about that pairing, not the account, so a caller that
+    /// means "this operator's own seat" needs a real role assignment to attach it to.</summary>
     private async Task<OperatorId> SeedOperatorForSiteAsync(SiteId siteId, bool holdsSeat, DateTimeOffset? removedAt = null)
     {
         await using var db = fixture.CreateDbContext();
         var operatorId = new OperatorId(Guid.NewGuid());
-        db.Operators.Add(new Operator(
-            operatorId, siteId, OperatorStatus.Offline, capacity: 5, holdsSeat: holdsSeat, removedAt: removedAt));
+        db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Offline, capacity: 5, removedAt: removedAt));
+        var roleId = await db.Roles.AsNoTracking().Where(r => r.SiteId == siteId && r.Name == "Operator").Select(r => r.Id).SingleOrDefaultAsync();
+        if (roleId == Guid.Empty)
+        {
+            roleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationRead.Value] });
+        }
+
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId, HoldsSeat = holdsSeat });
         await db.SaveChangesAsync();
         return operatorId;
     }
@@ -314,9 +334,15 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
 
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - registered below for RestoreOperatorSeatAsOwnerHandler's own
+        // OperatorRoleSeatCapacity to compose too.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<ResolveOperatorIdentityHandler>();
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         // A real repository, not a fake - this suite already runs against a real Postgres
         // (fixture.DataSource), and the whole point of the override tests above is proving a real row
         // lands.

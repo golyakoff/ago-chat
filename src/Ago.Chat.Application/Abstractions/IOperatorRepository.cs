@@ -22,15 +22,17 @@ public interface IOperatorRepository
     /// person is gone" admits no exception, not even for a former administrator
     /// (`Operator.Remove`'s own remarks: there is no "un-remove" in this codebase).</para>
     ///
-    /// <para><b>`23-71`: <see cref="Operator.HoldsSeat"/> is deliberately no longer filtered here.</b>
-    /// Before this item this query also required <c>HoldsSeat</c>, which was the entire mechanism
-    /// behind `Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`'s sign-in-blocking behaviour -
-    /// but it over-collapsed `decisions/0006`'s own rule ("only the owner **and** as many operators as
-    /// are paid for can sign in"): a seatless administrator was refused this row entirely and could
-    /// never sign in to administer their own account. Whether a returned, non-removed row is actually
-    /// eligible to sign in is now <see cref="UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler"/>'s
-    /// own decision (`OperatorSignInEligibility.CanSignInAsync`, composing <see cref="IPermissionChecker"/>) - this
-    /// query's job is narrower now: "does this identity have a real, non-removed row for this site",
+    /// <para><b>`23-71`/`25-170`: never filtered on seat-holding here.</b> Before `23-71` this query also
+    /// required the account-level `HoldsSeat`, which was the entire mechanism behind
+    /// `Ago.Chat.Api.Auth.OperatorIdentityClaimsTransformation`'s sign-in-blocking behaviour - but it
+    /// over-collapsed `decisions/0006`'s own rule ("only the owner **and** as many operators as are paid
+    /// for can sign in"): a seatless administrator was refused this row entirely and could never sign in
+    /// to administer their own account. `25-170` moved "holds a seat" off this aggregate entirely, onto
+    /// one `(operator, role)` pairing in `operator_roles` - so there is no column here to filter on any
+    /// more even in principle. Whether a returned, non-removed row is actually eligible to sign in is
+    /// <see cref="UseCases.ResolveOperatorIdentity.ResolveOperatorIdentityHandler"/>'s own decision
+    /// (`OperatorSignInEligibility.CanSignInAsync`, composing <see cref="IOperatorRoleRepository.HoldsAnySeatAsync"/>) -
+    /// this query's job is narrower now: "does this identity have a real, non-removed row for this site",
     /// nothing about whether it may sign in.</para>
     /// </summary>
     Task<Operator?> GetByExternalSubjectIdAndSiteIdAsync(string externalSubjectId, SiteId siteId, CancellationToken cancellationToken);
@@ -47,10 +49,9 @@ public interface IOperatorRepository
     ///
     /// <para>`13-03`: "every row" here means every non-removed row - the same
     /// <see cref="Operator.RemovedAt"/> filter <see cref="GetByExternalSubjectIdAndSiteIdAsync"/>'s
-    /// own remarks describe. <b>`23-71`: no longer also filtered on <see cref="Operator.HoldsSeat"/></b> -
-    /// see that method's own remarks on why; whether a seatless row is still eligible to sign in
-    /// (administrator or not) is <see cref="ResolveOperatorIdentityHandler"/>'s own decision to make
-    /// per row, not this query's.</para>
+    /// own remarks describe. <b>`23-71`/`25-170`: never filtered on seat-holding</b> - see that method's
+    /// own remarks on why; whether a seatless row is still eligible to sign in (administrator or not) is
+    /// <see cref="ResolveOperatorIdentityHandler"/>'s own decision to make per row, not this query's.</para>
     /// </summary>
     Task<IReadOnlyList<Operator>> ListByExternalSubjectIdAsync(string externalSubjectId, CancellationToken cancellationToken);
 
@@ -91,15 +92,8 @@ public interface IOperatorRepository
     /// cannot use this method to probe whether an id exists at all.</summary>
     Task<Operator?> GetByIdAsync(OperatorId id, SiteId siteId, CancellationToken cancellationToken);
 
-    /// <summary>`13-03`: the over-seats condition's own read -
-    /// `count(operators where HoldsSeat AND RemovedAt IS NULL)` for one site. A derived, read-time
-    /// count, not a stored counter (this item's own Scope: "computed at read time, not a stored flag") -
-    /// `GetSeatAssignmentSummaryHandler`'s only caller, and `ToggleOperatorSeatHandler`'s own capacity
-    /// guard before assigning one more seat.</summary>
-    Task<int> CountHeldSeatsAsync(SiteId siteId, CancellationToken cancellationToken);
-
     /// <summary>Persists an <see cref="Operator"/> mutated via <see cref="Operator.GoOnline"/>/
-    /// <see cref="Operator.GoOffline"/>/<see cref="Operator.ToggleSeat"/>/<see cref="Operator.Remove"/>.
+    /// <see cref="Operator.GoOffline"/>/<see cref="Operator.Remove"/>.
     /// Always called on an entity this same request already loaded through one of the
     /// <see cref="GetByIdAsync(OperatorId,System.Threading.CancellationToken)"/> overloads, so EF's
     /// change tracking is what actually writes the row - no concurrency token on this table

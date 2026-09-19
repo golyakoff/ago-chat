@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
@@ -41,9 +42,15 @@ public sealed class ConversationAssignmentConcurrencyTests(ConcurrencyTestFixtur
         await using (var db = fixture.CreateDbContext())
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            // `25-170`: the assignment claimers now require a real Operator-role seat, not merely
+            // `Online` - one seeded role for the site, every operator linked to it (HoldsSeat defaults
+            // true, OperatorRoleRecord's own remarks).
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             foreach (var operatorId in operatorIds)
             {
                 db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, operatorCapacity));
+                db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             }
 
             foreach (var conversationId in conversationIds)

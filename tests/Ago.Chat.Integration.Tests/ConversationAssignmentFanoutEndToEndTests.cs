@@ -37,12 +37,18 @@ public sealed class ConversationAssignmentFanoutEndToEndTests(ConnectionFanoutFi
         var visitorId = new VisitorId(Guid.NewGuid());
         var operatorId = new OperatorId(Guid.NewGuid());
         var conversationId = new ConversationId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
 
         await using (var seed = fixture.CreateDbContext())
         {
             seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             seed.Visitors.Add(new Visitor(visitorId, siteId, Now));
             seed.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // `25-170`: the real assignment job's own SkipLockedAssignmentClaimer/RedisLockAssignmentClaimer
+            // now filter candidates to Operator-role seat holders (operator_roles.HoldsSeat) - a
+            // role-less operator is no longer a routing candidate at all.
+            seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
+            seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
             seed.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
             await seed.SaveChangesAsync(CancellationToken.None);
         }

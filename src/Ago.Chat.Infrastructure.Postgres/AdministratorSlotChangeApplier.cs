@@ -15,13 +15,13 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// once <see cref="Application.UseCases.PurchaseAdministratorSlot.PurchaseAdministratorSlotHandler"/>'s
 /// own prorated charge has already succeeded.
 ///
-/// <para><b>No <see cref="IAdministratorLimitEnforcer"/> call here, unlike every other caller of
+/// <para><b>No <c>OperatorRoleSeatReconciler</c> call here, unlike every other caller of
 /// <see cref="Site.ActivateSubscription"/>.</b> This applier only ever increases
 /// <see cref="BillingSubscription.ExtraAdministratorsPurchased"/> (<see cref="BillingSubscription.ApplyAdministratorPurchase"/>'s
 /// own guard throws otherwise), so <see cref="Site.AdminLimit"/> can only go up here, never down - the
-/// one precondition <see cref="IAdministratorLimitEnforcer.DemoteExcessAdministratorsAsync"/> exists to
-/// react to can provably never hold at this call site, so it is not called, rather than called and
-/// trusted to no-op - a reader should not have to check the enforcer's own guard to know this path
+/// one precondition the reconciliation procedure exists to react to can provably never hold at this call
+/// site, so it is not called, rather than called and trusted to no-op - a reader should not have to
+/// check the reconciler's own guard to know this path
 /// never demotes anybody.</para>
 /// </summary>
 public sealed class AdministratorSlotChangeApplier(AgoChatDbContext db, IOutboxWriter outbox, IIdGenerator idGenerator)

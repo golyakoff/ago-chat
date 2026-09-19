@@ -132,15 +132,21 @@ public sealed record OwnerSiteRoleDto(string Name, IReadOnlyList<string> Permiss
 /// <param name="OperatorId">A raw <see cref="Guid"/>, never <c>Ago.Chat.Domain.OperatorId</c> - the
 /// identical "the wire carries values, not vocabulary" reasoning <see cref="OwnerSiteModuleDto.Id"/>'s
 /// own remarks state for itself; this project has no reference to <c>Ago.Chat.Domain</c>.</param>
-/// <param name="HoldsSeat">What the console's own "Restore seat" action is offered for -
-/// <see langword="false"/> is the locked-out candidate, exactly the fact the incident this item was
-/// filed from needed a way to see.</param>
-/// <param name="RoleNames">Every role this operator currently holds, the same field
-/// <c>OperatorTeamMemberDto.RoleNames</c> already carries - an empty list here is the "stripped their
-/// own last role" case this item's own scope names but does not fix, made visible rather than
-/// hidden.</param>
+/// <param name="Roles">`25-170`: every role this operator currently holds, each with its own seat
+/// status - replacing the pre-`25-170` flat <c>HoldsSeat</c>/<c>RoleNames</c> pair, since "holds a seat"
+/// is now a fact about one <c>(operator, role)</c> pairing, not the account as a whole. An empty list
+/// here is the "stripped their own last role" case this item's own scope names but does not fix, made
+/// visible rather than hidden; a role present with <c>HoldsSeat: false</c> is what the console's own
+/// "Restore seat" action is offered for on that specific role - exactly the fact the `23-68` incident
+/// this item was filed from needed a way to see, now expressed per role instead of per account.</param>
 public sealed record OwnerSiteOperatorDto(
-    Guid OperatorId, string? DisplayName, string? Email, bool HoldsSeat, IReadOnlyList<string> RoleNames);
+    Guid OperatorId, string? DisplayName, string? Email, IReadOnlyList<OwnerSiteRoleSeatDto> Roles);
+
+/// <summary>`25-170`: one role on the wire, and whether that specific pairing currently holds a seat -
+/// the owner-facing counterpart of <c>Ago.Chat.Application.UseCases.GetOperatorTeam.OperatorRoleSeatDto</c>,
+/// restated here on this project's own independent wire vocabulary (this file's own existing
+/// discipline).</summary>
+public sealed record OwnerSiteRoleSeatDto(string RoleName, bool HoldsSeat);
 
 /// <summary>
 /// `23-14`: one row of <see cref="OwnerSiteDetailResponse.Modules"/> - a module this site has (or had)

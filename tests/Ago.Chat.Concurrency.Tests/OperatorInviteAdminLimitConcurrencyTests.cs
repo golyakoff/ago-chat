@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -70,11 +71,14 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
             .CountAsync(o => o.SiteId == seed.SiteId && o.RemovedAt == null);
         Assert.Equal(adminLimit, finalAdministratorCount);
 
-        // `25-25`'s own independence requirement, under contention: the seat count the *other* limit
-        // gates never moved, even while N callers raced the Administrator limit - only the one
-        // existing operator row (the founder, seeded below) ever held a seat.
-        var heldSeats = await verify.Operators.AsNoTracking()
-            .CountAsync(o => o.SiteId == seed.SiteId && o.RemovedAt == null && o.HoldsSeat);
+        // `25-25`/`25-170`'s own independence requirement, under contention: the Operator role's own
+        // held-seat count (the *other* limit gates) never moved, even while N callers raced the
+        // Administrator limit - only the one existing operator row (the founder, seeded below, holding
+        // both seeded roles the way a real founder does) ever held that seat.
+        var heldSeats = await verify.OperatorRoles.AsNoTracking()
+            .Where(link => link.RoleId == seed.OperatorRoleId && link.HoldsSeat)
+            .Join(verify.Operators.AsNoTracking(), link => link.OperatorId, o => o.Id, (link, o) => o)
+            .CountAsync(o => o.SiteId == seed.SiteId && o.RemovedAt == null);
         Assert.Equal(1, heldSeats);
 
         var redeemedInvites = await verify.OperatorInvites.AsNoTracking()
@@ -83,12 +87,13 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
         Assert.Equal(1, redeemedInvites);
     }
 
-    private sealed record Seed(SiteId SiteId, Guid AdminRoleId, OperatorId CreatedByOperatorId);
+    private sealed record Seed(SiteId SiteId, Guid AdminRoleId, Guid OperatorRoleId, OperatorId CreatedByOperatorId);
 
     private async Task<Seed> SeedSiteAsync(int adminLimit, int existingAdministrators)
     {
         var siteId = new SiteId(Guid.NewGuid());
         var adminRoleId = Guid.NewGuid();
+        var operatorRoleId = Guid.NewGuid();
         var creatorId = new OperatorId(Guid.NewGuid());
 
         await using var db = fixture.CreateDbContext();
@@ -97,10 +102,11 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
         // not silently pass through.
         var site = new Site(siteId, $"site_{siteId.Value:N}", [], tier: SubscriptionTierBands.Growth, seatLimit: 100);
         db.Sites.Add(site);
-        // The row-locked read this test exercises (`LockSiteAndReadCapacityAsync`) reads `admin_limit`
-        // straight off the column - `SubscriptionTierBands.Growth`'s own derived default is `2`, but
-        // this write is explicit and independent of it, matching `OperatorInviteSeatLimitConcurrencyTests`'
-        // own explicit `seatLimit:` argument rather than relying on a tier's default to happen to agree.
+        // The row-locked read this test exercises (`OperatorRoleSeatCapacity`, `25-170`'s unified
+        // procedure) reads `admin_limit` straight off the column - `SubscriptionTierBands.Growth`'s own
+        // derived default is `2`, but this write is explicit and independent of it, matching
+        // `OperatorInviteSeatLimitConcurrencyTests`' own explicit `seatLimit:` argument rather than
+        // relying on a tier's default to happen to agree.
         db.Entry(site).Property(nameof(Site.AdminLimit)).CurrentValue = adminLimit;
         db.Roles.Add(new RoleRecord
         {
@@ -109,20 +115,32 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
             Name = "Admin",
             Permissions = [Permission.SiteManageOperators.Value],
         });
-        // The founder - holds a seat (registration's own default) and the Admin role, the identical
-        // shape RegisterSiteHandler gives a real founder.
-        db.Operators.Add(new Operator(creatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "creator", holdsSeat: true));
+        db.Roles.Add(new RoleRecord
+        {
+            Id = operatorRoleId,
+            SiteId = siteId,
+            Name = "Operator",
+            Permissions = [Permission.ConversationRead.Value],
+        });
+        // The founder - holds both seeded roles from registration, the identical shape
+        // RegisterSiteHandler gives a real founder (`25-170`: the Operator-role row's own HoldsSeat
+        // default carries what this test's own account-level `holdsSeat: true` used to mean).
+        db.Operators.Add(new Operator(creatorId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: "creator"));
         db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = creatorId, RoleId = adminRoleId });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = creatorId, RoleId = operatorRoleId });
         for (var i = 1; i < existingAdministrators; i++)
         {
             var extraAdminId = new OperatorId(Guid.NewGuid());
+            // `25-170`: no Operator-role row for this operator at all - an Administrator invited
+            // directly never held one, the identical fact this test's own pre-`25-170` `holdsSeat: false`
+            // argument used to express at the account level.
             db.Operators.Add(new Operator(
-                extraAdminId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: $"existing-admin-{i}", holdsSeat: false));
+                extraAdminId, siteId, OperatorStatus.Online, capacity: 5, externalSubjectId: $"existing-admin-{i}"));
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = extraAdminId, RoleId = adminRoleId });
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
-        return new Seed(siteId, adminRoleId, creatorId);
+        return new Seed(siteId, adminRoleId, operatorRoleId, creatorId);
     }
 
     private sealed record GeneratedInvite(byte[] CodeHash, string Email);
@@ -150,7 +168,9 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
     private async Task<OperatorInviteRedemptionResult> RedeemAsync(byte[] codeHash, string email, string externalSubjectId)
     {
         await using var db = fixture.CreateDbContext();
-        var repository = new OperatorInviteRedemptionRepository(db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db));
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(new OperatorRoleRepository(db), new SiteRepository(db));
+        var repository = new OperatorInviteRedemptionRepository(
+            db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db), roleSeatCapacity);
         return await repository.RedeemAsync(
             new RedeemOperatorInviteAttempt(codeHash, externalSubjectId, Now.AddMinutes(1), Email: email), CancellationToken.None);
     }

@@ -179,6 +179,51 @@ public sealed class ChannelPollerReapTests
         public string Decrypt(byte[] ciphertext) => throw new NotSupportedException("Not exercised by this test.");
     }
 
+    /// <summary>`25-170`: the entitlement watchdog's own pause is read at the very first gate
+    /// <c>RefreshPollersAsync</c> applies (`.Where(c =&gt; c.EntitlementPausedAt is null)`), before a
+    /// poller is ever started for that credential - so a paused credential should never even attempt to
+    /// acquire the ownership lease, proven here by a lease double that would notice immediately if it
+    /// were ever asked (<see cref="AlwaysLosesTheLeaseOwnership.AcquireAttempts"/> staying at zero for
+    /// several refresh ticks, not merely "the credential row still shows `Active = true`").</summary>
+    [Fact]
+    public async Task ACredentialWithALapsedEntitlement_IsNeverPolled_AndNeverAttemptsToAcquireTheLease()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var credential = ChannelCredential.Register(
+            new ChannelCredentialId(Guid.NewGuid()), siteId, ChannelKind.Telegram,
+            tokenCiphertext: [], webhookSecretHash: [], now: DateTimeOffset.UtcNow);
+        credential.PauseForLapsedEntitlement(DateTimeOffset.UtcNow);
+
+        var owning = new AlwaysLosesTheLeaseOwnership();
+
+        var services = new ServiceCollection();
+        services.AddScoped<IChannelCredentialRepository>(_ => new FixedActiveCredentialRepository(credential));
+        services.AddScoped<IChannelCredentialCipher>(_ => new PassthroughCipher());
+        await using var provider = services.BuildServiceProvider();
+
+        var client = new TelegramApiClient(new HttpClient { BaseAddress = new Uri("http://127.0.0.1:1") });
+        var apiOptions = Options.Create(new TelegramBotApiOptions());
+        var pollingOptions = Options.Create(new TelegramLongPollingServiceOptions { CredentialRefreshIntervalSeconds = 1 });
+
+        var service = new TelegramLongPollingService(
+            client, provider.GetRequiredService<IServiceScopeFactory>(), owning, apiOptions, pollingOptions,
+            NullLogger<TelegramLongPollingService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            // Several 1s refresh ticks - long enough that a bug re-including the paused credential in
+            // the pollable set would have attempted to acquire its lease at least once by now.
+            await Task.Delay(TimeSpan.FromSeconds(4));
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(0, owning.AcquireAttempts);
+    }
+
     /// <summary>Denies every acquire, immediately - PollOneCredentialAsync should therefore return right
     /// after this returns null, without ever touching client/scope/HTTP, giving _pollers a completed
     /// Task to (hopefully) reap on the very next tick.</summary>

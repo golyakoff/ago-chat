@@ -10,79 +10,72 @@ namespace Ago.Chat.Application.Tests.UseCases.ResolveOperatorIdentity;
 /// property of <see cref="OperatorSignInEligibility.CanSignInAsync"/>'s own result, not of any one
 /// handler - so these tests drive the actual sign-in check the way <c>ResolveOperatorIdentityHandler</c>
 /// does, rather than re-deriving "would this be safe" from a handler's own success/failure code the way
-/// `RemoveOperatorHandlerTests` and `ToggleOperatorSeatHandlerTests` each already do for their own
-/// action. `23-67`'s own incident - the sole operator released their own seat and could not sign back
-/// in - is reproduced here against the exact pre-`23-71` rule (<see cref="Operator.HoldsSeat"/> alone)
-/// to show it fails, then against today's rule to show `23-71` already closed it.
+/// `RemoveOperatorHandlerTests`/`ToggleOperatorSeatHandlerTests` each already do for their own action.
+///
+/// <para><b>`25-170`: the permission-exemption mechanism `23-71` built is gone; these tests are rewritten
+/// to prove the one-rule replacement, not the retired exemption.</b> Before this item, a seatless
+/// Administrator could still sign in because <c>Operator.CanSignIn</c> took a second,
+/// permission-derived door (<c>holdsManageOperatorsPermission</c>). That parameter no longer exists -
+/// `CanSignIn` is now `HoldsAnySeatAsync`'s own boolean, full stop. `23-67`'s own incident (a sole
+/// manager releasing their own seat) is still closed today, but by a different, more literal mechanism:
+/// the account's own founder holds *two* roles from registration, so releasing one role's seat still
+/// leaves the other's. An account seatless on *every* role it holds can no longer sign in at all, even
+/// if it is the site's last `site:manage_operators` holder - a real, deliberate consequence of removing
+/// the exemption, closed instead by the platform owner's own recovery tool
+/// (`RestoreOperatorSeatAsOwnerHandler`, `23-68`), not by a second sign-in door.</para>
 /// </summary>
 public class OperatorSignInEligibilityTests
 {
     private static readonly SiteId SiteId = new(Guid.NewGuid());
 
     /// <summary>
-    /// `23-67`'s own incident, reproduced: a site's sole `site:manage_operators` holder releases their
-    /// own last seat (<c>ToggleOperatorSeatHandler.HandleAsync</c>'s entire effect on the aggregate is
-    /// this one call - see that handler's own remarks for why it carries no separate guard of its own).
-    /// Pre-`23-71`, <see cref="Operator.HoldsSeat"/> was the only door and this operator would be
-    /// permanently locked out from inside the product, which is exactly what happened on the live
-    /// deployment. `23-71`'s <see cref="Operator.CanSignIn"/> adds the permission door, so the same
-    /// release leaves them able to sign in - proven against the real <see cref="Operator"/> and
-    /// <see cref="OperatorSignInEligibility"/>, not reasoned about.
+    /// `23-67`'s own incident, reproduced under the `25-170` mechanism: a site's sole
+    /// `site:manage_operators` holder is the founder, holding both seeded roles from registration
+    /// (`SiteRegistrationRepository`'s own remarks). Releasing the Operator role's own seat
+    /// (`ToggleOperatorSeatHandler`'s entire effect for a toggle-off request) leaves the Admin role's
+    /// own seat untouched, so <see cref="OperatorSignInEligibility.CanSignInAsync"/> still resolves true -
+    /// proven against the real <see cref="Operator"/>/<see cref="OperatorSignInEligibility"/>, not
+    /// reasoned about.
     /// </summary>
     [Fact]
-    public async Task CanSignInAsync_TheSoleManager_SurvivesReleasingTheirOwnLastSeat()
+    public async Task CanSignInAsync_TheFoundersSoleManager_SurvivesReleasingTheOperatorRolesOwnSeat()
     {
-        var sole = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5, holdsSeat: true);
-        var permissions = new FakePermissionChecker();
-        permissions.Grant(sole.Id, SiteId, Permission.SiteManageOperators);
+        var sole = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(sole.Id, "Operator", holdsSeat: true);
+        operatorRoles.SeedSeat(sole.Id, "Admin", holdsSeat: true);
 
-        Assert.True(await OperatorSignInEligibility.CanSignInAsync(sole, permissions, CancellationToken.None));
+        Assert.True(await OperatorSignInEligibility.CanSignInAsync(sole, operatorRoles, CancellationToken.None));
 
-        // The entire effect ToggleOperatorSeatHandler has on this aggregate for a toggle-off request -
-        // see that handler's own HandleAsync, which never guards this path.
-        sole.ToggleSeat(false);
+        // The entire effect ToggleOperatorSeatHandler has on operator_roles for a toggle-off request on
+        // the Operator role specifically - see that handler's own HandleAsync, which never guards this
+        // path.
+        await operatorRoles.SetHoldsSeatAsync(sole.Id, SiteId, "Operator", holdsSeat: false, CancellationToken.None);
 
-        Assert.False(sole.HoldsSeat);
         Assert.True(
-            await OperatorSignInEligibility.CanSignInAsync(sole, permissions, CancellationToken.None),
-            "23-71's permission door must keep the sole manager signed-in-capable after releasing their own seat - " +
-            "if this fails, 23-67's incident is reachable again.");
-    }
-
-    /// <summary>The pre-`23-71` counterpart of the test above, kept to show the incident's actual
-    /// mechanism rather than assert it from a changelog: <see cref="Operator.CanSignIn"/> called with
-    /// the permission argument hard-wired to <see langword="false"/> is exactly what "a seat is the
-    /// only door" meant, and it reproduces the lockout.</summary>
-    [Fact]
-    public void CanSignIn_PreOperatorSeatlessSignIn_TheSoleManagerReleasingTheirSeatWouldHaveBeenLockedOut()
-    {
-        var sole = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5, holdsSeat: true);
-
-        Assert.True(sole.CanSignIn(holdsManageOperatorsPermission: false));
-
-        sole.ToggleSeat(false);
-
-        Assert.False(
-            sole.CanSignIn(holdsManageOperatorsPermission: false),
-            "this is 23-67's incident: pre-23-71, releasing the last seat left nobody who could sign in.");
+            await OperatorSignInEligibility.CanSignInAsync(sole, operatorRoles, CancellationToken.None),
+            "the Admin role's own seat must still let the founder sign in after releasing the Operator " +
+            "role's own seat - if this fails, 23-67's incident is reachable again.");
     }
 
     /// <summary>
-    /// `23-67`'s gap in the existing `23-26` coverage: `RemoveOperatorHandlerTests` proves a refused
-    /// self-removal leaves the count at one holder, but nothing before `23-67` asked whether that
-    /// surviving holder can actually sign in - the question `23-67` is actually about. Seatless on
-    /// purpose: the sole manager here never held a seat at all (the `23-71` shape, not the pre-`23-71`
-    /// one), so this specifically proves the survivor's sign-in comes from the permission door, not
-    /// from a seat the refusal happened to leave untouched.
+    /// `25-170`'s own deliberate consequence, proven rather than assumed: an account seatless on *every*
+    /// role it holds cannot sign in at all, even when it is the site's last `site:manage_operators`
+    /// holder - the permission-exemption door `23-71` built no longer exists. This is not a regression
+    /// left unnoticed; it is the accepted trade-off this item's own design states explicitly, and the
+    /// platform owner's own recovery tool (`RestoreOperatorSeatAsOwnerHandler`, `23-68`) exists
+    /// specifically for this shape of lockout.
     /// </summary>
     [Fact]
-    public async Task CanSignInAsync_TheSurvivingManagerAfterARefusedSelfRemoval_CanStillSignIn()
+    public async Task CanSignInAsync_ASoleManagerSeatlessOnEveryRole_CannotSignIn()
     {
-        var sole = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5, holdsSeat: false);
+        var sole = new Operator(new OperatorId(Guid.NewGuid()), SiteId, OperatorStatus.Offline, capacity: 5);
         var permissions = new FakePermissionChecker();
         permissions.Grant(sole.Id, SiteId, Permission.SiteManageOperators);
         var operators = new FakeOperatorRepository();
         operators.Seed(sole);
+        var operatorRoles = new FakeOperatorRoleRepository();
+        operatorRoles.SeedSeat(sole.Id, "Admin", holdsSeat: false);
 
         var handler = new RemoveOperatorHandler(
             operators, permissions, new FakeUnitOfWork(), new FakeOutboxWriter(), new FakeIdGenerator(),
@@ -91,13 +84,14 @@ public class OperatorSignInEligibilityTests
         var result = await handler.HandleAsync(
             new Ago.Chat.Application.UseCases.RemoveOperator.RemoveOperator(sole.Id, SiteId, sole.Id), CancellationToken.None);
 
+        // `23-26`'s own guard still protects the role assignment - removal is refused, so the account
+        // still exists and still holds the role that grants site:manage_operators.
         Assert.True(result.IsFailure);
         Assert.Equal("Operator.IsLastManager", result.Error!.Value.Code);
         Assert.Null(sole.RemovedAt);
-        Assert.True(
-            await OperatorSignInEligibility.CanSignInAsync(sole, permissions, CancellationToken.None),
-            "the operator the guard refused to remove must still be able to sign in - a count of one " +
-            "holder that could not itself sign in would satisfy 23-26's own check while still leaving " +
-            "23-67's invariant broken.");
+
+        // But existing and holding the permission is no longer the same as being able to sign in - the
+        // account is genuinely locked out until its own seat (or another role's) is restored.
+        Assert.False(await OperatorSignInEligibility.CanSignInAsync(sole, operatorRoles, CancellationToken.None));
     }
 }

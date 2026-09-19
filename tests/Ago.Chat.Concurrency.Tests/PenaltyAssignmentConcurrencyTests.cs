@@ -44,6 +44,10 @@ public sealed class SkipLockedPenaltyAssignmentConcurrencyTests(ConcurrencyTestF
 
             db.Sites.Add(site);
             db.Operators.Add(new Operator(operatorId, siteId, operatorStatus, capacity: 1));
+            // `25-170`: the claimer now requires a real Operator-role seat, not merely `Online`/`Away`.
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, conversationCreatedAt));
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, conversationCreatedAt));
             await db.SaveChangesAsync();
@@ -249,6 +253,10 @@ public sealed class RedisLockPenaltyAssignmentConcurrencyTests(SiteCachingConcur
 
             db.Sites.Add(site);
             db.Operators.Add(new Operator(operatorId, siteId, operatorStatus, capacity: 1));
+            // `25-170`: the claimer now requires a real Operator-role seat, not merely `Online`/`Away`.
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, conversationCreatedAt));
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, conversationCreatedAt));
             await db.SaveChangesAsync();

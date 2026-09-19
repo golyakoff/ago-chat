@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
@@ -40,9 +41,13 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
         await using (var db = fixture.CreateDbContext())
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            // `25-170`: the assignment claimers now require a real Operator-role seat.
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             foreach (var operatorId in operatorIds)
             {
                 db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, operatorCapacity));
+                db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             }
 
             foreach (var conversationId in conversationIds)
@@ -134,13 +139,16 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
         await using (var db = fixture.CreateDbContext())
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             db.Operators.Add(new Operator(seatedOperatorId, siteId, OperatorStatus.Online, capacity: 5));
-            // HoldsSeat: false, Online, real capacity room - exactly what a seatless administrator's
-            // own console connection can now produce (Operator.NoteConnected asks nothing about the
-            // seat). Least-loaded-first ordering would otherwise make this the *preferred* candidate,
-            // since it starts with the same zero active_chats as the seated one - proving this isn't
-            // merely tie-broken away by chance.
-            db.Operators.Add(new Operator(seatlessOperatorId, siteId, OperatorStatus.Online, capacity: 5, holdsSeat: false));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = seatedOperatorId, RoleId = operatorRoleId });
+            // No Operator-role row at all (`25-170`) - Online, real capacity room, but no seat -
+            // exactly what a seatless administrator's own console connection can now produce
+            // (Operator.NoteConnected asks nothing about the seat). Least-loaded-first ordering would
+            // otherwise make this the *preferred* candidate, since it starts with the same zero
+            // active_chats as the seated one - proving this isn't merely tie-broken away by chance.
+            db.Operators.Add(new Operator(seatlessOperatorId, siteId, OperatorStatus.Online, capacity: 5));
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
             await db.SaveChangesAsync();

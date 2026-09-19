@@ -10,13 +10,25 @@
 /// was born `Offline` and had no way to become anything else - only the demo seed script's raw SQL ever
 /// wrote `Online`, which is why assignment only ever looked like it worked.
 ///
-/// <para><b>`13-03`: <see cref="HoldsSeat"/> and <see cref="RemovedAt"/></b> - the seat-assignment and
-/// operator-removal mechanism `13-01` named but did not build (its own Out of scope), folded into this
-/// item because nothing else in the roadmap owns it. Both are plain flags on this aggregate rather than
-/// a separate "seat assignment" aggregate: neither has any lifecycle of its own beyond "on or off" /
-/// "set once, never unset" (<see cref="Remove"/>'s own remarks), so the identical "one column, no object
-/// to bundle it into yet" judgement `Site.Tier`/`Site.SeatLimit`'s own remarks already make for the
-/// analogous case applies here too.</para>
+/// <para><b>`13-03`: <see cref="RemovedAt"/></b> - the operator-removal mechanism `13-01` named but did
+/// not build (its own Out of scope), folded into this item because nothing else in the roadmap owns it.
+/// A plain flag on this aggregate rather than a separate "removal" aggregate: it has no lifecycle of its
+/// own beyond "set once, never unset" (<see cref="Remove"/>'s own remarks), so the identical "one
+/// column, no object to bundle it into yet" judgement `Site.Tier`/`Site.SeatLimit`'s own remarks already
+/// make for the analogous case applies here too.</para>
+///
+/// <para><b>`25-170`: "holds a seat" is no longer a fact this aggregate carries at all.</b> Before this
+/// item, a single <c>HoldsSeat</c> flag lived here and <see cref="CanSignIn"/> read it directly - which
+/// worked only by accident for the seeded Admin role, whose own holder was exempted from it by a second,
+/// separate rule (<c>holdsManageOperatorsPermission</c>, below). This item's own root-cause finding is
+/// that "holds a seat" is not a fact about an operator <em>account</em> at all - it is a fact about one
+/// <c>(operator, role)</c> pairing, since a founder holds two roles from registration and must be able to
+/// lose one role's seat independently of the other's. That fact now lives on <c>operator_roles.HoldsSeat</c>
+/// (<c>Ago.Chat.Infrastructure.Postgres.Persistence.OperatorRoleRecord</c>), a join-table column no
+/// aggregate wraps - the identical "no invariant here for an aggregate to enforce" reasoning the
+/// `active_chats` shadow property already established for a different column on a different table. See
+/// <see cref="CanSignIn"/>'s own remarks for what this aggregate does with that fact once a caller has
+/// resolved it.</para>
 /// </summary>
 public sealed class Operator
 {
@@ -53,22 +65,6 @@ public sealed class Operator
     /// the token's own `email` claim, copied and refreshed the same way, for the same reason.</summary>
     public string? Email { get; }
 
-    /// <summary>`13-03`: does this operator currently occupy one of the site's paid seats. Defaults to
-    /// <see langword="true"/> at construction - every operator created today (self-registration,
-    /// invite redemption) is created within `13-01`'s own seat-limit check and therefore already fits,
-    /// so "holds a seat" is the correct starting state for every row this codebase has ever written,
-    /// not a special case.
-    ///
-    /// <para>Toggled by <see cref="ToggleSeat"/>, a site's `Permission.SiteManageOperators` holder's own
-    /// call, up to the site's current `SeatLimit` (the caller's own capacity check, not this aggregate's
-    /// - the same "aggregate applies, caller enforces the cross-aggregate rule" split
-    /// `OperatorInviteRedemptionRepository`'s own seat check already draws against `Operator` rows).
-    /// `false` resolves to no `OperatorId` claim at all (`ResolveOperatorIdentityHandler`'s own query -
-    /// the exact same shape as no `operators` row existing, so `RequireOperatorIdentity` already refuses
-    /// it with no new policy code, `decisions/0006`'s own "only the owner and as many operators as are
-    /// paid for can sign in").</para></summary>
-    public bool HoldsSeat { get; private set; } = true;
-
     /// <summary>`13-03`: when this operator was removed from their site, or <see langword="null"/> for
     /// one still active - "this person is gone", set once by <see cref="Remove"/> and never cleared
     /// (there is no "un-remove" in this item's own Scope). A removed operator resolves to no
@@ -92,7 +88,6 @@ public sealed class Operator
         string? externalSubjectId = null,
         string? displayName = null,
         string? email = null,
-        bool holdsSeat = true,
         DateTimeOffset? removedAt = null)
     {
         if (capacity <= 0)
@@ -108,7 +103,6 @@ public sealed class Operator
         ExternalSubjectId = externalSubjectId;
         DisplayName = displayName;
         Email = email;
-        HoldsSeat = holdsSeat;
         RemovedAt = removedAt;
     }
 
@@ -191,39 +185,43 @@ public sealed class Operator
     /// for why a mere connect or disconnect must not do this instead.</summary>
     public void GoAway() => Status = OperatorStatus.Away;
 
-    /// <summary>`13-03`: a site's `Permission.SiteManageOperators` holder assigns or releases this
-    /// operator's own seat. No guard against toggling a removed operator back on - <see cref="Remove"/>
-    /// is the permanent one; this method has nothing to say about it, and a caller that loaded a removed
-    /// operator to toggle its seat has already made a mistake this aggregate cannot see.</summary>
-    public void ToggleSeat(bool holdsSeat) => HoldsSeat = holdsSeat;
-
     /// <summary>
-    /// `23-71`: `decisions/0006`'s "only the owner and as many operators as are paid for can sign in"
-    /// restored to what it actually said - the owner is *additional to* the paid seats, not one of
-    /// them. `13-03` collapsed that: a seat became the *only* door, so an administrator holding no seat
-    /// (the common case for a shop owner who delegates every chat and answers none) could not sign in
-    /// at all. This is the one-line invariant both callers that decide sign-in eligibility
-    /// (<c>ResolveOperatorIdentityHandler</c>, <c>ListMyTenanciesHandler</c>) now share, so the rule
-    /// lives once, here, rather than as two separately maintained `HoldsSeat || ...` expressions that
-    /// could drift apart.
+    /// `23-71`: `decisions/0006`'s "only the owner and as many operators as are paid for can sign in" -
+    /// originally expressed here as `HoldsSeat || holdsManageOperatorsPermission`, an Admin-permission
+    /// exemption that let a seatless administrator sign in to administer their own account even though
+    /// their own seat said no.
     ///
-    /// <para><paramref name="holdsManageOperatorsPermission"/> is supplied by the caller, never
-    /// resolved here: <see cref="Permission"/>/role resolution is <c>IPermissionChecker</c>'s own
-    /// infrastructure-backed port (`adr/0016`), and Domain must not depend on it (`clean-architecture.md`'s
-    /// dependency rule - the alternative, giving <see cref="Operator"/> a reference to a permission
-    /// checker so it could resolve this itself, would make the aggregate untestable without a database
-    /// and would put an infrastructure concern inside the one layer that must never see it). This method
-    /// is deliberately just the boolean rule; the lookup that produces its input is the caller's own
-    /// job.</para>
+    /// <para><b>`25-170`: the exemption is gone; this is now the one rule it always should have been.</b>
+    /// The exemption was a symptom, not the fix - it existed only because "holds a seat" used to be one
+    /// flag per <em>account</em>, so an Administrator (who by design consumes no Operator-role seat) had
+    /// to be carved out by permission or could never sign in at all. Now that a seat is a fact about one
+    /// <c>(operator, role)</c> pairing, an account simply can sign in whenever <em>any</em> role it
+    /// currently holds has its own seat - an Administrator's own Admin-role row defaults to holding one
+    /// (`operator_roles`' own remarks) the same way an Operator-role row always has, with no permission
+    /// carve-out required to reach the identical outcome. An account disabled on every role it holds -
+    /// Admin-role included - is disabled, full stop, the same as one disabled on its Operator-role seat;
+    /// there is no longer a second door.</para>
+    ///
+    /// <para><paramref name="anyRoleHoldsSeat"/> is supplied by the caller, never resolved here:
+    /// <c>operator_roles</c> is an infrastructure-backed table (<c>IOperatorRoleRepository</c>,
+    /// `adr/0016`'s own dependency rule), and Domain must not depend on it - the alternative, giving
+    /// <see cref="Operator"/> a reference to that repository so it could resolve this itself, would make
+    /// the aggregate untestable without a database and would put an infrastructure concern inside the
+    /// one layer that must never see it. This method is deliberately just the rule; the lookup that
+    /// produces its input (<c>IOperatorRoleRepository.HoldsAnySeatAsync</c>) is the caller's own job -
+    /// <c>Application.UseCases.ResolveOperatorIdentity.OperatorSignInEligibility</c>, the one place both
+    /// callers that decide sign-in eligibility (<c>ResolveOperatorIdentityHandler</c>,
+    /// <c>ListMyTenanciesHandler</c>) already share it from.</para>
     ///
     /// <para><b>Never widens routing.</b> This answers "may sign in", nothing else - the assignment
     /// engine and every other routing/on-duty query (`SkipLockedAssignmentClaimer`,
     /// `RedisLockAssignmentClaimer`, `IOperatorRepository.AnyOnlineForSiteAsync`,
-    /// `AssignConversationHandler`'s own self-claim guard) still gate on <see cref="HoldsSeat"/> alone -
-    /// "may administer this account" and "may be routed a conversation" are two different questions
-    /// from this item onward, and this method only ever answers the first.</para>
+    /// `AssignConversationHandler`'s own self-claim guard) still gate on holding the seeded
+    /// <c>"Operator"</c> role's own seat specifically (<c>IOperatorRoleRepository.HoldsRoleSeatAsync</c>)
+    /// - "may administer this account" and "may be routed a conversation" are two different questions,
+    /// and this method only ever answers the first.</para>
     /// </summary>
-    public bool CanSignIn(bool holdsManageOperatorsPermission) => HoldsSeat || holdsManageOperatorsPermission;
+    public bool CanSignIn(bool anyRoleHoldsSeat) => anyRoleHoldsSeat;
 
     /// <summary>`13-03`: "this person is gone" - a site's `Permission.SiteManageOperators` holder's own
     /// call. Raises <see cref="OperatorRemoved"/> so `Ago.Chat.Worker` can release this operator's

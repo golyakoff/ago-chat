@@ -77,7 +77,8 @@ public class ReceiveChannelAttachmentHandlerTests
 
         var handler = new Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler(
             identities, visitors, conversations, startConversation, createAttachment, confirmAttachment,
-            sendVisitorMessage, siteConfig, outbox, clock, idGenerator, emojiPairs);
+            sendVisitorMessage, siteConfig, new AlwaysEntitledBillingOptionEntitlementProvider(),
+            new AlwaysEntitledModuleQuantityGrantStore(), outbox, clock, idGenerator, emojiPairs);
 
         return new Fixture(handler, identities, visitors, conversations, attachments, fileStorage, pipeline, outbox);
     }
@@ -92,6 +93,63 @@ public class ReceiveChannelAttachmentHandlerTests
         var conversation = await fixture.Conversations.GetActiveForVisitorAsync(visitorId, CancellationToken.None);
         Assert.NotNull(conversation);
         return conversation!;
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // `25-170`: the entitlement guard - checked before any of the grant/identity work below even
+    // starts, since a site with no channel entitlement at all should not be minting visitors for it.
+    // -----------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task PrepareAsync_WhenTheSitesChannelEntitlementHasLapsedToZero_Refuses_AndCreatesNoIdentity()
+    {
+        var identities = new FakeChannelIdentityRepository();
+        var visitors = new FakeVisitorRepository();
+        var conversations = new FakeConversationRepository();
+        var attachments = new FakeAttachmentRepository();
+        var fileStorage = new FakeFileStorage();
+        var clock = new FakeClock(Now);
+        var idGenerator = new FakeIdGenerator();
+        var emojiPairs = new FakeVisitorEmojiPairGenerator();
+        var outbox = new FakeOutboxWriter();
+        var pipeline = new FakeMessagePipeline();
+
+        var sites = new FakeSiteRepository();
+        sites.Seed(new Site(SiteId, $"site_{SiteId.Value:N}", ["https://example.test"], "Test Site", Now));
+        var siteConfig = new GetSiteConfigByIdHandler(sites, new FakeCache());
+        var restrictions = new FakeVisitorRestrictionRepository();
+        var startConversation = new StartConversationHandler(
+            visitors, conversations, restrictions, siteConfig,
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs);
+        var permissions = new FakePermissionChecker();
+        var createAttachment = new CreateAttachmentHandler(
+            conversations, attachments, fileStorage, new FakeRateLimiter(), permissions,
+            new FakeConversationAttachmentBudget(), new FakeSiteAttachmentStorageBudget(), sites,
+            new FakeBillingSubscriptionRepository(), new FakeUnitOfWork(), new AttachmentOptions(),
+            new AttachmentRateLimitOptions(), new AttachmentStorageQuotaOptions(), idGenerator, clock);
+        var confirmAttachment = new ConfirmAttachmentHandler(
+            attachments, conversations, fileStorage, permissions, outbox, idGenerator, clock);
+        var sendVisitorMessage = new SendVisitorMessageHandler(
+            conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline);
+
+        var entitlements = new FakeBillingOptionEntitlementProvider();
+        var moduleKey = new ModuleKey("channel-max");
+        entitlements.Map(ChannelEntitlementOptionKeys.For(ChannelKind.Max), moduleKey);
+        var grants = new FakeModuleQuantityGrantStore();
+        grants.Grants[(SiteId, moduleKey)] = 0;
+
+        var handler = new Application.UseCases.ReceiveChannelAttachment.ReceiveChannelAttachmentHandler(
+            identities, visitors, conversations, startConversation, createAttachment, confirmAttachment,
+            sendVisitorMessage, siteConfig, entitlements, grants, outbox, clock, idGenerator, emojiPairs);
+
+        var result = await handler.PrepareAsync(
+            new Application.UseCases.ReceiveChannelAttachment.PrepareChannelAttachmentUpload(
+                SiteId, ChannelKind.Max, new ExternalChannelAddress("max-chat-1"), "image/jpeg", 1024),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("ChannelCredential.NotEntitled", result.Error!.Value.Code);
+        Assert.Empty(identities.All);
     }
 
     // -----------------------------------------------------------------------------------------

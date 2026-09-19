@@ -74,9 +74,10 @@ public sealed class GetBillingStatusHandlerIntegrationTests(PostgresFixture fixt
         Assert.Equal(SubscriptionTierBands.MinSeats, status.SeatPricing.MinSeats);
         Assert.Equal(SubscriptionTierBands.MaxSeats, status.SeatPricing.MaxSeats);
 
-        // Every second operator holds a seat too, but only the Administrator-role holders above are
-        // what AdminsUsed counts - Operator seats stay this handler's own pre-existing SeatsUsed field.
-        Assert.Equal(3, status.SeatsUsed);
+        // `25-170`: SeatsUsed now counts the Operator role's own held seats specifically, not merely
+        // "anyone with a seat" - the two Admin-only operators seeded above hold no Operator-role
+        // assignment at all, so only the one plain Operator counts here.
+        Assert.Equal(1, status.SeatsUsed);
     }
 
     [Fact]
@@ -118,7 +119,7 @@ public sealed class GetBillingStatusHandlerIntegrationTests(PostgresFixture fixt
     {
         await using var db = fixture.CreateDbContext();
         var handler = new GetBillingStatusHandler(
-            new SiteRepository(db), new OperatorRepository(db), new BillingSubscriptionRepository(db),
+            new SiteRepository(db), new BillingSubscriptionRepository(db),
             new OperatorRoleRepository(db), new PriceCatalogRepository(db), new PermissionChecker(db));
 
         return await handler.HandleAsync(new GetBillingStatus(requestedBy, siteId), CancellationToken.None);

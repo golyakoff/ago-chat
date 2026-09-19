@@ -357,6 +357,11 @@ public sealed class WhatsAppWebhookEndpointsTests(PostgresFixture fixture)
         builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
+        // `25-170`: ReceiveChannelMessageHandler/ReceiveChannelAttachmentHandler now also compose the
+        // channel-entitlement guard's two ports - a permissive stand-in, since this file tests webhook
+        // signature/routing, not entitlement.
+        builder.Services.AddScoped<IBillingOptionEntitlementProvider, AlwaysEntitledBillingOptionEntitlementProvider>();
+        builder.Services.AddScoped<IModuleQuantityGrantStore, AlwaysEntitledModuleQuantityGrantStore>();
         builder.Services.AddScoped<ReceiveChannelMessageHandler>();
         builder.Services.AddSingleton(Options.Create(configureWhatsApp
             ? new WhatsAppBotApiOptions { AppSecret = AppSecret, VerifyToken = VerifyToken }

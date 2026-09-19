@@ -21,13 +21,18 @@ namespace Ago.Chat.Application.UseCases.GetBillingStatus;
 /// now, not three; the same freshness reasoning above covers every one of them.</para>
 /// </summary>
 public sealed class GetBillingStatusHandler(
-    ISiteRepository sites, IOperatorRepository operators, IBillingSubscriptionRepository subscriptions,
+    ISiteRepository sites, IBillingSubscriptionRepository subscriptions,
     IOperatorRoleRepository operatorRoles, IPriceCatalogRepository prices, IPermissionChecker permissions)
 {
-    // `25-23`: the identical bare literal `ChangeOperatorRoleHandler`/`AdministratorLimitEnforcer`/
+    // `25-23`: the identical bare literal `ChangeOperatorRoleHandler`/
     // `OperatorInviteRedemptionRepository` each already declare their own copy of - see those types'
     // own remarks for why there is still no shared named-role catalogue to read this from instead.
     private const string AdminRoleName = "Admin";
+
+    // `25-170`: the seeded Operator role's own literal, the counterpart of AdminRoleName right above -
+    // this handler's own SeatsUsed is now the Operator role's own held-seat count, not
+    // Domain.Operator.HoldsSeat (removed by this item).
+    private const string OperatorRoleName = "Operator";
 
     public async Task<Result<BillingStatusDto>> HandleAsync(GetBillingStatus query, CancellationToken cancellationToken)
     {
@@ -44,7 +49,12 @@ public sealed class GetBillingStatusHandler(
             return ConversationErrors.SiteNotFound(query.SiteId.Value);
         }
 
-        var seatsUsed = await operators.CountHeldSeatsAsync(query.SiteId, cancellationToken);
+        // `25-170`: IOperatorRoleRepository.GetHeldSeatHolderIdsAsync, not
+        // IOperatorRepository.CountHeldSeatsAsync (removed by this item along with
+        // Domain.Operator.HoldsSeat) - "holds a seat" is now a fact about the Operator role's own
+        // (operator, role) pairing, not the operator account.
+        var seatHolderIds = await operatorRoles.GetHeldSeatHolderIdsAsync(query.SiteId, OperatorRoleName, cancellationToken);
+        var seatsUsed = seatHolderIds.Count;
         // `23-86`: GetBaseForSiteAsync, not GetLatestForSiteAsync - this screen means "the site's base
         // subscription" (tier, seats), and with an option's own BillingSubscription rows now sharing
         // this table, the newest row for a site can be a channel bought yesterday rather than the tier
@@ -63,10 +73,12 @@ public sealed class GetBillingStatusHandler(
                 latest.PendingSeatCount,
                 latest.PendingTier);
 
-        // `25-23`: GetNonRemovedHolderIdsAsync, not CountNonRemovedHoldersAsync - see BillingStatusDto's
-        // own remarks on AdminsUsed for why the locked sibling method is the wrong tool for a plain
-        // display read.
-        var adminHolderIds = await operatorRoles.GetNonRemovedHolderIdsAsync(query.SiteId, AdminRoleName, cancellationToken);
+        // `25-23`/`25-170`: GetHeldSeatHolderIdsAsync, not LockAndGetHeldSeatHolderIdsAsync - see
+        // BillingStatusDto's own remarks on AdminsUsed for why the locked sibling method is the wrong
+        // tool for a plain display read. Now counts the Admin role's own held seats specifically
+        // (HoldsSeat = true), not merely who holds the role - the same "how many count against the
+        // limit right now" question SeatsUsed above already answers for the Operator role.
+        var adminHolderIds = await operatorRoles.GetHeldSeatHolderIdsAsync(query.SiteId, AdminRoleName, cancellationToken);
 
         // `25-23`: tier=="free" is the one bare-literal predicate this codebase already repeats for the
         // identical split (SubscriptionTierBands.ResolveAdminLimit, one line above the constant this

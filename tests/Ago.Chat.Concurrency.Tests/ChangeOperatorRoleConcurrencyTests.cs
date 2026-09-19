@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.UseCases.ChangeOperatorRole;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -88,8 +89,9 @@ public sealed class ChangeOperatorRoleConcurrencyTests(ConcurrencyTestFixture fi
         var unitOfWork = new EfUnitOfWork(db);
         var roleChangeRecords = new RoleChangeRecordRepository(db);
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites);
         var handler = new ChangeOperatorRoleHandler(
-            operators, roles, operatorRoles, permissions, sites, unitOfWork, roleChangeRecords, outbox,
+            operators, roles, operatorRoles, permissions, roleSeatCapacity, unitOfWork, roleChangeRecords, outbox,
             new UuidV7Generator(), new SystemClock());
         return await handler.HandleAsync(new ChangeOperatorRole(requestedBy, siteId, target, "Operator"), CancellationToken.None);
     }

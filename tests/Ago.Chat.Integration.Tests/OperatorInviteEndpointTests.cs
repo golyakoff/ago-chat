@@ -11,6 +11,7 @@ using Ago.Chat.Application.UseCases.HasPendingOperatorInvite;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.ListOperatorInvites;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Application.UseCases.PreviewOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemOperatorInvite;
 using Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller;
@@ -724,7 +725,14 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
 
         await using var db = fixture.CreateDbContext();
         var siteId = new SiteId(adminSite);
-        var heldSeats = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == siteId && o.RemovedAt == null && o.HoldsSeat);
+        // `25-170`: the Operator role's own held-seat count specifically - the founder holds both
+        // seeded roles from registration, the freshly redeemed Administrator holds only "Admin".
+        var operatorRoleId = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId && r.Name == "Operator").Select(r => r.Id).SingleAsync();
+        var heldSeats = await db.OperatorRoles.AsNoTracking()
+            .Where(link => link.RoleId == operatorRoleId && link.HoldsSeat)
+            .Join(db.Operators.AsNoTracking(), link => link.OperatorId, o => o.Id, (link, o) => o)
+            .CountAsync(o => o.SiteId == siteId && o.RemovedAt == null);
         // Only the founder's own seat, from registration - the freshly redeemed Administrator holds
         // none, `decisions/0006`'s "an administrator does not consume an operator seat" proven against
         // the real redeemed row rather than only against the domain constructor default.
@@ -999,6 +1007,9 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddDbContext<AgoChatDbContext>((provider, options) =>
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
+        // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
+        // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
+        builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<ISiteRegistrationRepository, SiteRegistrationRepository>();
         builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         // `24-03`: RegisterSiteHandler's own two new dependencies - SiteRegistrationTests' own
@@ -1008,6 +1019,9 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<IRoleRepository, RoleRepository>();
         builder.Services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
+        // `25-170`: OperatorInviteRedemptionRepository now composes OperatorRoleSeatCapacity - the
+        // one shared capacity-check procedure that replaced its own hand-written seat/admin counting.
+        builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         builder.Services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
         builder.Services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();
         builder.Services.AddSingleton(new OperatorInviteOptions { ConsoleBaseUrl = "https://console.example.test" });

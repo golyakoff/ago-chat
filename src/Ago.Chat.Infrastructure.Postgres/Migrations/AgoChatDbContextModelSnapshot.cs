@@ -370,6 +370,10 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTimeOffset?>("EntitlementPausedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("entitlement_paused_at");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1237,12 +1241,6 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Property<string>("ExternalSubjectId")
                         .HasColumnType("text")
                         .HasColumnName("external_subject_id");
-
-                    b.Property<bool>("HoldsSeat")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(true)
-                        .HasColumnName("holds_seat");
 
                     b.Property<DateTimeOffset?>("RemovedAt")
                         .HasColumnType("timestamp with time zone")
@@ -2593,6 +2591,16 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
                     b.Property<Guid>("RoleId")
                         .HasColumnType("uuid")
                         .HasColumnName("role_id");
+
+                    b.Property<DateTimeOffset>("GrantedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("granted_at");
+
+                    b.Property<bool>("HoldsSeat")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("holds_seat");
 
                     b.HasKey("OperatorId", "RoleId");
 

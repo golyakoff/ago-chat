@@ -178,7 +178,8 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var db = fixture.CreateDbContext();
         var assignConversation = new AssignConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
-            new OperatorRepository(db), new OperatorCapacityStore(db), new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
+            new OperatorRepository(db), new OperatorRoleRepository(db), new OperatorCapacityStore(db),
+            new EfUnitOfWork(db), new UuidV7Generator(), new SystemClock());
         var sendMessage = new SendOperatorMessageHandler(
             new PermissionChecker(db), new SiteSuspensionReadStore(fixture.DataSource),
             new SynchronousMessagePipeline(fixture.DataSource), new SystemClock());
