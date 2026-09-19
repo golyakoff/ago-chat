@@ -97,8 +97,10 @@ public sealed class EmailSmtpClient(EmailBotApiOptions options)
 
         // `25-155`: the one branch point between the plain-only and multipart/alternative build paths -
         // EmailMessageToSend.HtmlBody's own remarks explain why this is the only place that needs to
-        // know about the new method at all. EmailChannelAdapter never sets HtmlBody, so every message it
-        // builds still takes the exact same Build(message) branch it always has.
+        // know about the new method at all. `25-156`: EmailChannelAdapter now sets HtmlBody on every
+        // message it builds too (TenantReplyEmailShell), so this branch point is what actually routes
+        // both that item's own reply mail and NotificationMailSender's own account mail onto the
+        // identical multipart path - neither caller duplicates BuildMultipartAlternative for itself.
         var payload = DotStuff(message.HtmlBody is not null
             ? EmailMimeMessageBuilder.BuildMultipartAlternative(message)
             : EmailMimeMessageBuilder.Build(message));

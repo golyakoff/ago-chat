@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Text;
+using System.Text.RegularExpressions;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Email;
 using Ago.Platform.Kernel;
@@ -15,8 +17,14 @@ namespace Ago.Chat.Integration.Tests;
 /// (<see cref="EmailSmtpClientTests"/>'s own scope, which this class reuses <see cref="FakeSmtpServer"/>
 /// from). Uses the identical minimal fake-repository technique <see cref="WhatsAppChannelAdapterTests"/>
 /// already establishes.
+///
+/// <para>`25-156`: also covers the tenant-branded HTML part this adapter now attaches to every reply
+/// (<see cref="TenantReplyEmailShell"/>) - through the same real SMTP boundary as everything else in this
+/// class, decoded back out of the raw <c>multipart/alternative</c> transcript by
+/// <see cref="ExtractMimePart"/> rather than by calling any internal builder directly, so these tests
+/// prove what actually goes out on the wire, not merely that a method was invoked.</para>
 /// </summary>
-public sealed class EmailChannelAdapterTests
+public sealed partial class EmailChannelAdapterTests
 {
     private static readonly ConversationId ConversationId = new(Guid.NewGuid());
     private static readonly SiteId SiteId = new(Guid.Parse("3fa85f64-5717-4562-b3fc-2c963f66afa6"));
@@ -109,7 +117,16 @@ public sealed class EmailChannelAdapterTests
     /// exactly one connection - with the identical <see cref="OutboundChannelMessage.MessageId"/> and the
     /// same <see cref="FixedClock"/> both adapters share, so the only two facts that could otherwise vary
     /// the DATA payload (the <c>Message-Id</c> and <c>Date</c> headers) are held fixed and the comparison
-    /// is a genuine proof, not a coincidence.</summary>
+    /// is a genuine proof, not a coincidence.
+    ///
+    /// <para>`25-156`: the payload now also carries a per-message random <c>multipart/alternative</c>
+    /// boundary (<see cref="Ago.Chat.Infrastructure.Email.EmailMimeMessageBuilder.BuildMultipartAlternative"/>'s
+    /// own <c>Guid.NewGuid()</c> boundary), which is expected to differ between the two independent sends
+    /// this test makes and would otherwise make the two payloads *never* byte-equal regardless of this
+    /// item's own change - <see cref="NormalizeBoundary"/> replaces that one random token with a fixed
+    /// placeholder in both payloads before comparing, so the comparison still proves what it always
+    /// proved (the flag changes nothing) rather than failing on a fact this test was never about.</para>
+    /// </summary>
     [Fact]
     public async Task SendAsync_IgnoresRequestContactIfSupported_TheDataPayloadIsByteIdenticalEitherWay()
     {
@@ -125,14 +142,132 @@ public sealed class EmailChannelAdapterTests
         await adapterWithFlag.SendAsync(Reply(messageId, requestContactIfSupported: true), CancellationToken.None);
         var transcriptWithFlag = await serverWithFlag.WaitForTranscriptAsync();
 
-        Assert.Equal(transcriptWithoutFlag.DataPayload, transcriptWithFlag.DataPayload);
+        Assert.Equal(
+            NormalizeBoundary(transcriptWithoutFlag.DataPayload), NormalizeBoundary(transcriptWithFlag.DataPayload));
     }
 
-    private static EmailChannelAdapter BuildAdapter(EmailBotApiOptions options, bool hasConversation, bool hasThread)
+    /// <summary>`25-156`: a conversation's own <c>SiteId</c> must always name a real <see cref="Site"/> -
+    /// the identical "should not happen, thrown rather than silently accepted" data-inconsistency
+    /// category <see cref="SendAsync_WhenNoConversationExists_Throws"/>/
+    /// <see cref="SendAsync_WhenNoEmailThreadStateExists_Throws"/> already cover for their own missing
+    /// rows, now proven for the new <see cref="ISiteRepository"/> lookup this item adds.</summary>
+    [Fact]
+    public async Task SendAsync_WhenNoSiteExists_Throws()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(server.Options, hasConversation: true, hasThread: true, hasSite: false);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => adapter.SendAsync(Reply(), CancellationToken.None));
+    }
+
+    /// <summary>`25-156` Done-when #1: the tenant's own name and configured accent colour actually appear
+    /// in the rendered HTML part - decoded back out of the real <c>multipart/alternative</c> transcript,
+    /// not asserted by checking that some method was called.</summary>
+    [Fact]
+    public async Task SendAsync_IncludesTheTenantsNameAndConfiguredAccentColorInTheHtmlPart()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(
+            server.Options, hasConversation: true, hasThread: true,
+            siteName: "Acme Repairs", primaryColorHex: "#FF6600");
+
+        await adapter.SendAsync(Reply(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        var html = ExtractMimePart(transcript.DataPayload, "text/html");
+        Assert.Contains("Acme Repairs", html);
+        Assert.Contains("#FF6600", html);
+    }
+
+    /// <summary>`25-156` Done-when #2: a site with no <see cref="WidgetConfig.PrimaryColorHex"/> set still
+    /// renders correctly, with <see cref="TenantReplyEmailShell.NeutralAccentColorHex"/> rather than a
+    /// missing or broken accent - the not-only-happy-path case the ticket names explicitly.</summary>
+    [Fact]
+    public async Task SendAsync_WithNoAccentColorConfigured_UsesTheNeutralDefaultInTheHtmlPart()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(
+            server.Options, hasConversation: true, hasThread: true,
+            siteName: "Acme Repairs", primaryColorHex: null);
+
+        await adapter.SendAsync(Reply(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        var html = ExtractMimePart(transcript.DataPayload, "text/html");
+        Assert.Contains(TenantReplyEmailShell.NeutralAccentColorHex, html);
+        Assert.Contains("Acme Repairs", html);
+    }
+
+    /// <summary>`25-156` Done-when #3: the <c>text/plain</c> part is exactly <see cref="Reply"/>'s own
+    /// unadorned body - no shell markup has leaked into it - the same "wrapper is opt-in cosmetics, never
+    /// a second copy of the reply's own meaning" rule `25-155` already states for its own multipart
+    /// parts, now checked for this reply channel too.</summary>
+    [Fact]
+    public async Task SendAsync_ThePlainTextPartCarriesTheReplyExactlyAsBefore_Unadorned()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(server.Options, hasConversation: true, hasThread: true);
+        var reply = Reply();
+
+        await adapter.SendAsync(reply, CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        var plainText = ExtractMimePart(transcript.DataPayload, "text/plain");
+        Assert.Equal(reply.Body.Value, plainText);
+        Assert.DoesNotContain("<", plainText);
+    }
+
+    /// <summary>`25-156` Done-when #4 (the test half - a real send is out of a background worker's own
+    /// reach, left explicitly open in this item's own report): the switch to a
+    /// <c>multipart/alternative</c> body changes the <c>Content-Type</c> header alone -
+    /// <see cref="EmailChannelAdapter"/>'s own thread-matching headers are untouched, restated here for
+    /// <c>References</c> alongside <see cref="SendAsync_SetsInReplyToFromTheStoredThreadsLastInboundMessageId"/>'s
+    /// own <c>In-Reply-To</c> coverage.</summary>
+    [Fact]
+    public async Task SendAsync_MultipartAlternativeBody_LeavesTheReferencesHeaderUnaffected()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(server.Options, hasConversation: true, hasThread: true);
+
+        await adapter.SendAsync(Reply(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        Assert.Contains("References: <root@visitor.example>", transcript.DataPayload);
+    }
+
+    private static string NormalizeBoundary(string dataPayload) =>
+        BoundaryPattern().Replace(dataPayload, "BOUNDARY");
+
+    [GeneratedRegex("AgoChatBoundary[0-9a-f]{32}")]
+    private static partial Regex BoundaryPattern();
+
+    /// <summary>Pulls one MIME part's decoded text back out of a raw
+    /// <c>multipart/alternative</c> DATA transcript - both parts this adapter now sends are base64,
+    /// exactly as <see cref="Ago.Chat.Infrastructure.Email.EmailMimeMessageBuilder.BuildMultipartAlternative"/>'s
+    /// own remarks describe, so a test asserting on real content has to undo that encoding first rather
+    /// than substring-matching the wire bytes directly.</summary>
+    private static string ExtractMimePart(string dataPayload, string contentType)
+    {
+        var marker = $"Content-Type: {contentType}; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n";
+        var start = dataPayload.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"expected a {contentType} part in the transcript");
+        start += marker.Length;
+
+        var end = dataPayload.IndexOf("\r\n--AgoChatBoundary", start, StringComparison.Ordinal);
+        Assert.True(end >= 0, "expected a closing boundary after the part");
+
+        var base64 = dataPayload[start..end].Replace("\r\n", "");
+        return Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+    }
+
+    private static EmailChannelAdapter BuildAdapter(
+        EmailBotApiOptions options, bool hasConversation, bool hasThread, bool hasSite = true,
+        string siteName = "Acme Repairs", string? primaryColorHex = null)
     {
         var services = new ServiceCollection();
         services.AddScoped<IConversationRepository>(_ => new FixedConversationRepository(hasConversation));
         services.AddScoped<IEmailThreadStore>(_ => new FixedEmailThreadStore(hasThread));
+        services.AddScoped<ISiteRepository>(_ => new FixedSiteRepository(hasSite, siteName, primaryColorHex));
         var provider = services.BuildServiceProvider();
 
         var client = new EmailSmtpClient(options);
@@ -179,5 +314,39 @@ public sealed class EmailChannelAdapterTests
                 : null);
 
         public Task SaveAsync(EmailThreadState state, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>`25-156`: the new lookup <see cref="EmailChannelAdapter"/> adds - a fixed <see cref="Site"/>
+    /// carrying whatever name/colour a test wants to prove renders, or no site at all
+    /// (<see cref="SendAsync_WhenNoSiteExists_Throws"/>'s own "should not happen" case). The colour is
+    /// applied through <see cref="Site.UpdateWidgetConfig"/> rather than a constructor parameter -
+    /// <see cref="Site"/> has no constructor overload taking a <see cref="WidgetConfig"/> directly, the
+    /// same real aggregate every non-test caller also goes through.</summary>
+    private sealed class FixedSiteRepository(bool hasSite, string siteName, string? primaryColorHex) : ISiteRepository
+    {
+        public Task<Site?> GetByPublicKeyAsync(string publicKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Site?> GetByIdAsync(SiteId id, CancellationToken cancellationToken)
+        {
+            if (!hasSite)
+            {
+                return Task.FromResult<Site?>(null);
+            }
+
+            var site = new Site(id, "https://example.test/public-key", [], name: siteName);
+            if (primaryColorHex is not null)
+            {
+                site.UpdateWidgetConfig(
+                    new WidgetConfig(primaryColorHex, site.WidgetConfig.Position), DateTimeOffset.UtcNow);
+            }
+
+            return Task.FromResult<Site?>(site);
+        }
+
+        public Task<bool> AnyAllowsOriginAsync(string origin, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task SaveAsync(Site site, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

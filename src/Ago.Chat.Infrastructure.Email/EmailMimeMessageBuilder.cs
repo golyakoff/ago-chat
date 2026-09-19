@@ -66,12 +66,11 @@ internal static class EmailMimeMessageBuilder
     /// <c>multipart/alternative</c> body (a <c>text/plain</c> part first, a <c>text/html</c> part second,
     /// the order every mail client expects, so a client with no HTML rendering support falls back cleanly
     /// to the first part it understands) for a caller that has an HTML rendering of the same message to
-    /// offer alongside the plain-text one (<see cref="EmailMessageToSend.HtmlBody"/>).
-    /// <see cref="EmailChannelAdapter"/> never sets <see cref="EmailMessageToSend.HtmlBody"/> and keeps
-    /// calling <see cref="Build"/> unchanged - only <see cref="EmailSmtpClient.SendAsync"/>'s own branch on
-    /// whether <see cref="EmailMessageToSend.HtmlBody"/> is set decides which of the two methods runs, and
-    /// that branch is the only thing routing <see cref="NotificationMailSender"/>'s own calls to this
-    /// method instead.
+    /// offer alongside the plain-text one (<see cref="EmailMessageToSend.HtmlBody"/>). Only
+    /// <see cref="EmailSmtpClient.SendAsync"/>'s own branch on whether
+    /// <see cref="EmailMessageToSend.HtmlBody"/> is set decides which of the two methods runs - that branch
+    /// is the only thing routing both <see cref="NotificationMailSender"/>'s own calls (`25-155`) and, since
+    /// `25-156`, every <see cref="EmailChannelAdapter"/> call too, to this method instead of <see cref="Build"/>.
     ///
     /// <para>Each part is base64-encoded exactly as <see cref="Build"/>'s own single part already is - the
     /// identical wrap-every-76-characters rule, for the identical reason (this class's own remarks above):
@@ -204,14 +203,16 @@ internal static class EmailMimeMessageBuilder
 /// <see cref="EmailChannelAdapter"/>'s own remarks describe (no <see cref="Domain.EmailThreadState"/> row
 /// for a conversation that must already have received an inbound message before any reply could exist).
 ///
-/// <para><paramref name="HtmlBody"/> is `25-155`'s own addition - <see langword="null"/> by construction
-/// for every message <see cref="EmailChannelAdapter"/> builds (it never sets it), and non-null only for a
+/// <para><paramref name="HtmlBody"/> is `25-155`'s own addition - non-null for a
 /// <see cref="NotificationMailSender"/> call whose caller supplied an HTML rendering alongside
-/// <paramref name="Body"/>. <see cref="EmailSmtpClient.SendAsync"/> is the one place that branches on it -
+/// <paramref name="Body"/>, and, since `25-156`, also non-null for every message
+/// <see cref="EmailChannelAdapter"/> builds (<see cref="Infrastructure.Email.TenantReplyEmailShell"/>'s own
+/// tenant-branded reply shell - the one HTML rendering that adapter has ever had reason to attach).
+/// <see cref="EmailSmtpClient.SendAsync"/> is the one place that branches on it -
 /// <see cref="EmailMimeMessageBuilder.Build"/> when it is <see langword="null"/>,
-/// <see cref="EmailMimeMessageBuilder.BuildMultipartAlternative"/> when it is not - so adding this optional,
-/// defaulted parameter changes nothing about the plain-text-only path <see cref="EmailChannelAdapter"/>'s
-/// own tests already pin byte-for-byte.</para>
+/// <see cref="EmailMimeMessageBuilder.BuildMultipartAlternative"/> when it is not - so this optional,
+/// defaulted parameter still lets a caller with no HTML of its own (a future channel, a test) keep taking
+/// the plain-text-only path with no change of its own required.</para>
 /// </summary>
 public sealed record EmailMessageToSend(
     string From, string To, string Subject, string Body, string MessageId, string? InReplyTo,
