@@ -133,8 +133,10 @@ public static class ErrorExtensions
             // not fit, just measured against a running total instead of the one file's own ceiling.
             // Reached a real `ToProblem` call (`AttachmentEndpoints`/`CreateAttachmentHandler`) and had
             // never been given a line here.
+            // `25-160`: `Site.LogoTooLarge` joins this exact group - the identical "a declared size that
+            // will not fit" shape, just for the logo-upload endpoint instead of a chat attachment.
             "Attachment.TooLarge" or "Attachment.ConversationBudgetExceeded" or "Attachment.SiteBudgetExceeded"
-                => StatusCodes.Status413PayloadTooLarge,
+                or "Site.LogoTooLarge" => StatusCodes.Status413PayloadTooLarge,
             "Attachment.InvalidContentType" or "WebhookEndpoint.InvalidUrl"
                 or "WidgetConfig.InvalidColor" or "WidgetConfig.InvalidPosition"
                 or "Site.InvalidName" or "Site.InvalidOrigin" or "ChannelCredential.InvalidToken"
@@ -322,7 +324,12 @@ public static class ErrorExtensions
                 // one submitted priority order ... a caller submitting a genuine duplicate has almost
                 // certainly made a mistake" (ConversationErrors.ModuleTaskChannelPriorityDuplicateEntry's
                 // own remarks) - a malformed request body, not a conflict with anything concurrent.
-                or "ModuleTaskChannelPriority.DuplicateEntry" => StatusCodes.Status400BadRequest,
+                or "ModuleTaskChannelPriority.DuplicateEntry"
+                // `25-160`: the upload endpoint's own cheap, decode-nothing checks, and the settings
+                // screen's own company-name length ceiling - each the caller's own mistake to fix, the
+                // identical shape `Attachment.InvalidContentType`/`Attachment.TooLarge` already give
+                // their own upload endpoint two lines up in this same case.
+                or "Site.LogoInvalidContentType" or "Site.BrandCompanyNameTooLong" => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"
@@ -545,6 +552,9 @@ public static class ErrorExtensions
                 or "ReplyDraft.RateLimited" or "Consent.RateLimited"
                 or "PhoneVerification.RateLimited" or "PhoneVerification.LockedOut" or "demo.rate_limited"
                 or "OperatorInvite.RateLimited"
+                // `25-160`: the logo upload endpoint's own 5-per-site-per-day bucket - the identical
+                // group every other per-site upload/invite rate limit in this codebase already joins.
+                or "Site.LogoUploadRateLimited"
                 => StatusCodes.Status429TooManyRequests,
             // `14-08`: this deployment, not the caller, is not ready - ConversationErrors.ChannelNotAvailable's
             // own remarks. `19-01`: ReplyDraft.Unavailable is the identical shape - the LLM provider is

@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Api.Attachments;
+using Ago.Chat.Api.Branding;
 using Ago.Chat.Api.CannedResponses;
 using Ago.Chat.Api.ModuleTaskChannelPreferences;
 using Ago.Chat.Api.ChannelIdentities;
@@ -467,6 +468,11 @@ public static class CompositionRoot
         // console connect/disconnect flow to manage at all, unlike every channel above.
         app.MapEmailWebhookEndpoints();
         app.MapWidgetConfigEndpoints();
+        // `25-160`: the tenant's own reply-email brand (company name, logo upload) - a settings
+        // resource, not a connect/disconnect flow (this channel still has neither, unchanged from
+        // `MapEmailWebhookEndpoints`'s own remarks a few lines up), so it gets its own small endpoint
+        // group rather than a `MapEmailChannelEndpoints` this channel still has no other reason to grow.
+        app.MapSiteBrandingEndpoints();
         // `24-02`: the published surface's own unauthenticated read routes - see DocumentEndpoints' own
         // remarks for why they are mapped without any RequireAuthorization policy at all.
         app.MapDocumentEndpoints();

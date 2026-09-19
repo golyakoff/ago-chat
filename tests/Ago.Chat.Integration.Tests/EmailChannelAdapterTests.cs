@@ -1,8 +1,10 @@
 ﻿using System.Text;
 using System.Text.RegularExpressions;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Caching;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Email;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -262,18 +264,161 @@ public sealed partial class EmailChannelAdapterTests
 
     private static EmailChannelAdapter BuildAdapter(
         EmailBotApiOptions options, bool hasConversation, bool hasThread, bool hasSite = true,
-        string siteName = "Acme Repairs", string? primaryColorHex = null)
+        string siteName = "Acme Repairs", string? primaryColorHex = null, string? brandCompanyName = null,
+        string? readyLogoObjectKey = null, ICache? cache = null, IFileStorage? fileStorage = null)
     {
         var services = new ServiceCollection();
         services.AddScoped<IConversationRepository>(_ => new FixedConversationRepository(hasConversation));
         services.AddScoped<IEmailThreadStore>(_ => new FixedEmailThreadStore(hasThread));
-        services.AddScoped<ISiteRepository>(_ => new FixedSiteRepository(hasSite, siteName, primaryColorHex));
+        services.AddScoped<ISiteRepository>(_ => new FixedSiteRepository(
+            hasSite, siteName, primaryColorHex, brandCompanyName, readyLogoObjectKey));
         var provider = services.BuildServiceProvider();
 
         var client = new EmailSmtpClient(options);
         return new EmailChannelAdapter(
             client, Options.Create(options), provider.GetRequiredService<IServiceScopeFactory>(),
+            cache ?? new FakeCache(), fileStorage ?? new ThrowingFileStorage(),
             new FixedClock(), NullLogger<EmailChannelAdapter>.Instance);
+    }
+
+    /// <summary>`25-160`: the identical cache-aside fake `Ago.Chat.Application.Tests.Fakes.FakeCache`
+    /// already establishes for Application-level tests, duplicated here rather than shared across
+    /// projects - this test project has no reference to that one's own test-only assembly, and a fake
+    /// this small is not worth adding one for.</summary>
+    private sealed class FakeCache : ICache
+    {
+        private readonly Dictionary<string, object?> _store = [];
+
+        public Task<T?> GetAsync<T>(CacheKey key, CancellationToken cancellationToken) where T : class =>
+            Task.FromResult(_store.TryGetValue(key.Value, out var value) ? (T?)value : default);
+
+        public Task SetAsync<T>(CacheKey key, T value, CacheEntryOptions options, CancellationToken cancellationToken) where T : class
+        {
+            _store[key.Value] = value;
+            return Task.CompletedTask;
+        }
+
+        public async Task<T> GetOrCreateAsync<T>(
+            CacheKey key, Func<CancellationToken, Task<T>> factory, CacheEntryOptions options, CancellationToken cancellationToken)
+            where T : class
+        {
+            if (_store.TryGetValue(key.Value, out var cached))
+            {
+                return (T)cached!;
+            }
+
+            var value = await factory(cancellationToken);
+            _store[key.Value] = value;
+            return value;
+        }
+
+        public Task RemoveAsync(CacheKey key, CancellationToken cancellationToken)
+        {
+            _store.Remove(key.Value);
+            return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>`25-160`: proves <see cref="SendAsync_WithAWarmLogoCache_NeverCallsFileStorage"/> for
+    /// real, rather than by inspection - every member throws, so a warm-cache send that ever reached
+    /// object storage would fail the test immediately instead of silently succeeding by coincidence.</summary>
+    private sealed class ThrowingFileStorage : IFileStorage
+    {
+        public Task<PresignedUpload> CreateUploadAsync(ObjectKey key, UploadConstraints constraints, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected object storage call on a warm branding cache.");
+
+        public Task<Uri> CreateDownloadUrlAsync(ObjectKey key, TimeSpan lifetime, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected object storage call on a warm branding cache.");
+
+        public Task<ObjectMetadata?> GetMetadataAsync(ObjectKey key, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected object storage call on a warm branding cache.");
+
+        public Task DeleteAsync(ObjectKey key, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected object storage call on a warm branding cache.");
+    }
+
+    /// <summary>`25-160` Done-when: a visitor's reply email embeds the tenant's own logo inline
+    /// (<c>Content-ID</c>) when one is <c>Ready</c> - a real, promoted <see cref="Site"/> (through the
+    /// same <see cref="Site.SubmitLogoUpload"/>/<see cref="Site.PromoteLogo"/> pair the real validating
+    /// consumer calls, not a shortcut), a warm branding cache seeded exactly the way
+    /// <c>Ago.Chat.Worker.SiteLogoValidator</c>'s own write-through would.</summary>
+    [Fact]
+    public async Task SendAsync_WhenTheSiteHasAReadyLogo_EmbedsItInlineByContentId()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var logoObjectKey = $"site/{SiteId.Value}/logo/{Guid.NewGuid():N}.png";
+        var cache = new FakeCache();
+        await cache.SetAsync(
+            SiteBrandingCacheKeys.ForLogo(SiteId), new SiteBrandingLogoPayload(Convert.ToBase64String([1, 2, 3, 4]), "image/png"),
+            new CacheEntryOptions(TimeSpan.FromHours(1)), CancellationToken.None);
+        var adapter = BuildAdapter(
+            server.Options, hasConversation: true, hasThread: true,
+            siteName: "Acme Repairs", readyLogoObjectKey: logoObjectKey, cache: cache);
+
+        await adapter.SendAsync(Reply(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        Assert.Contains("Content-ID: <logo-", transcript.DataPayload);
+        Assert.Contains("Content-Disposition: inline", transcript.DataPayload);
+        var html = ExtractMimePart(transcript.DataPayload, "text/html");
+        Assert.Contains("cid:logo-", html);
+    }
+
+    /// <summary>`25-160` Done-when: "the email-composition path does not touch object storage on a warm
+    /// cache" - <see cref="ThrowingFileStorage"/> is what actually proves it; this test merely has to
+    /// reach a successful send to know none of its members were ever called.</summary>
+    [Fact]
+    public async Task SendAsync_WithAWarmLogoCache_NeverCallsFileStorage()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var logoObjectKey = $"site/{SiteId.Value}/logo/{Guid.NewGuid():N}.png";
+        var cache = new FakeCache();
+        await cache.SetAsync(
+            SiteBrandingCacheKeys.ForLogo(SiteId), new SiteBrandingLogoPayload(Convert.ToBase64String([1, 2, 3, 4]), "image/png"),
+            new CacheEntryOptions(TimeSpan.FromHours(1)), CancellationToken.None);
+        var adapter = BuildAdapter(
+            server.Options, hasConversation: true, hasThread: true,
+            readyLogoObjectKey: logoObjectKey, cache: cache, fileStorage: new ThrowingFileStorage());
+
+        var outcome = await adapter.SendAsync(Reply(), CancellationToken.None);
+
+        Assert.True(outcome.Delivered);
+    }
+
+    /// <summary>`25-160`: the fallback half of this item's own Done-when - no logo set at all still
+    /// renders the `25-156` text-only shell, unchanged.</summary>
+    [Fact]
+    public async Task SendAsync_WithNoLogoSet_FallsBackToTheTextOnlyShell()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(server.Options, hasConversation: true, hasThread: true, siteName: "Acme Repairs");
+
+        await adapter.SendAsync(Reply(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        Assert.DoesNotContain("Content-ID:", transcript.DataPayload);
+        var html = ExtractMimePart(transcript.DataPayload, "text/html");
+        Assert.Contains("Acme Repairs", html);
+        Assert.DoesNotContain("<img", html);
+    }
+
+    /// <summary>`25-160`: <see cref="Site.BrandCompanyName"/>, when set, is what the shell renders -
+    /// not <see cref="Site.Name"/> - the identical "brand name, not the registration name" split this
+    /// item's own Design decisions draw.</summary>
+    [Fact]
+    public async Task SendAsync_WhenBrandCompanyNameIsSet_RendersItInsteadOfSiteName()
+    {
+        using var server = await FakeSmtpServer.StartAsync();
+        var adapter = BuildAdapter(
+            server.Options, hasConversation: true, hasThread: true,
+            siteName: "Internal Registration Name", brandCompanyName: "Acme Repairs LLC");
+
+        await adapter.SendAsync(Reply(), CancellationToken.None);
+        var transcript = await server.WaitForTranscriptAsync();
+
+        var html = ExtractMimePart(transcript.DataPayload, "text/html");
+        Assert.Contains("Acme Repairs LLC", html);
+        Assert.DoesNotContain("Internal Registration Name", html);
     }
 
     private sealed class FixedClock : IClock
@@ -322,7 +467,9 @@ public sealed partial class EmailChannelAdapterTests
     /// applied through <see cref="Site.UpdateWidgetConfig"/> rather than a constructor parameter -
     /// <see cref="Site"/> has no constructor overload taking a <see cref="WidgetConfig"/> directly, the
     /// same real aggregate every non-test caller also goes through.</summary>
-    private sealed class FixedSiteRepository(bool hasSite, string siteName, string? primaryColorHex) : ISiteRepository
+    private sealed class FixedSiteRepository(
+        bool hasSite, string siteName, string? primaryColorHex, string? brandCompanyName = null,
+        string? readyLogoObjectKey = null) : ISiteRepository
     {
         public Task<Site?> GetByPublicKeyAsync(string publicKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -339,6 +486,23 @@ public sealed partial class EmailChannelAdapterTests
             {
                 site.UpdateWidgetConfig(
                     new WidgetConfig(primaryColorHex, site.WidgetConfig.Position), DateTimeOffset.UtcNow);
+            }
+
+            if (brandCompanyName is not null)
+            {
+                site.UpdateBrandCompanyName(brandCompanyName, DateTimeOffset.UtcNow);
+            }
+
+            // `25-160`: reaches Ready through the identical two real aggregate methods
+            // `SubmitLogoUploadHandler`/`Ago.Chat.Worker.SiteLogoValidator` call in production - never a
+            // shortcut that sets a private field directly - so this fake proves the real state machine
+            // still reaches the state each test needs.
+            if (readyLogoObjectKey is not null)
+            {
+                const string pendingKey = "site/pending/test-logo.png";
+                site.SubmitLogoUpload(pendingKey, "image/png", DateTimeOffset.UtcNow);
+                site.PromoteLogo(pendingKey, readyLogoObjectKey, DateTimeOffset.UtcNow);
+                site.ClearDomainEvents();
             }
 
             return Task.FromResult<Site?>(site);

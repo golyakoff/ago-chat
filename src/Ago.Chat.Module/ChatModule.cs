@@ -95,6 +95,9 @@ using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
+using Ago.Chat.Application.UseCases.GetSiteBranding;
+using Ago.Chat.Application.UseCases.UpdateSiteBranding;
+using Ago.Chat.Application.UseCases.SubmitLogoUpload;
 using Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetSiteForOwner;
@@ -1243,6 +1246,31 @@ public sealed class ChatModule : IProductModule
         // else on this page, even though only `Ago.Chat.Api` maps HTTP endpoints for them today.
         services.AddScoped<GetWidgetConfigHandler>();
         services.AddScoped<UpdateWidgetConfigHandler>();
+
+        // `25-160`: the tenant's own reply-email brand - a company name (the identical single-aggregate
+        // write shape `UpdateWidgetConfigHandler` establishes just above) and a logo upload (its own
+        // rate limit and cheap synchronous checks, `SubmitLogoUploadHandler`'s own remarks). Registered
+        // for every host, the same shape as everything else on this page.
+        services.AddScoped<GetSiteBrandingHandler>();
+        services.AddScoped<UpdateSiteBrandingHandler>();
+        services
+            .AddOptions<SiteLogoOptions>()
+            .Bind(configuration.GetSection(SiteLogoOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<SiteLogoOptions>>().Value);
+        services
+            .AddOptions<LogoUploadRateLimitOptions>()
+            .Bind(configuration.GetSection(LogoUploadRateLimitOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<LogoUploadRateLimitOptions>>().Value);
+        services.AddScoped<SubmitLogoUploadHandler>();
+        // The read-only shadow of Storage:S3 this port's own remarks explain - bound here, alongside
+        // AddS3FileStorage a few lines up, since both read the identical configuration section.
+        services
+            .AddOptions<Ago.Chat.Module.Branding.SiteBrandingStorageOptions>()
+            .Bind(configuration.GetSection(Ago.Chat.Module.Branding.SiteBrandingStorageOptions.SectionName));
+        services.AddSingleton<ISiteLogoPublicUrlBuilder, Ago.Chat.Module.Branding.ConfiguredSiteLogoPublicUrlBuilder>();
+        services.AddSingleton<IPresignedUrlUploader, Ago.Chat.Module.Branding.HttpPresignedUrlUploader>();
 
         // `10-06`: the read `GetWidgetConfigHandler`'s own doc comment names as the gap this item
         // closes - a site's own public key and allowed origins, returned to that site's operators so

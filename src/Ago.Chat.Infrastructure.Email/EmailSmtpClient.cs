@@ -101,9 +101,14 @@ public sealed class EmailSmtpClient(EmailBotApiOptions options)
         // message it builds too (TenantReplyEmailShell), so this branch point is what actually routes
         // both that item's own reply mail and NotificationMailSender's own account mail onto the
         // identical multipart path - neither caller duplicates BuildMultipartAlternative for itself.
-        var payload = DotStuff(message.HtmlBody is not null
-            ? EmailMimeMessageBuilder.BuildMultipartAlternative(message)
-            : EmailMimeMessageBuilder.Build(message));
+        // `25-160`: a third branch joins it - EmailMessageToSend.InlineLogo's own remarks explain why a
+        // tenant with a ready logo needs a `multipart/related` wrapper around the identical
+        // `multipart/alternative` body, never a fourth caller-side build method.
+        var payload = DotStuff(message.InlineLogo is not null
+            ? EmailMimeMessageBuilder.BuildMultipartRelatedWithInlineLogo(message)
+            : message.HtmlBody is not null
+                ? EmailMimeMessageBuilder.BuildMultipartAlternative(message)
+                : EmailMimeMessageBuilder.Build(message));
         await writer.WriteAsync(payload.AsMemory(), cancellationToken);
         await writer.WriteAsync("\r\n.\r\n".AsMemory(), cancellationToken);
         await writer.FlushAsync(cancellationToken);
