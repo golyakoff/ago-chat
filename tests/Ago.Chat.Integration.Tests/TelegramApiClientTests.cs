@@ -257,6 +257,106 @@ public sealed class TelegramApiClientTests
         Assert.Contains("401", result.RefusalReason);
     }
 
+    // -----------------------------------------------------------------------------------------
+    // `25-164`: DownloadImageAsync's own two-step protocol - getFile resolves a `file_id` to a
+    // `file_path`, then a second request against a distinct URL shape (`file/bot<token>/...`, not
+    // `bot<token>/{method}`) fetches the actual bytes. Both steps are proven against a real Kestrel
+    // host, the same standard every other method in this class already gets.
+    // -----------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenGetFileAndDownloadBothSucceed_ReturnsTheBytesAndContentType()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+        {
+            app.MapGet($"/bot{Token}/getFile", () =>
+                Results.Json(new { ok = true, result = new { file_path = "photos/file_1.jpg" } }));
+            app.MapGet($"/file/bot{Token}/photos/file_1.jpg", () =>
+                Results.File([1, 2, 3, 4], "image/jpeg"));
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, "abc-file-id", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal([1, 2, 3, 4], result.Content);
+        Assert.Equal("image/jpeg", result.ContentType);
+    }
+
+    /// <summary>Telegram's own documented behaviour for a file over the 20 MB `getFile` ceiling: no
+    /// `file_path` at all, not a distinct error - this must degrade to "nothing to download", not
+    /// throw.</summary>
+    [Fact]
+    public async Task DownloadImageAsync_WhenGetFileReturnsNoFilePath_ReturnsNull()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapGet($"/bot{Token}/getFile", () => Results.Json(new { ok = true, result = new { } })));
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, "abc-file-id", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenGetFileRefusesWith400_ReturnsNullRatherThanThrowing()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapGet($"/bot{Token}/getFile", () =>
+                Results.Json(
+                    new { ok = false, error_code = 400, description = "Bad Request: file not found" },
+                    statusCode: StatusCodes.Status400BadRequest)));
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, "missing-file-id", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenGetFileReturns500_Throws()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+            app.MapGet($"/bot{Token}/getFile", () => Results.StatusCode(StatusCodes.Status500InternalServerError)));
+        var client = BuildClient(host.BaseUrl);
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.DownloadImageAsync(Token, "abc-file-id", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheFileDownloadItselfRefusesWith404_ReturnsNull()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+        {
+            app.MapGet($"/bot{Token}/getFile", () =>
+                Results.Json(new { ok = true, result = new { file_path = "photos/gone.jpg" } }));
+            app.MapGet($"/file/bot{Token}/photos/gone.jpg", () => Results.StatusCode(StatusCodes.Status404NotFound));
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        var result = await client.DownloadImageAsync(Token, "abc-file-id", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DownloadImageAsync_WhenTheFileDownloadItselfReturns500_Throws()
+    {
+        await using var host = await BuildFakeTelegramHostAsync(app =>
+        {
+            app.MapGet($"/bot{Token}/getFile", () =>
+                Results.Json(new { ok = true, result = new { file_path = "photos/broken.jpg" } }));
+            app.MapGet(
+                $"/file/bot{Token}/photos/broken.jpg",
+                () => Results.StatusCode(StatusCodes.Status500InternalServerError));
+        });
+        var client = BuildClient(host.BaseUrl);
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.DownloadImageAsync(Token, "abc-file-id", CancellationToken.None));
+    }
+
     private static TelegramApiClient BuildClient(string baseUrl) =>
         new(new HttpClient { BaseAddress = new Uri(baseUrl) });
 

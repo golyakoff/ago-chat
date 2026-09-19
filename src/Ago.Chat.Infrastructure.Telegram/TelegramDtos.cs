@@ -32,7 +32,39 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("from")] TelegramUser? From,
     [property: JsonPropertyName("chat")] TelegramChat? Chat,
     [property: JsonPropertyName("text")] string? Text,
-    [property: JsonPropertyName("contact")] TelegramContact? Contact = null);
+    [property: JsonPropertyName("contact")] TelegramContact? Contact = null,
+    // `25-164`: an inbound photo - core.telegram.org/bots/api#photosize confirms Telegram sends every
+    // photo as several resolutions of the same image, in a `photo` array, and confirms a photo message
+    // never populates `text` at all (a photo's own caption lives in the separate `caption` field below) -
+    // a genuine divergence from MAX's single `text` field carrying both prose and a caption together
+    // (MaxDtos.cs's own MaxMessageBody), not an oversight.
+    [property: JsonPropertyName("photo")] IReadOnlyList<TelegramPhotoSize>? Photo = null,
+    [property: JsonPropertyName("caption")] string? Caption = null);
+
+/// <summary>
+/// `25-164`: one entry of <see cref="TelegramMessage.Photo"/> - confirmed against Telegram's own public
+/// Bot API documentation (core.telegram.org/bots/api#photosize). <see cref="FileId"/> is
+/// Telegram-internal - usable only against this same bot's own token via <c>getFile</c>, and only for a
+/// limited time (the same documentation: "guaranteed to be valid for at least 1 hour") - never a
+/// directly fetchable URL the way MAX's own photo attachment is (<c>MaxAttachmentPayload.Url</c>'s own
+/// remarks), hence the two-step <see cref="TelegramApiClient.DownloadImageAsync"/> this parser's own
+/// caller needs. <see cref="Width"/>/<see cref="Height"/> exist so the caller can pick the highest
+/// resolution explicitly rather than trusting the array's documented-but-unenforced smallest-to-largest
+/// ordering; <c>file_unique_id</c>/<c>file_size</c> are not modelled - "do not model what nothing
+/// reads", the same restraint this file's own top-level note already applies elsewhere.
+/// </summary>
+public sealed record TelegramPhotoSize(
+    [property: JsonPropertyName("file_id")] string? FileId,
+    [property: JsonPropertyName("width")] int? Width,
+    [property: JsonPropertyName("height")] int? Height);
+
+/// <summary>
+/// `25-164`: <c>getFile</c>'s own success shape (core.telegram.org/bots/api#file and #getfile) - only
+/// <see cref="FilePath"/> has a caller (<see cref="TelegramApiClient.DownloadImageAsync"/>'s own
+/// remarks); <c>file_id</c>/<c>file_unique_id</c>/<c>file_size</c> are not modelled for the identical
+/// "do not model what nothing reads" reason <see cref="TelegramPhotoSize"/> already states for itself.
+/// </summary>
+public sealed record TelegramFile([property: JsonPropertyName("file_path")] string? FilePath);
 
 /// <summary>
 /// `25-151`: Telegram's own "share a contact" message shape (core.telegram.org/bots/api#contact),
