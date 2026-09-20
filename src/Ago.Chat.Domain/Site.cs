@@ -129,10 +129,17 @@ public sealed class Site
     // already-established shape" reason `23-64`'s own `_autoOpenGreetingText` comment gives for itself.
     private string? _contactCaptureConfirmationText;
 
+    // `25-173`: two more flat backing fields, the same shape as the pair above - each gets its own
+    // column (the migration this item adds), a plain enum for the identical "one more caller of an
+    // already-established shape" reason `25-129`'s own comment gives for itself.
+    private ChannelSwitcherPlacement _channelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer;
+    private ChannelSwitcherIconSize _channelSwitcherIconSize = ChannelSwitcherIconSize.Medium;
+
     public WidgetConfig WidgetConfig =>
         new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl, _requireContactConsent,
             _attractAttention, _autoOpenEnabled, _autoOpenDelaySeconds, _autoOpenGreetingText,
-            _acceptUnverifiedPhone, _allowAttachmentUploadsByDefault, _contactCaptureConfirmationText);
+            _acceptUnverifiedPhone, _allowAttachmentUploadsByDefault, _contactCaptureConfirmationText,
+            _channelSwitcherPlacement, _channelSwitcherIconSize);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -455,6 +462,8 @@ public sealed class Site
         _autoOpenGreetingText = WidgetConfig.Default.AutoOpenGreetingText;
         _acceptUnverifiedPhone = WidgetConfig.Default.AcceptUnverifiedPhone;
         _allowAttachmentUploadsByDefault = WidgetConfig.Default.AllowAttachmentUploadsByDefault;
+        _channelSwitcherPlacement = WidgetConfig.Default.ChannelSwitcherPlacement;
+        _channelSwitcherIconSize = WidgetConfig.Default.ChannelSwitcherIconSize;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -487,6 +496,8 @@ public sealed class Site
         _acceptUnverifiedPhone = config.AcceptUnverifiedPhone;
         _allowAttachmentUploadsByDefault = config.AllowAttachmentUploadsByDefault;
         _contactCaptureConfirmationText = config.ContactCaptureConfirmationText;
+        _channelSwitcherPlacement = config.ChannelSwitcherPlacement;
+        _channelSwitcherIconSize = config.ChannelSwitcherIconSize;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

@@ -147,7 +147,8 @@ public static class AuthEndpoints
                 site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
                 enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
                 (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText, channelLinks,
-                site.WidgetContactCaptureConfirmationText));
+                site.WidgetContactCaptureConfirmationText, site.WidgetChannelSwitcherPlacement.ToString(),
+                site.WidgetChannelSwitcherIconSize.ToString()));
     }
 
     /// <summary>
@@ -274,7 +275,8 @@ public static class AuthEndpoints
             site.WidgetLocale.ToString(), site.WidgetNoticeText, site.WidgetNoticeUrl, enabledModules,
             enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
             (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText, channelLinks,
-            site.WidgetContactCaptureConfirmationText));
+            site.WidgetContactCaptureConfirmationText, site.WidgetChannelSwitcherPlacement.ToString(),
+            site.WidgetChannelSwitcherIconSize.ToString()));
     }
 
     /// <summary>
@@ -457,6 +459,15 @@ public static class AuthEndpoints
     /// with the visitor's own just-submitted name - a substitution that can only happen client-side,
     /// since the server has no visitor to name until after the visitor submits.
     ///
+    /// `25-173`: <see cref="WidgetChannelSwitcherPlacement"/>/<see cref="WidgetChannelSwitcherIconSize"/>
+    /// join as two more additive fields, crossing the wire the identical PascalCase-member-name way
+    /// <see cref="WidgetPosition"/>/<see cref="WidgetLocale"/> already do - `"AboveComposer"` (`25-149`'s
+    /// own pre-existing card, unchanged) for every site that has not configured this item's new
+    /// placement, `"Medium"` for the icon size on every site that has not configured a different one.
+    /// `ago-widget` chooses which of the two `25-149`/`25-173` renderers to run off the first field, and
+    /// reads the second only when the first says `"BelowLauncher"` - `WidgetConfig`'s own remarks on why
+    /// the size field is still always sent regardless.
+    ///
     /// `25-148`: <see cref="ChannelLinks"/> joins as one more additive field, never `null` - a site with
     /// nothing connected gets an empty list, the identical "no booking is the honest default"
     /// discipline <see cref="EnabledModules"/>'s own remarks already state. Before this item the widget
@@ -493,5 +504,7 @@ public static class AuthEndpoints
         int WidgetAutoOpenDelaySeconds,
         string? WidgetAutoOpenGreetingText,
         IReadOnlyList<ChannelLinkResponse> ChannelLinks,
-        string? WidgetContactCaptureConfirmationText = null);
+        string? WidgetContactCaptureConfirmationText = null,
+        string WidgetChannelSwitcherPlacement = "AboveComposer",
+        string WidgetChannelSwitcherIconSize = "Medium");
 }

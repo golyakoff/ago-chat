@@ -74,6 +74,22 @@ public sealed class UpdateWidgetConfigHandler(
                 $"'{command.AutoOpenDelaySeconds}' is not a valid auto-open delay - expected one of 15, 30, 45, 60, 90, 120.");
         }
 
+        // `25-173`: the identical "parse the closed set, translate a miss at the Application boundary"
+        // split `Position`/`Locale` already draw above.
+        if (!Enum.TryParse<ChannelSwitcherPlacement>(command.ChannelSwitcherPlacement, ignoreCase: true, out var channelSwitcherPlacement)
+            || !Enum.IsDefined(channelSwitcherPlacement))
+        {
+            return ConversationErrors.WidgetConfigInvalidChannelSwitcherPlacement(
+                $"'{command.ChannelSwitcherPlacement}' is not a valid channel switcher placement - expected '{nameof(ChannelSwitcherPlacement.AboveComposer)}' or '{nameof(ChannelSwitcherPlacement.BelowLauncher)}'.");
+        }
+
+        if (!Enum.TryParse<ChannelSwitcherIconSize>(command.ChannelSwitcherIconSize, ignoreCase: true, out var channelSwitcherIconSize)
+            || !Enum.IsDefined(channelSwitcherIconSize))
+        {
+            return ConversationErrors.WidgetConfigInvalidChannelSwitcherIconSize(
+                $"'{command.ChannelSwitcherIconSize}' is not a valid channel switcher icon size - expected '{nameof(ChannelSwitcherIconSize.Large)}', '{nameof(ChannelSwitcherIconSize.Medium)}' or '{nameof(ChannelSwitcherIconSize.Small)}'.");
+        }
+
         WidgetConfig config;
         try
         {
@@ -81,7 +97,7 @@ public sealed class UpdateWidgetConfigHandler(
                 command.PrimaryColorHex, position, command.NoticeText, command.NoticeUrl, command.RequireContactConsent,
                 command.AttractAttention, command.AutoOpenEnabled, autoOpenDelay, command.AutoOpenGreetingText,
                 command.AcceptUnverifiedPhone, command.AllowAttachmentUploadsByDefault,
-                command.ContactCaptureConfirmationText);
+                command.ContactCaptureConfirmationText, channelSwitcherPlacement, channelSwitcherIconSize);
         }
         // `16-04`: `WidgetConfig`'s constructor throws with its own parameter name for each of the
         // things it validates - matched here on that name so a caller can tell which field to
@@ -137,6 +153,7 @@ public sealed class UpdateWidgetConfigHandler(
             config.PrimaryColorHex, config.Position, locale, config.NoticeText, config.NoticeUrl,
             config.RequireContactConsent, config.AttractAttention, config.AutoOpenEnabled,
             config.AutoOpenDelaySeconds, config.AutoOpenGreetingText, config.AcceptUnverifiedPhone,
-            config.AllowAttachmentUploadsByDefault, config.ContactCaptureConfirmationText);
+            config.AllowAttachmentUploadsByDefault, config.ContactCaptureConfirmationText,
+            config.ChannelSwitcherPlacement, config.ChannelSwitcherIconSize);
     }
 }

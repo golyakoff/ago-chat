@@ -303,6 +303,10 @@ public static class ErrorExtensions
                 or "WidgetConfig.InvalidAutoOpenDelay" or "WidgetConfig.InvalidAutoOpenGreetingText"
                 or "WidgetConfig.InvalidLocale" or "WidgetConfig.InvalidNoticeText" or "WidgetConfig.InvalidNoticeUrl"
                 or "WidgetConfig.InvalidContactCaptureConfirmationText"
+                // `25-173`: `WidgetConfig.InvalidChannelSwitcherPlacement`/`WidgetConfig.InvalidChannelSwitcherIconSize` -
+                // the identical "validate the enum, translate the throw at the Application boundary"
+                // split every other `WidgetConfig.Invalid*` code in this group already draws.
+                or "WidgetConfig.InvalidChannelSwitcherPlacement" or "WidgetConfig.InvalidChannelSwitcherIconSize"
                 // `Billing.InvalidSeatCount` - "the requested seat count falls outside
                 // SubscriptionTierBands.MinSeats-MaxSeats ... never a purchasable band"
                 // (ConversationErrors.BillingInvalidSeatCount's own remarks) - the caller's own mistake

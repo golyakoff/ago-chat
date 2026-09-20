@@ -260,6 +260,19 @@ public static class ConversationErrors
     public static Error WidgetConfigInvalidContactCaptureConfirmationText(string reason) =>
         new("WidgetConfig.InvalidContactCaptureConfirmationText", reason);
 
+    /// <summary>`25-173`: the closed `ChannelSwitcherPlacement` set `UpdateWidgetConfigHandler`'s own
+    /// `Enum.TryParse`/`Enum.IsDefined` check rejected - the same "validate the enum, translate the miss
+    /// at the Application boundary" split `WidgetConfigInvalidPosition`/`WidgetConfigInvalidLocale`
+    /// already draw for their own closed sets.</summary>
+    public static Error WidgetConfigInvalidChannelSwitcherPlacement(string reason) =>
+        new("WidgetConfig.InvalidChannelSwitcherPlacement", reason);
+
+    /// <summary>`25-173`: the closed `ChannelSwitcherIconSize` set - the identical
+    /// "validate the enum, translate the miss at the Application boundary" split
+    /// `WidgetConfigInvalidChannelSwitcherPlacement` already draws for its own sibling field.</summary>
+    public static Error WidgetConfigInvalidChannelSwitcherIconSize(string reason) =>
+        new("WidgetConfig.InvalidChannelSwitcherIconSize", reason);
+
     /// <summary>`14-04`: an offline auto-reply configuration `OfflineAutoReplyRule`/
     /// `OfflineAutoReplySettings` refused - an empty or oversized keyword or reply, too many rules, or
     /// an enabled configuration with no fallback text. One code rather than five, because every one of

@@ -75,7 +75,9 @@ public static class WidgetConfigEndpoints
                 request.AutoOpenGreetingText,
                 request.AcceptUnverifiedPhone,
                 request.AllowAttachmentUploadsByDefault,
-                request.ContactCaptureConfirmationText),
+                request.ContactCaptureConfirmationText,
+                request.ChannelSwitcherPlacement,
+                request.ChannelSwitcherIconSize),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
@@ -85,7 +87,8 @@ public static class WidgetConfigEndpoints
         new(dto.PrimaryColorHex, dto.Position.ToString(), dto.Locale.ToString(), dto.NoticeText, dto.NoticeUrl,
             dto.RequireContactConsent, dto.AttractAttention, dto.AutoOpenEnabled, (int)dto.AutoOpenDelaySeconds,
             dto.AutoOpenGreetingText, dto.AcceptUnverifiedPhone, dto.AllowAttachmentUploadsByDefault,
-            dto.ContactCaptureConfirmationText);
+            dto.ContactCaptureConfirmationText, dto.ChannelSwitcherPlacement.ToString(),
+            dto.ChannelSwitcherIconSize.ToString());
 
     /// <summary>
     /// <para>
@@ -128,7 +131,15 @@ public static class WidgetConfigEndpoints
         // NoticeText/AutoOpenGreetingText already take above - a missing value binds to null, which is
         // "this tenant has not configured one," a legitimate value the widget already falls back to its
         // own default for.
-        string? ContactCaptureConfirmationText = null);
+        string? ContactCaptureConfirmationText = null,
+        // `25-173`: two plain strings, the identical "not yet the validated Domain enum" shape
+        // Position/Locale already have above - UpdateWidgetConfigHandler parses and validates both the
+        // same way. Missing binds to "AboveComposer"/"Medium", the same values WidgetConfig.Default and
+        // this migration's own column defaults already commit to for every existing site, so an old
+        // console build that has never heard of these two fields keeps saving exactly today's
+        // behaviour rather than a client error.
+        string ChannelSwitcherPlacement = "AboveComposer",
+        string ChannelSwitcherIconSize = "Medium");
 
     /// <summary>`23-64`: <c>AutoOpenDelaySeconds</c> crosses the wire as its plain `int` value
     /// (`AutoOpenDelay`'s own remarks on why it needs no PascalCase-string convention the way
@@ -138,5 +149,5 @@ public static class WidgetConfigEndpoints
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
         bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, int AutoOpenDelaySeconds,
         string? AutoOpenGreetingText, bool AcceptUnverifiedPhone, bool AllowAttachmentUploadsByDefault,
-        string? ContactCaptureConfirmationText);
+        string? ContactCaptureConfirmationText, string ChannelSwitcherPlacement, string ChannelSwitcherIconSize);
 }

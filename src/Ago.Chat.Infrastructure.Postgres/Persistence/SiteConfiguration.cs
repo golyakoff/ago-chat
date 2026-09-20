@@ -40,6 +40,18 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             // called any number of times against the same t" shape every constraint above already
             // uses - LogoStatus's own remarks on why this is a closed, SQL-enumerable set.
             t.HasCheckConstraint("ck_sites_logo_status", "logo_status IN ('None', 'Pending', 'Ready', 'Rejected')");
+            // `25-173`: a sixth and seventh check constraint on this table, the same
+            // "HasCheckConstraint can be called any number of times against the same t" shape every
+            // constraint above already uses - two more closed sets a raw UPDATE or a future migration's
+            // own backfill could otherwise put an undefined value into, the identical backstop
+            // ck_sites_widget_position/ck_sites_widget_auto_open_delay already provide for their own
+            // enums.
+            t.HasCheckConstraint(
+                "ck_sites_channel_switcher_placement",
+                "widget_channel_switcher_placement IN ('AboveComposer', 'BelowLauncher')");
+            t.HasCheckConstraint(
+                "ck_sites_channel_switcher_icon_size",
+                "widget_channel_switcher_icon_size IN ('Large', 'Medium', 'Small')");
         });
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id).HasColumnName("id").HasConversion(IdConverters.Site).ValueGeneratedNever();
@@ -189,6 +201,23 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // state for themselves.
         builder.Property<string?>("_contactCaptureConfirmationText")
             .HasColumnName("widget_contact_capture_confirmation_text");
+        // `25-173`: two more backing fields on the same terms - each a small enum stored as its own
+        // member name (`HasConversion<string>()`, the same built-in-converter shape `ContactVisibility`/
+        // `LogoStatus` already use above rather than a dedicated `PositionConverter`-style type, since
+        // the backlog left the storage spelling undecided and these two enums' wire/storage spelling can
+        // simply be identical, `ContactVisibility`'s own remarks on when that smaller choice is
+        // correct). Database default matches `WidgetConfig.Default`, so every row written before this
+        // migration reads back `AboveComposer`/`Medium` with no backfill - the identical "additive
+        // column, database default, no data migration" shape every field above already states for
+        // itself.
+        builder.Property<ChannelSwitcherPlacement>("_channelSwitcherPlacement")
+            .HasColumnName("widget_channel_switcher_placement")
+            .HasConversion<string>()
+            .HasDefaultValue(ChannelSwitcherPlacement.AboveComposer);
+        builder.Property<ChannelSwitcherIconSize>("_channelSwitcherIconSize")
+            .HasColumnName("widget_channel_switcher_icon_size")
+            .HasConversion<string>()
+            .HasDefaultValue(ChannelSwitcherIconSize.Medium);
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

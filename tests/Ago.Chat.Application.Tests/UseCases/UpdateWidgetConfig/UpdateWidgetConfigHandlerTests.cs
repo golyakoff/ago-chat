@@ -41,12 +41,16 @@ public class UpdateWidgetConfigHandlerTests
         bool autoOpenEnabled = false,
         int autoOpenDelaySeconds = 30,
         string? autoOpenGreetingText = null,
-        string? contactCaptureConfirmationText = null) =>
+        string? contactCaptureConfirmationText = null,
+        string channelSwitcherPlacement = nameof(ChannelSwitcherPlacement.AboveComposer),
+        string channelSwitcherIconSize = nameof(ChannelSwitcherIconSize.Medium)) =>
         new(
             SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl,
             AttractAttention: attractAttention, AutoOpenEnabled: autoOpenEnabled,
             AutoOpenDelaySeconds: autoOpenDelaySeconds, AutoOpenGreetingText: autoOpenGreetingText,
-            ContactCaptureConfirmationText: contactCaptureConfirmationText);
+            ContactCaptureConfirmationText: contactCaptureConfirmationText,
+            ChannelSwitcherPlacement: channelSwitcherPlacement,
+            ChannelSwitcherIconSize: channelSwitcherIconSize);
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_UpdatesTheSitesWidgetConfig()
@@ -452,6 +456,69 @@ public class UpdateWidgetConfigHandlerTests
 
         await fixture.Handler.HandleAsync(Command(contactCaptureConfirmationText: "   "), CancellationToken.None);
 
+        Assert.Empty(fixture.Outbox.Enqueued);
+    }
+
+    // `25-173`: the eleventh and twelfth fields this same call writes - straight onto
+    // Ago.Chat.Domain.WidgetConfig itself, the identical "no third Site method needed" shape every
+    // field above already established.
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_UpdatesTheSitesChannelSwitcherFields()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(
+                channelSwitcherPlacement: nameof(ChannelSwitcherPlacement.BelowLauncher),
+                channelSwitcherIconSize: nameof(ChannelSwitcherIconSize.Small)),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ChannelSwitcherPlacement.BelowLauncher, result.Value.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Small, result.Value.ChannelSwitcherIconSize);
+
+        var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
+        Assert.Equal(ChannelSwitcherPlacement.BelowLauncher, saved!.WidgetConfig.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Small, saved.WidgetConfig.ChannelSwitcherIconSize);
+    }
+
+    // The backlog's own default - `AboveComposer`/`Medium` - is what every existing site must keep
+    // reading when this item's own fields are never sent, `25-149`'s pre-existing card unchanged.
+    [Fact]
+    public async Task HandleAsync_WhenChannelSwitcherFieldsAreNotSupplied_LeavesTheDefaultPlacementAndSize()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ChannelSwitcherPlacement.AboveComposer, result.Value.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Medium, result.Value.ChannelSwitcherIconSize);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheChannelSwitcherPlacementIsNotARecognizedValue_ReturnsInvalidChannelSwitcherPlacement()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(channelSwitcherPlacement: "floating"), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidChannelSwitcherPlacement", result.Error!.Value.Code);
+        Assert.Empty(fixture.Outbox.Enqueued);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheChannelSwitcherIconSizeIsNotARecognizedValue_ReturnsInvalidChannelSwitcherIconSize()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(channelSwitcherIconSize: "huge"), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidChannelSwitcherIconSize", result.Error!.Value.Code);
         Assert.Empty(fixture.Outbox.Enqueued);
     }
 }
