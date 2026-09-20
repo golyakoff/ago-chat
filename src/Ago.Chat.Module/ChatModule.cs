@@ -104,6 +104,8 @@ using Ago.Chat.Application.UseCases.GetSiteForOwner;
 using Ago.Chat.Application.UseCases.GetSiteInstallation;
 using Ago.Chat.Application.UseCases.GetOperatorTeam;
 using Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
+using Ago.Chat.Application.UseCases.GetOwnerSeatSummary;
+using Ago.Chat.Application.UseCases.GrantOwnerSeatsAsOwner;
 using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Application.UseCases.GetMessageArchiveDownloadUrl;
 using Ago.Chat.Application.UseCases.GetSiteExportStatus;
@@ -1203,6 +1205,13 @@ public sealed class ChatModule : IProductModule
         // at the route rather than by IPermissionChecker (RestoreOperatorSeatAsOwner's own remarks).
         services.AddScoped<RestoreOperatorSeatAsOwnerHandler>();
         services.AddScoped<GetSeatAssignmentSummaryHandler>();
+        // `25-181`: the platform owner's own hand-granted seat extra - see IOwnerSeatGrantStore's own
+        // remarks. Gated entirely by RequirePlatformOwner at the route, the identical registration shape
+        // RestoreOperatorSeatAsOwnerHandler's own remarks give a few lines up for the analogous
+        // owner-only write.
+        services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
+        services.AddScoped<GrantOwnerSeatsAsOwnerHandler>();
+        services.AddScoped<GetOwnerSeatSummaryHandler>();
         // `23-22`: the team screen's own bootstrap read - see the handler's own remarks.
         services.AddScoped<GetOperatorTeamHandler>();
         // `23-72`: "an administrator can change an existing colleague's role, both directions" - see the

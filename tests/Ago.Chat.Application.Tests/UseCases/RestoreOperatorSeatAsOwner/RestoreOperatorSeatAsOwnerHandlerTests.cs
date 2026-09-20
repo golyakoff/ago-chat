@@ -36,7 +36,9 @@ public class RestoreOperatorSeatAsOwnerHandlerTests
         var sites = new FakeSiteRepository();
         sites.Seed(new Site(SiteId, $"site_{SiteId.Value:N}", [], tier: SubscriptionTierBands.Starter, seatLimit: seatLimit));
         var overrides = new FakeOperatorSeatRestoreOverrideRepository();
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites);
+        // `25-181`: FakeOwnerSeatGrantStore with nothing seeded - EffectiveExtraAsync reads 0, so
+        // every test in this file keeps exercising the identical billing-only limit it always has.
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites, new FakeOwnerSeatGrantStore(), new FakeClock(Now));
 
         var handler = new Application.UseCases.RestoreOperatorSeatAsOwner.RestoreOperatorSeatAsOwnerHandler(
             operators, operatorRoles, new FakeUnitOfWork(), roleSeatCapacity, overrides, new FakeClock(Now), new FakeIdGenerator());

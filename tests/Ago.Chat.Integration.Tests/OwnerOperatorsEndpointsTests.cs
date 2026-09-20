@@ -342,6 +342,10 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        // `25-181`: OperatorRoleSeatCapacity's own new dependency - nothing in this file's tests seeds
+        // an owner grant, so a real, always-empty OwnerSeatGrantStore reads 0 and every existing test
+        // keeps exercising the identical billing-only limit it always has.
+        builder.Services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
         builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         // A real repository, not a fake - this suite already runs against a real Postgres
         // (fixture.DataSource), and the whole point of the override tests above is proving a real row

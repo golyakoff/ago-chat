@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
+using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.OperatorRoleSeats;
 
@@ -10,20 +11,31 @@ namespace Ago.Chat.Application.UseCases.OperatorRoleSeats;
 /// count. Both existing call sites move to this; no new capacity rule is invented, the two existing ones
 /// are unified.
 ///
-/// <para><b>An Application class composing one port, not a port of its own.</b> The identical judgement
+/// <para><b>An Application class composing two ports, not a port of its own.</b> The identical judgement
 /// <see cref="Ago.Chat.Application.UseCases.AiAddOn.AiProcessingGate"/>'s own remarks make for itself:
 /// this touches no external resource of its own - it calls
-/// <see cref="IOperatorRoleRepository.LockAndGetHeldSeatHolderIdsAsync"/> and
-/// <see cref="ISiteRepository.GetByIdAsync"/>, two ports each caller already has or gains by
-/// constructor injection - so a third port here would only hide the two-step resolution (lock-and-count,
-/// then compare against the role's own limit) a reviewer needs to see to trust the decision.</para>
+/// <see cref="IOperatorRoleRepository.LockAndGetHeldSeatHolderIdsAsync"/>,
+/// <see cref="ISiteRepository.GetByIdAsync"/> and (`25-181`) <see cref="IOwnerSeatGrantStore.GetEffectiveExtraAsync"/>,
+/// ports every caller already has or gains by constructor injection - so a fourth port here would only
+/// hide the resolution (lock-and-count, then compare against the role's own limit plus whatever the
+/// owner has hand-granted) a reviewer needs to see to trust the decision.</para>
+///
+/// <para><b>`25-181`: the owner's own live, hand-granted extra counts toward this limit immediately.</b>
+/// Without this, <c>GetOwnerSeatSummaryHandler</c>'s own displayed limit would be a lie - a number the
+/// owner console shows as available capacity that this, the actual gate every invite/promote/restore
+/// call site goes through, would still refuse at the pre-grant ceiling. Resolved fresh every call
+/// (<paramref name="cancellationToken"/> aside, no caching - CLAUDE.md rule 8: a capacity decision reads
+/// live), against this method's own <see cref="IClock.UtcNow"/> - the identical "the caller resolves it
+/// against its own clock" shape <c>EntitlementWatchdogJob</c>'s own remarks already state for the
+/// reconciliation side of the same feature.</para>
 ///
 /// <para><b>Must be called inside the caller's own ambient transaction</b> - the identical contract
 /// <see cref="IOperatorRoleRepository.LockAndGetHeldSeatHolderIdsAsync"/> itself states, since the whole
 /// point is that the row lock this method takes stays held until the caller's own write (an invite
 /// redemption, a role change, a seat toggle) either commits or rolls back with it.</para>
 /// </summary>
-public sealed class OperatorRoleSeatCapacity(IOperatorRoleRepository operatorRoles, ISiteRepository sites)
+public sealed class OperatorRoleSeatCapacity(
+    IOperatorRoleRepository operatorRoles, ISiteRepository sites, IOwnerSeatGrantStore ownerSeatGrants, IClock clock)
 {
     public async Task<RoleSeatCapacityCheck> CheckAsync(SiteId siteId, string roleName, CancellationToken cancellationToken)
     {
@@ -44,7 +56,13 @@ public sealed class OperatorRoleSeatCapacity(IOperatorRoleRepository operatorRol
                 + "a foreign key should have prevented this.");
         }
 
-        var limit = RoleSeatLimits.LimitFor(roleName, site);
+        // `25-181`: the platform owner's own hand-granted extra, added on top of the billing-derived
+        // baseline - the identical shape `EntitlementWatchdogJob`/`GetOwnerSeatSummaryHandler` already
+        // apply for the reconciliation and display sides of this same feature, reused here rather than
+        // reinvented for the third, load-bearing side: the actual capacity gate.
+        var extra = await ownerSeatGrants.GetEffectiveExtraAsync(
+            siteId, RoleSeatLimits.OwnerGrantRoleFor(roleName), clock.UtcNow, cancellationToken);
+        var limit = RoleSeatLimits.LimitFor(roleName, site) + extra;
         return new RoleSeatCapacityCheck(holderIds.Count >= limit, limit);
     }
 }

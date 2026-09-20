@@ -24,4 +24,16 @@ internal static class RoleSeatLimits
         _ => throw new ArgumentOutOfRangeException(
             nameof(roleName), roleName, $"No seat limit is defined for role '{roleName}' - only '{OperatorRoleName}' and '{AdminRoleName}' carry one."),
     };
+
+    /// <summary>`25-181`: which <see cref="OwnerSeatGrantRole"/> a seeded role name's own seat capacity
+    /// corresponds to - the same pairing <see cref="LimitFor"/> already draws against <see cref="Site"/>'s
+    /// two fields, restated for the owner's own hand-granted extra rather than a <see cref="Site"/>
+    /// field.</summary>
+    public static OwnerSeatGrantRole OwnerGrantRoleFor(string roleName) => roleName switch
+    {
+        OperatorRoleName => OwnerSeatGrantRole.Operator,
+        AdminRoleName => OwnerSeatGrantRole.Administrator,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(roleName), roleName, $"No owner seat grant role is defined for role '{roleName}' - only '{OperatorRoleName}' and '{AdminRoleName}' carry one."),
+    };
 }

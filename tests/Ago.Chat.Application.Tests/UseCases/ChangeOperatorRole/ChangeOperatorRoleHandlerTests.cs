@@ -55,7 +55,10 @@ public class ChangeOperatorRoleHandlerTests
         var roleChangeRecords = new FakeRoleChangeRecordRepository();
         var outbox = new FakeOutboxWriter();
 
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites);
+        // `25-181`: FakeOwnerSeatGrantStore with nothing seeded - EffectiveExtraAsync reads 0, so
+        // every pre-existing test in this file keeps exercising the identical billing-only limit it
+        // always has.
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites, new FakeOwnerSeatGrantStore(), new FakeClock(Now));
         var handler = new Application.UseCases.ChangeOperatorRole.ChangeOperatorRoleHandler(
             operators, roles, operatorRoles, permissions, roleSeatCapacity, unitOfWork, roleChangeRecords, outbox,
             new FakeIdGenerator(), new FakeClock(Now));

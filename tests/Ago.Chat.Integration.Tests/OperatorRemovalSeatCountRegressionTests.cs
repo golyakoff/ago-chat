@@ -44,7 +44,11 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
 
         var (codeHash1, _) = await SeedInviteAsync(siteId, roleId, "new1@example.com");
         await using var repositoryDb = fixture.CreateDbContext();
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(new OperatorRoleRepository(repositoryDb), new SiteRepository(repositoryDb));
+        // `25-181`: a real OwnerSeatGrantStore with nothing seeded reads 0 - this test keeps
+        // exercising the identical billing-only seat limit it always has.
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(
+            new OperatorRoleRepository(repositoryDb), new SiteRepository(repositoryDb),
+            new OwnerSeatGrantStore(repositoryDb), new Ago.Platform.Hosting.SystemClock());
         var repository = new OperatorInviteRedemptionRepository(
             repositoryDb, new Ago.Platform.Kernel.UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(repositoryDb), roleSeatCapacity);
 

@@ -67,7 +67,10 @@ public sealed class OverSeatsDerivedConditionConcurrencyTests(ConcurrencyTestFix
             await gate.Task;
             await using var db = fixture.CreateDbContext();
             var operatorRoles = new OperatorRoleRepository(db);
-            var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, new SiteRepository(db));
+            // `25-181`: a real OwnerSeatGrantStore with nothing seeded reads 0 - this test keeps
+            // exercising the identical billing-only seat limit it always has.
+            var roleSeatCapacity = new OperatorRoleSeatCapacity(
+                operatorRoles, new SiteRepository(db), new OwnerSeatGrantStore(db), new Ago.Platform.Hosting.SystemClock());
             var handler = new ToggleOperatorSeatHandler(
                 new OperatorRepository(db), operatorRoles, new AlwaysAllowPermissionChecker(), new EfUnitOfWork(db), roleSeatCapacity);
             return await handler.HandleAsync(

@@ -600,6 +600,17 @@ public static class TenantScopeExemptions
             + "seat-limit override this handler decides for itself (was the override meant), not who may call the "
             + "route at all - the identical shape RevokeModuleForSiteAsOwnerHandler's own Force/Reason already "
             + "establishes for a different override.",
+        ["Ago.Chat.Application.UseCases.GrantOwnerSeatsAsOwner.GrantOwnerSeatsAsOwnerHandler.HandleAsync"] =
+            "`25-181`, the platform owner's own hand-granted seat extra - the identical category as "
+            + "RestoreOperatorSeatAsOwnerHandler right above: SiteId names the tenant being granted extra seats, "
+            + "chosen by the owner, not a resource the caller already owns, and RequirePlatformOwner on "
+            + "OwnerOperatorsEndpoints is the entire access-control story - Ago.Chat.Application still has no port "
+            + "that can see a Keycloak realm-role claim, so a permission check here would be a second, weaker copy "
+            + "of a rule the policy already decided.",
+        ["Ago.Chat.Application.UseCases.GetOwnerSeatSummary.GetOwnerSeatSummaryHandler.HandleAsync"] =
+            "`25-181`, the owner console's own read of the same grant - the identical category as "
+            + "VerifyModuleRegistrationAsOwnerHandler above: read-only, RequirePlatformOwner is the entire "
+            + "access-control story, and SiteId is used only to load one site's own held/limit numbers.",
         ["Ago.Chat.Application.UseCases.AddRolePermissionsAsOwner.AddRolePermissionsAsOwnerHandler.HandleAsync"] =
             "`25-76`, the platform owner's own role-permission tool - closes the live drift this item was found "
             + "from (seven tenants, seven different `Admin` permission sets). The identical category as "

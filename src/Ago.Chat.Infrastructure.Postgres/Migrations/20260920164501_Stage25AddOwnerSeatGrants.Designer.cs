@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Ago.Chat.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(AgoChatDbContext))]
-    partial class AgoChatDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260920164501_Stage25AddOwnerSeatGrants")]
+    partial class Stage25AddOwnerSeatGrants
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2263,11 +2266,11 @@ namespace Ago.Chat.Infrastructure.Postgres.Migrations
 
                     b.ToTable("access_records", null, t =>
                         {
-                            t.HasCheckConstraint("ck_access_records_access_kind", "access_kind IN ('CrossConversationHistoryRead', 'OwnerSiteList', 'OwnerSiteDetail', 'OwnerModuleGrant', 'OwnerModuleRevoke', 'OwnerChannelIdentityUnlink', 'OwnerModuleQuantityGrant', 'OwnerOperatorSeatRestore', 'OwnerRolePermissionsGrant', 'OwnerRolePermissionsRemoval', 'OwnerSeatGrant')");
+                            t.HasCheckConstraint("ck_access_records_access_kind", "access_kind IN ('CrossConversationHistoryRead', 'OwnerSiteList', 'OwnerSiteDetail', 'OwnerModuleGrant', 'OwnerModuleRevoke', 'OwnerChannelIdentityUnlink', 'OwnerModuleQuantityGrant', 'OwnerOperatorSeatRestore', 'OwnerRolePermissionsGrant', 'OwnerRolePermissionsRemoval')");
 
                             t.HasCheckConstraint("ck_access_records_actor_kind", "actor_kind IN ('Operator', 'PlatformOwner')");
 
-                            t.HasCheckConstraint("ck_access_records_resource_kind", "resource_kind IS NULL OR resource_kind IN ('Conversation', 'ChannelIdentity', 'EnabledModule', 'ModuleQuantityGrant', 'Operator', 'Role', 'OwnerSeatGrant')");
+                            t.HasCheckConstraint("ck_access_records_resource_kind", "resource_kind IS NULL OR resource_kind IN ('Conversation', 'ChannelIdentity', 'EnabledModule', 'ModuleQuantityGrant', 'Operator', 'Role')");
                         });
                 });
 

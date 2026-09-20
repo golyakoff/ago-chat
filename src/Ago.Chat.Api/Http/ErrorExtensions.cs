@@ -333,7 +333,13 @@ public static class ErrorExtensions
                 // screen's own company-name length ceiling - each the caller's own mistake to fix, the
                 // identical shape `Attachment.InvalidContentType`/`Attachment.TooLarge` already give
                 // their own upload endpoint two lines up in this same case.
-                or "Site.LogoInvalidContentType" or "Site.BrandCompanyNameTooLong" => StatusCodes.Status400BadRequest,
+                or "Site.LogoInvalidContentType" or "Site.BrandCompanyNameTooLong"
+                // `25-181`: the owner-seat-grant endpoint's own two caller-mistake checks - a blank/
+                // over-length reason, and a quantity outside OwnerSeatGrant.MinQuantity-MaxQuantity -
+                // the identical "fix what you sent" shape every other code in this group already gets.
+                or "Site.OwnerSeatGrantReasonRequired" or "Site.OwnerSeatGrantQuantityInvalid"
+                or "Site.OwnerSeatGrantRoleInvalid"
+                => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"
                 or "ChannelCredential.AlreadyConnected" or "OperatorInvite.AlreadyRedeemed"

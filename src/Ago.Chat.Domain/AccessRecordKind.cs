@@ -82,4 +82,13 @@ public enum AccessRecordKind
     /// exactly the fact `AccessRecordKind` already distinguishes for every other reversible act it
     /// covers, and a role-permission write is no different.</summary>
     OwnerRolePermissionsRemoval,
+
+    /// <summary>`25-181`: the platform owner granting a tenant extra seats of one role, by hand, beyond
+    /// what the tariff includes - <see cref="Domain.OwnerSeatGrant"/>'s own write, the identical "the
+    /// owner acted, record who/why" shape <see cref="OwnerModuleQuantityGrant"/> already establishes for
+    /// its own (site, module) grant, restated here for the (site, role) one this item adds rather than
+    /// reusing that member: a reviewer reading this deployment's own access log needs to tell "the owner
+    /// widened a module's quantity" apart from "the owner widened a seat limit" without opening each
+    /// row's own resource details.</summary>
+    OwnerSeatGrant,
 }

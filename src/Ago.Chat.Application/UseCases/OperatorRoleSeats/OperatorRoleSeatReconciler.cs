@@ -37,16 +37,36 @@ namespace Ago.Chat.Application.UseCases.OperatorRoleSeats;
 /// (`ChangeOperatorRoleHandler`/`OperatorInviteRedemptionRepository`/`SiteRegistrationRepository`), never
 /// by disabling a seat, so a "now" here would have no write to attach to. The caller that does need one -
 /// the new watchdog job, for its own per-tick logging - reads its own <c>IClock.UtcNow</c> instead; this
-/// class stays clock-free because it genuinely has nothing time-dependent to decide.</para>
+/// class stays clock-free because it genuinely has nothing time-dependent to decide.
+///
+/// <para><b>`25-181` still true, in the narrower sense that matters.</b> The <c>extraCapacity</c>
+/// overload below is time-dependent - the platform owner's own hand-granted extra expires - but this
+/// class never reads that clock itself: the caller (<c>EntitlementWatchdogJob</c>) resolves
+/// <c>Domain.OwnerSeatGrant.EffectiveQuantity(now)</c> against its own <c>IClock.UtcNow</c> before ever
+/// calling in, the identical "the caller already resolved it" shape <c>site</c> itself already arrives
+/// in (a live-loaded aggregate, not a <see cref="SiteId"/> this procedure would have to go fetch). This
+/// procedure still only ever compares numbers it was handed.</para>
 /// </summary>
 public sealed class OperatorRoleSeatReconciler(IOperatorRoleRepository operatorRoles)
 {
     /// <summary>Returns how many holders were disabled - <c>0</c> when already at or under the limit,
     /// the identical "let the callee decide there is nothing to do" no-op shape
     /// `AdministratorLimitEnforcer`'s own pre-`25-170` remarks described for itself.</summary>
-    public async Task<int> ReconcileAsync(Site site, string roleName, CancellationToken cancellationToken)
+    public Task<int> ReconcileAsync(Site site, string roleName, CancellationToken cancellationToken) =>
+        ReconcileAsync(site, roleName, extraCapacity: 0, cancellationToken);
+
+    /// <summary>`25-181`: the identical procedure, widened by one caller-supplied number added on top of
+    /// <see cref="RoleSeatLimits.LimitFor"/>'s own <see cref="Site"/>-derived baseline - the platform
+    /// owner's own live, hand-granted extra (<c>Domain.OwnerSeatGrant.EffectiveQuantity</c>), which this
+    /// procedure has no way to read itself (it takes no clock and no grant store - this type's own
+    /// remarks on why) and so must arrive already resolved, the identical "the caller already resolved
+    /// it" shape <see cref="Site"/>-derived <paramref name="site"/> itself arrives in. Defaults to
+    /// <c>0</c> so every pre-`25-181` call site (<c>EntitlementWatchdogJob</c>'s own pre-existing calls,
+    /// every test that already constructs this type) keeps compiling and behaving identically without
+    /// being touched.</summary>
+    public async Task<int> ReconcileAsync(Site site, string roleName, int extraCapacity, CancellationToken cancellationToken)
     {
-        var limit = RoleSeatLimits.LimitFor(roleName, site);
+        var limit = RoleSeatLimits.LimitFor(roleName, site) + extraCapacity;
 
         // The identical row-locked read the capacity-check procedure uses - a concurrent capacity
         // check or seat toggle on this same site and role serializes behind this same lock rather than
