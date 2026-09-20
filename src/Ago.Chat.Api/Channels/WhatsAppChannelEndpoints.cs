@@ -1,11 +1,13 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.WhatsApp;
+using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Api.Channels;
@@ -44,13 +46,23 @@ namespace Ago.Chat.Api.Channels;
 /// authenticated and accepted, so accepting a token now would silently promise a channel that can send
 /// but never receive.</para>
 ///
-/// <para><b>`25-65`: <see cref="HandleStatusAsync"/> never asks WhatsApp anything live, the same
-/// posture <see cref="VkChannelEndpoints.HandleStatusAsync"/>/<see cref="MaxChannelEndpoints.HandleStatusAsync"/>
-/// already take, for the identical reason.</b> Meta's own Graph API has no cheap, side-effect-free
-/// per-request check comparable to Telegram's own <c>getMe</c> that this endpoint could call on every
-/// status read - <c>GetPhoneNumberAsync</c> is validated once, at connect time, above. This endpoint
-/// reports only what <see cref="GetChannelCredentialStatusHandler"/> already answers for every channel.
-/// </para>
+/// <para><b>`25-176`: <see cref="HandleStatusAsync"/> now has MAX-style live-verification parity,
+/// correcting `25-65`'s own note above.</b> That note read WhatsApp as having no cheap, side-effect-free
+/// per-request check the way Telegram's `getMe` is - re-reading it found <c>GetPhoneNumberAsync</c> itself
+/// is exactly that: a plain <c>GET</c>, safe to repeat on every read, the identical "no side effect"
+/// character <see cref="WhatsAppApiClient.GetPhoneNumberAsync"/>'s own remarks already draw to
+/// <c>VkApiClient.GetGroupInfoAsync</c>. So this endpoint now calls
+/// <see cref="WhatsAppLiveTokenCheck.RunAsync"/> on every read, the same bounded, three-outcome shape
+/// <see cref="MaxChannelEndpoints.HandleStatusAsync"/>/<see cref="VkChannelEndpoints.HandleStatusAsync"/>
+/// already use - see <see cref="WhatsAppLiveTokenCheck"/>'s own remarks for why its shape is a genuine
+/// combination of both siblings' own precedents (VK's exception-catching control flow, MAX's
+/// carries-a-handle outcome), not a repeat of either alone.</para>
+///
+/// <para><b>Unlike VK, this endpoint's live check also backfills <see cref="Domain.ChannelCredential.PublicHandle"/>
+/// on a status read - the identical `25-147` pattern <see cref="MaxChannelEndpoints.HandleStatusAsync"/>
+/// already implements.</b> WhatsApp already has a real public handle to keep current
+/// (`display_phone_number`), unlike VK's fully-derived deep link - see
+/// <see cref="WhatsAppLiveCheckOutcome"/>'s own remarks.</para>
 /// </summary>
 public static class WhatsAppChannelEndpoints
 {
@@ -67,6 +79,10 @@ public static class WhatsAppChannelEndpoints
     private static async Task<IResult> HandleStatusAsync(
         Guid siteId,
         GetChannelCredentialStatusHandler statusHandler,
+        IChannelCredentialRepository credentials,
+        IChannelCredentialCipher cipher,
+        WhatsAppApiClient whatsAppApiClient,
+        IClock clock,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -80,9 +96,47 @@ public static class WhatsAppChannelEndpoints
             return status.Error!.Value.ToProblem(httpContext);
         }
 
-        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
-            ? new WhatsAppChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
-            : WhatsAppChannelStatusResponse.NotConnected);
+        if (status.Value.ChannelCredentialId is not { } credentialId)
+        {
+            return Results.Ok(WhatsAppChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        // `GetChannelCredentialStatusHandler` already confirmed this operator may manage this site's
+        // channels and that this id belongs to it - this second repository call exists only to reach
+        // TokenCiphertext/ProviderAccountId, which that channel-neutral handler's own result deliberately
+        // never carries (the identical reason `MaxChannelEndpoints.HandleStatusAsync`/
+        // `VkChannelEndpoints.HandleStatusAsync` make this same second call). A credential revoked
+        // between the two calls (an operator double-clicking Disconnect in another tab) is not an error -
+        // it means "no longer connected", answered the same way as if it had never existed.
+        var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
+        if (credential is null || !credential.Active)
+        {
+            return Results.Ok(WhatsAppChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        var token = cipher.Decrypt(credential.TokenCiphertext);
+        var outcome = await WhatsAppLiveTokenCheck.RunAsync(
+            whatsAppApiClient, token, credential.ProviderAccountId!, WhatsAppLiveTokenCheck.Timeout, cancellationToken);
+
+        // `25-176`: backfill on this same live read, no reconnect required - the identical `25-147`
+        // pattern `MaxChannelEndpoints.HandleStatusAsync` already implements. Never gates or changes
+        // anything about `outcome` itself: a verified-but-handle-less number still reports Verified: true
+        // here exactly as it did before this item, this is purely an additional, silent write alongside
+        // the existing read.
+        if (outcome.Ok && outcome.DisplayPhoneNumber is { Length: > 0 } number && credential.PublicHandle != number)
+        {
+            credential.SetPublicHandle(number);
+            await credentials.SaveAsync(credential, cancellationToken);
+        }
+
+        return Results.Ok(new WhatsAppChannelStatusResponse(
+            Connected: true,
+            ChannelCredentialId: credentialId.Value,
+            CreatedAt: status.Value.CreatedAt,
+            Verified: outcome.Unreachable ? null : outcome.Ok,
+            Unreachable: outcome.Unreachable,
+            RefusalReason: outcome.RefusalReason,
+            CheckedAt: clock.UtcNow));
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -160,11 +214,29 @@ public static class WhatsAppChannelEndpoints
 
     public sealed record ConnectWhatsAppChannelResponse(Guid ChannelCredentialId, DateTimeOffset CreatedAt);
 
-    /// <summary>`25-65`: <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>'s own shape
-    /// verbatim - see <see cref="HandleStatusAsync"/>'s own remarks for why this endpoint never asks
-    /// WhatsApp anything live.</summary>
-    public sealed record WhatsAppChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    /// <summary>
+    /// `25-176`: the same seven fields <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>/
+    /// <see cref="VkChannelEndpoints.VkChannelStatusResponse"/> already carry, repeated here rather than
+    /// extracted into a shared shape - this codebase's own established convention is two independent
+    /// per-channel response records (`25-09`'s own remarks on
+    /// <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/> give the fuller reasoning; `25-65`'s own
+    /// three-field version of this type used to be the odd one out precisely because
+    /// <see cref="HandleStatusAsync"/> never asked WhatsApp anything - now that it does, this type
+    /// converges on the same fields by coincidence of behaviour, not because a base type was introduced).
+    /// No field is shaped like a secret, the same guarantee <see cref="ConnectWhatsAppChannelResponse"/>
+    /// already makes.
+    /// </summary>
+    public sealed record WhatsAppChannelStatusResponse(
+        bool Connected,
+        Guid? ChannelCredentialId,
+        DateTimeOffset? CreatedAt,
+        bool? Verified,
+        bool Unreachable,
+        string? RefusalReason,
+        DateTimeOffset CheckedAt)
     {
-        public static readonly WhatsAppChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+        public static WhatsAppChannelStatusResponse NotConnected(DateTimeOffset checkedAt) =>
+            new(Connected: false, ChannelCredentialId: null, CreatedAt: null, Verified: null, Unreachable: false,
+                RefusalReason: null, CheckedAt: checkedAt);
     }
 }
