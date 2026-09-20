@@ -143,6 +143,25 @@ public readonly partial record struct WidgetConfig
     /// this substitution can only ever happen client-side).</summary>
     public string? ContactCaptureConfirmationText { get; }
 
+    /// <summary>`25-173`: where the widget shows a visitor the channels this site has connected -
+    /// <see cref="Domain.ChannelSwitcherPlacement.AboveComposer"/> for every row that predates this
+    /// column, `25-149`'s own pre-existing card, unchanged. Joins <see cref="NoticeText"/>/
+    /// <see cref="RequireContactConsent"/>/<see cref="AttractAttention"/> on the identical terms - one
+    /// more fixed, named, validated (here, nothing to validate beyond being a real enum member, the
+    /// Application boundary's own job matching every other closed set on this type) field, not a new
+    /// configuration mechanism.</summary>
+    public ChannelSwitcherPlacement ChannelSwitcherPlacement { get; }
+
+    /// <summary>`25-173`: the circle diameter/gap the `BelowLauncher` renderer uses -
+    /// <see cref="Domain.ChannelSwitcherIconSize.Medium"/> for every row that predates this column, the
+    /// author's own stated default. Always present, never nullable, even though it is only meaningful
+    /// when <see cref="ChannelSwitcherPlacement"/> is <see cref="Domain.ChannelSwitcherPlacement.BelowLauncher"/> -
+    /// the same posture every other always-present field on this type already takes (<see cref="AutoOpenDelaySeconds"/>
+    /// is meaningless while <see cref="AutoOpenEnabled"/> is <see langword="false"/> and is still a
+    /// plain, always-present enum, not a nullable one) - simpler than teaching this type and its
+    /// consumers a conditional-presence rule for one field.</summary>
+    public ChannelSwitcherIconSize ChannelSwitcherIconSize { get; }
+
     /// <summary>`25-39`: a tenant-level, off-by-default escape hatch around `20-09`'s own verified-phone
     /// gate on the chat-driven booking flow - joins <see cref="RequireContactConsent"/>/
     /// <see cref="AttractAttention"/>/<see cref="AutoOpenEnabled"/> on the identical terms (one more
@@ -186,7 +205,9 @@ public readonly partial record struct WidgetConfig
         bool requireContactConsent = false, bool attractAttention = false, bool autoOpenEnabled = false,
         AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30, string? autoOpenGreetingText = null,
         bool acceptUnverifiedPhone = false, bool allowAttachmentUploadsByDefault = false,
-        string? contactCaptureConfirmationText = null)
+        string? contactCaptureConfirmationText = null,
+        ChannelSwitcherPlacement channelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer,
+        ChannelSwitcherIconSize channelSwitcherIconSize = ChannelSwitcherIconSize.Medium)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -273,6 +294,8 @@ public readonly partial record struct WidgetConfig
         AcceptUnverifiedPhone = acceptUnverifiedPhone;
         AllowAttachmentUploadsByDefault = allowAttachmentUploadsByDefault;
         ContactCaptureConfirmationText = contactCaptureConfirmationText;
+        ChannelSwitcherPlacement = channelSwitcherPlacement;
+        ChannelSwitcherIconSize = channelSwitcherIconSize;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls

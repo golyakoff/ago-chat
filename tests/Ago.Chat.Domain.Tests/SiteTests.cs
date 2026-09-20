@@ -48,6 +48,12 @@ public class SiteTests
         // an AGO-authored one on the tenant's behalf (the identical reasoning NoticeText's own remarks
         // already state for itself).
         Assert.Null(site.WidgetConfig.ContactCaptureConfirmationText);
+        // `25-173`: every existing tenant, and every freshly created one, keeps `25-149`'s pre-existing
+        // above-composer card at the default `Medium` size - a site that never calls
+        // Site.UpdateWidgetConfig with this item's fields must not render the new placement by
+        // accident of a schema default.
+        Assert.Equal(ChannelSwitcherPlacement.AboveComposer, site.WidgetConfig.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Medium, site.WidgetConfig.ChannelSwitcherIconSize);
     }
 
     [Fact]
@@ -283,6 +289,47 @@ public class SiteTests
         site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomLeft), now);
 
         Assert.Null(site.WidgetConfig.ContactCaptureConfirmationText);
+    }
+
+    // `25-173`: the same "set it, read it back" shape every field above already establishes for
+    // itself - both fields ride the identical `WidgetConfig`/`Site.UpdateWidgetConfig` call, no third
+    // `Site` method needed.
+    [Fact]
+    public void UpdateWidgetConfig_WhenChannelSwitcherFieldsAreSet_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+
+        site.UpdateWidgetConfig(
+            new WidgetConfig(
+                null, Position.BottomRight,
+                channelSwitcherPlacement: ChannelSwitcherPlacement.BelowLauncher,
+                channelSwitcherIconSize: ChannelSwitcherIconSize.Large),
+            now);
+
+        Assert.Equal(ChannelSwitcherPlacement.BelowLauncher, site.WidgetConfig.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Large, site.WidgetConfig.ChannelSwitcherIconSize);
+    }
+
+    // The identical "a later call that omits the field must not silently carry the old value forward"
+    // guard every other field's own test states, for this pair - a save that only touches the launcher
+    // button panel must not leave a stale BelowLauncher/Large behind from an earlier save.
+    [Fact]
+    public void UpdateWidgetConfig_WhenChannelSwitcherFieldsAreOmitted_DefaultsToAboveComposerAndMedium()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.UpdateWidgetConfig(
+            new WidgetConfig(
+                null, Position.BottomRight,
+                channelSwitcherPlacement: ChannelSwitcherPlacement.BelowLauncher,
+                channelSwitcherIconSize: ChannelSwitcherIconSize.Large),
+            now);
+
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomLeft), now);
+
+        Assert.Equal(ChannelSwitcherPlacement.AboveComposer, site.WidgetConfig.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Medium, site.WidgetConfig.ChannelSwitcherIconSize);
     }
 
     [Fact]

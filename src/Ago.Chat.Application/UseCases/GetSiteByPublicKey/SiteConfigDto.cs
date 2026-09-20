@@ -90,6 +90,13 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// "says nothing an attacker could use" Done-when line forbids for the narrower per-conversation
 /// refusal - a tenant's upload posture is no more the public key's business than
 /// <see cref="ContactVisibility"/>'s own masking choice is.
+/// `25-173`: <see cref="WidgetChannelSwitcherPlacement"/>/<see cref="WidgetChannelSwitcherIconSize"/>
+/// join on the identical terms <see cref="WidgetAttractAttention"/> already established - additive
+/// fields on the existing cached DTO, populated identically by both loaders, and <b>put on the wire</b>
+/// by the handshake: which placement (and, for the new one, which size) to render is exactly the kind
+/// of fact the widget's own bootstrap needs to decide how to draw the channel switcher, the same
+/// "the widget's own bootstrap needs to render correctly" reasoning <see cref="WidgetAttractAttention"/>'s
+/// own remarks give for itself.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
@@ -97,4 +104,6 @@ public sealed record SiteConfigDto(
     string? WidgetNoticeText, string? WidgetNoticeUrl, ContactVisibility ContactVisibility,
     bool WidgetAttractAttention, bool WidgetAutoOpenEnabled, AutoOpenDelay WidgetAutoOpenDelaySeconds,
     string? WidgetAutoOpenGreetingText, bool WidgetAllowAttachmentUploadsByDefault = false,
-    string? WidgetContactCaptureConfirmationText = null);
+    string? WidgetContactCaptureConfirmationText = null,
+    ChannelSwitcherPlacement WidgetChannelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer,
+    ChannelSwitcherIconSize WidgetChannelSwitcherIconSize = ChannelSwitcherIconSize.Medium);

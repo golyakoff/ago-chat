@@ -19,7 +19,9 @@ public class GetWidgetConfigHandlerTests
         site.UpdateWidgetConfig(
             new WidgetConfig(
                 "#112233", Position.BottomLeft, "We read what you send us.", "https://tenant.example/privacy",
-                attractAttention: true, contactCaptureConfirmationText: "Спасибо, {name}, мы всё записали."),
+                attractAttention: true, contactCaptureConfirmationText: "Спасибо, {name}, мы всё записали.",
+                channelSwitcherPlacement: ChannelSwitcherPlacement.BelowLauncher,
+                channelSwitcherIconSize: ChannelSwitcherIconSize.Large),
             DateTimeOffset.UtcNow);
         site.UpdateLocale(Locale.Ru, DateTimeOffset.UtcNow);
         site.ClearDomainEvents();
@@ -37,6 +39,27 @@ public class GetWidgetConfigHandlerTests
         Assert.Equal("https://tenant.example/privacy", result.Value.NoticeUrl);
         Assert.True(result.Value.AttractAttention);
         Assert.Equal("Спасибо, {name}, мы всё записали.", result.Value.ContactCaptureConfirmationText);
+        Assert.Equal(ChannelSwitcherPlacement.BelowLauncher, result.Value.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Large, result.Value.ChannelSwitcherIconSize);
+    }
+
+    // `25-173`: a site that predates this item, or has simply never configured it, reads back the
+    // backlog's own default - `25-149`'s pre-existing above-composer card, unchanged, at `Medium`.
+    [Fact]
+    public async Task HandleAsync_WhenChannelSwitcherFieldsWereNeverSet_ReturnsTheDefaultPlacementAndSize()
+    {
+        var sites = new FakeSiteRepository();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.SiteConfigure);
+        sites.Seed(new Site(SiteId, "shop_7f3a", []));
+        var handler = new GetWidgetConfigHandler(sites, permissions);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetWidgetConfig.GetWidgetConfig(SiteId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ChannelSwitcherPlacement.AboveComposer, result.Value.ChannelSwitcherPlacement);
+        Assert.Equal(ChannelSwitcherIconSize.Medium, result.Value.ChannelSwitcherIconSize);
     }
 
     // `25-129`: every site that predates this item, or has simply never configured an override, reads
