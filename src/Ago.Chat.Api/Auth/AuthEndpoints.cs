@@ -334,8 +334,11 @@ public static class AuthEndpoints
     {
         var links = await channelLinkReadStore.GetForSiteAsync(siteId, cancellationToken);
 
+        // `25-194`: the read store's own SQL carries no ORDER BY, so the fixed display order the
+        // widget's channel switcher needs is applied here, once, for every caller of this method -
+        // ChannelLinkUrlBuilder.DisplayOrder's own remarks have the reasoning.
         var responses = new List<ChannelLinkResponse>(links.Count);
-        foreach (var link in links)
+        foreach (var link in links.OrderBy(l => ChannelLinkUrlBuilder.DisplayOrder(l.Kind)))
         {
             var url = ChannelLinkUrlBuilder.BuildUrl(link.Kind, link.Handle);
             if (url is null)
