@@ -189,6 +189,9 @@ public sealed class WhatsAppChannelAdapterTests
             throw new NotSupportedException();
 
         public Task SaveAsync(ChannelCredential credential, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task ReloadAsync(ChannelCredential credential, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class PassthroughCipher : IChannelCredentialCipher

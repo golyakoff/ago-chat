@@ -30,5 +30,10 @@ public sealed class FakeChannelCredentialRepository : IChannelCredentialReposito
         return Task.CompletedTask;
     }
 
+    // `25-177`: this fake stores and returns the identical instance reference for a given id (`GetByIdAsync`/
+    // `SaveAsync` above) rather than a separate copy the way a real database row is - there is no second
+    // "current, stored" value for a reload to ever diverge from, so nothing to do here.
+    public Task ReloadAsync(ChannelCredential credential, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public void Seed(ChannelCredential credential) => _byId[credential.Id] = credential;
 }

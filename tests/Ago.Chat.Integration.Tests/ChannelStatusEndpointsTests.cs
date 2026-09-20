@@ -43,17 +43,17 @@ namespace Ago.Chat.Integration.Tests;
 /// see this item's own worker report for why that gap in the existing suite is worth naming rather than
 /// silently matched.
 ///
-/// <para><b>`25-175`/`25-176`: VK's and WhatsApp's own "connected, with an active credential" cases both
-/// moved out of this file.</b> `VkChannelEndpoints.HandleStatusAsync`/`WhatsAppChannelEndpoints.HandleStatusAsync`
-/// now call VK/WhatsApp live on every read (the same MAX/Telegram-style bounded check `25-174` gave MAX) -
-/// the "whose routes never call any provider" framing this file's own remarks state above stopped being
-/// true for either the moment those items shipped, the identical reason MAX was never part of this shared
-/// file to begin with. Both live-check paths now have their own dedicated coverage, mirroring `25-174`'s
-/// own <c>MaxChannelStatusLiveCheckTests</c> split: see <c>VkChannelStatusLiveCheckTests</c>/
-/// <c>WhatsAppChannelStatusLiveCheckTests</c>. This file keeps only VK's and WhatsApp's own "no
-/// credential" cases below (still true unchanged - the live check is never attempted when there is
-/// nothing to check), alongside Avito's still-fully-covered connected/not-connected pair (`25-177`, not
-/// yet live-checked).</para>
+/// <para><b>`25-175`/`25-176`/`25-177`: VK's, WhatsApp's and Avito's own "connected, with an active
+/// credential" cases all moved out of this file.</b> `VkChannelEndpoints.HandleStatusAsync`/
+/// `WhatsAppChannelEndpoints.HandleStatusAsync`/`AvitoChannelEndpoints.HandleStatusAsync` now call their
+/// own provider live on every read (the same MAX/Telegram-style bounded check `25-174` gave MAX) - the
+/// "whose routes never call any provider" framing this file's own remarks state above stopped being true
+/// for any of the three the moment its own item shipped, the identical reason MAX was never part of this
+/// shared file to begin with. Every live-check path now has its own dedicated coverage, mirroring
+/// `25-174`'s own <c>MaxChannelStatusLiveCheckTests</c> split: see <c>VkChannelStatusLiveCheckTests</c>/
+/// <c>WhatsAppChannelStatusLiveCheckTests</c>/<c>AvitoChannelStatusLiveCheckTests</c>. This file keeps only
+/// each channel's own "no credential" case below (still true unchanged - the live check is never
+/// attempted when there is nothing to check).</para>
 ///
 /// <para><b>Only the `GET` route of each group is ever dispatched to by this file's own tests, but every
 /// route's own services still have to be registered.</b> `MapVkChannelEndpoints`/
@@ -144,26 +144,11 @@ public sealed class ChannelStatusEndpointsTests(OperatorOidcFixture fixture)
     // Avito
     // ------------------------------------------------------------------------------------------
 
-    [Fact]
-    public async Task GetAvitoStatus_WithAnActiveCredential_ReturnsTheRealPersistedConnectedStatus()
-    {
-        var siteId = await CreateFreshSiteAsync();
-        await GrantChannelManageAsync(siteId);
-        var credential = await SeedActiveCredentialAsync(siteId, ChannelKind.Avito, "avito-user-id-1");
-
-        var token = await fixture.GetDemoAdminAccessTokenAsync();
-        await using var host = await BuildTestHostAsync(siteId, ChannelKind.Avito);
-        using var client = CreateClient(host, token);
-
-        var response = await client.GetAsync(Route(siteId, ChannelKind.Avito));
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<AvitoChannelEndpoints.AvitoChannelStatusResponse>();
-        Assert.NotNull(body);
-        Assert.True(body!.Connected);
-        Assert.Equal(credential.Id.Value, body.ChannelCredentialId);
-        Assert.Equal(RegisteredAt, body.CreatedAt);
-    }
+    // `25-177`: the "connected, with an active credential" case moved to
+    // `AvitoChannelStatusLiveCheckTests` - see this class's own remarks above. `HandleStatusAsync` now
+    // decrypts the stored token and calls Avito live, which this shared file's own credential seeding (a
+    // raw, non-cipher-encrypted `TokenCiphertext`, and no refresh token) and `AvitoApiClient` registration
+    // (no fake Avito host) were never built to support.
 
     [Fact]
     public async Task GetAvitoStatus_WithNoCredential_ReturnsNotConnected()
@@ -207,20 +192,6 @@ public sealed class ChannelStatusEndpointsTests(OperatorOidcFixture fixture)
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
         await db.SaveChangesAsync();
         return siteId;
-    }
-
-    private async Task<ChannelCredential> SeedActiveCredentialAsync(SiteId siteId, ChannelKind kind, string providerAccountId)
-    {
-        var credential = ChannelCredential.Register(
-            new ChannelCredentialId(Guid.NewGuid()), siteId, kind,
-            tokenCiphertext: [1, 2, 3, 4], webhookSecretHash: [5, 6, 7, 8], RegisteredAt,
-            providerAccountId: providerAccountId);
-
-        await using var db = fixture.CreateDbContext();
-        db.ChannelCredentials.Add(credential);
-        await db.SaveChangesAsync();
-
-        return credential;
     }
 
     /// <summary>Grants `demo-admin` a second, `25-65`-only role holding `channel:manage` on

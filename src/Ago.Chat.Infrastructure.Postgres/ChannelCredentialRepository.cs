@@ -33,4 +33,11 @@ public sealed class ChannelCredentialRepository(AgoChatDbContext db) : IChannelC
 
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>`25-177`: <c>IChannelCredentialRepository.ReloadAsync</c>'s own remarks - EF's own
+    /// <c>EntityEntry.ReloadAsync</c> is exactly this operation (re-query by this entity's own key,
+    /// overwrite its current property values in place, leave it <c>Unchanged</c>), so this adapter does
+    /// nothing beyond exposing it through the port.</summary>
+    public Task ReloadAsync(ChannelCredential credential, CancellationToken cancellationToken) =>
+        db.Entry(credential).ReloadAsync(cancellationToken);
 }
