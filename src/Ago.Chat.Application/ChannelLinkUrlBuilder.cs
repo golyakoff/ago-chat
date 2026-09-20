@@ -71,4 +71,21 @@ public static class ChannelLinkUrlBuilder
     }
 
     private static string DigitsOnly(string value) => new([.. value.Where(char.IsAsciiDigit)]);
+
+    /// <summary>
+    /// `25-194`: the widget's own channel-switcher display order - the author's own explicit choice,
+    /// not alphabetical and not read-store row order (<see cref="Application.Abstractions.IPublicChannelLinkReadStore"/>'s
+    /// own SQL carries no <c>ORDER BY</c> at all, so that order is whatever Postgres happens to return -
+    /// stable in practice, never a guarantee). Lower sorts first; a kind with no entry here (there is
+    /// none among the four this builder ever returns a URL for) sorts last rather than throwing, so a
+    /// future fifth channel degrades to "appears at the end" instead of a crash.
+    /// </summary>
+    public static int DisplayOrder(ChannelKind kind) => kind switch
+    {
+        ChannelKind.Max => 0,
+        ChannelKind.Vk => 1,
+        ChannelKind.Telegram => 2,
+        ChannelKind.WhatsApp => 3,
+        _ => int.MaxValue,
+    };
 }

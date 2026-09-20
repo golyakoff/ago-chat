@@ -529,6 +529,48 @@ public sealed class VisitorSessionRenewalTests(SiteCachingFixture fixture)
     }
 
     /// <summary>
+    /// `25-194`: the read store's own SQL carries no `ORDER BY`, so with nothing enforcing display
+    /// order the wire response would come back in whatever order Postgres happens to return rows -
+    /// seeded here deliberately scrambled (WhatsApp, Telegram, Vk, Max - the reverse of the wanted
+    /// order) to prove the fixed order is a real sort applied on the way out, not an accident of
+    /// insertion order this test would pass either way.
+    /// </summary>
+    [Fact]
+    public async Task TheMint_ForASiteWithSeveralConnectedChannels_Returns_ThemInTheFixedDisplayOrder()
+    {
+        var site = await SeedSiteAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.WhatsApp,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                providerAccountId: $"phone-{site.SiteId:N}", publicHandle: "+1 555 0100"));
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.Telegram,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                publicHandle: "shop_support_bot"));
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.Vk,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                providerAccountId: "123456"));
+            db.ChannelCredentials.Add(Domain.ChannelCredential.Register(
+                new Domain.ChannelCredentialId(Guid.NewGuid()), new SiteId(site.SiteId), Domain.ChannelKind.Max,
+                tokenCiphertext: [1, 2, 3], webhookSecretHash: [4, 5, 6], DateTimeOffset.UtcNow,
+                publicHandle: "shop_support_bot"));
+            await db.SaveChangesAsync();
+        }
+
+        await using var app = await BuildAppAsync();
+        var body = await (await MintAsync(app, site.PublicKey))
+            .Content.ReadFromJsonAsync<AuthEndpoints.VisitorSessionResponse>();
+
+        Assert.NotNull(body);
+        Assert.Equal(
+            [nameof(Domain.ChannelKind.Max), nameof(Domain.ChannelKind.Vk), nameof(Domain.ChannelKind.Telegram), nameof(Domain.ChannelKind.WhatsApp)],
+            body!.ChannelLinks.Select(l => l.Kind));
+    }
+
+    /// <summary>
     /// `25-148`'s own Telegram-identity-continuity half: a visitor who already has real, persisted
     /// history (a `Visitor` row - the same precondition a widget conversation already establishes)
     /// renews their session and gets a fresh `?start=` code, and that code is a genuinely live, usable
