@@ -264,6 +264,11 @@ public sealed class AvitoChannelAdapterTests
             LastSavedRefreshToken = credential.RefreshTokenCiphertext is { } bytes ? PassthroughCipher.DecryptStatic(bytes) : null;
             return Task.CompletedTask;
         }
+
+        // `25-177`: `GetByIdAsync`/`SaveAsync` above always hand back the same `_credential` reference -
+        // there is no separate "stored" copy for a reload to diverge from, unlike the real EF-backed
+        // repository this port method exists for.
+        public Task ReloadAsync(ChannelCredential credential, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class PassthroughCipher : IChannelCredentialCipher

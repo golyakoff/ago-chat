@@ -56,4 +56,19 @@ public interface IChannelCredentialRepository
         ChannelKind kind, string providerAccountId, CancellationToken cancellationToken);
 
     Task SaveAsync(ChannelCredential credential, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `25-177`: overwrites <paramref name="credential"/>'s own in-memory field values with whatever is
+    /// currently stored for its id - the identical purpose EF Core's own <c>EntityEntry.ReloadAsync</c>
+    /// serves, exposed through this port because <c>Ago.Chat.Infrastructure.Avito.AvitoLiveTokenCheck</c>
+    /// (an Infrastructure.Avito type, which must never reference Infrastructure.Postgres or EF directly -
+    /// the dependency rule CLAUDE.md rule 1 states) needs it to settle Avito's own one-shot-refresh-token
+    /// race: <see cref="ChannelCredentialRepository.GetByIdAsync"/>'s own remarks on being a tracking
+    /// query already explain why a second <c>GetByIdAsync</c> call on the same id, within the same
+    /// request's own <c>DbContext</c>, returns the identical already-tracked instance rather than
+    /// re-querying the database (EF's identity-map behaviour) - useless for "did somebody else's
+    /// concurrent request already write a new value here", which is exactly the question a caller that
+    /// just lost that race needs answered. This method exists solely to force that re-query.
+    /// </summary>
+    Task ReloadAsync(ChannelCredential credential, CancellationToken cancellationToken);
 }

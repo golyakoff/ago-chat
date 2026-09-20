@@ -1,11 +1,13 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Avito;
+using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Api.Channels;
@@ -37,13 +39,23 @@ namespace Ago.Chat.Api.Channels;
 /// VK community token is obtained from each provider's own console today), and an operator pastes both
 /// resulting values in.</para>
 ///
-/// <para><b>`25-65`: <see cref="HandleStatusAsync"/> never asks Avito anything live, the same posture
-/// <see cref="VkChannelEndpoints.HandleStatusAsync"/>/<see cref="WhatsAppChannelEndpoints.HandleStatusAsync"/>/
-/// <see cref="MaxChannelEndpoints.HandleStatusAsync"/> already take. Avito's own <c>GetSelfAsync</c> is
-/// validated once, at connect time, above - re-asking it on every status read would cost a tenant a live
-/// Avito call just for looking at this screen, for a richness this item was never asked to add. This
-/// endpoint reports only what <see cref="GetChannelCredentialStatusHandler"/> already answers for every
-/// channel.</para>
+/// <para><b>`25-177`: <see cref="HandleStatusAsync"/> now re-verifies live on every read, correcting
+/// `25-65`'s own note above.</b> That note read re-asking Avito on every status read as pure cost for no
+/// benefit - re-reading it while Telegram/MAX/VK/WhatsApp each gained the identical live-check richness
+/// (`25-174`/`25-175`/`25-176`) found the same argument does not hold up for the one channel whose token
+/// actually *expires*: a stored `Active = true` here proves nothing about whether Avito's own access token
+/// still works, and unlike the other three, Avito's own access token is *expected* to expire routinely
+/// (every 24 hours) rather than only on an unusual revocation. See <see cref="AvitoLiveTokenCheck"/>'s own
+/// remarks for the full shape - the bounded, three-outcome check every sibling channel's own live-check
+/// uses, plus the eager-refresh-on-expiry behaviour `docs/backlog/25-177-*.md`'s own Decision section
+/// requires only Avito's OAuth-shaped credential to need at all.</para>
+///
+/// <para><b>No <see cref="Domain.ChannelCredential.PublicHandle"/> write anywhere in this endpoint, still -
+/// unlike <see cref="MaxChannelEndpoints.HandleStatusAsync"/>/<see cref="WhatsAppChannelEndpoints.HandleStatusAsync"/>'s
+/// own live-check backfill.</b> <see cref="AvitoLiveTokenCheck"/>'s own outcome type carries no handle
+/// field at all - `25-147`'s decision that Avito has no provider-documented public deep-link to store is
+/// unaffected by this item; this endpoint's live check adds only richness about whether the token works,
+/// never a fact this credential never had anywhere to keep.</para>
 /// </summary>
 public static class AvitoChannelEndpoints
 {
@@ -60,6 +72,11 @@ public static class AvitoChannelEndpoints
     private static async Task<IResult> HandleStatusAsync(
         Guid siteId,
         GetChannelCredentialStatusHandler statusHandler,
+        IChannelCredentialRepository credentials,
+        IChannelCredentialCipher cipher,
+        AvitoApiClient avitoApiClient,
+        IOptions<AvitoApiOptions> avitoOptions,
+        IClock clock,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -73,9 +90,37 @@ public static class AvitoChannelEndpoints
             return status.Error!.Value.ToProblem(httpContext);
         }
 
-        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
-            ? new AvitoChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
-            : AvitoChannelStatusResponse.NotConnected);
+        if (status.Value.ChannelCredentialId is not { } credentialId)
+        {
+            return Results.Ok(AvitoChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        // `GetChannelCredentialStatusHandler` already confirmed this operator may manage this site's
+        // channels and that this id belongs to it - this second repository call exists only to reach
+        // TokenCiphertext/RefreshTokenCiphertext, which that channel-neutral handler's own result
+        // deliberately never carries (the identical reason every sibling live-check endpoint makes this
+        // same second call). A credential revoked between the two calls (an operator double-clicking
+        // Disconnect in another tab) is not an error - it means "no longer connected", answered the same
+        // way as if it had never existed.
+        var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
+        if (credential is null || !credential.Active)
+        {
+            return Results.Ok(AvitoChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        var outcome = await AvitoLiveTokenCheck.RunAsync(
+            avitoApiClient, credentials, cipher, avitoOptions.Value, credential, AvitoLiveTokenCheck.Timeout, cancellationToken);
+
+        // `25-177`/`25-147`: deliberately no PublicHandle write here - see this class's own remarks above.
+
+        return Results.Ok(new AvitoChannelStatusResponse(
+            Connected: true,
+            ChannelCredentialId: credentialId.Value,
+            CreatedAt: status.Value.CreatedAt,
+            Verified: outcome.Unreachable ? null : outcome.Ok,
+            Unreachable: outcome.Unreachable,
+            RefusalReason: outcome.RefusalReason,
+            CheckedAt: clock.UtcNow));
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -171,11 +216,23 @@ public static class AvitoChannelEndpoints
     /// needs to paste anywhere.</summary>
     public sealed record ConnectAvitoChannelResponse(Guid ChannelCredentialId, DateTimeOffset CreatedAt);
 
-    /// <summary>`25-65`: <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>'s own shape
-    /// verbatim - see <see cref="HandleStatusAsync"/>'s own remarks for why this endpoint never asks
-    /// Avito anything live.</summary>
-    public sealed record AvitoChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    /// <summary>`25-177`: the same seven fields <see cref="WhatsAppChannelEndpoints.WhatsAppChannelStatusResponse"/>/
+    /// <see cref="VkChannelEndpoints.VkChannelStatusResponse"/> already carry, repeated here rather than
+    /// extracted into a shared shape - this codebase's own established convention of one independent
+    /// response record per channel (`WhatsAppChannelEndpoints.WhatsAppChannelStatusResponse`'s own remarks
+    /// give the fuller reasoning). No field is shaped like a secret, the same guarantee
+    /// <see cref="ConnectAvitoChannelResponse"/> already makes.</summary>
+    public sealed record AvitoChannelStatusResponse(
+        bool Connected,
+        Guid? ChannelCredentialId,
+        DateTimeOffset? CreatedAt,
+        bool? Verified,
+        bool Unreachable,
+        string? RefusalReason,
+        DateTimeOffset CheckedAt)
     {
-        public static readonly AvitoChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+        public static AvitoChannelStatusResponse NotConnected(DateTimeOffset checkedAt) =>
+            new(Connected: false, ChannelCredentialId: null, CreatedAt: null, Verified: null, Unreachable: false,
+                RefusalReason: null, CheckedAt: checkedAt);
     }
 }

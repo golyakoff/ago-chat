@@ -151,6 +151,9 @@ public sealed class ChannelPollerReapTests
 
         public Task SaveAsync(ChannelCredential credential2, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not exercised by this test.");
+
+        public Task ReloadAsync(ChannelCredential credential2, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by this test.");
     }
 
     private sealed class FixedActiveCredentialRepository(ChannelCredential credential) : IChannelCredentialRepository
@@ -169,6 +172,9 @@ public sealed class ChannelPollerReapTests
             throw new NotSupportedException("Not exercised by this test.");
 
         public Task SaveAsync(ChannelCredential credential2, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by this test.");
+
+        public Task ReloadAsync(ChannelCredential credential2, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not exercised by this test.");
     }
 
