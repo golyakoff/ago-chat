@@ -7,6 +7,7 @@ using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.MaxBot;
+using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Api.Channels;
@@ -33,26 +34,22 @@ namespace Ago.Chat.Api.Channels;
 /// on the strength of nothing yet - <c>MaxLongPollingService</c> is what will discover, on its own next
 /// poll, whether the token actually works.</para>
 ///
-/// <para><b>`25-09`: <see cref="HandleStatusAsync"/> exists, but it does not do what
-/// <see cref="Api.Channels.TelegramChannelEndpoints.HandleStatusAsync"/> does.</b> That endpoint
-/// re-verifies the token live on every read because Telegram exposes a cheap, side-effect-free
-/// <c>getMe</c> call. <b>`25-147`'s own correction: this comment used to claim MAX's public API "has no
-/// equivalent" - that was stale and wrong even before this item.</b> MAX's Bot API has always had a
-/// <c>GET /me</c> (dev.max.ru/docs-api), needing only the bot token every other call here already
-/// attaches - <see cref="MaxApiClient.GetMeAsync"/>'s own remarks have the full account, and
-/// <see cref="HandleConnectAsync"/> now calls it, best-effort, to capture the bot's own
-/// <see cref="Domain.ChannelCredential.PublicHandle"/>. What remains genuinely true, and is the actual
-/// reason <see cref="HandleStatusAsync"/> stays the narrow shape below: MAX's only other credential-shaped
-/// calls are <c>POST /subscriptions</c> (a write, changing the live webhook registration - not safe to
-/// repeat on every page load of this screen) and <c>GET /updates</c> (the long-polling read
-/// <c>MaxLongPollingService</c> already owns exclusively - a second, unsynchronized caller would race it
-/// for the same marker). <c>GET /me</c> itself has no such hazard - it is exactly as safe to repeat as
-/// Telegram's own <c>getMe</c> - but this item deliberately does not use it to give
-/// <see cref="HandleStatusAsync"/> Telegram-style live-verification parity (`23-36`/`adr/0143`): that is a
-/// real, separate, valuable item of its own, named here so it is not silently rediscovered, not built as
-/// a side effect of this one. So this endpoint still reports only what
-/// <see cref="GetChannelCredentialStatusHandler"/> already answers for every channel: whether an active
-/// credential row exists, and since when.</para>
+/// <para><b>`25-174`: <see cref="HandleStatusAsync"/> now has Telegram-style live-verification parity.</b>
+/// MAX's Bot API has always had a <c>GET /me</c> (dev.max.ru/docs-api), needing only the bot token every
+/// other call here already attaches - <see cref="MaxApiClient.GetMeAsync"/>'s own remarks have the full
+/// account, and <see cref="HandleConnectAsync"/> still calls it best-effort, unchanged, to capture the
+/// bot's own <see cref="Domain.ChannelCredential.PublicHandle"/> at connect time. What used to be true
+/// (`25-09`/`25-147`): MAX's only other credential-shaped calls are <c>POST /subscriptions</c> (a write,
+/// changing the live webhook registration - not safe to repeat on every page load of this screen) and
+/// <c>GET /updates</c> (the long-polling read <c>MaxLongPollingService</c> already owns exclusively - a
+/// second, unsynchronized caller would race it for the same marker); <c>GET /me</c> alone has no such
+/// hazard, exactly as safe to repeat as Telegram's own <c>getMe</c>. This item is what stopped leaving
+/// that safe call unused on the status read: <see cref="HandleStatusAsync"/> now calls
+/// <see cref="MaxLiveTokenCheck.RunAsync"/> on every read, the same place and the same bounded shape
+/// <see cref="Api.Channels.TelegramChannelEndpoints.HandleStatusAsync"/> already does, and reports
+/// <c>Verified</c>/<c>Unreachable</c>/<c>RefusalReason</c> rather than only what
+/// <see cref="GetChannelCredentialStatusHandler"/> answers for every channel (whether an active
+/// credential row exists, and since when).</para>
 /// </summary>
 public static class MaxChannelEndpoints
 {
@@ -69,6 +66,10 @@ public static class MaxChannelEndpoints
     private static async Task<IResult> HandleStatusAsync(
         Guid siteId,
         GetChannelCredentialStatusHandler statusHandler,
+        IChannelCredentialRepository credentials,
+        IChannelCredentialCipher cipher,
+        MaxApiClient maxApiClient,
+        IClock clock,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -82,9 +83,46 @@ public static class MaxChannelEndpoints
             return status.Error!.Value.ToProblem(httpContext);
         }
 
-        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
-            ? new MaxChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
-            : MaxChannelStatusResponse.NotConnected);
+        if (status.Value.ChannelCredentialId is not { } credentialId)
+        {
+            return Results.Ok(MaxChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        // `GetChannelCredentialStatusHandler` already confirmed this operator may manage this site's
+        // channels and that this id belongs to it - this second repository call exists only to reach
+        // TokenCiphertext, which that channel-neutral handler's own result deliberately never carries
+        // (the identical reason `TelegramChannelEndpoints.HandleStatusAsync` makes this same second
+        // call). A credential revoked between the two calls (an operator double-clicking Disconnect in
+        // another tab) is not an error - it means "no longer connected", answered the same way as if it
+        // had never existed.
+        var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
+        if (credential is null || !credential.Active)
+        {
+            return Results.Ok(MaxChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        var token = cipher.Decrypt(credential.TokenCiphertext);
+        var outcome = await MaxLiveTokenCheck.RunAsync(maxApiClient, token, MaxLiveTokenCheck.Timeout, cancellationToken);
+
+        // `25-174`: backfill on this same live read, no reconnect required - the identical `25-147`
+        // pattern `TelegramChannelEndpoints.HandleStatusAsync` already implements. Never gates or
+        // changes anything about `outcome` itself: a verified-but-handle-less bot still reports
+        // Verified: true here exactly as it did before this item, this is purely an additional, silent
+        // write alongside the existing read.
+        if (outcome.Ok && outcome.Username is { Length: > 0 } username && credential.PublicHandle != username)
+        {
+            credential.SetPublicHandle(username);
+            await credentials.SaveAsync(credential, cancellationToken);
+        }
+
+        return Results.Ok(new MaxChannelStatusResponse(
+            Connected: true,
+            ChannelCredentialId: credentialId.Value,
+            CreatedAt: status.Value.CreatedAt,
+            Verified: outcome.Unreachable ? null : outcome.Ok,
+            Unreachable: outcome.Unreachable,
+            RefusalReason: outcome.RefusalReason,
+            CheckedAt: clock.UtcNow));
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -181,14 +219,25 @@ public static class MaxChannelEndpoints
     public sealed record ConnectMaxChannelResponse(Guid ChannelCredentialId, DateTimeOffset CreatedAt);
 
     /// <summary>
-    /// `25-09`: deliberately three fields, not <see cref="Api.Channels.TelegramChannelEndpoints.TelegramChannelStatusResponse"/>'s
-    /// seven - there is no <c>Verified</c>/<c>Unreachable</c>/<c>RefusalReason</c>/<c>CheckedAt</c> here
-    /// because <see cref="HandleStatusAsync"/> never asks MAX anything (this type's own remarks above).
-    /// No field is shaped like a secret, the same guarantee <see cref="ConnectMaxChannelResponse"/> already
-    /// makes.
+    /// `25-174`: the same seven fields <see cref="Api.Channels.TelegramChannelEndpoints.TelegramChannelStatusResponse"/>
+    /// already carries, repeated here rather than extracted into a shared shape - this codebase's own
+    /// established convention is two independent per-channel response records (`25-09`'s own three-field
+    /// version of this type used to be the odd one out precisely because <see cref="HandleStatusAsync"/>
+    /// never asked MAX anything; now that it does, the two types converge on the same fields by
+    /// coincidence of behaviour, not because a base type was introduced). No field is shaped like a
+    /// secret, the same guarantee <see cref="ConnectMaxChannelResponse"/> already makes.
     /// </summary>
-    public sealed record MaxChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    public sealed record MaxChannelStatusResponse(
+        bool Connected,
+        Guid? ChannelCredentialId,
+        DateTimeOffset? CreatedAt,
+        bool? Verified,
+        bool Unreachable,
+        string? RefusalReason,
+        DateTimeOffset CheckedAt)
     {
-        public static readonly MaxChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+        public static MaxChannelStatusResponse NotConnected(DateTimeOffset checkedAt) =>
+            new(Connected: false, ChannelCredentialId: null, CreatedAt: null, Verified: null, Unreachable: false,
+                RefusalReason: null, CheckedAt: checkedAt);
     }
 }
