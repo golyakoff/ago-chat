@@ -568,6 +568,7 @@ public static class CompositionRoot
         // `23-68`: the platform owner's own recovery write - restoring a locked-out operator's seat, gated by
         // RequirePlatformOwner exactly as every owner surface above is (OwnerOperatorsEndpoints' own remarks).
         app.MapOwnerOperatorsEndpoints();
+        app.MapOwnerSeatGrantsEndpoints();
         // `25-76`: the platform owner's own role-permission tool - adding a permission a tenant's role is
         // missing, gated by RequirePlatformOwner exactly as every owner surface above is
         // (OwnerRolesEndpoints' own remarks).

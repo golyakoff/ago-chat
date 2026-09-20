@@ -46,4 +46,10 @@ public enum AccessRecordResourceKind
     /// own remarks give for the identical reason (a site always has more than one role, so `site_id`
     /// alone would not say which).</summary>
     Role,
+
+    /// <summary>`25-181`: <see cref="AccessRecordKind.OwnerSeatGrant"/>'s own resource - a different
+    /// row (<c>owner_seat_grants</c>) from every member above, keyed by (site, role) rather than by a
+    /// synthetic id, the identical "no resourceId" shape <see cref="ModuleQuantityGrant"/> already
+    /// establishes for its own (site, module) key.</summary>
+    OwnerSeatGrant,
 }

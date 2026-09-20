@@ -50,12 +50,12 @@ internal sealed class AccessRecordEntityConfiguration : IEntityTypeConfiguration
                 "access_kind IN ('CrossConversationHistoryRead', 'OwnerSiteList', 'OwnerSiteDetail', "
                 + "'OwnerModuleGrant', 'OwnerModuleRevoke', 'OwnerChannelIdentityUnlink', "
                 + "'OwnerModuleQuantityGrant', 'OwnerOperatorSeatRestore', 'OwnerRolePermissionsGrant', "
-                + "'OwnerRolePermissionsRemoval')");
+                + "'OwnerRolePermissionsRemoval', 'OwnerSeatGrant')");
             t.HasCheckConstraint("ck_access_records_actor_kind", "actor_kind IN ('Operator', 'PlatformOwner')");
             t.HasCheckConstraint(
                 "ck_access_records_resource_kind",
                 "resource_kind IS NULL OR resource_kind IN ('Conversation', 'ChannelIdentity', 'EnabledModule', "
-                + "'ModuleQuantityGrant', 'Operator', 'Role')");
+                + "'ModuleQuantityGrant', 'Operator', 'Role', 'OwnerSeatGrant')");
         });
 
         // Serves IAccessRecordRepository.ListForSiteAsync's own keyset read - a tenant's own page,

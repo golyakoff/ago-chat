@@ -58,6 +58,19 @@ public sealed class EntitlementWatchdogJob(
     /// `GetSeatAssignmentSummaryHandler`'s own remarks enumerate for its own analogous read.</summary>
     private static readonly string[] RoleNames = ["Operator", "Admin"];
 
+    /// <summary>`25-181`: the identical role-name pairing `Ago.Chat.Application.UseCases.OperatorRoleSeats.RoleSeatLimits.OwnerGrantRoleFor`
+    /// draws, restated here as this job's own tiny local copy rather than reaching into that class - it
+    /// is `internal` to `Ago.Chat.Application`, and this job already keeps its own local copy of
+    /// <see cref="RoleNames"/> itself for the identical reason (no `InternalsVisibleTo` grant exists from
+    /// that assembly to this one, and adding one for two bare string literals would be a wider seam than
+    /// the duplication it would save).</summary>
+    private static OwnerSeatGrantRole OwnerGrantRoleFor(string roleName) => roleName switch
+    {
+        "Operator" => OwnerSeatGrantRole.Operator,
+        "Admin" => OwnerSeatGrantRole.Administrator,
+        _ => throw new ArgumentOutOfRangeException(nameof(roleName), roleName, $"No owner seat grant role is defined for role '{roleName}'."),
+    };
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(options.Value.Interval);
@@ -95,6 +108,7 @@ public sealed class EntitlementWatchdogJob(
                 var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
                 var sites = scope.ServiceProvider.GetRequiredService<ISiteRepository>();
                 var reconciler = scope.ServiceProvider.GetRequiredService<OperatorRoleSeatReconciler>();
+                var ownerSeatGrants = scope.ServiceProvider.GetRequiredService<IOwnerSeatGrantStore>();
 
                 await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
@@ -109,7 +123,15 @@ public sealed class EntitlementWatchdogJob(
 
                 foreach (var roleName in RoleNames)
                 {
-                    disabledTotal += await reconciler.ReconcileAsync(site, roleName, cancellationToken);
+                    // `25-181`: the platform owner's own hand-granted extra, resolved live against this
+                    // tick's own `clock.UtcNow` - the one thing that makes an owner grant's expiry
+                    // "checked live" rather than a stored fact that goes stale: the very next tick after
+                    // it lapses resolves 0 here instead of whatever it used to, and the reconciler
+                    // demotes the excess exactly as it already would for a billing-driven drop, with no
+                    // second, bespoke consequence built for the identical shape of problem.
+                    var extraCapacity = await ownerSeatGrants.GetEffectiveExtraAsync(
+                        siteId, OwnerGrantRoleFor(roleName), clock.UtcNow, cancellationToken);
+                    disabledTotal += await reconciler.ReconcileAsync(site, roleName, extraCapacity, cancellationToken);
                 }
 
                 await transaction.CommitAsync(cancellationToken);

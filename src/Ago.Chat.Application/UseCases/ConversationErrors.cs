@@ -1194,4 +1194,29 @@ public static class ConversationErrors
     /// <c>UpdateSiteBrandingHandler.MaxLength</c> allows.</summary>
     public static Error SiteBrandCompanyNameTooLong(int length, int maxLength) =>
         new("Site.BrandCompanyNameTooLong", $"Brand company name is {length} characters; the limit is {maxLength}.");
+
+    /// <summary>`25-181`: <c>GrantOwnerSeatsAsOwnerHandler</c>'s own guard - a reason is required
+    /// whenever the platform owner grants a tenant extra seats by hand, the identical "decide, don't
+    /// default" check <see cref="ModuleQuantityUnconditionalGrantReasonRequired"/> already makes for its
+    /// own owner-only override.</summary>
+    public static Error OwnerSeatGrantReasonRequired(string reason) =>
+        new("Site.OwnerSeatGrantReasonRequired", reason);
+
+    /// <summary>`25-181`: the requested quantity fell outside <see cref="Domain.OwnerSeatGrant.MinQuantity"/>-
+    /// <see cref="Domain.OwnerSeatGrant.MaxQuantity"/> - the caller's own mistake to fix, checked before
+    /// this handler ever touches the store.</summary>
+    public static Error OwnerSeatGrantQuantityInvalid(int quantity) =>
+        new(
+            "Site.OwnerSeatGrantQuantityInvalid",
+            $"An owner seat grant must be between {Ago.Chat.Domain.OwnerSeatGrant.MinQuantity} and " +
+            $"{Ago.Chat.Domain.OwnerSeatGrant.MaxQuantity}; {quantity} was requested.");
+
+    /// <summary>`25-181`: the request named a role this endpoint does not recognise - the wire carries
+    /// the role as a plain string (`"Operator"`/`"Administrator"`), the same shape every other
+    /// role-naming field in this codebase's own API already uses, so this is the caller's own
+    /// unparseable-value mistake, checked before the endpoint calls the handler at all.</summary>
+    public static Error OwnerSeatGrantRoleInvalid(string role) =>
+        new(
+            "Site.OwnerSeatGrantRoleInvalid",
+            $"'{role}' is not a role an owner seat grant can name - only 'Operator' and 'Administrator' do.");
 }

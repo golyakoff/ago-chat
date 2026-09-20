@@ -1021,6 +1021,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
         // `25-170`: OperatorInviteRedemptionRepository now composes OperatorRoleSeatCapacity - the
         // one shared capacity-check procedure that replaced its own hand-written seat/admin counting.
+        // `25-181`: OperatorRoleSeatCapacity's own new dependency - nothing in this file's tests seeds
+        // an owner grant, so a real, always-empty OwnerSeatGrantStore reads 0 and every existing test
+        // keeps exercising the identical billing-only limit it always has.
+        builder.Services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
         builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         builder.Services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
         builder.Services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();

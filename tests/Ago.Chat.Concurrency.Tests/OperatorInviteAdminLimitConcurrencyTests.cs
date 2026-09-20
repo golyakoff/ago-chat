@@ -168,7 +168,10 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
     private async Task<OperatorInviteRedemptionResult> RedeemAsync(byte[] codeHash, string email, string externalSubjectId)
     {
         await using var db = fixture.CreateDbContext();
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(new OperatorRoleRepository(db), new SiteRepository(db));
+        // `25-181`: a real OwnerSeatGrantStore with nothing seeded reads 0 - this test keeps
+        // exercising the identical billing-only admin limit it always has.
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(
+            new OperatorRoleRepository(db), new SiteRepository(db), new OwnerSeatGrantStore(db), new Ago.Platform.Hosting.SystemClock());
         var repository = new OperatorInviteRedemptionRepository(
             db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db), roleSeatCapacity);
         return await repository.RedeemAsync(

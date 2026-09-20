@@ -26,6 +26,16 @@ namespace Ago.Chat.Api.Owner;
 /// <see cref="RestoreOperatorSeatAsOwner"/>'s own remarks for why releasing a seat from this console is
 /// deliberately not built here, so this recovery action does not quietly grow into the wider "act as a
 /// tenant" capability `23-68`'s own "What this is not" forbids.</para>
+///
+/// <para><b>`25-181`: the platform owner's own hand-granted seat extra deliberately lives in its own
+/// sibling file, <see cref="OwnerSeatGrantsEndpoints"/>, not appended here.</b> This file's own
+/// integration test (<c>OwnerOperatorsEndpointsTests</c>) builds a deliberately minimal test host,
+/// registering only what <see cref="RestoreOperatorSeatAsOwnerHandler"/> itself needs - adding a
+/// second, unrelated route here that resolves a handler that host never registers breaks ASP.NET's own
+/// endpoint-metadata inference for every route this file maps, not only the new one (found the hard
+/// way, building this item: the whole file's own test suite failed at host startup, not just a test
+/// naming the new route). A sibling file with its own minimal test host is the shape that keeps each
+/// endpoint file's own dependency surface exactly as large as its own tests already assume.</para>
 /// </summary>
 public static class OwnerOperatorsEndpoints
 {

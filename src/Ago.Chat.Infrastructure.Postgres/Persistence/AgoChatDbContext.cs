@@ -56,6 +56,10 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // masters count is the first real instance.
     public DbSet<ModuleQuantityGrant> ModuleQuantityGrants => Set<ModuleQuantityGrant>();
 
+    // `25-181`: "the platform owner granted site X, Q extra seats of role R, by hand" - one row per
+    // (site, role), the identical shape ModuleQuantityGrants keeps for its own (site, module) key.
+    public DbSet<OwnerSeatGrant> OwnerSeatGrants => Set<OwnerSeatGrant>();
+
     public DbSet<ModuleQuantityImpactPreview> ModuleQuantityImpactPreviews => Set<ModuleQuantityImpactPreview>();
     internal DbSet<ModuleTask> ModuleTasks => Set<ModuleTask>();
     // `14-14`: VisitorContactDetail's own table - see its own remarks for why it is not folded into

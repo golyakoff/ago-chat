@@ -137,8 +137,62 @@ public sealed class EntitlementWatchdogJobTests(PostgresFixture fixture)
         await AssertHoldsSeatAsync(earlierGranted, operatorRoleId, expected: true);
     }
 
-    private EntitlementWatchdogJob CreateJob(IReadOnlyDictionary<string, string?>? entitlementMappings = null)
+    // -----------------------------------------------------------------------------------------
+    // `25-181`: the platform owner's own hand-granted extra, fed into the identical reconciliation
+    // procedure above rather than a second, bespoke consequence - see OwnerSeatGrantStore's own
+    // remarks and EntitlementWatchdogJob.ReconcileRoleSeatsAsync for how the live extra reaches here.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>The owner's own grant covers what would otherwise be an over-limit site - a live,
+    /// unexpired extra keeps both Administrators seated even though `AdminLimit` alone is 1.</summary>
+    [Fact]
+    public async Task RunOnceAsync_ASiteOverItsAdminLimit_ButCoveredByALiveOwnerGrant_DisablesNobody()
     {
+        var siteId = await SeedSiteAsync(seatLimit: 5, adminLimit: 1);
+        var adminRoleId = await SeedRoleAsync(siteId, "Admin");
+        var earlierGranted = await SeedRoleHolderAsync(siteId, adminRoleId, Now - TimeSpan.FromDays(10));
+        var laterGranted = await SeedRoleHolderAsync(siteId, adminRoleId, Now - TimeSpan.FromDays(1));
+        await SeedOwnerSeatGrantAsync(siteId, OwnerSeatGrantRole.Administrator, quantity: 1, expiresAt: Now.AddHours(1));
+
+        await CreateJob(now: Now).RunOnceAsync(CancellationToken.None);
+
+        await AssertHoldsSeatAsync(laterGranted, adminRoleId, expected: true);
+        await AssertHoldsSeatAsync(earlierGranted, adminRoleId, expected: true);
+    }
+
+    /// <summary>The item's own Done-when, proven end to end through the real watchdog rather than only
+    /// through <see cref="Application.UseCases.GetOwnerSeatSummary.GetOwnerSeatSummaryHandlerTests"/>'s
+    /// own displayed-number proof: an owner grant that has since expired stops covering the site, and
+    /// the very next tick demotes the excess Administrator exactly as it would for a billing-driven
+    /// drop - reusing this job's own existing consequence, never a second one built for owner
+    /// grants.</summary>
+    [Fact]
+    public async Task RunOnceAsync_AnOwnerGrantThatHasExpired_DemotesTheExcessAdministrator()
+    {
+        var siteId = await SeedSiteAsync(seatLimit: 5, adminLimit: 1);
+        var adminRoleId = await SeedRoleAsync(siteId, "Admin");
+        var earlierGranted = await SeedRoleHolderAsync(siteId, adminRoleId, Now - TimeSpan.FromDays(10));
+        var laterGranted = await SeedRoleHolderAsync(siteId, adminRoleId, Now - TimeSpan.FromDays(1));
+        var expiresAt = Now.AddHours(1);
+        await SeedOwnerSeatGrantAsync(siteId, OwnerSeatGrantRole.Administrator, quantity: 1, expiresAt);
+
+        // Still within the grant - a tick right now covers both.
+        await CreateJob(now: Now).RunOnceAsync(CancellationToken.None);
+        await AssertHoldsSeatAsync(laterGranted, adminRoleId, expected: true);
+        await AssertHoldsSeatAsync(earlierGranted, adminRoleId, expected: true);
+
+        // A fake clock advanced past the expiry - the next tick demotes the excess, most-recently-
+        // granted-first, the identical tie-break every other reconciliation test in this file proves.
+        var afterExpiry = expiresAt.AddMinutes(1);
+        await CreateJob(now: afterExpiry).RunOnceAsync(CancellationToken.None);
+
+        await AssertHoldsSeatAsync(laterGranted, adminRoleId, expected: false);
+        await AssertHoldsSeatAsync(earlierGranted, adminRoleId, expected: true);
+    }
+
+    private EntitlementWatchdogJob CreateJob(IReadOnlyDictionary<string, string?>? entitlementMappings = null, DateTimeOffset? now = null)
+    {
+        var effectiveNow = now ?? Now;
         var services = new ServiceCollection();
         services.AddDbContext<AgoChatDbContext>(options => options.UseNpgsql(fixture.DataSource));
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
@@ -149,7 +203,10 @@ public sealed class EntitlementWatchdogJobTests(PostgresFixture fixture)
         services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         services.AddScoped<IIdGenerator, UuidV7Generator>();
         services.AddScoped<IModuleQuantityGrantStore, ModuleQuantityGrantStore>();
-        services.AddSingleton<IClock>(new FixedClock(Now));
+        // `25-181`: the platform owner's own hand-granted seat extra - resolved live, every tick, by
+        // this job's own ReconcileRoleSeatsAsync loop, against effectiveNow below.
+        services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
+        services.AddSingleton<IClock>(new FixedClock(effectiveNow));
         // `23-86`: the real ConfiguredBillingOptionEntitlementProvider, backed by an in-memory
         // configuration - the identical shape SubscriptionRenewalJobTests' own DirectScopeFactory uses,
         // for the identical reason (this item's own guard composes the real port, not a fake standing
@@ -166,7 +223,7 @@ public sealed class EntitlementWatchdogJobTests(PostgresFixture fixture)
         return new EntitlementWatchdogJob(
             provider.GetRequiredService<IServiceScopeFactory>(),
             fixture.DataSource,
-            new FixedClock(Now),
+            new FixedClock(effectiveNow),
             Options.Create(new EntitlementWatchdogJobOptions()),
             NullLogger<EntitlementWatchdogJob>.Instance);
     }
@@ -222,6 +279,17 @@ public sealed class EntitlementWatchdogJobTests(PostgresFixture fixture)
         var idGenerator = new UuidV7Generator();
         var grants = new ModuleQuantityGrantStore(db, outbox, idGenerator, new FixedClock(Now));
         await grants.GrantAsync(siteId, new ModuleKey(TelegramModuleKey), quantity, Now, CancellationToken.None);
+    }
+
+    /// <summary>`25-181`: seeds a real <c>owner_seat_grants</c> row through <see cref="OwnerSeatGrantStore"/> -
+    /// production writes however it writes, the same shortcut <see cref="SeedGrantAsync"/> already
+    /// takes for its own (site, module) grant.</summary>
+    private async Task SeedOwnerSeatGrantAsync(
+        SiteId siteId, OwnerSeatGrantRole role, int quantity, DateTimeOffset? expiresAt = null)
+    {
+        await using var db = fixture.CreateDbContext();
+        var grants = new OwnerSeatGrantStore(db);
+        await grants.GrantAsync(siteId, role, quantity, "owner-sub", "25-181 integration test", Now, expiresAt, CancellationToken.None);
     }
 
     private async Task<DateTimeOffset?> ReadEntitlementPausedAtAsync(ChannelCredentialId credentialId)
