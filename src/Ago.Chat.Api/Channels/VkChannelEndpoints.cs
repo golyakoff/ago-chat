@@ -1,11 +1,13 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.GetChannelCredentialStatus;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Vk;
+using Ago.Platform.Kernel;
 using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Api.Channels;
@@ -15,17 +17,24 @@ namespace Ago.Chat.Api.Channels;
 /// <c>"RequireOperatorIdentity"</c> policy <see cref="MaxChannelEndpoints"/>/<see cref="TelegramChannelEndpoints"/>
 /// already use.
 ///
-/// <para><b>`25-65`: <see cref="HandleStatusAsync"/> is MAX's own shape, not Telegram's.</b> VK's public
-/// API has no side-effect-free equivalent of Telegram's own <c>getMe</c> that this endpoint could call on
-/// every status read without mutating anything or racing another caller - <c>groups.getById</c> (used
-/// only at connect time, above) is the closest analogue, and calling it here on every console page load
-/// would mean a tenant merely looking at this screen keeps making live calls to VK on their behalf, for
-/// a live-check richness this item was never asked to add (backlog item's own "resist the temptation to
-/// special-case… if VK genuinely needs a different status shape, that is worth naming explicitly rather
-/// than assumed away" - named here, not built). So this endpoint reports only what
-/// <see cref="GetChannelCredentialStatusHandler"/> already answers for every channel: whether an active
-/// credential row exists, and since when - <see cref="MaxChannelEndpoints.HandleStatusAsync"/>'s own
-/// remarks give the fuller version of this same reasoning.</para>
+/// <para><b>`25-65`'s own note on why <see cref="HandleStatusAsync"/> did not call VK, corrected by
+/// `25-175`.</b> `25-65` read <c>groups.getById</c> (used only at connect time before this item, above)
+/// as unsafe to repeat on every console page load - re-reading that note found the call itself is a
+/// plain read, the same "no side effect" character <see cref="VkApiClient.GetGroupInfoAsync"/>'s own
+/// remarks draw to Telegram's own <c>getMe</c>; the real reason was scope and cost (every screen view
+/// making a live VK call on the tenant's behalf), the identical tradeoff Telegram already accepts for
+/// itself. `25-175`'s own backlog file records the author's explicit decision to accept it for VK too.
+/// So this endpoint now calls <see cref="VkLiveTokenCheck.RunAsync"/> on every read, the same bounded,
+/// three-outcome shape <see cref="MaxChannelEndpoints.HandleStatusAsync"/>/
+/// <see cref="TelegramChannelEndpoints.HandleStatusAsync"/> already use - see <see cref="VkLiveTokenCheck"/>'s
+/// own remarks for the one place VK's own client genuinely differs (it throws rather than returning a
+/// result object).</para>
+///
+/// <para><b>`25-175`: no <see cref="Domain.ChannelCredential.PublicHandle"/> write here, unlike either
+/// precedent.</b> VK has nothing to backfill - see <see cref="VkLiveCheckOutcome"/>'s own remarks and
+/// <see cref="HandleConnectAsync"/>'s own comment below on why <c>ProviderAccountId</c> alone is always
+/// enough. This endpoint's live check is pure status-richness (<c>Verified</c>/<c>Unreachable</c>/
+/// <c>RefusalReason</c>), never a second write path.</para>
 ///
 /// <para><b>Why this endpoint validates the token, and discovers VK's own community id, <em>before</em>
 /// ever writing a <see cref="ChannelCredential"/> row - unlike both precedents, which must create the
@@ -64,6 +73,10 @@ public static class VkChannelEndpoints
     private static async Task<IResult> HandleStatusAsync(
         Guid siteId,
         GetChannelCredentialStatusHandler statusHandler,
+        IChannelCredentialRepository credentials,
+        IChannelCredentialCipher cipher,
+        VkApiClient vkApiClient,
+        IClock clock,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
@@ -77,9 +90,37 @@ public static class VkChannelEndpoints
             return status.Error!.Value.ToProblem(httpContext);
         }
 
-        return Results.Ok(status.Value.ChannelCredentialId is { } credentialId
-            ? new VkChannelStatusResponse(Connected: true, ChannelCredentialId: credentialId.Value, CreatedAt: status.Value.CreatedAt)
-            : VkChannelStatusResponse.NotConnected);
+        if (status.Value.ChannelCredentialId is not { } credentialId)
+        {
+            return Results.Ok(VkChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        // `GetChannelCredentialStatusHandler` already confirmed this operator may manage this site's
+        // channels and that this id belongs to it - this second repository call exists only to reach
+        // TokenCiphertext, which that channel-neutral handler's own result deliberately never carries
+        // (the identical reason `TelegramChannelEndpoints.HandleStatusAsync`/`MaxChannelEndpoints.HandleStatusAsync`
+        // make this same second call). A credential revoked between the two calls (an operator
+        // double-clicking Disconnect in another tab) is not an error - it means "no longer connected",
+        // answered the same way as if it had never existed.
+        var credential = await credentials.GetByIdAsync(credentialId, cancellationToken);
+        if (credential is null || !credential.Active)
+        {
+            return Results.Ok(VkChannelStatusResponse.NotConnected(clock.UtcNow));
+        }
+
+        var token = cipher.Decrypt(credential.TokenCiphertext);
+        var outcome = await VkLiveTokenCheck.RunAsync(vkApiClient, token, VkLiveTokenCheck.Timeout, cancellationToken);
+
+        // `25-175`: deliberately no `credential.SetPublicHandle(...)` here - see this class's own
+        // remarks and `VkLiveCheckOutcome`'s own remarks for why VK has nothing to backfill.
+        return Results.Ok(new VkChannelStatusResponse(
+            Connected: true,
+            ChannelCredentialId: credentialId.Value,
+            CreatedAt: status.Value.CreatedAt,
+            Verified: outcome.Unreachable ? null : outcome.Ok,
+            Unreachable: outcome.Unreachable,
+            RefusalReason: outcome.RefusalReason,
+            CheckedAt: clock.UtcNow));
     }
 
     private static async Task<IResult> HandleConnectAsync(
@@ -160,14 +201,29 @@ public static class VkChannelEndpoints
         Guid ChannelCredentialId, DateTimeOffset CreatedAt, string CallbackUrl, string WebhookSecret);
 
     /// <summary>
-    /// `25-65`: <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>'s own shape verbatim, not
-    /// <see cref="TelegramChannelEndpoints.TelegramChannelStatusResponse"/>'s seven-field one - see
-    /// <see cref="HandleStatusAsync"/>'s own remarks for why this endpoint never asks VK anything live.
-    /// No field is shaped like a secret, the same guarantee <see cref="ConnectVkChannelResponse"/>
-    /// already makes for the connect response.
+    /// `25-175`: the same seven fields <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/>/
+    /// <see cref="TelegramChannelEndpoints.TelegramChannelStatusResponse"/> already carry, repeated here
+    /// rather than extracted into a shared shape - this codebase's own established convention is two
+    /// independent per-channel response records (`25-09`'s own remarks on
+    /// <see cref="MaxChannelEndpoints.MaxChannelStatusResponse"/> give the fuller reasoning). No field is
+    /// shaped like a secret, the same guarantee <see cref="ConnectVkChannelResponse"/> already makes for
+    /// the connect response.
+    ///
+    /// <para><b>Unlike either sibling, no field here ever backfills anything.</b> See
+    /// <see cref="HandleStatusAsync"/>'s own remarks and <see cref="VkLiveCheckOutcome"/>'s own remarks
+    /// for why VK has no <c>PublicHandle</c>-shaped gap to close.</para>
     /// </summary>
-    public sealed record VkChannelStatusResponse(bool Connected, Guid? ChannelCredentialId, DateTimeOffset? CreatedAt)
+    public sealed record VkChannelStatusResponse(
+        bool Connected,
+        Guid? ChannelCredentialId,
+        DateTimeOffset? CreatedAt,
+        bool? Verified,
+        bool Unreachable,
+        string? RefusalReason,
+        DateTimeOffset CheckedAt)
     {
-        public static readonly VkChannelStatusResponse NotConnected = new(Connected: false, ChannelCredentialId: null, CreatedAt: null);
+        public static VkChannelStatusResponse NotConnected(DateTimeOffset checkedAt) =>
+            new(Connected: false, ChannelCredentialId: null, CreatedAt: null, Verified: null, Unreachable: false,
+                RefusalReason: null, CheckedAt: checkedAt);
     }
 }

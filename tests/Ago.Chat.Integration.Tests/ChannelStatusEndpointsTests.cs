@@ -43,6 +43,17 @@ namespace Ago.Chat.Integration.Tests;
 /// see this item's own worker report for why that gap in the existing suite is worth naming rather than
 /// silently matched.
 ///
+/// <para><b>`25-175`: VK's own "connected, with an active credential" case moved out of this file.</b>
+/// `VkChannelEndpoints.HandleStatusAsync` now calls VK live on every read (the same MAX/Telegram-style
+/// bounded check `25-174` gave MAX) - the "whose routes never call any provider" framing this file's own
+/// remarks state above stopped being true for VK the moment that shipped, the identical reason MAX was
+/// never part of this shared file to begin with. That live-check path now has its own dedicated coverage,
+/// mirroring `25-174`'s own <c>MaxChannelStatusLiveCheckTests</c> split: see
+/// <c>VkChannelStatusLiveCheckTests</c>. This file keeps only VK's "no credential" case below (still true
+/// unchanged - the live check is never attempted when there is nothing to check), alongside WhatsApp's
+/// and Avito's still-fully-covered connected/not-connected pairs (`25-176`/`25-177`, not yet
+/// live-checked).</para>
+///
 /// <para><b>Only the `GET` route of each group is ever dispatched to by this file's own tests, but every
 /// route's own services still have to be registered.</b> `MapVkChannelEndpoints`/
 /// `MapWhatsAppChannelEndpoints`/`MapAvitoChannelEndpoints` each map `POST`/`DELETE` too - found live
@@ -75,26 +86,10 @@ public sealed class ChannelStatusEndpointsTests(OperatorOidcFixture fixture)
     // VK
     // ------------------------------------------------------------------------------------------
 
-    [Fact]
-    public async Task GetVkStatus_WithAnActiveCredential_ReturnsTheRealPersistedConnectedStatus()
-    {
-        var siteId = await CreateFreshSiteAsync();
-        await GrantChannelManageAsync(siteId);
-        var credential = await SeedActiveCredentialAsync(siteId, ChannelKind.Vk, "vk-provider-account-1");
-
-        var token = await fixture.GetDemoAdminAccessTokenAsync();
-        await using var host = await BuildTestHostAsync(siteId, ChannelKind.Vk);
-        using var client = CreateClient(host, token);
-
-        var response = await client.GetAsync(Route(siteId, ChannelKind.Vk));
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<VkChannelEndpoints.VkChannelStatusResponse>();
-        Assert.NotNull(body);
-        Assert.True(body!.Connected);
-        Assert.Equal(credential.Id.Value, body.ChannelCredentialId);
-        Assert.Equal(RegisteredAt, body.CreatedAt);
-    }
+    // `25-175`: the "connected, with an active credential" case moved to `VkChannelStatusLiveCheckTests`
+    // - see this class's own remarks above. `HandleStatusAsync` now decrypts the stored token and calls
+    // VK live, which this shared file's own credential seeding (a raw, non-cipher-encrypted
+    // `TokenCiphertext`) and `VkApiClient` registration (no fake VK host) were never built to support.
 
     [Fact]
     public async Task GetVkStatus_WithNoCredential_ReturnsNotConnected()
