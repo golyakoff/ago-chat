@@ -47,7 +47,7 @@ public sealed class OperatorDeviceRevokerTests(PostgresFixture fixture)
             {
                 var deviceId = new OperatorDeviceId(Guid.NewGuid());
                 var device = OperatorDevice.Register(
-                    deviceId, siteId, operatorId, $"installation-{i}", PushProvider.Fcm, "android", UniqueToken($"token-{i}"), Now);
+                    deviceId, siteId, operatorId, $"installation-{i}", PushProvider.RuStore, "android", UniqueToken($"token-{i}"), Now);
                 await repository.SaveAsync(device, CancellationToken.None);
                 deviceIds.Add(deviceId);
             }
@@ -58,7 +58,7 @@ public sealed class OperatorDeviceRevokerTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var other = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), otherSiteId, otherOperatorId, "installation-other", PushProvider.Fcm,
+                new OperatorDeviceId(Guid.NewGuid()), otherSiteId, otherOperatorId, "installation-other", PushProvider.RuStore,
                 "android", UniqueToken("token-other"), Now);
             await new OperatorDeviceRepository(db).SaveAsync(other, CancellationToken.None);
         }
@@ -99,7 +99,7 @@ public sealed class OperatorDeviceRevokerTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var device = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
                 UniqueToken("token"), Now);
             await new OperatorDeviceRepository(db).SaveAsync(device, CancellationToken.None);
         }

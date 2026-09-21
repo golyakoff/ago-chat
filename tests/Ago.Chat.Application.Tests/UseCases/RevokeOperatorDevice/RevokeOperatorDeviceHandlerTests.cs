@@ -22,7 +22,7 @@ public class RevokeOperatorDeviceHandlerTests
     {
         var (handler, devices) = CreateFixture();
         var device = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
             "token-1", Now);
         devices.Seed(device);
 
@@ -52,7 +52,7 @@ public class RevokeOperatorDeviceHandlerTests
     {
         var (handler, devices) = CreateFixture();
         var device = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
             "token-1", Now);
         devices.Seed(device);
 
@@ -74,7 +74,7 @@ public class RevokeOperatorDeviceHandlerTests
         var (handler, devices) = CreateFixture();
         var otherOperatorId = new OperatorId(Guid.NewGuid());
         var device = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, otherOperatorId, "installation-1", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, otherOperatorId, "installation-1", PushProvider.RuStore, "android",
             "token-1", Now);
         devices.Seed(device);
 

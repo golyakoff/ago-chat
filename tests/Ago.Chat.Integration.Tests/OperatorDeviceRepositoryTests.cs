@@ -40,7 +40,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         var (siteId, operatorId) = await SeedSiteAndOperatorAsync();
         var token = UniqueToken("token");
         var device = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
             token, Now);
 
         await using (var db = fixture.CreateDbContext())
@@ -53,7 +53,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
 
         Assert.NotNull(loaded);
         Assert.Equal(token, loaded.Token);
-        Assert.Equal(PushProvider.Fcm, loaded.Provider);
+        Assert.Equal(PushProvider.RuStore, loaded.Provider);
         Assert.Null(loaded.RevokedAt);
     }
 
@@ -68,14 +68,14 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var first = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
                 UniqueToken("token"), Now);
             await new OperatorDeviceRepository(db).SaveAsync(first, CancellationToken.None);
         }
 
         await using var conflictingDb = fixture.CreateDbContext();
         var second = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
             UniqueToken("token"), Now);
 
         var thrown = await Assert.ThrowsAsync<DbUpdateException>(
@@ -94,7 +94,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var first = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
                 sharedToken, Now);
             await new OperatorDeviceRepository(db).SaveAsync(first, CancellationToken.None);
         }
@@ -102,7 +102,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         await using var conflictingDb = fixture.CreateDbContext();
         // A different installation (so the first unique index does not fire), same live token.
         var second = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-2", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-2", PushProvider.RuStore, "android",
             sharedToken, Now);
 
         var thrown = await Assert.ThrowsAsync<DbUpdateException>(
@@ -122,7 +122,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var first = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
                 sharedToken, Now);
             first.Revoke(Now.AddHours(1));
             await new OperatorDeviceRepository(db).SaveAsync(first, CancellationToken.None);
@@ -130,7 +130,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
 
         await using var db2 = fixture.CreateDbContext();
         var second = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-2", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-2", PushProvider.RuStore, "android",
             sharedToken, Now.AddHours(2));
 
         // Must not throw.
@@ -143,14 +143,14 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         var (siteId, operatorId) = await SeedSiteAndOperatorAsync();
         var token = UniqueToken("token");
         var device = OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.Fcm, "android",
+            new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
             token, Now);
 
         await using (var db = fixture.CreateDbContext())
         {
             var repository = new OperatorDeviceRepository(db);
             await repository.SaveAsync(device, CancellationToken.None);
-            Assert.NotNull(await repository.FindActiveByTokenAsync(PushProvider.Fcm, token, CancellationToken.None));
+            Assert.NotNull(await repository.FindActiveByTokenAsync(PushProvider.RuStore, token, CancellationToken.None));
         }
 
         await using (var db = fixture.CreateDbContext())
@@ -163,7 +163,7 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
 
         await using var readDb = fixture.CreateDbContext();
         Assert.Null(
-            await new OperatorDeviceRepository(readDb).FindActiveByTokenAsync(PushProvider.Fcm, token, CancellationToken.None));
+            await new OperatorDeviceRepository(readDb).FindActiveByTokenAsync(PushProvider.RuStore, token, CancellationToken.None));
     }
 
     /// <summary>`26-05`'s own future read, proven now (this item's own Done-when: "a revoked device is
@@ -177,10 +177,10 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
         {
             var repository = new OperatorDeviceRepository(db);
             var live = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-live", PushProvider.Fcm,
+                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-live", PushProvider.RuStore,
                 "android", UniqueToken("token-live"), Now);
             var revoked = OperatorDevice.Register(
-                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-revoked", PushProvider.Fcm,
+                new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-revoked", PushProvider.RuStore,
                 "android", UniqueToken("token-revoked"), Now);
             revoked.Revoke(Now.AddHours(1));
 

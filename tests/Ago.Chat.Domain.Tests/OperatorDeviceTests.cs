@@ -8,7 +8,7 @@ public class OperatorDeviceTests
 
     private static OperatorDevice Register(string token = "token-1") =>
         OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.Fcm, "android", token, Now);
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android", token, Now);
 
     [Fact]
     public void Register_StartsLive()
@@ -23,7 +23,7 @@ public class OperatorDeviceTests
     public void Register_BlankToken_Throws()
     {
         Assert.Throws<ArgumentException>(() => OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.Fcm, "android", " ", Now));
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android", " ", Now));
     }
 
     [Fact]
@@ -31,14 +31,14 @@ public class OperatorDeviceTests
     {
         var tooLong = new string('a', OperatorDevice.MaxTokenLength + 1);
         Assert.Throws<ArgumentException>(() => OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.Fcm, "android", tooLong, Now));
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android", tooLong, Now));
     }
 
     [Fact]
     public void Register_BlankInstallationId_Throws()
     {
         Assert.Throws<ArgumentException>(() => OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "  ", PushProvider.Fcm, "android", "token-1", Now));
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "  ", PushProvider.RuStore, "android", "token-1", Now));
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public class OperatorDeviceTests
         var device = Register();
         var later = Now.AddDays(1);
 
-        device.Refresh(PushProvider.Fcm, "android", "token-2", later);
+        device.Refresh(PushProvider.RuStore, "android", "token-2", later);
 
         Assert.Equal("token-2", device.Token);
         Assert.Equal(later, device.LastSeenAt);
@@ -63,7 +63,7 @@ public class OperatorDeviceTests
         device.Revoke(Now.AddHours(1));
         Assert.NotNull(device.RevokedAt);
 
-        device.Refresh(PushProvider.Fcm, "android", "token-2", Now.AddHours(2));
+        device.Refresh(PushProvider.RuStore, "android", "token-2", Now.AddHours(2));
 
         Assert.Null(device.RevokedAt);
     }
@@ -74,7 +74,7 @@ public class OperatorDeviceTests
         var device = Register();
         device.Revoke(Now.AddHours(1));
 
-        device.Refresh(PushProvider.Fcm, "android", "token-2", Now.AddHours(2));
+        device.Refresh(PushProvider.RuStore, "android", "token-2", Now.AddHours(2));
 
         Assert.Null(device.LastFailureAt);
         Assert.Null(device.FailureReason);

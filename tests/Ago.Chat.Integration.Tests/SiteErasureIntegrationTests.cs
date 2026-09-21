@@ -108,7 +108,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         await using (var db = fixture.CreateDbContext())
         {
             var device = OperatorDevice.Register(
-                deviceId, siteId, adminOperatorId, "erasure-test-installation", PushProvider.Fcm, "android",
+                deviceId, siteId, adminOperatorId, "erasure-test-installation", PushProvider.RuStore, "android",
                 "erasure-test-token", Now);
             db.OperatorDevices.Add(device);
             await db.SaveChangesAsync();

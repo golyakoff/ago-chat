@@ -27,7 +27,7 @@ public class RegisterOperatorDeviceHandlerTests
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", "token-1"),
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-1"),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -47,13 +47,13 @@ public class RegisterOperatorDeviceHandlerTests
 
         await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", "token-1"),
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-1"),
             CancellationToken.None);
 
         fixture.Clock.UtcNow = Now.AddDays(1);
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", "token-2"),
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-2"),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -69,7 +69,7 @@ public class RegisterOperatorDeviceHandlerTests
         var fixture = CreateFixture();
         await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", "token-1"),
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-1"),
             CancellationToken.None);
         var device = await fixture.Devices.FindAsync(OperatorId, "installation-1", CancellationToken.None);
         device!.Revoke(Now.AddHours(1));
@@ -77,7 +77,7 @@ public class RegisterOperatorDeviceHandlerTests
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", "token-2"),
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-2"),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -93,12 +93,12 @@ public class RegisterOperatorDeviceHandlerTests
         var fixture = CreateFixture();
         await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-old", PushProvider.Fcm, "android", "shared-token"),
+                OperatorId, SiteId, "installation-old", PushProvider.RuStore, "android", "shared-token"),
             CancellationToken.None);
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-new", PushProvider.Fcm, "android", "shared-token"),
+                OperatorId, SiteId, "installation-new", PushProvider.RuStore, "android", "shared-token"),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
@@ -115,7 +115,7 @@ public class RegisterOperatorDeviceHandlerTests
 
         var result = await fixture.Handler.HandleAsync(
             new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
-                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", " "),
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", " "),
             CancellationToken.None);
 
         Assert.True(result.IsFailure);
