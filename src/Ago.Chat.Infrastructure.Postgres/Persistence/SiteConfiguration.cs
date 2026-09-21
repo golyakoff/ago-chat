@@ -218,6 +218,12 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
             .HasColumnName("widget_channel_switcher_icon_size")
             .HasConversion<string>()
             .HasDefaultValue(ChannelSwitcherIconSize.Medium);
+        // `25-210`: one more backing field on the same terms as widget_notice_text/
+        // widget_auto_open_greeting_text/widget_contact_capture_confirmation_text - a nullable free-text
+        // column with no CHECK constraint and no database default, for the identical "free text is not
+        // a closed set SQL can enumerate, WidgetConfig's own constructor is this value's only
+        // validation" reasoning those already state for themselves.
+        builder.Property<string?>("_panelTitle").HasColumnName("widget_panel_title");
         builder.Ignore(s => s.WidgetConfig);
 
         // `14-04`: same shape again - three private backing fields, three columns, the computed

@@ -148,7 +148,7 @@ public static class AuthEndpoints
                 enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
                 (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText, channelLinks,
                 site.WidgetContactCaptureConfirmationText, site.WidgetChannelSwitcherPlacement.ToString(),
-                site.WidgetChannelSwitcherIconSize.ToString()));
+                site.WidgetChannelSwitcherIconSize.ToString(), site.WidgetPanelTitle));
     }
 
     /// <summary>
@@ -276,7 +276,7 @@ public static class AuthEndpoints
             enabledModuleTriggerWords, site.WidgetAttractAttention, site.WidgetAutoOpenEnabled,
             (int)site.WidgetAutoOpenDelaySeconds, site.WidgetAutoOpenGreetingText, channelLinks,
             site.WidgetContactCaptureConfirmationText, site.WidgetChannelSwitcherPlacement.ToString(),
-            site.WidgetChannelSwitcherIconSize.ToString()));
+            site.WidgetChannelSwitcherIconSize.ToString(), site.WidgetPanelTitle));
     }
 
     /// <summary>
@@ -485,6 +485,14 @@ public static class AuthEndpoints
     /// (`adr/0079`) rather than a second one - opening it and messaging the bot continues the same
     /// conversation the widget already had, the identical guarantee `/linkidentity`'s own hand-typed
     /// flow already gives, just reached without the visitor having to type a command first.
+    ///
+    /// `25-210`: <see cref="WidgetPanelTitle"/> joins as one more additive, nullable field, on
+    /// <see cref="WidgetNoticeText"/>'s own wire terms - `null`/absent means "this tenant has not
+    /// configured an override," which `ago-widget`'s `.ago-header h1` (and `25-211`'s own
+    /// channel-switcher header bar) resolves against the widget's own built-in default greeting, never
+    /// against a blank title - the identical "always renders something" posture
+    /// <see cref="WidgetPosition"/> already has for a tenant who never chose a launcher corner, the
+    /// opposite of <see cref="WidgetNoticeText"/>'s own "render nothing" default.
     /// </summary>
     public sealed record VisitorSessionResponse(
         string Token,
@@ -509,5 +517,6 @@ public static class AuthEndpoints
         IReadOnlyList<ChannelLinkResponse> ChannelLinks,
         string? WidgetContactCaptureConfirmationText = null,
         string WidgetChannelSwitcherPlacement = "AboveComposer",
-        string WidgetChannelSwitcherIconSize = "Medium");
+        string WidgetChannelSwitcherIconSize = "Medium",
+        string? WidgetPanelTitle = null);
 }

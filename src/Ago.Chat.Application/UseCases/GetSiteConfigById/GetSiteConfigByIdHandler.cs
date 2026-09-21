@@ -42,6 +42,7 @@ public sealed class GetSiteConfigByIdHandler(ISiteRepository sites, ICache cache
             site.WidgetConfig.AttractAttention, site.WidgetConfig.AutoOpenEnabled,
             site.WidgetConfig.AutoOpenDelaySeconds, site.WidgetConfig.AutoOpenGreetingText,
             site.WidgetConfig.AllowAttachmentUploadsByDefault, site.WidgetConfig.ContactCaptureConfirmationText,
-            site.WidgetConfig.ChannelSwitcherPlacement, site.WidgetConfig.ChannelSwitcherIconSize));
+            site.WidgetConfig.ChannelSwitcherPlacement, site.WidgetConfig.ChannelSwitcherIconSize,
+            site.WidgetConfig.PanelTitle));
     }
 }

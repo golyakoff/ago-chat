@@ -50,6 +50,9 @@ namespace Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 /// identical terms <see cref="Position"/>/<see cref="Locale"/> already have - raw strings, not yet the
 /// validated Domain enums, so `UpdateWidgetConfigHandler` runs the same `Enum.TryParse`/`Enum.IsDefined`
 /// check it already runs for those two before either reaches `new WidgetConfig(...)`.
+///
+/// `25-210`: <see cref="PanelTitle"/> joins on the identical terms `NoticeText`/`ContactCaptureConfirmationText`
+/// already have - a raw, unvalidated string `Ago.Chat.Domain.WidgetConfig`'s own constructor validates.
 /// </summary>
 public sealed record UpdateWidgetConfig(
     SiteId SiteId,
@@ -68,4 +71,5 @@ public sealed record UpdateWidgetConfig(
     bool AllowAttachmentUploadsByDefault = false,
     string? ContactCaptureConfirmationText = null,
     string ChannelSwitcherPlacement = "AboveComposer",
-    string ChannelSwitcherIconSize = "Medium");
+    string ChannelSwitcherIconSize = "Medium",
+    string? PanelTitle = null);

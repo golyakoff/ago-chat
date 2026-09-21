@@ -39,10 +39,13 @@ namespace Ago.Chat.Application.UseCases.GetWidgetConfig;
 /// identical terms - straight off `Ago.Chat.Domain.WidgetConfig`, no second domain method to read from.
 /// Both stay the typed Domain enum here for the same reason <see cref="Position"/> does - `Ago.Chat.Api`'s
 /// endpoint is where a typed value becomes a wire value, not Application.
+/// `25-210`: <see cref="PanelTitle"/> joins on the identical terms - straight off
+/// `Ago.Chat.Domain.WidgetConfig`, no second domain method to read from.
 public sealed record WidgetConfigDto(
     string? PrimaryColorHex, Position Position, Locale Locale, string? NoticeText, string? NoticeUrl,
     bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, AutoOpenDelay AutoOpenDelaySeconds,
     string? AutoOpenGreetingText, bool AcceptUnverifiedPhone, bool AllowAttachmentUploadsByDefault = false,
     string? ContactCaptureConfirmationText = null,
     ChannelSwitcherPlacement ChannelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer,
-    ChannelSwitcherIconSize ChannelSwitcherIconSize = ChannelSwitcherIconSize.Medium);
+    ChannelSwitcherIconSize ChannelSwitcherIconSize = ChannelSwitcherIconSize.Medium,
+    string? PanelTitle = null);

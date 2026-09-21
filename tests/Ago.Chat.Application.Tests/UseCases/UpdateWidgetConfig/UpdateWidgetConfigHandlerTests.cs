@@ -43,14 +43,16 @@ public class UpdateWidgetConfigHandlerTests
         string? autoOpenGreetingText = null,
         string? contactCaptureConfirmationText = null,
         string channelSwitcherPlacement = nameof(ChannelSwitcherPlacement.AboveComposer),
-        string channelSwitcherIconSize = nameof(ChannelSwitcherIconSize.Medium)) =>
+        string channelSwitcherIconSize = nameof(ChannelSwitcherIconSize.Medium),
+        string? panelTitle = null) =>
         new(
             SiteId, OperatorId, primaryColorHex, position, locale, noticeText, noticeUrl,
             AttractAttention: attractAttention, AutoOpenEnabled: autoOpenEnabled,
             AutoOpenDelaySeconds: autoOpenDelaySeconds, AutoOpenGreetingText: autoOpenGreetingText,
             ContactCaptureConfirmationText: contactCaptureConfirmationText,
             ChannelSwitcherPlacement: channelSwitcherPlacement,
-            ChannelSwitcherIconSize: channelSwitcherIconSize);
+            ChannelSwitcherIconSize: channelSwitcherIconSize,
+            PanelTitle: panelTitle);
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_UpdatesTheSitesWidgetConfig()
@@ -519,6 +521,76 @@ public class UpdateWidgetConfigHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("WidgetConfig.InvalidChannelSwitcherIconSize", result.Error!.Value.Code);
+        Assert.Empty(fixture.Outbox.Enqueued);
+    }
+
+    // `25-210`: the thirteenth field this same call writes - straight onto
+    // Ago.Chat.Domain.WidgetConfig itself, the identical "no third Site method needed" shape every
+    // field above already established.
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_UpdatesTheSitesPanelTitle()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(panelTitle: "Чем мы могли бы вам помочь?"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Чем мы могли бы вам помочь?", result.Value.PanelTitle);
+
+        var saved = await fixture.Sites.GetByIdAsync(SiteId, CancellationToken.None);
+        Assert.Equal("Чем мы могли бы вам помочь?", saved!.WidgetConfig.PanelTitle);
+    }
+
+    // `25-210`'s own Done-when: a site that never configures a title reads back `null`, which is what
+    // makes the widget fall back to its own built-in default greeting - never an AGO-authored default
+    // this handler would invent, and never an empty title either.
+    [Fact]
+    public async Task HandleAsync_WhenPanelTitleIsNotSupplied_LeavesItNull()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.PanelTitle);
+    }
+
+    // Mirrors the notice-text/contact-capture-confirmation-text guards above - a bad panel title is a
+    // clean Result failure with its own error code, not an unhandled exception, and it costs no outbox
+    // writes.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task HandleAsync_WhenThePanelTitleIsWhitespaceOnly_ReturnsInvalidPanelTitle(string malformedTitle)
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(panelTitle: malformedTitle), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidPanelTitle", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenThePanelTitleExceedsMaxLength_ReturnsInvalidPanelTitle()
+    {
+        var fixture = CreateFixture();
+        var tooLong = new string('a', WidgetConfig.MaxPanelTitleLength + 1);
+
+        var result = await fixture.Handler.HandleAsync(Command(panelTitle: tooLong), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("WidgetConfig.InvalidPanelTitle", result.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenThePanelTitleIsInvalid_EnqueuesNothing()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(Command(panelTitle: "   "), CancellationToken.None);
+
         Assert.Empty(fixture.Outbox.Enqueued);
     }
 }

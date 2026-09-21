@@ -279,6 +279,12 @@ public static class ConversationErrors
     public static Error WidgetConfigInvalidChannelSwitcherIconSize(string reason) =>
         new("WidgetConfig.InvalidChannelSwitcherIconSize", reason);
 
+    /// <summary>`25-210`: a whitespace-only or over-length panel title - `WidgetConfig`'s own
+    /// constructor rejected it, the same catch-and-translate split `WidgetConfigInvalidNoticeText`/
+    /// `WidgetConfigInvalidContactCaptureConfirmationText` already draw for their own fields.</summary>
+    public static Error WidgetConfigInvalidPanelTitle(string reason) =>
+        new("WidgetConfig.InvalidPanelTitle", reason);
+
     /// <summary>`14-04`: an offline auto-reply configuration `OfflineAutoReplyRule`/
     /// `OfflineAutoReplySettings` refused - an empty or oversized keyword or reply, too many rules, or
     /// an enabled configuration with no fallback text. One code rather than five, because every one of

@@ -54,6 +54,11 @@ public class SiteTests
         // accident of a schema default.
         Assert.Equal(ChannelSwitcherPlacement.AboveComposer, site.WidgetConfig.ChannelSwitcherPlacement);
         Assert.Equal(ChannelSwitcherIconSize.Medium, site.WidgetConfig.ChannelSwitcherIconSize);
+        // `25-210`: every existing tenant, and every freshly created one, has no configured panel-title
+        // override - `null` here means "use the widget's own built-in default greeting", not "show no
+        // title" (WidgetConfig.PanelTitle's own remarks on why this joins PrimaryColorHex/Position's
+        // precedent, not NoticeText's).
+        Assert.Null(site.WidgetConfig.PanelTitle);
     }
 
     [Fact]
@@ -856,5 +861,56 @@ public class SiteTests
         Assert.Equal(id, raised.SiteId);
         Assert.Null(raised.SuspendedUntil);
         Assert.Equal(now, raised.OccurredAt);
+    }
+
+    // `25-210`: whitespace-only text is rejected rather than silently stored - the identical "leave it
+    // null to use the widget's own default" reflex `NoticeText`'s/`ContactCaptureConfirmationText`'s own
+    // guards already state for themselves. Unlike those two, `null` here means "the built-in default
+    // greeting", never "no title" - WidgetConfig.PanelTitle's own remarks.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateWidgetConfig_WhenPanelTitleIsWhitespaceOnly_Throws(string malformedTitle)
+    {
+        Assert.Throws<ArgumentException>(
+            () => new WidgetConfig(null, Position.BottomRight, panelTitle: malformedTitle));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenPanelTitleExceedsMaxLength_Throws()
+    {
+        var tooLong = new string('a', WidgetConfig.MaxPanelTitleLength + 1);
+
+        Assert.Throws<ArgumentException>(
+            () => new WidgetConfig(null, Position.BottomRight, panelTitle: tooLong));
+    }
+
+    [Fact]
+    public void UpdateWidgetConfig_WhenPanelTitleIsValid_Accepts()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        const string title = "Чем мы могли бы вам помочь?";
+
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, panelTitle: title), now);
+
+        Assert.Equal(title, site.WidgetConfig.PanelTitle);
+    }
+
+    // `25-210`'s own Done-when: an unset site renders the widget's own built-in default text, not an
+    // empty title - proven here at the domain level as "the field reads back null", the fact
+    // `ago-widget`'s own `.ago-header h1` fallback (`chatWithUs`) depends on. A later call that omits
+    // the field must not silently carry the old value forward - the identical guard every other
+    // optional WidgetConfig field's own test already states for itself.
+    [Fact]
+    public void UpdateWidgetConfig_WhenPanelTitleIsOmitted_DefaultsNull()
+    {
+        var site = new Site(new SiteId(Guid.NewGuid()), "shop_7f3a", []);
+        var now = DateTimeOffset.UtcNow;
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomRight, panelTitle: "Custom greeting"), now);
+
+        site.UpdateWidgetConfig(new WidgetConfig(null, Position.BottomLeft), now);
+
+        Assert.Null(site.WidgetConfig.PanelTitle);
     }
 }

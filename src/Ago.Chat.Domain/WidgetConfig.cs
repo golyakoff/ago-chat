@@ -143,6 +143,23 @@ public readonly partial record struct WidgetConfig
     /// this substitution can only ever happen client-side).</summary>
     public string? ContactCaptureConfirmationText { get; }
 
+    /// <summary>`25-210`: a bound, matching <see cref="MaxAutoOpenGreetingTextLength"/>'s own reasoning,
+    /// not <see cref="MaxNoticeTextLength"/>'s - this is one drawn line a visitor reads once at the top
+    /// of the panel, not a legal disclosure needing room to say something substantive.</summary>
+    public const int MaxPanelTitleLength = 300;
+
+    /// <summary>`25-210`: the panel's own `&lt;h1&gt;` (`.ago-header h1`, `ui/widget.ts`) - found while
+    /// sizing `25-211`'s channel-switcher header bar, which needs the identical title and so cannot
+    /// invent a second, hardcoded copy of it. <see langword="null"/> means "use the widget's own
+    /// built-in default greeting" (`ago-widget`'s own `i18n` string table, `chatWithUs`) - joining
+    /// <see cref="PrimaryColorHex"/>/<see cref="Position"/> on their terms, deliberately <b>not</b>
+    /// <see cref="NoticeText"/>'s: a chat panel always needs a title exactly the way it always needs a
+    /// launcher position, so there is no "render nothing" state for this field to have, unlike a legal
+    /// notice a tenant may legitimately choose to omit entirely. A tenant who wants different words sets
+    /// this; a tenant who never configures it still gets a real, friendly greeting, never a blank
+    /// header.</summary>
+    public string? PanelTitle { get; }
+
     /// <summary>`25-173`: where the widget shows a visitor the channels this site has connected -
     /// <see cref="Domain.ChannelSwitcherPlacement.AboveComposer"/> for every row that predates this
     /// column, `25-149`'s own pre-existing card, unchanged. Joins <see cref="NoticeText"/>/
@@ -207,7 +224,8 @@ public readonly partial record struct WidgetConfig
         bool acceptUnverifiedPhone = false, bool allowAttachmentUploadsByDefault = false,
         string? contactCaptureConfirmationText = null,
         ChannelSwitcherPlacement channelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer,
-        ChannelSwitcherIconSize channelSwitcherIconSize = ChannelSwitcherIconSize.Medium)
+        ChannelSwitcherIconSize channelSwitcherIconSize = ChannelSwitcherIconSize.Medium,
+        string? panelTitle = null)
     {
         if (primaryColorHex is not null && !HexColorPattern().IsMatch(primaryColorHex))
         {
@@ -271,6 +289,22 @@ public readonly partial record struct WidgetConfig
             }
         }
 
+        if (panelTitle is not null)
+        {
+            if (string.IsNullOrWhiteSpace(panelTitle))
+            {
+                throw new ArgumentException(
+                    "Widget panel title cannot be whitespace-only - leave it null to use the widget's own default greeting.",
+                    nameof(panelTitle));
+            }
+
+            if (panelTitle.Length > MaxPanelTitleLength)
+            {
+                throw new ArgumentException(
+                    $"Widget panel title cannot exceed {MaxPanelTitleLength} characters.", nameof(panelTitle));
+            }
+        }
+
         // `23-64`: "There is no default sentence we supply" (the backlog item's own Scope) - turning
         // auto-open on with nothing configured to say is not a state this constructor lets exist,
         // the same "an enabled configuration with nothing to say" guard `OfflineAutoReplySettings`
@@ -296,6 +330,7 @@ public readonly partial record struct WidgetConfig
         ContactCaptureConfirmationText = contactCaptureConfirmationText;
         ChannelSwitcherPlacement = channelSwitcherPlacement;
         ChannelSwitcherIconSize = channelSwitcherIconSize;
+        PanelTitle = panelTitle;
     }
 
     /// <summary>What a <see cref="Site"/> has before anyone ever calls
