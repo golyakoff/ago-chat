@@ -42,7 +42,7 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
         await using (var db = fixture.CreateDbContext())
         {
             var device = OperatorDevice.Register(
-                deviceId, siteId, operatorId, "installation-1", PushProvider.Fcm, "android", "fcm-token-1", Now);
+                deviceId, siteId, operatorId, "installation-1", PushProvider.RuStore, "android", "rustore-token-1", Now);
             db.OperatorDevices.Add(device);
             await db.SaveChangesAsync();
         }
