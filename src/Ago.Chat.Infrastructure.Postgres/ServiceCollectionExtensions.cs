@@ -137,6 +137,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUnreadCounterStore, UnreadCounterStore>();
         // `6-03`
         services.AddScoped<IWebhookEndpointRepository, WebhookEndpointRepository>();
+        // `26-03`
+        services.AddScoped<IOperatorDeviceRepository, OperatorDeviceRepository>();
         services.AddScoped<IWebhookDeliveryRepository, WebhookDeliveryRepository>();
         services.AddScoped<IWebhookDeliveryReadStore, WebhookDeliveryReadStore>();
         // `23-19`

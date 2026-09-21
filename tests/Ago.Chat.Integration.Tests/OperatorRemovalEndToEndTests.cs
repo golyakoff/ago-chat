@@ -21,6 +21,12 @@ namespace Ago.Chat.Integration.Tests;
 /// <see cref="OperatorConversationReleaser"/> - the same "real Postgres, real RabbitMQ, hand-wired
 /// pipeline stages" shape <c>WidgetConfigCacheInvalidationEndToEndTests</c> already established for
 /// `SiteSettingsChanged`'s own chain.
+///
+/// <para>`26-03`/`adr/0179` §1: the same real chain now also proves
+/// <see cref="OperatorDeviceRevoker.RevokeAllAsync"/>, <see cref="OperatorRemovedConsumer"/>'s other
+/// added call - a device this operator registered before removal must come back revoked, through the
+/// identical live outbox/RabbitMQ path the conversation-release assertion already trusts, not a direct
+/// unit call to the revoker in isolation.</para>
 /// </summary>
 [Collection(ConnectionFanoutCollection.Name)]
 public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture)
@@ -32,6 +38,15 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
     {
         var (siteId, operatorId, conversationId) = await SeedAssignedConversationAsync();
 
+        var deviceId = new OperatorDeviceId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            var device = OperatorDevice.Register(
+                deviceId, siteId, operatorId, "installation-1", PushProvider.Fcm, "android", "fcm-token-1", Now);
+            db.OperatorDevices.Add(device);
+            await db.SaveChangesAsync();
+        }
+
         await using var dispatcherConnection = fixture.CreateRabbitMqConnection();
         var dispatcher = new OutboxDispatcher(
             fixture.DataSource, new RabbitMqEventPublisher(dispatcherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(),
@@ -39,8 +54,9 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
 
         await using var consumerConnection = fixture.CreateRabbitMqConnection();
         var releaser = new OperatorConversationReleaser(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+        var deviceRevoker = new OperatorDeviceRevoker(fixture.DataSource, new SystemClock());
         var consumer = new OperatorRemovedConsumer(
-            new RabbitMqEventConsumer(consumerConnection), releaser,
+            new RabbitMqEventConsumer(consumerConnection), releaser, deviceRevoker,
             Options.Create(new OperatorRemovedConsumerOptions()), NullLogger<OperatorRemovedConsumer>.Instance);
 
         await dispatcher.StartAsync(CancellationToken.None);
@@ -64,6 +80,12 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
 
             var released = await OutboxTestHelpers.WaitUntilAsync(async () => await IsWaitingAsync(conversationId), TimeSpan.FromSeconds(15));
             Assert.True(released, "Timed out waiting for the removed operator's conversation to be released back to Waiting.");
+
+            // `26-03`: the same removal must also revoke this operator's device - waited for
+            // separately, since nothing orders the two calls inside HandleAsync relative to an outside
+            // observer beyond "both complete before AckAsync".
+            var revoked = await OutboxTestHelpers.WaitUntilAsync(async () => await IsDeviceRevokedAsync(deviceId), TimeSpan.FromSeconds(15));
+            Assert.True(revoked, "Timed out waiting for the removed operator's device to be revoked.");
         }
         finally
         {
@@ -122,6 +144,13 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
         await using var db = fixture.CreateDbContext();
         var conversation = await db.Conversations.FindAsync(conversationId);
         return conversation!.State == ConversationState.Waiting;
+    }
+
+    private async Task<bool> IsDeviceRevokedAsync(OperatorDeviceId deviceId)
+    {
+        await using var db = fixture.CreateDbContext();
+        var device = await db.OperatorDevices.FindAsync(deviceId);
+        return device!.RevokedAt is not null;
     }
 
     private async Task<int> ReadActiveChatsAsync(OperatorId operatorId)

@@ -161,6 +161,12 @@ public static class ConversationErrors
     public static Error WebhookInvalidUrl(string reason) =>
         new("WebhookEndpoint.InvalidUrl", reason);
 
+    // `26-03`: same shared vocabulary, same reason - RegisterOperatorDeviceHandler's own translation of
+    // OperatorDevice.Register/Refresh's bounded-value ArgumentException, the identical
+    // SendVisitorMessageHandler/ConversationErrors.InvalidBody idiom for MessageBody.
+    public static Error OperatorDeviceInvalid(string reason) =>
+        new("OperatorDevice.Invalid", reason);
+
     // `10-02`: same shared vocabulary, same reason - one place a client branching on `type` looks.
     /// <summary>
     /// `10-02`'s original meaning: the caller's `sub` already resolved to an `operators` row anywhere

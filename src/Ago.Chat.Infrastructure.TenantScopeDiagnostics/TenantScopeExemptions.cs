@@ -849,5 +849,33 @@ public static class TenantScopeExemptions
             + "scope: 'any tenant-facing self-service control over the auto-bill/manual toggle - stays the "
             + "platform owner's'. The tenant-facing half of this item, PurchaseDownloadOverageHandler, is "
             + "ordinarily RBAC-gated on Permission.SiteConfigure and is deliberately not listed here.",
+
+        // ---------------------------------------------------------------------------------------
+        // `26-03`/`adr/0179`. The caller's own device row, resolved entirely from
+        // RequireOperatorIdentity's own claim pair (MeDeviceEndpoints.HandleRegisterAsync/
+        // HandleRevokeAsync read OperatorId/SiteId off httpContext.User, never from the request body
+        // or route) - the same "OperatorId is the caller's own identity, not a resource the caller
+        // names" category SetOperatorPresenceHandler's own group above is in. Neither handler has a
+        // second, operator- or site-scoping parameter anywhere on its command for a caller to
+        // substitute another operator's id into - the identical "no combination the caller could
+        // supply names anyone but themselves" shape GetOwnAnalyticsForOperatorHandler's own entry
+        // above argues for the identical (OperatorId, SiteId) pairing.
+        // ---------------------------------------------------------------------------------------
+        ["Ago.Chat.Application.UseCases.RegisterOperatorDevice.RegisterOperatorDeviceHandler.HandleAsync"] =
+            "`26-03`. Takes a SiteId but calls no IPermissionChecker, by the same deliberate design as "
+            + "SetOperatorPresenceHandler's own group above: both OperatorId and SiteId come from "
+            + "RequireOperatorIdentity's own resolved claim pair, never from the PUT body (which carries only "
+            + "installationId, provider, platform and token - none of them name another operator or site). "
+            + "There is no site-wide resource being managed here the way WebhookEndpoint's Permission.WebhookManage "
+            + "gate manages one - only 'write my own device row', so a permission check would be asking whether "
+            + "the caller may act on an object the caller's own identity already is.",
+        ["Ago.Chat.Application.UseCases.RevokeOperatorDevice.RevokeOperatorDeviceHandler.HandleAsync"] =
+            "`26-03`. No SiteId at all, and deliberately so - the identical shape "
+            + "SetOperatorPresenceHandler.GoOnlineAsync's own entry above describes: the only input is the "
+            + "caller's own OperatorId, resolved by MeDeviceEndpoints.HandleRevokeAsync from the connection's own "
+            + "validated JWT before this handler is ever constructed, plus an installationId that scopes the "
+            + "lookup no further than 'this operator's own row for this install' (IOperatorDeviceRepository."
+            + "FindAsync's own (operatorId, installationId) key). There is no second party's device this call "
+            + "could ever reach - revoking your own device on sign-out needs nobody else's say-so.",
     };
 }
