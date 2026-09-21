@@ -44,6 +44,7 @@ public sealed class GetWidgetConfigHandler(ISiteRepository sites, IPermissionChe
             site.WidgetConfig.AllowAttachmentUploadsByDefault,
             site.WidgetConfig.ContactCaptureConfirmationText,
             site.WidgetConfig.ChannelSwitcherPlacement,
-            site.WidgetConfig.ChannelSwitcherIconSize);
+            site.WidgetConfig.ChannelSwitcherIconSize,
+            site.WidgetConfig.PanelTitle);
     }
 }

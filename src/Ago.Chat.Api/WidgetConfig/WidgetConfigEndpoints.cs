@@ -77,7 +77,8 @@ public static class WidgetConfigEndpoints
                 request.AllowAttachmentUploadsByDefault,
                 request.ContactCaptureConfirmationText,
                 request.ChannelSwitcherPlacement,
-                request.ChannelSwitcherIconSize),
+                request.ChannelSwitcherIconSize,
+                request.PanelTitle),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(ToResponse(result.Value));
@@ -88,7 +89,7 @@ public static class WidgetConfigEndpoints
             dto.RequireContactConsent, dto.AttractAttention, dto.AutoOpenEnabled, (int)dto.AutoOpenDelaySeconds,
             dto.AutoOpenGreetingText, dto.AcceptUnverifiedPhone, dto.AllowAttachmentUploadsByDefault,
             dto.ContactCaptureConfirmationText, dto.ChannelSwitcherPlacement.ToString(),
-            dto.ChannelSwitcherIconSize.ToString());
+            dto.ChannelSwitcherIconSize.ToString(), dto.PanelTitle);
 
     /// <summary>
     /// <para>
@@ -139,7 +140,12 @@ public static class WidgetConfigEndpoints
         // console build that has never heard of these two fields keeps saving exactly today's
         // behaviour rather than a client error.
         string ChannelSwitcherPlacement = "AboveComposer",
-        string ChannelSwitcherIconSize = "Medium");
+        string ChannelSwitcherIconSize = "Medium",
+        // `25-210`: a nullable string, the identical "no state this can silently destroy" posture
+        // NoticeText/ContactCaptureConfirmationText already take above - a missing value binds to null,
+        // which is "this tenant has not configured an override," a legitimate value the widget already
+        // falls back to its own built-in default greeting for.
+        string? PanelTitle = null);
 
     /// <summary>`23-64`: <c>AutoOpenDelaySeconds</c> crosses the wire as its plain `int` value
     /// (`AutoOpenDelay`'s own remarks on why it needs no PascalCase-string convention the way
@@ -149,5 +155,6 @@ public static class WidgetConfigEndpoints
         string? PrimaryColorHex, string Position, string Locale, string? NoticeText, string? NoticeUrl,
         bool RequireContactConsent, bool AttractAttention, bool AutoOpenEnabled, int AutoOpenDelaySeconds,
         string? AutoOpenGreetingText, bool AcceptUnverifiedPhone, bool AllowAttachmentUploadsByDefault,
-        string? ContactCaptureConfirmationText, string ChannelSwitcherPlacement, string ChannelSwitcherIconSize);
+        string? ContactCaptureConfirmationText, string ChannelSwitcherPlacement, string ChannelSwitcherIconSize,
+        string? PanelTitle = null);
 }

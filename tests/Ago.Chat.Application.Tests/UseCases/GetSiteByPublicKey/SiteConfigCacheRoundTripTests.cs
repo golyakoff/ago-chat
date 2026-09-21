@@ -28,11 +28,13 @@ public class SiteConfigCacheRoundTripTests
         bool autoOpenEnabled = false,
         AutoOpenDelay autoOpenDelaySeconds = AutoOpenDelay.Seconds30,
         string? autoOpenGreetingText = null,
-        string? contactCaptureConfirmationText = null) =>
+        string? contactCaptureConfirmationText = null,
+        string? panelTitle = null) =>
         new(
             Guid.NewGuid(), "shop_7f3a", ["https://example.com"], "#336699", Position.BottomLeft, locale, autoReply,
             "free", noticeText, noticeUrl, ContactVisibility.Visible, false, autoOpenEnabled, autoOpenDelaySeconds,
-            autoOpenGreetingText, WidgetContactCaptureConfirmationText: contactCaptureConfirmationText);
+            autoOpenGreetingText, WidgetContactCaptureConfirmationText: contactCaptureConfirmationText,
+            WidgetPanelTitle: panelTitle);
 
     private static SiteConfigDto RoundTrip(SiteConfigDto dto) =>
         JsonSerializer.Deserialize<SiteConfigDto>(JsonSerializer.Serialize(dto))!;
@@ -184,5 +186,28 @@ public class SiteConfigCacheRoundTripTests
         var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled));
 
         Assert.Null(read.WidgetContactCaptureConfirmationText);
+    }
+
+    // `25-210`: `WidgetPanelTitle` joins `TheWidgetNoticeFields_SurviveTheCache`'s own reasoning - a
+    // plain nullable string with no validating constructor at this DTO layer, still asserted through
+    // the real (de)serializer rather than trusted because the test compiles.
+    [Fact]
+    public void ThePanelTitle_SurvivesTheCache()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled, panelTitle: "Чем мы могли бы вам помочь?"));
+
+        Assert.Equal("Чем мы могли бы вам помочь?", read.WidgetPanelTitle);
+    }
+
+    // `25-210`'s own default - a site with no override configured must round-trip as `null`, not as an
+    // empty string a naive (de)serializer default could substitute - the identical guard
+    // `ANullWidgetNotice_SurvivesTheCacheAsNull` already states for the sibling notice field. `null`
+    // here is what makes the widget fall back to its own built-in default greeting, never a blank title.
+    [Fact]
+    public void ANullPanelTitle_SurvivesTheCacheAsNull()
+    {
+        var read = RoundTrip(Dto(OfflineAutoReplySettings.Disabled));
+
+        Assert.Null(read.WidgetPanelTitle);
     }
 }

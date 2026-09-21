@@ -307,6 +307,10 @@ public static class ErrorExtensions
                 // the identical "validate the enum, translate the throw at the Application boundary"
                 // split every other `WidgetConfig.Invalid*` code in this group already draws.
                 or "WidgetConfig.InvalidChannelSwitcherPlacement" or "WidgetConfig.InvalidChannelSwitcherIconSize"
+                // `25-210`: `WidgetConfig.InvalidPanelTitle` - the identical "validate the value,
+                // translate the throw at the Application boundary" split every other
+                // `WidgetConfig.Invalid*` code in this group already draws.
+                or "WidgetConfig.InvalidPanelTitle"
                 // `Billing.InvalidSeatCount` - "the requested seat count falls outside
                 // SubscriptionTierBands.MinSeats-MaxSeats ... never a purchasable band"
                 // (ConversationErrors.BillingInvalidSeatCount's own remarks) - the caller's own mistake

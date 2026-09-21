@@ -97,6 +97,12 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// of fact the widget's own bootstrap needs to decide how to draw the channel switcher, the same
 /// "the widget's own bootstrap needs to render correctly" reasoning <see cref="WidgetAttractAttention"/>'s
 /// own remarks give for itself.
+/// `25-210`: <see cref="WidgetPanelTitle"/> joins on the identical terms <see cref="WidgetAttractAttention"/>
+/// already established - an additive, nullable field on the existing cached DTO, populated identically by
+/// both loaders, and <b>put on the wire</b> by the handshake: the widget's own `.ago-header h1` reads
+/// exactly this value, falling back to its own built-in default greeting when it is `null` - `null` means
+/// "no override", never "no title", the same distinction `WidgetConfig.PanelTitle`'s own remarks draw
+/// against `WidgetNoticeText`'s "render nothing" posture.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
@@ -106,4 +112,5 @@ public sealed record SiteConfigDto(
     string? WidgetAutoOpenGreetingText, bool WidgetAllowAttachmentUploadsByDefault = false,
     string? WidgetContactCaptureConfirmationText = null,
     ChannelSwitcherPlacement WidgetChannelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer,
-    ChannelSwitcherIconSize WidgetChannelSwitcherIconSize = ChannelSwitcherIconSize.Medium);
+    ChannelSwitcherIconSize WidgetChannelSwitcherIconSize = ChannelSwitcherIconSize.Medium,
+    string? WidgetPanelTitle = null);

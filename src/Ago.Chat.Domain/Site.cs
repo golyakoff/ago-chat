@@ -135,11 +135,16 @@ public sealed class Site
     private ChannelSwitcherPlacement _channelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer;
     private ChannelSwitcherIconSize _channelSwitcherIconSize = ChannelSwitcherIconSize.Medium;
 
+    // `25-210`: one more flat backing field, the same shape as the pair above - its own column (the
+    // migration this item adds), a nullable free-text field for the identical "one more caller of an
+    // already-established shape" reason `25-173`'s own comment gives for itself.
+    private string? _panelTitle;
+
     public WidgetConfig WidgetConfig =>
         new(_widgetPrimaryColorHex, _widgetPosition, _widgetNoticeText, _widgetNoticeUrl, _requireContactConsent,
             _attractAttention, _autoOpenEnabled, _autoOpenDelaySeconds, _autoOpenGreetingText,
             _acceptUnverifiedPhone, _allowAttachmentUploadsByDefault, _contactCaptureConfirmationText,
-            _channelSwitcherPlacement, _channelSwitcherIconSize);
+            _channelSwitcherPlacement, _channelSwitcherIconSize, _panelTitle);
 
     // `14-04`: three more flat backing fields, the same shape `11-01` chose just above and for the
     // same reason - each gets its own column (Stage14AddSiteOfflineAutoReply) without introducing EF's
@@ -464,6 +469,7 @@ public sealed class Site
         _allowAttachmentUploadsByDefault = WidgetConfig.Default.AllowAttachmentUploadsByDefault;
         _channelSwitcherPlacement = WidgetConfig.Default.ChannelSwitcherPlacement;
         _channelSwitcherIconSize = WidgetConfig.Default.ChannelSwitcherIconSize;
+        _panelTitle = WidgetConfig.Default.PanelTitle;
     }
 
     // EF Core materialization only (1-04) - every field above is overwritten via reflection
@@ -498,6 +504,7 @@ public sealed class Site
         _contactCaptureConfirmationText = config.ContactCaptureConfirmationText;
         _channelSwitcherPlacement = config.ChannelSwitcherPlacement;
         _channelSwitcherIconSize = config.ChannelSwitcherIconSize;
+        _panelTitle = config.PanelTitle;
         _domainEvents.Add(new SiteWidgetConfigUpdated(Id, PublicKey, now));
     }
 

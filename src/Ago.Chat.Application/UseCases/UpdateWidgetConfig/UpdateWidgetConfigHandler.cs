@@ -97,7 +97,8 @@ public sealed class UpdateWidgetConfigHandler(
                 command.PrimaryColorHex, position, command.NoticeText, command.NoticeUrl, command.RequireContactConsent,
                 command.AttractAttention, command.AutoOpenEnabled, autoOpenDelay, command.AutoOpenGreetingText,
                 command.AcceptUnverifiedPhone, command.AllowAttachmentUploadsByDefault,
-                command.ContactCaptureConfirmationText, channelSwitcherPlacement, channelSwitcherIconSize);
+                command.ContactCaptureConfirmationText, channelSwitcherPlacement, channelSwitcherIconSize,
+                command.PanelTitle);
         }
         // `16-04`: `WidgetConfig`'s constructor throws with its own parameter name for each of the
         // things it validates - matched here on that name so a caller can tell which field to
@@ -125,6 +126,13 @@ public sealed class UpdateWidgetConfigHandler(
         catch (ArgumentException ex) when (ex.ParamName == "contactCaptureConfirmationText")
         {
             return ConversationErrors.WidgetConfigInvalidContactCaptureConfirmationText(ex.Message);
+        }
+        // `25-210`: the same catch-and-translate shape, one more parameter name - whether the configured
+        // panel title was whitespace-only or over-length (`WidgetConfig`'s own constructor makes both
+        // the same `ArgumentException` on this parameter name).
+        catch (ArgumentException ex) when (ex.ParamName == "panelTitle")
+        {
+            return ConversationErrors.WidgetConfigInvalidPanelTitle(ex.Message);
         }
         catch (ArgumentException ex)
         {
@@ -154,6 +162,6 @@ public sealed class UpdateWidgetConfigHandler(
             config.RequireContactConsent, config.AttractAttention, config.AutoOpenEnabled,
             config.AutoOpenDelaySeconds, config.AutoOpenGreetingText, config.AcceptUnverifiedPhone,
             config.AllowAttachmentUploadsByDefault, config.ContactCaptureConfirmationText,
-            config.ChannelSwitcherPlacement, config.ChannelSwitcherIconSize);
+            config.ChannelSwitcherPlacement, config.ChannelSwitcherIconSize, config.PanelTitle);
     }
 }
