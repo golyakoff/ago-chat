@@ -112,6 +112,56 @@ public sealed class ChatMetricsTests
         Assert.Equal(2, conflictsOnly);
     }
 
+    /// <summary>`26-04`: proves the three push instruments are wired the way
+    /// <see cref="ChatMetrics.PushSendsInstrumentName"/>'s own remarks describe - not yet called by any
+    /// production code (`26-05` is the real caller and does not exist yet), so this is the only place
+    /// this item's own tag shape is exercised at all.</summary>
+    [Fact]
+    public void RecordPushMethods_TagEachInstrumentTheWayItsRemarksDescribe()
+    {
+        var exportedMetrics = new List<Metric>();
+        using var meterProvider = Sdk.CreateMeterProviderBuilder()
+            .AddMeter(ChatMetrics.MeterName)
+            .AddInMemoryExporter(exportedMetrics)
+            .Build();
+
+        ChatMetrics.RecordPushSend("message", "rustore", "delivered");
+        ChatMetrics.RecordPushSuppressed("no_devices");
+        ChatMetrics.RecordPushTokenRevoked("provider_unregistered");
+        meterProvider.ForceFlush();
+
+        var sends = exportedMetrics.Single(m => m.Name == ChatMetrics.PushSendsInstrumentName);
+        Assert.Equal(1, SumMatchingTags(sends, ("reason", "message"), ("provider", "rustore"), ("outcome", "delivered")));
+
+        var suppressed = exportedMetrics.Single(m => m.Name == ChatMetrics.PushSuppressedInstrumentName);
+        Assert.Equal(1, SumMatchingTags(suppressed, ("reason", "no_devices")));
+
+        var revoked = exportedMetrics.Single(m => m.Name == ChatMetrics.PushTokensRevokedInstrumentName);
+        Assert.Equal(1, SumMatchingTags(revoked, ("cause", "provider_unregistered")));
+    }
+
+    private static long SumMatchingTags(Metric metric, params (string Key, string Value)[] expectedTags)
+    {
+        long total = 0;
+        foreach (ref readonly var point in metric.GetMetricPoints())
+        {
+            var tags = new List<KeyValuePair<string, object?>>();
+            foreach (var tag in point.Tags)
+            {
+                tags.Add(tag);
+            }
+
+            var matches = expectedTags.All(expected =>
+                tags.Any(tag => tag.Key == expected.Key && (string?)tag.Value == expected.Value));
+            if (matches)
+            {
+                total += point.GetSumLong();
+            }
+        }
+
+        return total;
+    }
+
     private static long SumMatching(Metric metric, string hub, string method, string outcome)
     {
         long total = 0;

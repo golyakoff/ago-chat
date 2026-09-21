@@ -1,22 +1,27 @@
-﻿using Ago.Chat.Application.Abstractions;
+﻿using System.Net.Http.Headers;
+using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Infrastructure.Postgres.Schema;
+using Ago.Chat.Infrastructure.RuStore;
 using Ago.Chat.Infrastructure.Telegram;
 using Ago.Chat.Module;
 using Ago.Chat.Module.Pipeline;
+using Ago.Chat.Module.Push;
 using Ago.Chat.Worker;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Hosting;
 using Ago.Platform.Observability;
 using Ago.Platform.Kernel;
+using Ago.Platform.Resilience;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using OpenTelemetry.Exporter;
+using Polly;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -184,6 +189,61 @@ builder.Services.AddHostedService<ConversationAssignmentJob>();
 builder.Services.AddSingleton<OperatorConversationReleaser>();
 // `26-03`: OperatorDeviceRevoker is the identical shape, for the identical reason.
 builder.Services.AddSingleton<OperatorDeviceRevoker>();
+
+// `26-04`/`adr/0180`: IPushSender's own registration - deliberately here, in Ago.Chat.Worker's own
+// Program.cs, and not in ChatModule.ConfigureServices (which Ago.Chat.Api and Ago.Chat.Webhooks call
+// too). RuStoreOptions.ServiceToken is the one credential `push-notifications.md`'s own secrets table
+// says must reach exactly one deployable - binding it with .ValidateOnStart() from the shared method
+// would make the other two hosts' startup depend on a value they must never hold. No provider registry,
+// no IPushSenderFactory (`adr/0179` §5): RuStorePushSender, wrapped once in ResilientPushSender, is
+// registered directly as the only IPushSender this codebase has.
+builder.Services
+    .AddOptions<RuStoreOptions>()
+    .Bind(builder.Configuration.GetSection(RuStoreOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ProjectId), "Push:RuStore:ProjectId must be set.")
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ServiceToken), "Push:RuStore:ServiceToken must be set.")
+    .ValidateOnStart();
+builder.Services.AddHttpClient<RuStorePushSender>((sp, client) =>
+{
+    var options = sp.GetRequiredService<IOptions<RuStoreOptions>>().Value;
+    var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
+    // `adr/0180` §1: one host, one long-lived bearer token, presented directly - no OAuth2 mint, so
+    // this is the whole of the client's setup, set once here at the composition root the same
+    // "ChatModule builds the HttpClient, the client class stays thin" split YooKassaPaymentsApiClient's
+    // own remarks describe for its own Basic-auth header.
+    client.BaseAddress = new Uri($"{baseUrl}v1/projects/{options.ProjectId}/");
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.ServiceToken);
+});
+// Starting points, not measured numbers - the identical caveat every resilience default in this
+// codebase carries (CLAUDE.md rule 7). Close to Ago.Chat.Module.Channels.ChannelResiliencePipelines'
+// own channel-send defaults, because the boundary is the same kind of thing - an HTTP call to a third
+// party this codebase does not control - with a smaller bulkhead: a push fan-out sends at most one
+// message per operator device per event, nowhere near a channel adapter's own send volume.
+builder.Services.AddResiliencePipelineOptions(
+    PushResiliencePipeline.PipelineName,
+    builder.Configuration,
+    options =>
+    {
+        options.Timeout = new ResilienceTimeoutOptions { Duration = TimeSpan.FromSeconds(5) };
+        options.Retry = new ResilienceRetryOptions
+        {
+            MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = TimeSpan.FromMilliseconds(200),
+        };
+        options.CircuitBreaker = new ResilienceCircuitBreakerOptions
+        {
+            FailureRatio = 0.5,
+            MinimumThroughput = 4,
+            SamplingDuration = TimeSpan.FromSeconds(30),
+            BreakDuration = TimeSpan.FromSeconds(10),
+        };
+        options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 4, MaxQueuedActions = 16 };
+    });
+builder.Services.AddSingleton(sp => new PushResiliencePipeline(
+    sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(PushResiliencePipeline.PipelineName)));
+builder.Services.AddScoped<IPushSender>(sp => new ResilientPushSender(
+    sp.GetRequiredService<RuStorePushSender>(), sp.GetRequiredService<PushResiliencePipeline>()));
 
 builder.Services
     .AddOptions<OperatorDisconnectGraceConsumerOptions>()

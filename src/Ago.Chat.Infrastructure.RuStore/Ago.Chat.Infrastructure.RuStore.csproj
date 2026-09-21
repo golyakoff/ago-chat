@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `26-04`: a project of its own because RuStore Push is a distinct external technology -
+       `naming-and-structure.md`'s "one project per external technology" rule, the same reason
+       Ago.Chat.Infrastructure.MaxBot/.Telegram/.Vk/.WhatsApp each exist. Everything that knows RuStore's
+       own HTTP shape (its send-API DTOs, its base URL, its error envelope) lives here and nowhere above
+       it - ChannelPortTests.NoProviderVocabulary_AppearsAboveInfrastructure lists "RuStore" among the
+       forbidden name fragments above this boundary for the identical reason it already lists the other
+       six providers. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+</Project>

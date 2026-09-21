@@ -65,6 +65,33 @@ public static class ChatMetrics
     /// information.</summary>
     public const string ConversationAutoReleasedInstrumentName = "ago.chat.conversation.auto_released";
 
+    /// <summary>`26-04`/`push-notifications.md`'s own "Quiet failure" section: one point per
+    /// <c>IPushSender.SendAsync</c> outcome, tagged <c>reason</c> (<c>"assigned"</c>/<c>"message"</c> -
+    /// which of the two events triggered this send), <c>provider</c> (<c>"rustore"</c> today,
+    /// <see cref="Domain.PushProvider"/>'s own member name lower-cased - this class cannot reference
+    /// `Ago.Chat.Domain`, the identical constraint <see cref="ConversationAutoClosedInstrumentName"/>'s
+    /// own remarks already state, so the caller passes it as a plain string) and <c>outcome</c>
+    /// (<c>"delivered"</c>/<c>"token_gone"</c>/<c>"failed"</c> - <c>PushSendOutcome</c>'s own three
+    /// cases). Not yet called anywhere: `26-05`'s own <c>NotifyOperatorDevicesHandler</c> is this
+    /// instrument's only real caller, and it does not exist yet - named and reserved now, the identical
+    /// "present now so that work needs no second migration" reasoning
+    /// <see cref="Domain.OperatorDevice.LastFailureAt"/>'s own remarks already give for its column.</summary>
+    public const string PushSendsInstrumentName = "ago.chat.push.sends";
+
+    /// <summary>The number that tells "push is broken" apart from "nobody has ever registered a
+    /// device" (`push-notifications.md`'s own words) - tagged <c>reason</c>
+    /// (<c>"no_devices"</c>/<c>"not_visitor"</c>/<c>"unassigned"</c>), one point per candidate `26-05`'s
+    /// handler decided not to send for. Not yet called - see <see cref="PushSendsInstrumentName"/>'s own
+    /// remarks.</summary>
+    public const string PushSuppressedInstrumentName = "ago.chat.push.suppressed";
+
+    /// <summary>One point per <see cref="Domain.OperatorDevice"/> row `26-05`'s handler (or
+    /// `26-03`'s existing <c>OperatorRemovedConsumer</c>/`OperatorDeviceRevoker`) actually revoked,
+    /// tagged <c>cause</c> (<c>"signed_out"</c>/<c>"provider_unregistered"</c>/<c>"operator_removed"</c>)
+    /// - `push-notifications.md`'s own three revocation causes, none of them a timer. Not yet called -
+    /// see <see cref="PushSendsInstrumentName"/>'s own remarks.</summary>
+    public const string PushTokensRevokedInstrumentName = "ago.chat.push.tokens_revoked";
+
     /// <summary>`15-04`: one heartbeat instrument shared by every retention-pruning job
     /// (<c>OutboxPruneJob</c>, <c>WebhookDeliveryPruneJob</c>, <c>InboxPruneJob</c>,
     /// <c>MessagePartitionPruneJob</c>), tagged by <c>table</c>. Incremented once per completed cycle
@@ -153,6 +180,15 @@ public static class ChatMetrics
     private static readonly Counter<long> ConversationAutoReleased = Meter.CreateCounter<long>(
         ConversationAutoReleasedInstrumentName, unit: "{conversation}", description: "Widget conversations released back to Waiting by AutoCloseInactiveConversationsJob's own release pass - `25-118`. Untagged (widget-only), unlike ConversationAutoClosed.");
 
+    private static readonly Counter<long> PushSends = Meter.CreateCounter<long>(
+        PushSendsInstrumentName, unit: "{send}", description: "IPushSender.SendAsync outcomes, tagged reason (assigned/message), provider, and outcome (delivered/token_gone/failed) - 26-04/26-05.");
+
+    private static readonly Counter<long> PushSuppressed = Meter.CreateCounter<long>(
+        PushSuppressedInstrumentName, unit: "{candidate}", description: "Push candidates the fan-out handler decided not to send for, tagged reason (no_devices/not_visitor/unassigned) - the number that tells \"push is broken\" apart from \"nobody has ever registered a device\".");
+
+    private static readonly Counter<long> PushTokensRevoked = Meter.CreateCounter<long>(
+        PushTokensRevokedInstrumentName, unit: "{device}", description: "operator_devices rows revoked, tagged cause (signed_out/provider_unregistered/operator_removed) - none of the three is a timer.");
+
     private static Func<int>? _channelOccupancyProvider;
     private static int _channelCapacity;
     private static double _outboxLagSeconds;
@@ -236,6 +272,25 @@ public static class ChatMetrics
     /// `ReleaseInactiveConversationHandler` reached it, the identical "logged as a skip, not counted as
     /// a failure" shape <see cref="RecordConversationAutoClosed"/>'s own remarks already state.</summary>
     public static void RecordConversationAutoReleased() => ConversationAutoReleased.Add(1);
+
+    /// <summary>`26-04`/`26-05`: one point per <c>IPushSender.SendAsync</c> outcome. Not yet called - see
+    /// <see cref="PushSendsInstrumentName"/>'s own remarks.</summary>
+    public static void RecordPushSend(string reason, string provider, string outcome) =>
+        PushSends.Add(
+            1,
+            new KeyValuePair<string, object?>("reason", reason),
+            new KeyValuePair<string, object?>("provider", provider),
+            new KeyValuePair<string, object?>("outcome", outcome));
+
+    /// <summary>`26-04`/`26-05`: one point per candidate the fan-out handler chose not to send a push
+    /// for. Not yet called - see <see cref="PushSendsInstrumentName"/>'s own remarks.</summary>
+    public static void RecordPushSuppressed(string reason) =>
+        PushSuppressed.Add(1, new KeyValuePair<string, object?>("reason", reason));
+
+    /// <summary>`26-04`/`26-05`: one point per <c>OperatorDevice</c> row actually revoked. Not yet
+    /// called - see <see cref="PushSendsInstrumentName"/>'s own remarks.</summary>
+    public static void RecordPushTokenRevoked(string cause) =>
+        PushTokensRevoked.Add(1, new KeyValuePair<string, object?>("cause", cause));
 
     public static void RecordCapacityClaimAttempt(bool claimed)
     {
