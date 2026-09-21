@@ -111,6 +111,9 @@
     <ProjectReference Include="..\..\src\Ago.Chat.Module\Ago.Chat.Module.csproj" />
     <!-- `24-17`: OwnerTenantIsolationEndpointTests calls AddTenantScopeDiagnostics directly. -->
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.TenantScopeDiagnostics\Ago.Chat.Infrastructure.TenantScopeDiagnostics.csproj" />
+    <!-- `26-04`: RuStorePushSenderTests' own real HTTP boundary - the same reasoning as the MAX/
+         Telegram/VK/WhatsApp/YooKassa references above. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.RuStore\Ago.Chat.Infrastructure.RuStore.csproj" />
   </ItemGroup>
 
 
