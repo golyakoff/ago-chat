@@ -339,6 +339,11 @@ public static class ErrorExtensions
                 // the identical "fix what you sent" shape every other code in this group already gets.
                 or "Site.OwnerSeatGrantReasonRequired" or "Site.OwnerSeatGrantQuantityInvalid"
                 or "Site.OwnerSeatGrantRoleInvalid"
+                // `26-03`: the caller's own mistake to fix - a blank or over-length installation id,
+                // platform, or push token (`OperatorDevice.Register`/`Refresh`'s own bounded-value
+                // checks), the identical "fix what you sent" shape every other code in this group
+                // already gets.
+                or "OperatorDevice.Invalid"
                 => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"

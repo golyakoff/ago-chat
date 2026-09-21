@@ -98,6 +98,22 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
             siteId, visitorId, adminOperatorId, VisitorRestrictionKind.Spam, Now.AddHours(24), conversationId,
             restrictionId, Now, CancellationToken.None);
 
+        // `26-03`/`adr/0179`: confirmed live, not assumed, exactly the check `adr/0168`'s own
+        // Consequences say `visitor_restrictions` skipped once (`25-78`) - a device row, registered
+        // for this site's own admin operator, must actually be gone once this test's own erasure
+        // convergence loop below finishes, through OperatorDeviceConfiguration's declared `ON DELETE
+        // CASCADE` from `sites` (and from `operators`), not merely a migration that claims to declare
+        // one.
+        var deviceId = new OperatorDeviceId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            var device = OperatorDevice.Register(
+                deviceId, siteId, adminOperatorId, "erasure-test-installation", PushProvider.Fcm, "android",
+                "erasure-test-token", Now);
+            db.OperatorDevices.Add(device);
+            await db.SaveChangesAsync();
+        }
+
         Assert.True(await fixture.UserExistsAsync(subjectId));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));
         Assert.NotNull(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(thumbnailKey), CancellationToken.None));
@@ -109,6 +125,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         Assert.Equal(1, await CountAsync("select count(*) from visitor_contact_details where visitor_id = @siteId", visitorId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from team_messages where site_id = @siteId", siteId.Value));
         Assert.Equal(1, await CountAsync("select count(*) from visitor_restrictions where site_id = @siteId", siteId.Value));
+        Assert.Equal(1, await CountAsync("select count(*) from operator_devices where site_id = @siteId", siteId.Value));
 
         // The real HTTP-facing write: permission-checked, one flag set, no deletion here.
         var erasureRequests = new ErasureRequestRepository(fixture.DataSource);
@@ -172,6 +189,11 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         // ErasureRecordIntegrationTests.ErasingASite_DrainsVisitorRestrictionsExplicitly_AndCountsThemInTheReceipt
         // is what proves the count side of that claim; this assertion is the completeness side.
         Assert.Equal(0, await CountAsync("select count(*) from visitor_restrictions where site_id = @siteId", siteId.Value));
+        // `26-03`/`adr/0179`: the live cascade proof this item's own Done-when asked for - not assumed
+        // from the migration's declared `ON DELETE CASCADE`, checked against what `DeleteSiteAsync`'s
+        // own `delete from sites` actually does. It reaches this table without any compensating
+        // deletion needed, unlike the `25-78` precedent this item's own remarks name above.
+        Assert.Equal(0, await CountAsync("select count(*) from operator_devices where site_id = @siteId", siteId.Value));
 
         // MinIO: both the object and 5-04's thumbnail beside it.
         Assert.Null(await fixture.FileStorage.GetMetadataAsync(new ObjectKey(objectKey), CancellationToken.None));

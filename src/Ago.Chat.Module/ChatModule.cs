@@ -140,6 +140,7 @@ using Ago.Chat.Application.UseCases.RedeemPendingOperatorInviteForCaller;
 using Ago.Chat.Application.UseCases.RegisterChannelCredential;
 using Ago.Chat.Application.UseCases.ListNonEntitledChannelCredentialsAsOwner;
 using Ago.Chat.Application.UseCases.DisconnectNonEntitledChannelCredentialsAsOwner;
+using Ago.Chat.Application.UseCases.RegisterOperatorDevice;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Application.UseCases.RegisterWebhookEndpoint;
 using Ago.Chat.Application.UseCases.RemoveOperator;
@@ -156,6 +157,7 @@ using Ago.Chat.Application.UseCases.ResolveTeamMessageRemovalDelivery;
 using Ago.Chat.Application.UseCases.ResolveOperatorIdentity;
 using Ago.Chat.Application.UseCases.RestoreOperatorSeatAsOwner;
 using Ago.Chat.Application.UseCases.RevokeChannelCredential;
+using Ago.Chat.Application.UseCases.RevokeOperatorDevice;
 using Ago.Chat.Application.UseCases.RevokeModuleForSiteAsOwner;
 using Ago.Chat.Application.UseCases.RotateModuleCredentialAsOwner;
 using Ago.Chat.Application.UseCases.RouteConversationToModule;
@@ -1256,6 +1258,14 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<ListWebhookEndpointsHandler>();
         services.AddScoped<RevokeWebhookEndpointHandler>();
         services.AddScoped<GetWebhookDeliveriesHandler>();
+
+        // `26-03`/`adr/0179`: device registration for push - see each handler's own remarks. Registered
+        // for every host, the same shape as everything else on this page, even though only
+        // `Ago.Chat.Api` maps HTTP endpoints for them today; `Ago.Chat.Worker`'s own
+        // `OperatorRemovedConsumer` is the other in-process caller of `IOperatorDeviceRepository`
+        // (through its own `OperatorDeviceRevoker`, not through these two handlers).
+        services.AddScoped<RegisterOperatorDeviceHandler>();
+        services.AddScoped<RevokeOperatorDeviceHandler>();
 
         // `11-01`: Site's first real read/write handler pair since `1-04` - see each handler's own
         // remarks (GetWidgetConfigHandler deliberately uncached, UpdateWidgetConfigHandler the first

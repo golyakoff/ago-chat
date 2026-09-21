@@ -437,6 +437,9 @@ public static class CompositionRoot
         app.MapOperatorsEndpoints();
         // `13-07`/`adr/0068`
         app.MapMeEndpoints();
+        // `26-03`/`adr/0179`: push device registration - the caller's own row, RequireOperatorIdentity
+        // throughout, no site-wide permission to check (MeDeviceEndpoints' own remarks).
+        app.MapMeDeviceEndpoints();
         app.MapWebhookEndpoints();
         // `14-02`: the inbound receiver (MAX's own production mechanism) and the console's own connect/
         // disconnect flow - see MaxWebhookEndpoints' own remarks for why this host, not Ago.Chat.Webhooks.

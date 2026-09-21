@@ -182,6 +182,8 @@ builder.Services.AddHostedService<ConversationAssignmentJob>();
 // 4-04: OperatorConversationReleaser is stateless beyond the shared NpgsqlDataSource pool, matching
 // SkipLockedAssignmentClaimer/RedisLockAssignmentClaimer's own registration shape.
 builder.Services.AddSingleton<OperatorConversationReleaser>();
+// `26-03`: OperatorDeviceRevoker is the identical shape, for the identical reason.
+builder.Services.AddSingleton<OperatorDeviceRevoker>();
 
 builder.Services
     .AddOptions<OperatorDisconnectGraceConsumerOptions>()
