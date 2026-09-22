@@ -43,6 +43,12 @@ public sealed class OperatorDevice
 
     public const int MaxPlatformLength = 32;
 
+    /// <summary>Bounded for the identical reason <see cref="ChannelDelivery.MaxProviderDetailLength"/>
+    /// is - <see cref="FailureReason"/>'s own doc comment already states this rule; the constant lives
+    /// here instead of a magic number in <see cref="RecordSendFailure"/> for the same "the bound is
+    /// part of the invariant, not the call site" reason <see cref="MaxTokenLength"/> already is.</summary>
+    public const int MaxFailureReasonLength = 2000;
+
     public OperatorDeviceId Id { get; }
 
     public SiteId SiteId { get; }
@@ -164,6 +170,24 @@ public sealed class OperatorDevice
         }
 
         RevokedAt = now;
+    }
+
+    /// <summary>
+    /// `26-05`: the one caller <see cref="LastFailureAt"/>/<see cref="FailureReason"/>'s own doc
+    /// comments were written for - <c>NotifyOperatorDevicesHandler</c>'s own
+    /// <c>PushSendOutcome.TransientFailure</c> path (RuStore's own credential-fault outcomes, `401`/
+    /// `403`/`429`/`500` - never a statement about this device). Deliberately <em>not</em> a
+    /// revocation: the device's own registration is still believed live, so <see cref="RevokedAt"/> is
+    /// untouched and a future send is retried exactly as before - only a <c>TokenGone</c>-shaped
+    /// outcome ever calls <see cref="Revoke"/>. Not cleared by a later successful send, on the same
+    /// "this is a historical fact about the row, not a currently-failing flag" reading
+    /// <see cref="LastSeenAt"/>'s own remarks give the sibling field that <em>is</em> cleared, by
+    /// <see cref="Refresh"/> alone.
+    /// </summary>
+    public void RecordSendFailure(string reason, DateTimeOffset now)
+    {
+        LastFailureAt = now;
+        FailureReason = reason.Length > MaxFailureReasonLength ? reason[..MaxFailureReasonLength] : reason;
     }
 
     private static void ValidateInstallationId(string installationId)

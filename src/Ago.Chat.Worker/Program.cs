@@ -1,5 +1,6 @@
 ﻿using System.Net.Http.Headers;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.NotifyOperatorDevices;
 using Ago.Chat.Contracts;
 using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.MaxBot;
@@ -244,6 +245,28 @@ builder.Services.AddSingleton(sp => new PushResiliencePipeline(
     sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(PushResiliencePipeline.PipelineName)));
 builder.Services.AddScoped<IPushSender>(sp => new ResilientPushSender(
     sp.GetRequiredService<RuStorePushSender>(), sp.GetRequiredService<PushResiliencePipeline>()));
+
+// `26-05`/`push-notifications.md`'s own "Fan-out": NotifyOperatorDevicesHandler's own registration -
+// deliberately here, next to IPushSender, and not in ChatModule.ConfigureServices (which Ago.Chat.Api
+// and Ago.Chat.Webhooks call too) for the identical reason IPushSender itself lives here rather than
+// there - see that registration's own remarks, and ChatModule.ConfigureServices' own remarks at the
+// point this handler is conspicuously absent from its neighbours.
+builder.Services.AddScoped<NotifyOperatorDevicesHandler>();
+
+// `26-05`/`push-notifications.md`'s own "Fan-out": the two consumers that actually call IPushSender -
+// see each class's own remarks for its queue/DLQ naming and why a per-subscriber ConsumerName is what
+// makes OperatorMessagePushConsumer a safe new subscriber on an already-crowded MessageAccepted topic.
+builder.Services
+    .AddOptions<OperatorAssignmentPushConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorAssignmentPushConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorAssignmentPushConsumer>();
+
+builder.Services
+    .AddOptions<OperatorMessagePushConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorMessagePushConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorMessagePushConsumer>();
 
 builder.Services
     .AddOptions<OperatorDisconnectGraceConsumerOptions>()
