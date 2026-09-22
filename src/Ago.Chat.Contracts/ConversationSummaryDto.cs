@@ -47,11 +47,45 @@
 /// placeholder string. Renders between the emoji pair and the short code
 /// (`{emoji}{emoji} {name} {shortCode}`) in the same two locations and no others.
 /// </summary>
+/// <summary>
+/// `26-29`: <see cref="LastMessagePreview"/>/<see cref="LastMessageAt"/> - the pair this DTO's own
+/// header used to justify staying without: "deliberately thin ... since the queue view lists
+/// conversations, it does not read them." That reasoning held only until both the console and Android
+/// needed a client-renderable snippet under the visitor's name, the way every real chat list shows one -
+/// at which point "thin" had started to mean "wrong", not "simple". Additive/nullable the identical
+/// rule every field above already follows.
+///
+/// <para><b>Both null together means exactly one thing: this conversation has no messages at all</b>
+/// (a <see cref="Domain.ConversationState.Pending"/> conversation - `25-221` - or any other edge case
+/// with an empty <c>messages</c> row set). <c>GetOperatorQueueHandler</c> populates both from one
+/// batched <see cref="Application.Abstractions.IConversationReadStore.GetLatestMessagesAsync"/> call,
+/// never from the <c>Conversation.Messages</c> EF navigation (an unbounded read on a screen the
+/// console polls) and never one query per row.</para>
+///
+/// <para><b><see cref="LastMessagePreview"/> can be <see langword="null"/> even when a last message
+/// exists.</b> A system message counts as the last message when it genuinely is one - hiding it would
+/// make this field and <see cref="LastMessageAt"/> disagree about whether anything was said since
+/// <see cref="LastMessageAt"/>. What *does* suppress the preview is the message's own shape, not its
+/// author: a message that references an attachment or carries structured content (a module step, any
+/// non-prose <c>MessageContentKind</c>) has no <see cref="LastMessagePreview"/> - the backend cannot
+/// tell a real human caption apart from a client-supplied placeholder standing in for a file, and
+/// inventing a server-composed label ("[attachment]") would be exactly the kind of localized string
+/// this contract must not own, since the same wire shape also feeds an English console locale.
+/// <see cref="LastMessageAt"/> is still populated in that case - the timestamp is honest regardless of
+/// whether the words themselves are safe to preview.</para>
+///
+/// <para><b>Truncated to 80 characters, collapsed to one line.</b> A list row has room for a
+/// few dozen characters, never a full 8000-character <c>MessageBody</c>, so
+/// <c>GetOperatorQueueHandler</c> truncates (and flattens embedded newlines - the whole point is a
+/// row that reads as one line) before this DTO is built; nothing this thin needs the client to
+/// re-truncate for wire-size reasons, only for whatever width its own layout actually has.</para>
+/// </summary>
 public sealed record ConversationSummaryDto(
     Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
     Guid? OperatorId = null, string? OperatorName = null, bool HasAttachmentUploadGrant = false,
     DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null,
-    string? EmojiCreature = null, string? EmojiFood = null, string? VisitorName = null);
+    string? EmojiCreature = null, string? EmojiFood = null, string? VisitorName = null,
+    string? LastMessagePreview = null, DateTimeOffset? LastMessageAt = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

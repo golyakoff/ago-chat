@@ -347,6 +347,55 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return createdAt is { } value ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)) : null;
     }
 
+    // `26-29`: DISTINCT ON, not a per-id `left join lateral` - unlike AllForSiteSql/VisitorHistorySql
+    // above, this method's rows are not correlated against an outer table already selected one per
+    // output row; the caller hands in a bare id list, so a lateral would need its own synthetic
+    // per-id row source (an `unnest(@ConversationIds)`) to correlate against, buying nothing over a
+    // single filtered scan reduced with DISTINCT ON - the same smaller-of-two-equally-correct-shapes
+    // call `SiteSuspensionReadStore.ForOwnerSql` already makes for its own "most recent per group"
+    // read. No new index: `(conversation_id, sequence, site_id)` (MessageConfiguration's own unique
+    // index, already cited by GetUnreadCountAsync's remarks above for this same table) serves both
+    // predicates directly - `site_id = @SiteId` prunes to the one partition bucket
+    // (`15-09`/`adr/0087`), and `conversation_id = any(@ConversationIds)` is answered by that same
+    // index's leading column. The result set this scans is bounded by the queue's own two small,
+    // unpaginated lists (GetOperatorQueueHandler's own remarks), never by table size - the same
+    // "console-poll frequency, never a hot per-message path" ceiling this file's own tag-filter and
+    // `SiteSuspensionReadStore`'s own DISTINCT ON both already accept without a bespoke index.
+    private const string LatestMessagesSql = """
+        select distinct on (conversation_id)
+               conversation_id as "ConversationId", body as "Body", created_at as "CreatedAt",
+               content_kind as "ContentKind", attachment_id as "AttachmentId"
+        from messages
+        where site_id = @SiteId
+          and conversation_id = any(@ConversationIds)
+        order by conversation_id, sequence desc
+        """;
+
+    public async Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
+        SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken)
+    {
+        if (conversationIds.Count == 0)
+        {
+            return new Dictionary<ConversationId, LatestMessageSummary>();
+        }
+
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var rows = await connection.QueryAsync<LatestMessageRow>(new CommandDefinition(
+            LatestMessagesSql,
+            new { SiteId = siteId.Value, ConversationIds = conversationIds.Select(id => id.Value).ToArray() },
+            cancellationToken: cancellationToken));
+
+        return rows.ToDictionary(
+            r => new ConversationId(r.ConversationId),
+            r => new LatestMessageSummary(
+                new ConversationId(r.ConversationId),
+                r.Body,
+                new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)),
+                r.ContentKind,
+                r.AttachmentId));
+    }
+
     private static ConversationSummaryItem ToSummaryItem(ConversationSummaryRow r) => new(
         new ConversationId(r.Id),
         new VisitorId(r.VisitorId),

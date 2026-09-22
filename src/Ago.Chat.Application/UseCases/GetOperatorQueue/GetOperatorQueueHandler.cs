@@ -38,8 +38,17 @@ namespace Ago.Chat.Application.UseCases.GetOperatorQueue;
 /// </summary>
 public sealed class GetOperatorQueueHandler(
     IConversationRepository conversations, IVisitorRepository visitors, ITagRepository tags,
-    IPermissionChecker permissions, IVisitorContactDetailRepository contactDetails)
+    IPermissionChecker permissions, IVisitorContactDetailRepository contactDetails,
+    IConversationReadStore readStore)
 {
+    // `26-29`: a list row has room for a few dozen characters, never a full 8000-character
+    // MessageBody (MessageBody.MaxLength) - 80 is generous enough that almost no ordinary sentence
+    // is cut, small enough that this DTO stays a summary rather than a second copy of the transcript.
+    // Every client still ellipsises for its own actual pixel width (26-30's own snippet line); this
+    // number only bounds the wire payload, it does not try to guess anyone's layout.
+    private const int MaxPreviewLength = 80;
+
+
     public async Task<Result<OperatorQueueResponse>> HandleAsync(GetOperatorQueue query, CancellationToken cancellationToken)
     {
         var allowed = await permissions.HasPermissionAsync(
@@ -95,14 +104,27 @@ public sealed class GetOperatorQueueHandler(
         // GetNamesForVisitorsAsync).
         var namesByVisitorId = await contactDetails.GetNamesForVisitorsAsync(visitorIds, cancellationToken);
 
+        // `26-29`: the identical one-batch-not-a-loop shape as the visitor/name lookups right above,
+        // against IConversationReadStore instead - GetHistoryAsync/Conversation.Messages would work
+        // per-conversation, but only by materialising every message of every queued conversation to
+        // read the last one of each, which is the unbounded read this method exists to avoid on a
+        // screen the console polls. One SiteId for the whole call: every id in either list already
+        // belongs to query.SiteId (this handler's own permission check proves `waiting`; an Operator
+        // belongs to exactly one Site, so `assigned` does too), which also lets this single query
+        // prune `messages`' own site_id hash partitioning to one bucket.
+        var conversationIds = waiting.Concat(assigned).Select(c => c.Id).ToList();
+        var latestMessagesByConversationId = await readStore.GetLatestMessagesAsync(
+            query.SiteId, conversationIds, cancellationToken);
+
         return new OperatorQueueResponse(
-            waiting.Select(c => ToSummary(c, visitorsById, namesByVisitorId)).ToList(),
-            assigned.Select(c => ToSummary(c, visitorsById, namesByVisitorId)).ToList());
+            waiting.Select(c => ToSummary(c, visitorsById, namesByVisitorId, latestMessagesByConversationId)).ToList(),
+            assigned.Select(c => ToSummary(c, visitorsById, namesByVisitorId, latestMessagesByConversationId)).ToList());
     }
 
     private static ConversationSummaryDto ToSummary(
         Conversation conversation, IReadOnlyDictionary<VisitorId, Visitor> visitorsById,
-        IReadOnlyDictionary<VisitorId, string> namesByVisitorId)
+        IReadOnlyDictionary<VisitorId, string> namesByVisitorId,
+        IReadOnlyDictionary<ConversationId, LatestMessageSummary> latestMessagesByConversationId)
     {
         // `25-56`: absent only if the visitor row somehow vanished between the two reads (the FK
         // guarantees it exists at the time this conversation was created and Visitor rows are never
@@ -110,6 +132,11 @@ public sealed class GetOperatorQueueHandler(
         // is the same "additive, missing for a row this caller could not resolve" shape every other
         // optional field on this DTO already uses.
         var visitor = visitorsById.GetValueOrDefault(conversation.VisitorId);
+
+        // `26-29`: absent whenever this conversation has no messages at all (a Pending conversation,
+        // `25-221`, or any other edge case) - LatestMessageSummary's own remarks explain why this
+        // dictionary omits rather than placeholders that case.
+        var latestMessage = latestMessagesByConversationId.GetValueOrDefault(conversation.Id);
 
         return new(
             conversation.Id.Value, conversation.VisitorId.Value, conversation.State.ToString(),
@@ -119,6 +146,38 @@ public sealed class GetOperatorQueueHandler(
             EmojiCreature: visitor?.EmojiCreature, EmojiFood: visitor?.EmojiFood,
             // `25-56`'s own second half: absent whenever this visitor has never given a name - the
             // ordinary case, not a defensive fallback the way the emoji pair's own absence above is.
-            VisitorName: namesByVisitorId.GetValueOrDefault(conversation.VisitorId));
+            VisitorName: namesByVisitorId.GetValueOrDefault(conversation.VisitorId),
+            LastMessagePreview: ToPreview(latestMessage),
+            // `26-29`: the timestamp is honest about "when was the last thing said" regardless of
+            // whether ToPreview refused to render the words - a system message, an attachment, or a
+            // module step still moves this instant forward, exactly as ConversationSummaryDto's own
+            // remarks state.
+            LastMessageAt: latestMessage?.CreatedAt);
+    }
+
+    /// <summary>
+    /// `26-29`: <see langword="null"/> when there is no last message at all, and also when there is one
+    /// but it carries no sensible plain-text body to summarise - an attachment reference
+    /// (<see cref="LatestMessageSummary.AttachmentId"/>) or structured content
+    /// (<see cref="LatestMessageSummary.ContentKind"/>, e.g. a module step). Both cases get the same
+    /// treatment because the backend cannot tell a real human caption apart from a client-supplied
+    /// placeholder standing in for a file or a card, and a client is better served by an honest "no
+    /// preview" than a guess dressed up as one.
+    /// </summary>
+    private static string? ToPreview(LatestMessageSummary? latestMessage)
+    {
+        if (latestMessage is null || latestMessage.AttachmentId is not null || latestMessage.ContentKind is not null)
+        {
+            return null;
+        }
+
+        // A list row is one line - collapsing embedded newlines is part of truncation, not an
+        // afterthought, since a multi-line message would otherwise break that guarantee regardless of
+        // its character count.
+        var singleLine = latestMessage.Body.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
+
+        return singleLine.Length <= MaxPreviewLength
+            ? singleLine
+            : string.Concat(singleLine.AsSpan(0, MaxPreviewLength - 1), "…");
     }
 }
