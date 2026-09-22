@@ -212,4 +212,130 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
 
         Assert.Null(Assert.Single(page.Conversations).VisitorName);
     }
+
+    // `26-29`: the queue row's own "what did this conversation last say" - proves the real
+    // `DISTINCT ON (conversation_id)` query, batched across more than one id in one round trip, not
+    // just the single-id case every other test in this class exercises for GetHistoryAsync/GetDeltaAsync.
+    [Fact]
+    public async Task GetLatestMessagesAsync_ReturnsTheLatestMessagePerConversation_ForABatchOfIds()
+    {
+        var (firstId, siteId) = await SeedConversationWithMessages(3);
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var second = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+        second.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("only message"), Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(second);
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var latest = await store.GetLatestMessagesAsync(siteId, [firstId, second.Id], CancellationToken.None);
+
+        Assert.Equal(2, latest.Count);
+        Assert.Equal("message 2", latest[firstId].Body);
+        Assert.Null(latest[firstId].ContentKind);
+        Assert.Null(latest[firstId].AttachmentId);
+        Assert.Equal("only message", latest[second.Id].Body);
+    }
+
+    // `26-29`'s own Done-when: "a conversation with several messages reports the latest one,
+    // including when the latest is a system ... message" - a system message counts as the last
+    // message when it genuinely is one.
+    [Fact]
+    public async Task GetLatestMessagesAsync_WhenTheLatestMessageIsSystemAuthored_StillReturnsIt()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var systemMessageAt = Now.AddMinutes(1);
+        conversation.AddSystemMessage(new MessageId(Guid.NewGuid()), new MessageBody("We are back online."), systemMessageAt);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(conversation);
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var latest = await store.GetLatestMessagesAsync(siteId, [conversation.Id], CancellationToken.None);
+
+        Assert.Equal("We are back online.", latest[conversation.Id].Body);
+        Assert.Equal(systemMessageAt, latest[conversation.Id].CreatedAt);
+    }
+
+    // `26-29`'s own Done-when, its other named case: "... or operator message."
+    [Fact]
+    public async Task GetLatestMessagesAsync_WhenTheLatestMessageIsOperatorAuthored_StillReturnsIt()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.AssignTo(operatorId, Now);
+        var operatorMessageAt = Now.AddMinutes(1);
+        conversation.AddOperatorMessage(
+            operatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), operatorMessageAt);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            db.Conversations.Add(conversation);
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var latest = await store.GetLatestMessagesAsync(siteId, [conversation.Id], CancellationToken.None);
+
+        Assert.Equal("how can I help?", latest[conversation.Id].Body);
+        Assert.Equal(operatorMessageAt, latest[conversation.Id].CreatedAt);
+    }
+
+    // `26-29`'s own Done-when: "a conversation with no messages at all sends both as null" - this is
+    // the read-store half of that promise: an id with no `messages` rows is simply absent from the
+    // dictionary, not a placeholder GetOperatorQueueHandler would have to special-case.
+    [Fact]
+    public async Task GetLatestMessagesAsync_AConversationWithNoMessagesAtAll_IsAbsentFromTheResult()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Conversations.Add(conversation);
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var latest = await store.GetLatestMessagesAsync(siteId, [conversation.Id], CancellationToken.None);
+
+        Assert.False(latest.ContainsKey(conversation.Id));
+    }
+
+    // `15-09`/`adr/0087`: `messages` is `PARTITION BY HASH (site_id)` - this method's own `site_id`
+    // predicate must actually scope the result, not merely prune the plan, or a conversation id that
+    // collided across two tenants (impossible in practice, ids are unique, but the predicate is what
+    // this test actually proves) would leak a site's message text into another site's queue row.
+    [Fact]
+    public async Task GetLatestMessagesAsync_ASiteAsksForAnIdThatIsNotItsOwn_ReturnsNothingForIt()
+    {
+        var (conversationId, _) = await SeedConversationWithMessages(1);
+        var otherSiteId = new SiteId(Guid.NewGuid());
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var latest = await store.GetLatestMessagesAsync(otherSiteId, [conversationId], CancellationToken.None);
+
+        Assert.False(latest.ContainsKey(conversationId));
+    }
 }

@@ -129,4 +129,32 @@ public interface IConversationReadStore
     /// already resolved from a conversation it proved belongs to the caller's own site.</para>
     /// </summary>
     Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `26-29`: the queue row's own "what did this conversation last say, and when" - one batched
+    /// query for every id in <paramref name="conversationIds"/>, the same one-batch-not-a-loop shape
+    /// <see cref="Application.Abstractions.IVisitorRepository.GetManyByIdsAsync"/>/
+    /// <see cref="Application.Abstractions.IVisitorContactDetailRepository.GetNamesForVisitorsAsync"/>
+    /// already establish in <c>GetOperatorQueueHandler</c> for the identical reason: that handler
+    /// already holds two small, unpaginated lists in memory, so answering "latest message" for all of
+    /// them costs one round trip here rather than one `Conversation.Messages` navigation load per row
+    /// (which would materialise every message of every queued conversation just to read the last one -
+    /// exactly the unbounded read this method exists to avoid on a screen the console polls).
+    ///
+    /// <para><b>Single <paramref name="siteId"/>, not one per conversation.</b> Every id this handler
+    /// ever passes belongs to the one site its own permission check already authorized (`waiting` is
+    /// `GetWaitingForSiteAsync(query.SiteId, ...)`; `assigned` is one operator's own conversations, and
+    /// an <see cref="Operator"/> belongs to exactly one <see cref="SiteId"/>) - so one site-scoped
+    /// predicate both matches that precondition and prunes `messages`' own `PARTITION BY HASH (site_id)`
+    /// to the single bucket that can possibly hold these rows, the identical `15-09`/`adr/0087` shape
+    /// <see cref="GetHistoryAsync"/>/<see cref="GetDeltaAsync"/> already require for the same table.</para>
+    ///
+    /// <para>The dictionary omits any id with no message at all (a <see cref="ConversationState.Pending"/>
+    /// conversation, or any other edge case) rather than mapping it to a placeholder - the caller's own
+    /// <c>GetValueOrDefault</c> already turns "absent" into the DTO's own null preview/timestamp pair,
+    /// the identical "missing means null, not a sentinel" shape this handler's own visitor-name lookup
+    /// already uses.</para>
+    /// </summary>
+    Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
+        SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken);
 }

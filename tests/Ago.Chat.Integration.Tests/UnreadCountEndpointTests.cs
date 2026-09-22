@@ -196,6 +196,10 @@ public sealed class UnreadCountEndpointTests
 
         public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
+
+        public Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
+            SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of this endpoint's own read path.");
     }
 
     /// <summary>Records the exact `afterSequence` the handler passed through, so
@@ -236,6 +240,10 @@ public sealed class UnreadCountEndpointTests
 
         public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
+
+        public Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
+            SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of this endpoint's own read path.");
     }
 
     private sealed class NeverCalledUnreadCountReadStore : IConversationReadStore
@@ -267,6 +275,10 @@ public sealed class UnreadCountEndpointTests
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
         public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of this endpoint's own read path.");
+
+        public Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
+            SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
     }
 

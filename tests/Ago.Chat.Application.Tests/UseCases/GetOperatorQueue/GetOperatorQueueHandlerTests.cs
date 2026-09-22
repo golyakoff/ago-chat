@@ -129,7 +129,8 @@ public class GetOperatorQueueHandlerTests
         tags.Seed(tag);
 
         var handler = new GetOperatorQueueHandler(
-            conversations, new FakeVisitorRepository(), tags, permissions, new FakeVisitorContactDetailRepository());
+            conversations, new FakeVisitorRepository(), tags, permissions, new FakeVisitorContactDetailRepository(),
+            new FakeConversationReadStore());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [tagId]), CancellationToken.None);
@@ -170,7 +171,8 @@ public class GetOperatorQueueHandlerTests
         tags.Seed(Tag.Create(billingTagId, SiteId, "Billing", Now));
 
         var handler = new GetOperatorQueueHandler(
-            conversations, new FakeVisitorRepository(), tags, permissions, new FakeVisitorContactDetailRepository());
+            conversations, new FakeVisitorRepository(), tags, permissions, new FakeVisitorContactDetailRepository(),
+            new FakeConversationReadStore());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId, [vipTagId, billingTagId]),
@@ -262,7 +264,8 @@ public class GetOperatorQueueHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
         var handler = new GetOperatorQueueHandler(
-            conversations, visitors, new FakeTagRepository(), permissions, new FakeVisitorContactDetailRepository());
+            conversations, visitors, new FakeTagRepository(), permissions, new FakeVisitorContactDetailRepository(),
+            new FakeConversationReadStore());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
@@ -297,7 +300,8 @@ public class GetOperatorQueueHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
         var handler = new GetOperatorQueueHandler(
-            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions, contactDetails);
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions, contactDetails,
+            new FakeConversationReadStore());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
@@ -347,13 +351,207 @@ public class GetOperatorQueueHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
         var handler = new GetOperatorQueueHandler(
-            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions, contactDetails);
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions, contactDetails,
+            new FakeConversationReadStore());
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("Иван Иванов", Assert.Single(result.Value.AssignedToMe).VisitorName);
+    }
+
+    // `26-29`: the ordinary case - the latest visitor message's own body and timestamp ride the
+    // summary, read from IConversationReadStore rather than the Conversation.Messages navigation
+    // (this handler's own remarks explain why: an unbounded read on a screen the console polls).
+    [Fact]
+    public async Task HandleAsync_ALatestVisitorMessage_PopulatesThePreviewAndTimestamp()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        var lastMessageAt = Now.AddMinutes(5);
+        assignedToMe.AssignTo(OperatorId, Now);
+        assignedToMe.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), lastMessageAt);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Equal("how can I help?", summary.LastMessagePreview);
+        Assert.Equal(lastMessageAt, summary.LastMessageAt);
+    }
+
+    // `26-29`: "a system message counts as the last message if it genuinely is the last one" - hiding
+    // it would make the timestamp and the text disagree about whether anything was said since.
+    [Fact]
+    public async Task HandleAsync_TheLatestMessageIsSystemAuthored_StillPopulatesThePreviewAndTimestamp()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        var lastMessageAt = Now.AddMinutes(5);
+        assignedToMe.AddSystemMessage(new MessageId(Guid.NewGuid()), new MessageBody("We are back online."), lastMessageAt);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Equal("We are back online.", summary.LastMessagePreview);
+        Assert.Equal(lastMessageAt, summary.LastMessageAt);
+    }
+
+    // `26-29`: the stated truncation ceiling - a body well past 80 characters comes back cut to
+    // exactly that length (79 real characters plus the ellipsis), never the full text.
+    [Fact]
+    public async Task HandleAsync_ALongLatestMessageBody_IsTruncatedToTheStatedMaximum()
+    {
+        var longBody = string.Concat(Enumerable.Repeat("0123456789", 20)); // 200 characters
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody(longBody), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var preview = Assert.Single(result.Value.AssignedToMe).LastMessagePreview;
+        Assert.NotNull(preview);
+        Assert.Equal(80, preview!.Length);
+        Assert.EndsWith("…", preview);
+        Assert.StartsWith(longBody[..79], preview);
+    }
+
+    // `26-29`: a message that references an attachment has no sensible plain-text body to preview -
+    // the backend cannot tell a real caption apart from a client-supplied placeholder standing in for
+    // a file. The timestamp still moves forward regardless.
+    [Fact]
+    public async Task HandleAsync_TheLatestMessageHasAnAttachment_PreviewIsNullButTimestampIsSet()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        var lastMessageAt = Now.AddMinutes(5);
+        assignedToMe.AddOperatorMessage(
+            OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("see attached"), lastMessageAt,
+            attachmentId: new AttachmentId(Guid.NewGuid()));
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Null(summary.LastMessagePreview);
+        Assert.Equal(lastMessageAt, summary.LastMessageAt);
+    }
+
+    // `26-29`: the identical "no sensible plain-text preview" treatment for structured content (a
+    // module step, or any other non-prose MessageContentKind) - Message.Body stays mandatory even
+    // here, but this DTO deliberately does not trust it as a one-line summary.
+    [Fact]
+    public async Task HandleAsync_TheLatestMessageCarriesStructuredContent_PreviewIsNullButTimestampIsSet()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        var lastMessageAt = Now.AddMinutes(5);
+        var content = MessageContent.Create(new MessageContentKind("booking.confirmation"));
+        assignedToMe.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("Your booking is confirmed for Tuesday."), lastMessageAt,
+            content: content);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Null(summary.LastMessagePreview);
+        Assert.Equal(lastMessageAt, summary.LastMessageAt);
+    }
+
+    // `26-29`'s own Done-when: "a conversation with no messages at all sends both as null, and no
+    // client is required to guess." A conversation only ever reaches this handler's two lists once it
+    // has at least one real message (`GetWaitingForSiteAsync`/`GetAssignedToOperatorAsync` both filter
+    // to a state a message caused, `25-221`), so this proves the defensive branch directly: a read
+    // store that genuinely has nothing for this id (exactly what the real query returns for an id with
+    // no `messages` rows - `ConversationReadStoreTests`' own integration coverage proves that half)
+    // must not surface a null-reference or a placeholder, only two absent fields.
+    [Fact]
+    public async Task HandleAsync_TheReadStoreHasNoLatestMessageForThisConversation_SendsBothFieldsNull()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        // Deliberately not seeded into the read store - mirrors what the real query returns for an id
+        // with no `messages` rows at all (absent, not a placeholder).
+        var readStore = new FakeConversationReadStore();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Null(summary.LastMessagePreview);
+        Assert.Null(summary.LastMessageAt);
     }
 
     [Fact]
@@ -363,7 +561,7 @@ public class GetOperatorQueueHandlerTests
         var permissions = new FakePermissionChecker();
         var handler = new GetOperatorQueueHandler(
             conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
-            new FakeVisitorContactDetailRepository());
+            new FakeVisitorContactDetailRepository(), new FakeConversationReadStore());
 
         var result = await handler.HandleAsync(new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
 
@@ -379,7 +577,7 @@ public class GetOperatorQueueHandlerTests
         return (
             new GetOperatorQueueHandler(
                 conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
-                new FakeVisitorContactDetailRepository()),
+                new FakeVisitorContactDetailRepository(), new FakeConversationReadStore()),
             conversations);
     }
 }

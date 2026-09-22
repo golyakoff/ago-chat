@@ -169,4 +169,35 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 
         return Task.FromResult(ids);
     }
+
+    /// <summary>`26-29`: mirrors the real store's own DISTINCT ON reduction - the seeded conversation's
+    /// own last message by <see cref="Message.Sequence"/>, for every id in
+    /// <paramref name="conversationIds"/> that belongs to <paramref name="siteId"/> and actually has
+    /// one. An id with no messages, the wrong site, or no seeded conversation at all is simply absent
+    /// from the result - the identical "missing means null, not a sentinel" shape the real query's own
+    /// remarks state.</summary>
+    public Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
+        SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<ConversationId, LatestMessageSummary>();
+        foreach (var conversationId in conversationIds)
+        {
+            if (!_bySource.TryGetValue(conversationId, out var conversation) || conversation.SiteId != siteId)
+            {
+                continue;
+            }
+
+            var lastMessage = conversation.Messages.OrderByDescending(m => m.Sequence).FirstOrDefault();
+            if (lastMessage is null)
+            {
+                continue;
+            }
+
+            result[conversationId] = new LatestMessageSummary(
+                conversationId, lastMessage.Body.Value, lastMessage.CreatedAt,
+                lastMessage.Content?.Kind.Value, lastMessage.AttachmentId?.Value);
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<ConversationId, LatestMessageSummary>>(result);
+    }
 }
