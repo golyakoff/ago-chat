@@ -35,6 +35,9 @@ public class GetVisitorHistoryHandlerTests
         }
 
         var current = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        current.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         current.AssignTo(AssignedOperatorId, Now);
         conversations.Seed(current);
         readStore.Seed(current);
@@ -157,6 +160,10 @@ public class GetVisitorHistoryHandlerTests
     {
         var fixture = CreateFixture();
         var historical = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now.AddDays(-1));
+        // `25-221`: a real visitor message must exist before AssignTo is legal at all - this
+        // conversation's own real history is now this graduating message plus the operator's reply,
+        // not the operator's reply alone.
+        historical.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("anyone there?"), Now.AddDays(-1));
         historical.AssignTo(OtherOperatorId, Now.AddDays(-1));
         historical.AddOperatorMessage(OtherOperatorId, new MessageId(Guid.NewGuid()), new MessageBody("handled by someone else"), Now.AddDays(-1));
         historical.Close(Now.AddDays(-1).AddHours(1));
@@ -169,8 +176,8 @@ public class GetVisitorHistoryHandlerTests
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        var message = Assert.Single(result.Value.Messages);
-        Assert.Equal("handled by someone else", message.Body);
+        Assert.Equal(2, result.Value.Messages.Count);
+        Assert.Contains(result.Value.Messages, m => m.Body == "handled by someone else");
 
         // `24-12`'s own Done-when: this boundary-crossing read leaves exactly one access_records row,
         // naming the operator who read it, the historical conversation that was opened, and the site -
@@ -285,6 +292,9 @@ public class GetVisitorHistoryHandlerTests
     {
         var fixture = CreateFixture();
         var historical = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now.AddDays(-1));
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        historical.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("anyone there?"), Now.AddDays(-1));
         historical.AssignTo(OtherOperatorId, Now.AddDays(-1));
         historical.AddOperatorMessage(OtherOperatorId, new MessageId(Guid.NewGuid()), new MessageBody("handled by someone else"), Now.AddDays(-1));
         historical.Close(Now.AddDays(-1).AddHours(1));

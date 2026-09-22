@@ -16,6 +16,9 @@ public class ListModuleTaskChannelPriorityListHandlerTests
     public async Task HandleAsync_AStoredList_IsReturnedInPriorityOrder()
     {
         var conversation = Conversation.Start(ConversationId, SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var task = conversation.StartModuleTask(new ModuleTaskId(Guid.NewGuid()), new ModuleKey("booking-flow"), "ext-1", Now, null, null, []);
 
@@ -56,6 +59,9 @@ public class ListModuleTaskChannelPriorityListHandlerTests
     public async Task HandleAsync_NoActiveModuleTask_ReturnsAnEmptyList()
     {
         var conversation = Conversation.Start(ConversationId, SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
 
         var conversations = new FakeConversationRepository();
@@ -79,6 +85,9 @@ public class ListModuleTaskChannelPriorityListHandlerTests
     public async Task HandleAsync_WithoutPermission_ReturnsForbidden()
     {
         var conversation = Conversation.Start(ConversationId, SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var conversations = new FakeConversationRepository();
         conversations.Seed(conversation);

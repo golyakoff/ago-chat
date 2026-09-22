@@ -54,7 +54,12 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
             {
                 var visitorId = new VisitorId(Guid.NewGuid());
                 db.Visitors.Add(new Visitor(visitorId, siteId, Now));
-                db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+                // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+                // visitor's own real first message before persisting it, so it is genuinely Waiting for
+                // RedisLockAssignmentClaimer to find.
+                var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+                conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+                db.Conversations.Add(conversation);
             }
 
             await db.SaveChangesAsync();
@@ -150,7 +155,12 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
             // active_chats as the seated one - proving this isn't merely tie-broken away by chance.
             db.Operators.Add(new Operator(seatlessOperatorId, siteId, OperatorStatus.Online, capacity: 5));
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // RedisLockAssignmentClaimer to find.
+            var seeded = Conversation.Start(conversationId, siteId, visitorId, Now);
+            seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            db.Conversations.Add(seeded);
             await db.SaveChangesAsync();
         }
 

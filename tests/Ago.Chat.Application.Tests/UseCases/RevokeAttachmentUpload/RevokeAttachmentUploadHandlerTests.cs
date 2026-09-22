@@ -28,6 +28,9 @@ public class RevokeAttachmentUploadHandlerTests
         if (seedConversation)
         {
             var conversation = Conversation.Start(ConversationId, SiteId, VisitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(assignedOperator ?? OperatorId, Now);
             conversations.Seed(conversation);
             grants.SeedConversation(ConversationId, SiteId, currentlyGranted);
@@ -162,6 +165,7 @@ public class RevokeAttachmentUploadHandlerTests
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(
             ConversationId, SiteId, VisitorId, Now, attachmentUploadGrantedByDefault: true);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         conversations.Seed(conversation);
         var grants = new FakeConversationAttachmentUploadGrantRepository();

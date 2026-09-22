@@ -168,8 +168,9 @@ public sealed class Conversation
     /// moment <see cref="StartConversationHandler"/> would otherwise start a brand-new conversation
     /// for them, this is stamped with that moment instead of being left <see langword="null"/> - the
     /// conversation is created exactly as normal in every other respect (same id scheme, same
-    /// <see cref="ConversationState.Waiting"/> start state, still accepts and stores the visitor's own
-    /// messages via <see cref="AddVisitorMessage"/>, which does not check this flag) so that
+    /// <see cref="ConversationState.Pending"/> start state `25-221` gave every conversation, still
+    /// accepts and stores the visitor's own messages via <see cref="AddVisitorMessage"/>, which does
+    /// not check this flag) so that
     /// <c>StartConversationHandler</c>'s own response is not special-cased at all - both items' own
     /// answered "силенс" requirement (no message to the visitor, ever) is met by there being nothing
     /// to special-case, not by the caller lying about what happened.
@@ -291,7 +292,11 @@ public sealed class Conversation
         Id = id;
         SiteId = siteId;
         VisitorId = visitorId;
-        State = ConversationState.Waiting;
+        // `25-221`: not ConversationState.Waiting - a brand-new conversation must not be routable to
+        // an operator until the visitor has actually written something. AddVisitorMessage is the only
+        // place that ever moves a conversation out of Pending, and only for a genuine Visitor-authored
+        // message (see that method's own remarks).
+        State = ConversationState.Pending;
         CreatedAt = now;
     }
 
@@ -561,6 +566,20 @@ public sealed class Conversation
     /// sites construct a message with no opinion about retention at all, and forcing every one of
     /// them to supply a class this item's own scope does not concern them with would be exactly the
     /// unscoped blast radius <see cref="Site.Name"/>'s own remarks warn against repeating.</para>
+    ///
+    /// <para>`25-221`: this is the one and only place a conversation ever leaves
+    /// <see cref="ConversationState.Pending"/> - graduating it to <see cref="ConversationState.Waiting"/>
+    /// (and therefore into <c>ConversationAssignmentJob</c>'s claim query for the first time) the moment
+    /// a real visitor message arrives. Keyed on <see cref="State"/>, not on whether <see cref="_messages"/>
+    /// is already non-empty: <see cref="AddAutoGreetingMessage"/> may already have added the greeting to
+    /// this same conversation, in this same transaction, moments earlier
+    /// (<c>MessageBatchWriter</c>'s own greeting-then-message sequencing), and that
+    /// <see cref="MessageAuthorKind.AutoGreeting"/> message must not be what graduates the conversation -
+    /// only a genuine <see cref="MessageAuthorKind.Visitor"/> one may. <see cref="State"/> only ever
+    /// equals <see cref="ConversationState.Pending"/> once, immediately after <see cref="Start"/>, and
+    /// the transition below only ever runs once per conversation - so this is naturally idempotent for a
+    /// retried send: a second attempt simply finds <see cref="State"/> already
+    /// <see cref="ConversationState.Waiting"/> (or further along) and does nothing extra here.</para>
     /// </summary>
     public Message AddVisitorMessage(
         VisitorId authorId, MessageId messageId, MessageBody body, DateTimeOffset now,
@@ -577,6 +596,11 @@ public sealed class Conversation
         {
             throw new InvalidConversationStateException(
                 $"Cannot add a message to closed conversation {Id.Value}.");
+        }
+
+        if (State == ConversationState.Pending)
+        {
+            State = ConversationState.Waiting;
         }
 
         return AddMessage(

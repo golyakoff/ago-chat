@@ -489,7 +489,12 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
                 Permissions = [Permission.ConversationAssign.Value, Permission.ConversationClose.Value],
             });
             seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
-            seed.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so AssignConversationHandler
+            // below (whose own AssignTo only ever accepted Waiting) can actually claim it.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            seed.Conversations.Add(conversation);
             await seed.SaveChangesAsync(CancellationToken.None);
         }
 
@@ -606,7 +611,12 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         var conversationIds = Enumerable.Range(0, conversationCount).Select(_ => new ConversationId(Guid.NewGuid())).ToList();
         for (var i = 0; i < conversationCount; i++)
         {
-            db.Conversations.Add(Conversation.Start(conversationIds[i], siteId, visitorIds[i], Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // this test's own claim/assignment jobs to find.
+            var conversation = Conversation.Start(conversationIds[i], siteId, visitorIds[i], Now);
+            conversation.AddVisitorMessage(visitorIds[i], new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            db.Conversations.Add(conversation);
         }
 
         await db.SaveChangesAsync(CancellationToken.None);

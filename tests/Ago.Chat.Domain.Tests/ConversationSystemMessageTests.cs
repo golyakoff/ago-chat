@@ -51,18 +51,22 @@ public class ConversationSystemMessageTests
     public void AddSystemMessage_WhileWaiting_IsAllowed()
     {
         var conversation = StartConversation();
+        // `25-221`: Waiting now always has the graduating visitor message already in it - "an
+        // unattended conversation" no longer means "an empty one."
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
 
         // The whole point: this is the state an unattended conversation is in.
         Assert.Equal(ConversationState.Waiting, conversation.State);
         conversation.AddSystemMessage(new MessageId(Guid.NewGuid()), new MessageBody("Closed."), Now);
 
-        Assert.Single(conversation.Messages);
+        Assert.Equal(2, conversation.Messages.Count);
     }
 
     [Fact]
     public void AddSystemMessage_OnAClosedConversation_Throws()
     {
         var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now);
 

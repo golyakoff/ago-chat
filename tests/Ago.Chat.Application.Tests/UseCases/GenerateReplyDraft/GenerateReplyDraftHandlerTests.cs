@@ -38,12 +38,19 @@ public class GenerateReplyDraftHandlerTests
         var generator = new FakeReplyDraftGenerator();
 
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
-        if (assignOperator)
+        // `25-221`: AssignTo no longer runs here, up front - a brand-new conversation starts Pending,
+        // not Waiting, so the visitor's own real first message has to exist before AssignTo is legal at
+        // all. The seeding callback below now owns that ordering itself: DefaultMessages adds the
+        // graduating message first and only then assigns (if asked to), and the one test that supplies
+        // its own seedMessages does the identical thing explicitly.
+        if (seedMessages is null)
         {
-            conversation.AssignTo(OperatorId, Now);
+            DefaultMessages(conversation, assignOperator);
         }
-
-        (seedMessages ?? DefaultMessages)(conversation);
+        else
+        {
+            seedMessages(conversation);
+        }
 
         conversations.Seed(conversation);
         readStore.Seed(conversation);
@@ -65,14 +72,17 @@ public class GenerateReplyDraftHandlerTests
         return new Fixture(handler, generator, conversation);
     }
 
-    private static void DefaultMessages(Conversation conversation)
+    private static void DefaultMessages(Conversation conversation, bool assignOperator)
     {
+        // `25-221`: this first message is what graduates the conversation out of Pending and into
+        // Waiting - AssignTo below is only legal once it exists.
         conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("do you ship to Kazan?"), Now);
-        // Only once assigned - AddOperatorMessage refuses a Waiting conversation, and
+        // Only once assigned - AddOperatorMessage refuses a non-Assigned conversation, and
         // HandleAsync_WhenOperatorIsNotAssignedToTheConversation_ReturnsForbidden deliberately builds
         // its fixture with assignOperator: false.
-        if (conversation.State == ConversationState.Assigned)
+        if (assignOperator)
         {
+            conversation.AssignTo(OperatorId, Now);
             conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("yes, 3-5 days"), Now);
         }
     }
@@ -191,17 +201,20 @@ public class GenerateReplyDraftHandlerTests
         var permissions = new FakePermissionChecker();
         var generator = new FakeReplyDraftGenerator();
 
+        // `25-221`: reordered - a brand-new conversation starts Pending, not Waiting, so the visitor's
+        // own real first message has to exist before AssignTo is legal at all. Still exactly one
+        // message on each conversation, matching this test's own Assert.Single below.
         var target = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
-        target.AssignTo(OperatorId, Now);
         target.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("TARGET-secret-order-12345"), Now);
+        target.AssignTo(OperatorId, Now);
         conversations.Seed(target);
         readStore.Seed(target);
 
         var otherVisitor = new VisitorId(Guid.NewGuid());
         var otherOperator = new OperatorId(Guid.NewGuid());
         var decoy = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, otherVisitor, Now);
-        decoy.AssignTo(otherOperator, Now);
         decoy.AddVisitorMessage(otherVisitor, new MessageId(Guid.NewGuid()), new MessageBody("DECOY-unrelated-medical-question"), Now);
+        decoy.AssignTo(otherOperator, Now);
         conversations.Seed(decoy);
         readStore.Seed(decoy);
 
@@ -228,7 +241,10 @@ public class GenerateReplyDraftHandlerTests
     {
         var fixture = CreateFixture(seedMessages: conversation =>
         {
+            // `25-221`: "first" is what graduates Pending -> Waiting; AssignTo only becomes legal
+            // once it exists, so it runs here rather than before this callback.
             conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("first"), Now);
+            conversation.AssignTo(OperatorId, Now);
             conversation.AddOperatorMessage(
                 OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("a booking card"), Now.AddSeconds(1),
                 content: MessageContent.Create(new MessageContentKind("booking_card"), new MessagePayload("{\"price\":100}")));

@@ -36,6 +36,9 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
                 var conversationId = new ConversationId(Guid.NewGuid());
                 db.Visitors.Add(new Visitor(visitorId, siteId, Now));
                 var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+                // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+                // visitor's own real first message before AssignTo, which still only accepts Waiting.
+                conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
                 // `6-09`: holdsCapacityClaim: true - these three stand in for engine-made assignments,
                 // which is what the active_chats = 3 seeded below actually represents. The sweep now
                 // releases a slot only for a conversation that holds the receipt for one; the
@@ -57,6 +60,7 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
             var closedVisitorId = new VisitorId(Guid.NewGuid());
             db.Visitors.Add(new Visitor(closedVisitorId, siteId, Now));
             var closed = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, closedVisitorId, Now);
+            closed.AddVisitorMessage(closedVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             closed.AssignTo(operatorId, Now);
             closed.Close(Now);
             db.Conversations.Add(closed);
@@ -130,6 +134,9 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
                 db.Visitors.Add(new Visitor(visitorId, siteId, Now));
                 var conversationId = new ConversationId(Guid.NewGuid());
                 var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+                // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+                // visitor's own real first message before AssignTo, which still only accepts Waiting.
+                conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
                 conversation.AssignTo(operatorId, Now, holdsCapacityClaim);
                 db.Conversations.Add(conversation);
                 // `23-03`: every assigned conversation gets an interval regardless of whether it holds

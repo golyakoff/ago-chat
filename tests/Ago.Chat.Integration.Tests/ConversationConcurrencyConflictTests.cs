@@ -52,9 +52,10 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         var conversationRow = await verify.Conversations.Include("_messages").SingleAsync(c => c.Id == conversationId, CancellationToken.None);
         Assert.Equal(ConversationState.Closed, conversationRow.State);
-        // The concurrent writer's message is still there - the retry reloaded the real row rather than
+        // `25-221`: two messages now - SeedAssignedConversationAsync's own graduating one, plus the
+        // concurrent writer's - both still there, since the retry reloaded the real row rather than
         // overwriting it with a stale in-memory copy.
-        Assert.Single(conversationRow.Messages);
+        Assert.Equal(2, conversationRow.Messages.Count);
 
         // Exactly one ConversationEnded row, not two - the failed first attempt's outbox enqueue never
         // committed (same DbContext, same transaction as its own failed SaveChangesAsync), so only the
@@ -109,7 +110,12 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
             seed.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
             seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
             seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
-            seed.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so AssignConversationHandler
+            // below (whose own AssignTo only ever accepted Waiting) can actually claim it.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            seed.Conversations.Add(conversation);
             await seed.SaveChangesAsync(CancellationToken.None);
         }
 
@@ -129,7 +135,8 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var conversationRow = await verify.Conversations.Include("_messages").SingleAsync(c => c.Id == conversationId, CancellationToken.None);
         Assert.Equal(ConversationState.Assigned, conversationRow.State);
         Assert.Equal(operatorId, conversationRow.OperatorId);
-        Assert.Single(conversationRow.Messages);
+        // `25-221`: two messages now - the graduating one seeded above, plus the concurrent writer's.
+        Assert.Equal(2, conversationRow.Messages.Count);
     }
 
     private async Task<(SiteId SiteId, VisitorId VisitorId, OperatorId OperatorId, ConversationId ConversationId)> SeedAssignedConversationAsync(Permission permission)
@@ -148,6 +155,9 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
 
         var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(operatorId, Now);
         conversation.ClearDomainEvents();
         seed.Conversations.Add(conversation);

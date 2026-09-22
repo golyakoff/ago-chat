@@ -27,10 +27,13 @@ public class GetAllConversationsForSiteHandlerTests
     public async Task HandleAsync_WhenTheOperatorHoldsSiteConfigure_ReturnsEveryConversationForTheSite_RegardlessOfAssignment()
     {
         var (handler, readStore) = CreateFixture();
-        var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        // `25-221`: deliberately left Pending (never messaged) - this handler's own point is "every
+        // conversation for the site, regardless", and that now includes one nothing has routed yet.
+        var pending = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
         var assignedToSomeoneElse = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        assignedToSomeoneElse.AddVisitorMessage(assignedToSomeoneElse.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToSomeoneElse.AssignTo(OtherOperatorId, Now);
-        readStore.Seed(waiting);
+        readStore.Seed(pending);
         readStore.Seed(assignedToSomeoneElse);
 
         var result = await handler.HandleAsync(new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(AdminId, SiteId, null, 50), CancellationToken.None);

@@ -20,8 +20,11 @@ public class GetConversationHistoryHandlerTests
         var permissions = new FakePermissionChecker();
 
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
-        conversation.AssignTo(OperatorId, Now);
+        // `25-221`: reordered - a brand-new conversation starts Pending, not Waiting, so the visitor's
+        // own first real message ("hi", Sequence 1) has to exist before AssignTo is legal at all. Every
+        // test in this file that hardcodes sequence 1 (visitor)/2 (operator) still gets exactly that.
         conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.AssignTo(OperatorId, Now);
         conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now);
 
         conversations.Seed(conversation);

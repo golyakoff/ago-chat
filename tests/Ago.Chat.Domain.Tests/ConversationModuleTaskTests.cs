@@ -63,6 +63,7 @@ public class ConversationModuleTaskTests
     public void StartModuleTask_OnAClosedConversation_Throws()
     {
         var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(new OperatorId(Guid.NewGuid()), Now);
         conversation.Close(Now);
 

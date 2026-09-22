@@ -35,8 +35,10 @@ public sealed class NothingReachesTheVendorWhenDisabledTests
         var permissions = new FakePermissionChecker();
 
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), Site, Visitor, Now);
-        conversation.AssignTo(Operator, Now);
+        // `25-221`: reordered - a brand-new conversation starts Pending, not Waiting, so the visitor's
+        // own real first message has to exist before AssignTo is legal at all.
         conversation.AddVisitorMessage(Visitor, new MessageId(Guid.NewGuid()), new MessageBody("do you ship to Kazan?"), Now);
+        conversation.AssignTo(Operator, Now);
         conversations.Seed(conversation);
         readStore.Seed(conversation);
         permissions.Grant(Operator, Site, Permission.ConversationSend);

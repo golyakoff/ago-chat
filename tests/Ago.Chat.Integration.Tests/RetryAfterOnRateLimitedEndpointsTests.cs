@@ -191,6 +191,9 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         // Permission, then the conversation lookup (assigned-operator check), both before the rate
         // limit (GenerateReplyDraftHandler's own ordering) - readStore/generator are never reached.
         var conversation = Conversation.Start(conversationId, siteId, visitorId, DateTimeOffset.UtcNow);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), DateTimeOffset.UtcNow);
         conversation.AssignTo(operatorId, DateTimeOffset.UtcNow);
 
         var rateLimitOptions = new ReplyDraftRateLimitOptions

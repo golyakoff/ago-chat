@@ -38,6 +38,9 @@ public class DeliverChannelMessageHandlerTests
 
         var visitorId = new VisitorId(Guid.NewGuid());
         conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, visitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         conversations.Seed(conversation);
         visitors.Seed(new Visitor(visitorId, SiteId, Now));
@@ -694,6 +697,9 @@ public class DeliverChannelMessageHandlerTests
 
         var visitorId = new VisitorId(Guid.NewGuid());
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, visitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         conversations.Seed(conversation);
         await LinkMaxIdentity(identities, visitorId);

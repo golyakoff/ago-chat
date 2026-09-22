@@ -193,11 +193,19 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = otherOperatorId, RoleId = roleId });
 
         var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
-        conversation.AssignTo(assignedOperatorId, Now);
         for (var i = 0; i < visitorMessages; i++)
         {
             var message = conversation.AddVisitorMessage(
                 visitorId, new MessageId(Guid.NewGuid()), new MessageBody("incoming"), Now);
+            if (i == 0)
+            {
+                // `25-221`: this first message is what graduates the conversation out of Pending and
+                // into Waiting - only from there can AssignTo run. Assigning right after it, mid-loop,
+                // keeps every sequence number and every IncrementUnreadCount call exactly as before
+                // this item (every caller here passes visitorMessages >= 1).
+                conversation.AssignTo(assignedOperatorId, Now);
+            }
+
             conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, message.Sequence);
         }
 

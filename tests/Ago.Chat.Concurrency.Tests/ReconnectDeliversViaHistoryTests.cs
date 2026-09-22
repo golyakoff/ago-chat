@@ -39,6 +39,10 @@ public sealed class ReconnectDeliversViaHistoryTests(ConcurrencyTestFixture fixt
             db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationSend.Value] });
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting. This
+            // message is Sequence 1, so the three operator messages below become Sequence 2..4.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(operatorId, Now);
             db.Conversations.Add(conversation);
             await db.SaveChangesAsync(CancellationToken.None);
@@ -61,11 +65,14 @@ public sealed class ReconnectDeliversViaHistoryTests(ConcurrencyTestFixture fixt
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(readDb), new ConversationReadStore(fixture.DataSource), new PermissionChecker(readDb));
 
+        // `25-221`: AfterSequence: 1, not 0 - the seed's own graduating visitor message (Sequence 1)
+        // is real history too, and this test's own point is the three operator messages sent while the
+        // visitor was away, not that first one.
         var delta = await getHistory.HandleDeltaAsVisitorAsync(
-            new GetConversationDeltaAsVisitor(conversationId, visitorId, AfterSequence: 0), CancellationToken.None);
+            new GetConversationDeltaAsVisitor(conversationId, visitorId, AfterSequence: 1), CancellationToken.None);
 
         Assert.True(delta.IsSuccess);
-        Assert.Equal([1, 2, 3], delta.Value.Select(m => m.Sequence));
+        Assert.Equal([2, 3, 4], delta.Value.Select(m => m.Sequence));
         Assert.Equal(
             ["while you were away 1", "while you were away 2", "while you were away 3"],
             delta.Value.Select(m => m.Body));

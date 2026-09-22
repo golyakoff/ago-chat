@@ -111,7 +111,12 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, createdAt));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // this test's own close pass (which now also reaches Waiting rows) to find.
+            var seeded = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+            seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
+            db.Conversations.Add(seeded);
             await db.SaveChangesAsync();
         }
 
@@ -151,7 +156,12 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
             db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, createdAt));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so this test proves a genuinely
+            // Waiting conversation is left alone, not merely that an invisible Pending one is.
+            var seeded = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+            seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
+            db.Conversations.Add(seeded);
             await db.SaveChangesAsync();
         }
 
@@ -350,7 +360,13 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             db.ChannelIdentities.Add(ChannelIdentity.Link(
                 new ChannelIdentityId(Guid.NewGuid()), siteId, ChannelKind.Max,
                 new ExternalChannelAddress("max-user-waiting"), visitorId, createdAt));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, createdAt));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so this test proves a genuinely
+            // Waiting channel-kind conversation is left alone, not merely that an invisible Pending
+            // one is.
+            var seeded = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+            seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
+            db.Conversations.Add(seeded);
             await db.SaveChangesAsync();
         }
 
@@ -409,6 +425,9 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             }
 
             var conversation = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
             conversation.AssignTo(operatorId, createdAt, holdsCapacityClaim);
             conversation.ClearDomainEvents();
             db.Conversations.Add(conversation);
