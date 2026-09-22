@@ -228,6 +228,20 @@ public static class TenantScopeExemptions
             "Consumer side. Fan-out to the conversation's own participants, resolved from the conversation row; "
             + "it acts on behalf of nobody, so routing it through an authorized read path would be a layering "
             + "fiction rather than a check (this handler's own remarks say so).",
+        ["Ago.Chat.Application.UseCases.NotifyOperatorDevices.NotifyOperatorDevicesHandler.HandleAssignmentAsync"] =
+            "`26-05`, consumer side (Ago.Chat.Worker). The identical category and reasoning "
+            + "ResolveConversationAssignmentTargetsHandler right above already establishes: the OperatorId this "
+            + "sends a push to is the one the ConversationAssignedToOperator event itself names - no lookup, no "
+            + "caller, nothing read back. There is also no principal to check a permission for - a broker "
+            + "delivery triggered this, not a request (adr/0016 has no representation for that caller, exactly "
+            + "as SendOfflineAutoReplyHandler's own entry states for its own identical shape).",
+        ["Ago.Chat.Application.UseCases.NotifyOperatorDevices.NotifyOperatorDevicesHandler.HandleMessageAsync"] =
+            "`26-05`, consumer side (Ago.Chat.Worker). The identical category and reasoning "
+            + "ResolveMessageDeliveryTargetsHandler right above already establishes: the conversation is loaded to "
+            + "find its own assigned operator, and the only recipient is that operator - it acts on behalf of "
+            + "nobody, so routing it through an authorized read path would be a layering fiction rather than a "
+            + "check. No principal to check a permission for, for the identical reason HandleAssignmentAsync's own "
+            + "entry above states.",
         ["Ago.Chat.Application.UseCases.ReceiveChannelMessage.ReceiveChannelMessageHandler.HandleAsync"] =
             "`14-01`, adapter side (AGO Inbox). Carries a SiteId that no external caller can influence: a channel "
             + "provider's payload has no way to name a site, so the concrete adapter resolves it from the "

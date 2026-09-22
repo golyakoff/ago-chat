@@ -80,6 +80,54 @@ public class OperatorDeviceTests
         Assert.Null(device.FailureReason);
     }
 
+    /// <summary>`26-05`: `NotifyOperatorDevicesHandler`'s own `PushSendOutcome.TransientFailure` path -
+    /// a credential- or provider-side failure that says nothing about this device, so unlike
+    /// <see cref="Revoke"/> the row stays live.</summary>
+    [Fact]
+    public void RecordSendFailure_SetsLastFailureAtAndReason_WithoutRevoking()
+    {
+        var device = Register();
+        var failedAt = Now.AddHours(1);
+
+        device.RecordSendFailure("RuStore 401 UNAUTHORIZED", failedAt);
+
+        Assert.Equal(failedAt, device.LastFailureAt);
+        Assert.Equal("RuStore 401 UNAUTHORIZED", device.FailureReason);
+        Assert.Null(device.RevokedAt);
+    }
+
+    /// <summary>Bounded the identical way <see cref="ChannelDelivery.MaxProviderDetailLength"/> is - a
+    /// failure reason is a code or a phrase, never an essay, regardless of how long the provider's own
+    /// message text happens to be.</summary>
+    [Fact]
+    public void RecordSendFailure_TruncatesAnOverlongReason()
+    {
+        var device = Register();
+        var tooLong = new string('x', OperatorDevice.MaxFailureReasonLength + 100);
+
+        device.RecordSendFailure(tooLong, Now);
+
+        Assert.Equal(OperatorDevice.MaxFailureReasonLength, device.FailureReason!.Length);
+    }
+
+    /// <summary>A later successful send is not this method's job to record - `NotifyOperatorDevicesHandler`
+    /// simply does not call it for a <c>Delivered</c> outcome. This pins down that a device already
+    /// carrying a stale failure keeps it recorded (a historical fact, not a "currently failing" flag -
+    /// this type's own remarks on <see cref="OperatorDevice.RecordSendFailure"/>) unless a fresh
+    /// <see cref="OperatorDevice.Refresh"/> clears it, which <see cref="Refresh_ClearsFailureTracking"/>
+    /// already proves.</summary>
+    [Fact]
+    public void RecordSendFailure_CalledTwice_OverwritesWithTheLatestReason()
+    {
+        var device = Register();
+        device.RecordSendFailure("RuStore 500 INTERNAL", Now);
+
+        device.RecordSendFailure("RuStore 429 TOO_MANY_REQUESTS", Now.AddMinutes(5));
+
+        Assert.Equal(Now.AddMinutes(5), device.LastFailureAt);
+        Assert.Equal("RuStore 429 TOO_MANY_REQUESTS", device.FailureReason);
+    }
+
     [Fact]
     public void Revoke_SetsRevokedAt()
     {

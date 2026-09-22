@@ -1267,6 +1267,15 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<RegisterOperatorDeviceHandler>();
         services.AddScoped<RevokeOperatorDeviceHandler>();
 
+        // `26-05`/`push-notifications.md`'s own "Fan-out": NotifyOperatorDevicesHandler is deliberately
+        // NOT registered here, unlike every other handler on this page. Its constructor needs
+        // IPushSender, and that port is registered only in Ago.Chat.Worker's own Program.cs - the one
+        // place `push-notifications.md`'s own secrets table says the RuStore credential may reach
+        // (RuStoreOptions's own remarks in that Program.cs). Registering the handler here, in the
+        // method Ago.Chat.Api and Ago.Chat.Webhooks call too, would make their own composition roots
+        // require an IPushSender they must never hold just to satisfy ValidateOnBuild - the identical
+        // reasoning that already keeps IPushSender's own registration out of this method.
+
         // `11-01`: Site's first real read/write handler pair since `1-04` - see each handler's own
         // remarks (GetWidgetConfigHandler deliberately uncached, UpdateWidgetConfigHandler the first
         // real SiteSettingsChanged producer). Registered for every host, the same shape as everything
