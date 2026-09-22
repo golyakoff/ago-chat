@@ -40,6 +40,9 @@ public class GetAttachmentDownloadUrlHandlerTests
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         if (assignOperator)
         {
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(OperatorId, Now);
         }
 
@@ -367,7 +370,10 @@ public class GetAttachmentDownloadUrlHandlerTests
             new GetAttachmentDownloadUrlAsOperator(fixture.Attachment.Id, OperatorId, SiteId), CancellationToken.None);
 
         var saved = await fixture.Conversations.GetByIdAsync(fixture.Conversation.Id, CancellationToken.None);
-        Assert.Empty(saved!.Messages);
+        // `25-221`: no longer an empty conversation - CreateFixture's own graduating visitor message
+        // is unavoidable now that reaching Assigned requires one. This test's real point survives
+        // unchanged: no *System*-authored message was added by the refusal.
+        Assert.DoesNotContain(saved!.Messages, m => m.AuthorKind == MessageAuthorKind.System);
     }
 
     // ----------------------------------------------------------------------------------------------

@@ -39,7 +39,12 @@ public sealed class ConversationAssignmentIntervalTests(PostgresFixture fixture)
         db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity));
         db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [permission.Value] });
         db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
-        db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before persisting it, so it is genuinely Waiting (this
+        // helper's own name) for every caller below.
+        var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        db.Conversations.Add(conversation);
         await db.SaveChangesAsync();
 
         return (siteId, operatorId, conversationId);

@@ -153,6 +153,9 @@ public class NotifyOperatorDevicesHandlerTests
     public async Task HandleMessageAsync_VisitorAuthored_AssignedConversation_SendsPushToTheAssignedOperator()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var (handler, devices, conversations, pushSender) = CreateHandler();
         conversations.Seed(conversation);
@@ -175,6 +178,9 @@ public class NotifyOperatorDevicesHandlerTests
     public async Task HandleMessageAsync_VisitorAuthored_DataCarriesBothConversationIdAndMessageId()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var (handler, devices, conversations, pushSender) = CreateHandler();
         conversations.Seed(conversation);
@@ -197,6 +203,9 @@ public class NotifyOperatorDevicesHandlerTests
     public async Task HandleMessageAsync_OperatorAuthored_NeverSends()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var (handler, devices, conversations, pushSender) = CreateHandler();
         conversations.Seed(conversation);
@@ -218,6 +227,9 @@ public class NotifyOperatorDevicesHandlerTests
     public async Task HandleMessageAsync_NonVisitorAuthorKinds_NeverSend(string authorKind)
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var (handler, devices, conversations, pushSender) = CreateHandler();
         conversations.Seed(conversation);
@@ -233,6 +245,9 @@ public class NotifyOperatorDevicesHandlerTests
     public async Task HandleMessageAsync_OperatorAuthored_RecordsSuppressedWithNotVisitorReason()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var (handler, devices, conversations, _) = CreateHandler();
         conversations.Seed(conversation);

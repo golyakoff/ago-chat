@@ -158,7 +158,12 @@ public class ClaimConversationEndpointTests(PostgresFixture fixture)
             Permissions = [Permission.ConversationAssign.Value],
         });
         seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
-        seed.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before persisting it, so the claim endpoint under test
+        // (whose own AssignTo only ever accepted Waiting) can actually claim it.
+        var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        seed.Conversations.Add(conversation);
 
         await seed.SaveChangesAsync(CancellationToken.None);
         return new SeedResult(siteId, visitorId, operatorId, conversationId);

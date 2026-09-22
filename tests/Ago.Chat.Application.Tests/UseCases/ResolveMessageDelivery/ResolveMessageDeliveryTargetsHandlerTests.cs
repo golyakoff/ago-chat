@@ -36,6 +36,9 @@ public class ResolveMessageDeliveryTargetsHandlerTests
     public async Task HandleAsync_AssignedConversation_PublishesToBothVisitorAndOperator()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var message = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var (handler, fanout) = CreateHandler(conversation);
@@ -127,6 +130,9 @@ public class ResolveMessageDeliveryTargetsHandlerTests
     public async Task HandleAsync_TagsEachRecipientByKindAndByWhetherTheRegistryHadAConnection()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         var message = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var (handler, fanout) = CreateHandler(conversation);

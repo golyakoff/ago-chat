@@ -82,12 +82,15 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
             $"rounds={Rounds}; increment attempts lost to a real xmin conflict and redelivered={conflicts}");
 
         var conversation = await LoadAsync(seed.ConversationId);
-        // The last mark-read cleared up to Rounds - 1, so exactly one visitor message - the final
-        // round's, which the operator never saw - is still outstanding. Not "at least one": every
-        // earlier round's message was genuinely read, and an over-count would be just as wrong.
-        Assert.Equal(Rounds - 1, conversation.OperatorLastReadSequence);
+        // `25-221`: SeedAssignedConversationAsync's own graduating visitor message is Sequence 1, so
+        // round r's own appended message is Sequence r + 1 - both numbers below shift by exactly one
+        // from what they would be without it, not from any change to the race itself.
+        // The last mark-read cleared up to Rounds, so exactly one visitor message - the final round's,
+        // which the operator never saw - is still outstanding. Not "at least one": every earlier
+        // round's message was genuinely read, and an over-count would be just as wrong.
+        Assert.Equal(Rounds, conversation.OperatorLastReadSequence);
         Assert.Equal(1, conversation.OperatorUnreadCount);
-        Assert.Equal(Rounds, conversation.Messages.Count);
+        Assert.Equal(Rounds + 1, conversation.Messages.Count);
     }
 
     /// <summary>
@@ -124,7 +127,9 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
         }
 
         var conversation = await LoadAsync(seed.ConversationId);
-        Assert.Equal(Rounds, conversation.OperatorLastReadSequence);
+        // `25-221`: SeedAssignedConversationAsync's own graduating visitor message is Sequence 1, so
+        // round Rounds' own appended message (the last one marked read here) is Sequence Rounds + 1.
+        Assert.Equal(Rounds + 1, conversation.OperatorLastReadSequence);
         Assert.Equal(0, conversation.OperatorUnreadCount);
     }
 
@@ -142,12 +147,15 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
             await RecordUnreadWithBrokerRetryAsync(services, seed, messageId, sequence);
         }
 
+        // `25-221`: SeedAssignedConversationAsync's own graduating visitor message is Sequence 1, so
+        // the 5 messages appended above are Sequence 2..6, not 1..5 - covering all of them now takes
+        // upToSequence: 6.
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var readers = Enumerable.Range(0, 8)
             .Select(_ => Task.Run(async () =>
             {
                 await gate.Task;
-                return await MarkReadAsync(seed, upToSequence: 5);
+                return await MarkReadAsync(seed, upToSequence: 6);
             }))
             .ToArray();
 
@@ -156,7 +164,7 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
 
         var conversation = await LoadAsync(seed.ConversationId);
         Assert.Equal(0, conversation.OperatorUnreadCount);
-        Assert.Equal(5, conversation.OperatorLastReadSequence);
+        Assert.Equal(6, conversation.OperatorLastReadSequence);
     }
 
     /// <summary>
@@ -176,6 +184,13 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
     {
         var seed = await SeedAssignedConversationAsync();
         await using var services = fixture.CreateServiceProvider();
+        // `25-221`: SeedAssignedConversationAsync's own graduating visitor message (Sequence 1) was
+        // never itself run through RecordUnreadWithBrokerRetryAsync, so MarkReadByOperator's own
+        // newlyRead scan (every Visitor message in range, not just ones actually incremented) would
+        // otherwise double-count it the first time anything marks read past Sequence 1. Marking it
+        // read here, before any of this test's own messages exist, keeps that scan's range starting
+        // strictly after it for the rest of this test.
+        await MarkReadAsync(seed, upToSequence: 1);
         for (var i = 0; i < 3; i++)
         {
             var (messageId, sequence) = await AppendVisitorMessageAsync(seed);
@@ -193,23 +208,26 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
             });
         var handler = new MarkConversationReadHandler(racing, new PermissionChecker(db));
 
+        // `25-221`: SeedAssignedConversationAsync's own graduating visitor message is Sequence 1, so
+        // the 3 messages appended above are Sequence 2..4, not 1..3 - covering all of them now takes
+        // UpToSequence: 4.
         var result = await handler.HandleAsync(
             new Application.UseCases.MarkConversationRead.MarkConversationRead(
-                seed.ConversationId, seed.OperatorId, seed.SiteId, UpToSequence: 3),
+                seed.ConversationId, seed.OperatorId, seed.SiteId, UpToSequence: 4),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         // Two saves: the first lost the race, the second went in against the fresh row.
         Assert.Equal(2, racing.SaveAttempts);
-        // The one message that arrived while the operator was marking read - sequence 4, past their
-        // read position of 3 - is still counted. This is `5-15`'s "correct" in one number.
+        // The one message that arrived while the operator was marking read - sequence 5, past their
+        // read position of 4 - is still counted. This is `5-15`'s "correct" in one number.
         Assert.Equal(1, result.Value.OperatorUnreadCount);
-        Assert.Equal(3, result.Value.OperatorLastReadSequence);
+        Assert.Equal(4, result.Value.OperatorLastReadSequence);
 
         var conversation = await LoadAsync(seed.ConversationId);
         Assert.Equal(1, conversation.OperatorUnreadCount);
-        Assert.Equal(3, conversation.OperatorLastReadSequence);
-        Assert.Equal(4, conversation.Messages.Count);
+        Assert.Equal(4, conversation.OperatorLastReadSequence);
+        Assert.Equal(5, conversation.Messages.Count);
     }
 
     private sealed record Seed(SiteId SiteId, VisitorId VisitorId, OperatorId OperatorId, ConversationId ConversationId);
@@ -272,6 +290,9 @@ public sealed class MarkConversationReadConcurrencyTests(ConcurrencyTestFixture 
         db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
 
         var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(operatorId, Now);
         conversation.ClearDomainEvents();
         db.Conversations.Add(conversation);

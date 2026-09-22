@@ -19,9 +19,12 @@ public class ConversationRepositoryTests(PostgresFixture fixture)
         var operatorId = new OperatorId(Guid.NewGuid());
         await SeedSiteVisitorOperator(siteId, visitorId, operatorId);
 
+        // `25-221`: reordered - a brand-new conversation starts Pending, not Waiting, so the visitor's
+        // own first real message ("hello", Sequence 1) has to exist before AssignTo is legal at all.
+        // The sequence numbers this test asserts (1 for "hello", 2 for "hi there") are unchanged.
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
-        conversation.AssignTo(operatorId, Now);
         conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now);
+        conversation.AssignTo(operatorId, Now);
         conversation.AddOperatorMessage(operatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi there"), Now);
 
         await using (var writeDb = fixture.CreateDbContext())

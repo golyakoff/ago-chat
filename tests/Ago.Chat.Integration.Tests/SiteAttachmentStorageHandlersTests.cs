@@ -585,7 +585,10 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var repository = new ConversationRepository(db);
         var conversation = await repository.GetByIdAsync(conversationId, CancellationToken.None);
-        conversation!.AssignTo(operatorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation!.AddVisitorMessage(conversation.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.AssignTo(operatorId, Now);
         await repository.SaveAsync(conversation, CancellationToken.None);
     }
 

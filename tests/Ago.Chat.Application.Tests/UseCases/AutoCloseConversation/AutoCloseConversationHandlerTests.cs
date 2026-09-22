@@ -24,6 +24,9 @@ public class AutoCloseConversationHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var conversation = Ago.Chat.Domain.Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now, holdsCapacityClaim);
         // Simulates a fresh load from Postgres (EF's materialization ctor never raises domain events) -
         // the same reason CloseConversationHandlerTests clears them here too.
@@ -131,6 +134,9 @@ public class AutoCloseConversationHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var conversation = Ago.Chat.Domain.Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a genuinely Waiting conversation, not merely Pending - this test's own point is
+        // "Waiting (never assigned)", which the visitor's own first real message is what reaches.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversations.Seed(conversation);
 
         var outbox = new FakeOutboxWriter();
@@ -157,6 +163,8 @@ public class AutoCloseConversationHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var conversation = Ago.Chat.Domain.Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a genuinely Waiting-then-Closed conversation, matching this test's own name.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.Close(Now);
         conversation.ClearDomainEvents();
         conversations.Seed(conversation);

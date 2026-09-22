@@ -495,7 +495,12 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
 
         for (var i = 0; i < conversationCount; i++)
         {
-            db.Conversations.Add(Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorIds[i], Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // AssignSpecificallyAsync's own State == Waiting query (and the assignment engine) to find.
+            var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorIds[i], Now);
+            conversation.AddVisitorMessage(visitorIds[i], new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            db.Conversations.Add(conversation);
         }
 
         await db.SaveChangesAsync(CancellationToken.None);

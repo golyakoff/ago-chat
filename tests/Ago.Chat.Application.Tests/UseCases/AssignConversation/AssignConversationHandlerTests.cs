@@ -16,6 +16,9 @@ public class AssignConversationHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before seeding it as "a waiting conversation".
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversations.Seed(conversation);
 
         var permissions = new FakePermissionChecker();
@@ -177,6 +180,7 @@ public class AssignConversationHandlerTests
         var conversations = new FakeConversationRepository();
         var victimSiteId = new SiteId(Guid.NewGuid());
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), victimSiteId, VisitorId, Now);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversations.Seed(conversation);
 
         // A real grant, on the caller's own site - the point is that a legitimately-permitted

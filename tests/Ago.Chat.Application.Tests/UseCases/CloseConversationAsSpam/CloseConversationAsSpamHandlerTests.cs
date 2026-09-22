@@ -29,6 +29,9 @@ public class CloseConversationAsSpamHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         conversation.ClearDomainEvents();
         conversations.Seed(conversation);

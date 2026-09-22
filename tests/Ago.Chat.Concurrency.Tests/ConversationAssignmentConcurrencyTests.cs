@@ -57,7 +57,12 @@ public sealed class ConversationAssignmentConcurrencyTests(ConcurrencyTestFixtur
             {
                 var visitorId = new VisitorId(Guid.NewGuid());
                 db.Visitors.Add(new Visitor(visitorId, siteId, Now));
-                db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+                // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+                // visitor's own real first message before persisting it, so it is genuinely Waiting for
+                // ConversationAssignmentJob to find.
+                var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+                conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+                db.Conversations.Add(conversation);
             }
 
             await db.SaveChangesAsync();

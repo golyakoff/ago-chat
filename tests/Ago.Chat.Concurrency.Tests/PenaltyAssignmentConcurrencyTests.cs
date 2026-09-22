@@ -49,7 +49,13 @@ public sealed class SkipLockedPenaltyAssignmentConcurrencyTests(ConcurrencyTestF
             db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, conversationCreatedAt));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, conversationCreatedAt));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // the assignment claimer to find.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, conversationCreatedAt);
+            conversation.AddVisitorMessage(
+                visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), conversationCreatedAt);
+            db.Conversations.Add(conversation);
             await db.SaveChangesAsync();
         }
 
@@ -258,7 +264,13 @@ public sealed class RedisLockPenaltyAssignmentConcurrencyTests(SiteCachingConcur
             db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
             db.Visitors.Add(new Visitor(visitorId, siteId, conversationCreatedAt));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, conversationCreatedAt));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // the assignment claimer to find.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, conversationCreatedAt);
+            conversation.AddVisitorMessage(
+                visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), conversationCreatedAt);
+            db.Conversations.Add(conversation);
             await db.SaveChangesAsync();
         }
 

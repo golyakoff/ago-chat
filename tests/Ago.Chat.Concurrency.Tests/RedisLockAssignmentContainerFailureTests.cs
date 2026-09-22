@@ -57,7 +57,12 @@ public sealed class RedisLockAssignmentContainerFailureTests
             var operatorRoleId = Guid.NewGuid();
             db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
             db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, leaving it genuinely Waiting (the
+            // real candidate this test's own docstring requires).
+            var seeded = Conversation.Start(conversationId, siteId, visitorId, Now);
+            seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            db.Conversations.Add(seeded);
             await db.SaveChangesAsync();
         }
 

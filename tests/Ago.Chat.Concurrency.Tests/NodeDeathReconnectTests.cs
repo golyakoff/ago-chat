@@ -79,6 +79,20 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
         var conversationId = new ConversationId(joined.ConversationId);
         Assert.Single(trackerA.Snapshot());
 
+        // `25-221`: a brand-new conversation starts Pending, not Waiting, so nothing is routable to an
+        // operator - and JoinConversationAsync below would refuse it outright - until the visitor's
+        // own real first message exists. Written directly through the repository rather than this
+        // fixture's own hub (whose SendVisitorMessageHandler dependency is deliberately null! here -
+        // this file exercises node-death reconnect, not the send pipeline).
+        await using (var db = fixture.CreateDbContext())
+        {
+            var conversations = new ConversationRepository(db);
+            var conversation = (await conversations.GetByIdAsync(conversationId, CancellationToken.None))!;
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello from node A"), Now);
+            conversation.ClearDomainEvents();
+            await conversations.SaveAsync(conversation, CancellationToken.None);
+        }
+
         // --- Node B: the operator connects and assigns the conversation - unaffected throughout. ---
         var operatorOnB = CreateOperatorHub(siteId, operatorId, "operator-conn-b", registry, trackerB, nodeB);
         await operatorOnB.OnConnectedAsync();
@@ -110,8 +124,9 @@ public sealed class NodeDeathReconnectTests(SiteCachingConcurrencyFixture fixtur
 
         Assert.False(resumed.IsNew);
         Assert.Equal(conversationId.Value, resumed.ConversationId);
-        var message = Assert.Single(resumed.History);
-        Assert.Equal("hello from node B", message.Body);
+        // `25-221`: two messages now - the visitor's own graduating one, then the operator's reply.
+        Assert.Equal(2, resumed.History.Count);
+        Assert.Contains(resumed.History, m => m.Body == "hello from node B");
         Assert.Single(trackerC.Snapshot()); // registered under the new node
 
         var onlyNodeC = await registry.GetConnectionsAsync(PrincipalKeys.ForVisitor(visitorId), CancellationToken.None);

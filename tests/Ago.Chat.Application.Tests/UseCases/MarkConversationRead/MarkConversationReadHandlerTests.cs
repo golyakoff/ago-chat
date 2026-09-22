@@ -20,11 +20,19 @@ public class MarkConversationReadHandlerTests
         ConversationId id, int visitorMessages, OperatorId? assignedTo = null)
     {
         var conversation = Conversation.Start(id, SiteId, VisitorId, Now);
-        conversation.AssignTo(assignedTo ?? OperatorId, Now);
         for (var i = 0; i < visitorMessages; i++)
         {
             var message = conversation.AddVisitorMessage(
                 VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("incoming"), Now);
+            if (i == 0)
+            {
+                // `25-221`: this first message is what graduates the conversation out of Pending and
+                // into Waiting - only from there can AssignTo run. Assigning right after it, mid-loop,
+                // keeps every sequence number and every IncrementUnreadCount call exactly as before
+                // this item (every caller here passes visitorMessages >= 1).
+                conversation.AssignTo(assignedTo ?? OperatorId, Now);
+            }
+
             conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, message.Sequence);
         }
 

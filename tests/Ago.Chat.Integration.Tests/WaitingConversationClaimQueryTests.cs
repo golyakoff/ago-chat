@@ -1,7 +1,13 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
+using Ago.Platform.Hosting;
+using Ago.Platform.Kernel;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -44,7 +50,10 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
             var visitorId = new VisitorId(Guid.NewGuid());
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
             var assigned = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+            assigned.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             assigned.AssignTo(operatorId, Now);
             db.Conversations.Add(assigned);
 
@@ -57,7 +66,11 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
             db.Sites.Add(new Site(otherSiteId, $"site_{otherSiteId.Value:N}", []));
             var otherVisitorId = new VisitorId(Guid.NewGuid());
             db.Visitors.Add(new Visitor(otherVisitorId, otherSiteId, Now));
-            db.Conversations.Add(Conversation.Start(new ConversationId(Guid.NewGuid()), otherSiteId, otherVisitorId, Now));
+            // Genuinely Waiting too - this row must be excluded for being the wrong site, not merely
+            // for being Pending.
+            var otherSiteConversation = Conversation.Start(new ConversationId(Guid.NewGuid()), otherSiteId, otherVisitorId, Now);
+            otherSiteConversation.AddVisitorMessage(otherVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            db.Conversations.Add(otherSiteConversation);
 
             await db.SaveChangesAsync();
         }
@@ -141,15 +154,20 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
         {
             db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
 
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate each with the
+            // visitor's own real first message before persisting it, so both are genuinely Waiting and
+            // this test proves routing suppression itself, not merely Pending's own invisibility.
             var suppressedVisitorId = new VisitorId(Guid.NewGuid());
             db.Visitors.Add(new Visitor(suppressedVisitorId, siteId, Now));
             var suppressed = Conversation.Start(
                 new ConversationId(Guid.NewGuid()), siteId, suppressedVisitorId, Now, suppressRouting: true);
+            suppressed.AddVisitorMessage(suppressedVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             db.Conversations.Add(suppressed);
 
             var ordinaryVisitorId = new VisitorId(Guid.NewGuid());
             db.Visitors.Add(new Visitor(ordinaryVisitorId, siteId, Now));
             var ordinary = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, ordinaryVisitorId, Now);
+            ordinary.AddVisitorMessage(ordinaryVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             db.Conversations.Add(ordinary);
 
             await db.SaveChangesAsync();
@@ -165,6 +183,77 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
         }
     }
 
+    /// <summary>`25-221`'s own fails-before/passes-after proof, at the level nearest the reported bug:
+    /// opening a conversation alone (<see cref="Conversation.Start"/>, unconditionally
+    /// <see cref="ConversationState.Pending"/> since this item - exactly what a widget mount alone
+    /// produces via <c>VisitorHub.JoinAsync</c>) must never be picked up by a real assignment cycle -
+    /// <see cref="ConversationAssignmentJob.RunOnceAsync"/>, through the real
+    /// <see cref="SkipLockedAssignmentClaimer"/> production actually runs, not the raw query the other
+    /// tests in this file exercise directly. Only once the visitor's own first real message exists does
+    /// the identical cycle claim it - proven by running the same job twice, before and after that
+    /// message, against one real Postgres row.</summary>
+    [Fact]
+    public async Task ConversationAssignmentJob_NeverAssignsAConversationWithNoRealMessage_ButAssignsItOnceOneArrives()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // `25-170`: a real Operator-role seat - the claimer requires one regardless of status, so
+            // there is a genuine, eligible candidate for the job to (wrongly, before this item) assign.
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+            // The literal reported bug: a brand-new conversation with no message at all.
+            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            await db.SaveChangesAsync();
+        }
+
+        var job = new ConversationAssignmentJob(
+            fixture.DataSource,
+            new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator()),
+            Options.Create(new ConversationAssignmentJobOptions()), NullLogger<ConversationAssignmentJob>.Instance);
+
+        // Fails-before: a real assignment cycle runs, an eligible operator is online and seated, and
+        // still nothing is claimed - the conversation is Pending, not Waiting, structurally invisible
+        // to WaitingConversationClaimQuery's own literal `state = 'Waiting'` filter.
+        await job.RunOnceAsync(CancellationToken.None);
+
+        await using (var afterFirstCycle = fixture.CreateDbContext())
+        {
+            var stillPending = await afterFirstCycle.Conversations.AsNoTracking()
+                .SingleAsync(c => c.Id == conversationId);
+            Assert.Equal(ConversationState.Pending, stillPending.State);
+            Assert.Null(stillPending.OperatorId);
+        }
+
+        // The visitor writes - the one and only thing that graduates Pending -> Waiting
+        // (Conversation.AddVisitorMessage's own remarks).
+        await using (var messageDb = fixture.CreateDbContext())
+        {
+            var repository = new ConversationRepository(messageDb);
+            var conversation = await repository.GetByIdAsync(conversationId, CancellationToken.None);
+            conversation!.AddVisitorMessage(
+                visitorId, new MessageId(Guid.NewGuid()), new MessageBody("is anyone there?"), Now.AddSeconds(1));
+            await repository.SaveAsync(conversation, CancellationToken.None);
+        }
+
+        // Passes-after: the identical cycle, against the identical row, now claims it.
+        await job.RunOnceAsync(CancellationToken.None);
+
+        await using var afterSecondCycle = fixture.CreateDbContext();
+        var nowAssigned = await afterSecondCycle.Conversations.AsNoTracking()
+            .SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Assigned, nowAssigned.State);
+        Assert.Equal(operatorId, nowAssigned.OperatorId);
+    }
+
     private async Task<List<ConversationId>> SeedWaitingConversationsAsync(SiteId siteId, int count)
     {
         var ids = new List<ConversationId>();
@@ -176,7 +265,12 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
             var visitorId = new VisitorId(Guid.NewGuid());
             var conversationId = new ConversationId(Guid.NewGuid());
             db.Visitors.Add(new Visitor(visitorId, siteId, Now.AddSeconds(i)));
-            db.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now.AddSeconds(i)));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting (this
+            // helper's own name) for WaitingConversationClaimQuery to find.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now.AddSeconds(i));
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now.AddSeconds(i));
+            db.Conversations.Add(conversation);
             ids.Add(conversationId);
         }
 

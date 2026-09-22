@@ -45,6 +45,9 @@ public sealed class FreshSiteOperatorConversationCloseTests(PostgresFixture fixt
             seed.Visitors.Add(new Visitor(visitorId, siteId, Now));
 
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(operatorId, Now);
             conversation.ClearDomainEvents();
             seed.Conversations.Add(conversation);

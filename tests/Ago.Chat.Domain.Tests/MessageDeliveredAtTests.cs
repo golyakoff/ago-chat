@@ -17,6 +17,9 @@ public class MessageDeliveredAtTests
     private static Conversation StartAssignedConversation()
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: graduates Pending -> Waiting so AssignTo below is legal - none of this file's own
+        // tests care about the resulting message's sequence number, only about MarkDelivered.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
         return conversation;
     }

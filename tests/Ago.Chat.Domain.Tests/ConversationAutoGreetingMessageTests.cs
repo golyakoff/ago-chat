@@ -93,6 +93,7 @@ public class ConversationAutoGreetingMessageTests
     public void AddAutoGreetingMessage_OnAClosedConversation_ReturnsNull_RatherThanThrowing()
     {
         var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now);
 

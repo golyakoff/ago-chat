@@ -23,6 +23,9 @@ public class BlockVisitorHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - this fixture's own tests
+        // assert Waiting, so graduate it with the visitor's own real first message.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversations.Seed(conversation);
 
         var permissions = new FakePermissionChecker();

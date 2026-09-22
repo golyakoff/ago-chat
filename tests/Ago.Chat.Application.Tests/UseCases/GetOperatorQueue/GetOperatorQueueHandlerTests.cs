@@ -14,10 +14,15 @@ public class GetOperatorQueueHandlerTests
     [Fact]
     public async Task HandleAsync_ReturnsWaitingConversationsForTheSite_AndAssignedConversationsForThisOperator()
     {
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - each of these three needs
+        // the visitor's own real first message before it is genuinely Waiting (or assignable at all).
         var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        waiting.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        assignedToMe.AddVisitorMessage(assignedToMe.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
         var assignedToSomeoneElse = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        assignedToSomeoneElse.AddVisitorMessage(assignedToSomeoneElse.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToSomeoneElse.AssignTo(new OperatorId(Guid.NewGuid()), Now);
 
         var (handler, conversations) = CreateHandler();
@@ -43,6 +48,7 @@ public class GetOperatorQueueHandlerTests
     {
         var operatorWhoGranted = new OperatorId(Guid.NewGuid());
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
         assignedToMe.MarkAttachmentUploadGrantedForTesting(operatorWhoGranted, Now);
 
@@ -62,6 +68,7 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_AnAssignedConversationWithNoGrant_CarriesNoGrantFieldsOnItsSummary()
     {
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
 
         var (handler, conversations) = CreateHandler();
@@ -81,6 +88,7 @@ public class GetOperatorQueueHandlerTests
     {
         var otherSite = new SiteId(Guid.NewGuid());
         var waitingElsewhere = Conversation.Start(new ConversationId(Guid.NewGuid()), otherSite, VisitorId, Now);
+        waitingElsewhere.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
 
         var (handler, conversations) = CreateHandler();
         conversations.Seed(waitingElsewhere);
@@ -95,10 +103,14 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_WithATagFilter_ReturnsOnlyTaggedConversationsInBothLists()
     {
         var taggedWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        taggedWaiting.AddVisitorMessage(taggedWaiting.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var untaggedWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        untaggedWaiting.AddVisitorMessage(untaggedWaiting.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var taggedAssignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        taggedAssignedToMe.AddVisitorMessage(taggedAssignedToMe.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         taggedAssignedToMe.AssignTo(OperatorId, Now);
         var untaggedAssignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        untaggedAssignedToMe.AddVisitorMessage(untaggedAssignedToMe.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         untaggedAssignedToMe.AssignTo(OperatorId, Now);
 
         var conversations = new FakeConversationRepository();
@@ -135,8 +147,11 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_WithTwoTagFilters_ReturnsOnlyConversationsCarryingBoth()
     {
         var bothTagsWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        bothTagsWaiting.AddVisitorMessage(bothTagsWaiting.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var oneTagWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        oneTagWaiting.AddVisitorMessage(oneTagWaiting.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var neitherTagWaiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now);
+        neitherTagWaiting.AddVisitorMessage(neitherTagWaiting.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
 
         var conversations = new FakeConversationRepository();
         conversations.Seed(bothTagsWaiting);
@@ -173,6 +188,7 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_ABlockedWaitingConversation_IsExcluded()
     {
         var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        waiting.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         waiting.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
 
         var (handler, conversations) = CreateHandler();
@@ -188,6 +204,7 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_ABlockedConversationAssignedToMe_IsExcluded()
     {
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
         assignedToMe.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
 
@@ -208,6 +225,7 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_ARoutingSuppressedWaitingConversation_IsExcluded()
     {
         var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, suppressRouting: true);
+        waiting.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
 
         var (handler, conversations) = CreateHandler();
         conversations.Seed(waiting);
@@ -231,7 +249,9 @@ public class GetOperatorQueueHandlerTests
         visitor.AssignEmojiPair("🐳", "🌭");
 
         var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        waiting.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
 
         var conversations = new FakeConversationRepository();
@@ -263,7 +283,9 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_TheSameVisitorsTwoConversations_CarryTheIdenticalVisitorName()
     {
         var waiting = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        waiting.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
 
         var conversations = new FakeConversationRepository();
@@ -294,6 +316,7 @@ public class GetOperatorQueueHandlerTests
     {
         var (handler, conversations) = CreateHandler();
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
         conversations.Seed(assignedToMe);
 
@@ -310,6 +333,7 @@ public class GetOperatorQueueHandlerTests
     public async Task HandleAsync_AVisitorWithTwoNameRows_CarriesTheMostRecentlyRecordedOne()
     {
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
 
         var conversations = new FakeConversationRepository();

@@ -113,6 +113,9 @@ public sealed class OperatorRemovalEndToEndTests(ConnectionFanoutFixture fixture
             db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
             db.Visitors.Add(new Visitor(visitorId, siteId, Now));
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(operatorId, Now, holdsCapacityClaim: true);
             db.Conversations.Add(conversation);
             await db.SaveChangesAsync();

@@ -49,7 +49,12 @@ public sealed class ConversationAssignmentFanoutEndToEndTests(ConnectionFanoutFi
             // role-less operator is no longer a routing candidate at all.
             seed.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
             seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
-            seed.Conversations.Add(Conversation.Start(conversationId, siteId, visitorId, Now));
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // the real assignment engine to find.
+            var seededConversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            seededConversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            seed.Conversations.Add(seededConversation);
             await seed.SaveChangesAsync(CancellationToken.None);
         }
 

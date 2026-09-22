@@ -48,6 +48,9 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
 
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(operatorId, Now);
             conversation.ClearDomainEvents();
             seed.Conversations.Add(conversation);
@@ -116,6 +119,9 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = otherOperatorId, RoleId = roleId });
 
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(assignedOperatorId, Now);
             conversation.ClearDomainEvents();
             seed.Conversations.Add(conversation);
@@ -178,6 +184,9 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
 
             var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+            // visitor's own real first message before AssignTo, which still only accepts Waiting.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
             conversation.AssignTo(operatorId, Now);
             conversation.ClearDomainEvents();
             seed.Conversations.Add(conversation);

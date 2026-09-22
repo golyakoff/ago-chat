@@ -11,12 +11,17 @@ public class ConversationTests
     private static Conversation StartConversation(DateTimeOffset? now = null) =>
         Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, now ?? Now);
 
+    /// <summary>`25-221`: renamed from `Start_CreatesAWaitingConversation_...` - a brand-new
+    /// conversation must not be routable to an operator before the visitor has written anything, so it
+    /// starts in <see cref="ConversationState.Pending"/>, not <see cref="ConversationState.Waiting"/>.
+    /// See <see cref="AddVisitorMessage_OnAPendingConversation_TransitionsToWaiting"/> for the other
+    /// half of this invariant.</summary>
     [Fact]
-    public void Start_CreatesAWaitingConversation_AndRaisesConversationStarted()
+    public void Start_CreatesAPendingConversation_AndRaisesConversationStarted()
     {
         var conversation = StartConversation();
 
-        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Equal(ConversationState.Pending, conversation.State);
         Assert.Null(conversation.OperatorId);
         Assert.Equal(0, conversation.LastSequence);
         Assert.Empty(conversation.Messages);
@@ -25,6 +30,61 @@ public class ConversationTests
         Assert.Equal(conversation.Id, started.ConversationId);
         Assert.Equal(SiteId, started.SiteId);
         Assert.Equal(VisitorId, started.VisitorId);
+    }
+
+    /// <summary>`25-221`: the fails-before proof for this item's own root fix - a real visitor message
+    /// is the only thing that ever graduates a conversation out of <see cref="ConversationState.Pending"/>
+    /// and, with it, into <c>ConversationAssignmentJob</c>'s claim query for the first time.</summary>
+    [Fact]
+    public void AddVisitorMessage_OnAPendingConversation_TransitionsToWaiting()
+    {
+        var conversation = StartConversation();
+        Assert.Equal(ConversationState.Pending, conversation.State);
+
+        conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
+
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+    }
+
+    /// <summary>`25-221`: the retried-send case named in <see cref="Conversation.AddVisitorMessage"/>'s
+    /// own remarks - the transition only ever runs once, so a second real message finds the
+    /// conversation already <see cref="ConversationState.Waiting"/> (or further along) and simply
+    /// leaves it there.</summary>
+    [Fact]
+    public void AddVisitorMessage_OnAConversationAlreadyWaiting_LeavesItWaiting()
+    {
+        var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
+
+        conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(1));
+
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+    }
+
+    /// <summary>`25-221`: the exact case the backlog item's own root-cause trace calls out by name -
+    /// `AddAutoGreetingMessage` may materialise a message on this same conversation, in this same
+    /// transaction, before the visitor's own first real message ever reaches
+    /// <see cref="Conversation.AddVisitorMessage"/> (`MessageBatchWriter`'s greeting-then-message
+    /// sequencing). That greeting message must not be what graduates the conversation out of
+    /// <see cref="ConversationState.Pending"/> - only a genuine <see cref="MessageAuthorKind.Visitor"/>
+    /// one may, which is why the guard is keyed on <see cref="Conversation.State"/> rather than on
+    /// <c>Messages.Count</c>.</summary>
+    [Fact]
+    public void AddAutoGreetingMessage_DoesNotGraduateThePendingConversation_OnlyARealVisitorMessageDoes()
+    {
+        var conversation = StartConversation();
+
+        var greeting = conversation.AddAutoGreetingMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody("Hi, need any help?"), Now);
+        Assert.NotNull(greeting);
+        Assert.Equal(ConversationState.Pending, conversation.State);
+
+        conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("Yes please"), Now.AddMinutes(1));
+
+        Assert.Equal(ConversationState.Waiting, conversation.State);
     }
 
     /// <summary>`24-10`: a freshly started conversation has never been blocked - the same "null means
@@ -131,10 +191,22 @@ public class ConversationTests
     // `InternalsVisibleTo` grants only `Ago.Chat.Application.Tests` that seam, deliberately, and
     // `Ago.Chat.Domain.Tests` (this project) does not get it just to duplicate that coverage.
 
+    /// <summary>`25-221`: a conversation ready to be assigned - the same "graduate with the visitor's
+    /// own first real message, then act" shape every test in this file that needs a <see
+    /// cref="ConversationState.Waiting"/> (not <see cref="ConversationState.Pending"/>) starting point
+    /// now uses, since <see cref="Conversation.AssignTo"/> only ever accepted <c>Waiting</c> and that
+    /// has not changed - only how a brand-new conversation gets there has.</summary>
+    private static Conversation StartWaitingConversation()
+    {
+        var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        return conversation;
+    }
+
     [Fact]
     public void AssignTo_WhenWaiting_TransitionsToAssigned_AndRaisesConversationAssigned()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
 
         conversation.AssignTo(OperatorId, Now);
 
@@ -146,7 +218,7 @@ public class ConversationTests
     [Fact]
     public void AssignTo_WhenAlreadyAssigned_ThrowsInvalidConversationStateException()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
 
         Assert.Throws<InvalidConversationStateException>(() =>
@@ -156,7 +228,7 @@ public class ConversationTests
     [Fact]
     public void AssignTo_WhenAlreadyAssignedToTheSameOperator_IsANoOp()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.ClearDomainEvents();
 
@@ -175,7 +247,7 @@ public class ConversationTests
     [InlineData(false)]
     public void AssignTo_RecordsWhetherTheAssignmentHoldsACapacityClaim(bool holdsCapacityClaim)
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
 
         conversation.AssignTo(OperatorId, Now, holdsCapacityClaim);
 
@@ -185,7 +257,7 @@ public class ConversationTests
     [Fact]
     public void AssignTo_Default_TakesNoCapacityClaim()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
 
         conversation.AssignTo(OperatorId, Now);
 
@@ -197,7 +269,7 @@ public class ConversationTests
     [Fact]
     public void AssignTo_RepeatedBySameOperator_KeepsAnExistingCapacityClaim()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
 
         conversation.AssignTo(OperatorId, Now.AddMinutes(5));
@@ -211,7 +283,7 @@ public class ConversationTests
     [Fact]
     public void TransferTo_WhenAssigned_MovesTheOperator_StaysAssigned_AndRaisesConversationTransferred()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.ClearDomainEvents();
         var newOperator = new OperatorId(Guid.NewGuid());
@@ -240,7 +312,7 @@ public class ConversationTests
     [Fact]
     public void TransferTo_WhenClosed_ThrowsInvalidConversationStateException()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now);
 
@@ -255,7 +327,7 @@ public class ConversationTests
     [InlineData(false)]
     public void TransferTo_CarriesTheCapacityClaimFlagOverUnchanged(bool holdsCapacityClaim)
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now, holdsCapacityClaim);
         var newOperator = new OperatorId(Guid.NewGuid());
 
@@ -268,7 +340,7 @@ public class ConversationTests
     [Fact]
     public void Close_WhenTheAssignmentHoldsACapacityClaim_ConsumesItExactlyOnce()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
 
         Assert.True(conversation.Close(Now));
@@ -281,7 +353,7 @@ public class ConversationTests
     [Fact]
     public void Close_WhenTheAssignmentHoldsNoCapacityClaim_ConsumesNothing()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
 
         Assert.False(conversation.Close(Now));
@@ -297,7 +369,7 @@ public class ConversationTests
     [Fact]
     public void Close_WhenWaiting_ClosesCleanly_WithNoCapacityClaimToConsume_AndRaisesConversationClosed()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.ClearDomainEvents();
 
         var consumedCapacityClaim = conversation.Close(Now.AddMinutes(5));
@@ -321,7 +393,7 @@ public class ConversationTests
     [Fact]
     public void Close_WhenReleasedBackToWaitingAfterHoldingACapacityClaim_ConsumesNothingOnClose()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
         conversation.ReleaseToQueue(Now.AddMinutes(1));
         conversation.ClearDomainEvents();
@@ -335,12 +407,12 @@ public class ConversationTests
     [Fact]
     public void ReleaseToQueue_ConsumesTheCapacityClaimIfThereWasOne()
     {
-        var claiming = StartConversation();
+        var claiming = StartWaitingConversation();
         claiming.AssignTo(OperatorId, Now, holdsCapacityClaim: true);
         Assert.True(claiming.ReleaseToQueue(Now));
         Assert.False(claiming.HoldsCapacityClaim);
 
-        var handPicked = StartConversation();
+        var handPicked = StartWaitingConversation();
         handPicked.AssignTo(OperatorId, Now);
         Assert.False(handPicked.ReleaseToQueue(Now));
     }
@@ -357,7 +429,7 @@ public class ConversationTests
     [Fact]
     public void ReleaseToQueue_WhenAssigned_TransitionsToWaiting_ClearsOperatorId_AndRaisesConversationReleased()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.ClearDomainEvents();
 
@@ -383,7 +455,7 @@ public class ConversationTests
     [Fact]
     public void ReleaseToQueue_WhenClosed_ThrowsInvalidConversationStateException()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now);
 
@@ -393,7 +465,7 @@ public class ConversationTests
     [Fact]
     public void ReleaseToQueue_ThenAssignToADifferentOperator_Succeeds()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.ReleaseToQueue(Now);
         var anotherOperator = new OperatorId(Guid.NewGuid());
@@ -422,8 +494,13 @@ public class ConversationTests
 
     public static TheoryData<Action<Conversation>> NonClosedStates() => new()
     {
-        _ => { }, // still Waiting
-        c => c.AssignTo(OperatorId, Now), // Assigned
+        _ => { }, // still Pending - `25-221`: Close has never required Waiting, only "not already Closed"
+        c => c.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now), // Waiting
+        c => // Assigned
+        {
+            c.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            c.AssignTo(OperatorId, Now);
+        },
     };
 
     [Fact]
@@ -475,13 +552,16 @@ public class ConversationTests
     [Fact]
     public void AddVisitorMessage_WhenAssigned_Succeeds()
     {
-        var conversation = StartConversation();
+        // `25-221`: reaching Assigned at all requires the visitor's own first real message
+        // (Pending -> Waiting -> Assigned), so "still here" is necessarily the *second* message, not
+        // the first - StartWaitingConversation's own seed already burned Sequence 1.
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
 
         var message = conversation.AddVisitorMessage(
             VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("still here"), Now);
 
-        Assert.Equal(1, message.Sequence);
+        Assert.Equal(2, message.Sequence);
     }
 
     [Fact]
@@ -507,13 +587,15 @@ public class ConversationTests
     [Fact]
     public void AddOperatorMessage_WhenAssignedToTheCorrectOperator_Succeeds()
     {
-        var conversation = StartConversation();
+        // `25-221`: StartWaitingConversation's own seed visitor message already burned Sequence 1 -
+        // reaching Assigned is impossible without it.
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
 
         var message = conversation.AddOperatorMessage(
             OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), Now);
 
-        Assert.Equal(1, message.Sequence);
+        Assert.Equal(2, message.Sequence);
         Assert.Equal(MessageAuthorKind.Operator, message.AuthorKind);
         Assert.Equal(SiteId, message.SiteId);
     }
@@ -530,7 +612,7 @@ public class ConversationTests
     [Fact]
     public void AddOperatorMessage_WhenClosed_ThrowsInvalidConversationStateException()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now);
 
@@ -541,7 +623,7 @@ public class ConversationTests
     [Fact]
     public void AddOperatorMessage_WhenAuthorIsNotTheAssignedOperator_ThrowsConversationParticipantMismatchException()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         var someoneElse = new OperatorId(Guid.NewGuid());
 
@@ -553,9 +635,12 @@ public class ConversationTests
     public void Sequence_IncrementsAcrossVisitorAndOperatorMessages_RegardlessOfAuthor()
     {
         var conversation = StartConversation();
+        // `25-221`: the visitor's own first real message has to exist before AssignTo is legal at all
+        // (Pending -> Waiting -> Assigned) - reordered from "assign, then send three messages" with no
+        // change to the sequence numbers this test asserts.
+        var first = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
 
-        var first = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         var second = conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now);
         var third = conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("thanks"), Now);
 
@@ -584,7 +669,10 @@ public class ConversationTests
     [Fact]
     public void AddOperatorMessage_RepeatedClientMessageId_ReturnsOriginalMessage_BurnsNoNewSequence()
     {
-        var conversation = StartConversation();
+        // `25-221`: StartWaitingConversation's own seed visitor message is Sequence 1 and the
+        // conversation's only other message besides the operator's own - the dedup guard still burns
+        // no *new* sequence for the retry, it just is not the conversation's only message any more.
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         var clientMessageId = Guid.NewGuid();
 
@@ -594,8 +682,8 @@ public class ConversationTests
             OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now, clientMessageId: clientMessageId);
 
         Assert.Same(first, retry);
-        Assert.Equal(1, conversation.LastSequence);
-        Assert.Single(conversation.Messages);
+        Assert.Equal(2, conversation.LastSequence);
+        Assert.Equal(2, conversation.Messages.Count);
     }
 
     [Fact]
@@ -663,15 +751,26 @@ public class ConversationTests
     // `5-15` -------------------------------------------------------------------------------------
 
     /// <summary>An assigned conversation with <paramref name="visitorMessages"/> visitor messages,
-    /// each already counted by `2-05`'s consumer - the ordinary state an operator finds one in.</summary>
+    /// each already counted by `2-05`'s consumer - the ordinary state an operator finds one in.
+    /// Requires <paramref name="visitorMessages"/> to be at least 1: `25-221`'s own graduation rule
+    /// means there is no way to reach <see cref="ConversationState.Assigned"/>, and therefore no way
+    /// to be "an assigned conversation with unread messages" at all, without one.</summary>
     private static Conversation AssignedConversationWithUnread(int visitorMessages)
     {
         var conversation = StartConversation();
-        conversation.AssignTo(OperatorId, Now);
         for (var i = 0; i < visitorMessages; i++)
         {
             var message = conversation.AddVisitorMessage(
                 VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("incoming"), Now);
+            if (i == 0)
+            {
+                // `25-221`: this first message is what graduates the conversation out of Pending and
+                // into Waiting - only from there can AssignTo run. Assigning right after it, mid-loop,
+                // keeps every sequence number and every IncrementUnreadCount call exactly as before
+                // this item, rather than front-loading a throwaway message that would shift them all.
+                conversation.AssignTo(OperatorId, Now);
+            }
+
             conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, message.Sequence);
         }
 
@@ -740,7 +839,7 @@ public class ConversationTests
         // The in-flight case: the message row commits, the operator reads it, and `2-05`'s consumer
         // only gets to it afterwards. Without the guard this would re-raise a count the operator has
         // already cleared, and the badge would light up for a message they are looking at.
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         var message = conversation.AddVisitorMessage(
             VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
@@ -771,9 +870,12 @@ public class ConversationTests
     public void MarkReadByOperator_OperatorMessagesInTheRange_DoNotSubtractFromTheOperatorsOwnCount()
     {
         var conversation = StartConversation();
-        conversation.AssignTo(OperatorId, Now);
+        // `25-221`: reordered - the visitor's own first message has to exist (Pending -> Waiting)
+        // before AssignTo is legal, so it comes before assignment rather than after. The sequence
+        // numbers this test asserts (1, 2, 3) are unchanged either way.
         var incoming = conversation.AddVisitorMessage(
             VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello"), Now);
+        conversation.AssignTo(OperatorId, Now);
         conversation.IncrementUnreadCount(MessageAuthorKind.Visitor, incoming.Sequence);
         conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi back"), Now);
         var second = conversation.AddVisitorMessage(
@@ -789,8 +891,10 @@ public class ConversationTests
     public void MarkReadByOperator_WhenTheConsumerHasNotCaughtUp_NeverGoesNegative()
     {
         var conversation = StartConversation();
-        conversation.AssignTo(OperatorId, Now);
+        // `25-221`: "a" is what graduates Pending -> Waiting, so AssignTo has to follow it rather than
+        // precede it - the sequence numbers this test asserts (1, 2) are unchanged either way.
         conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("a"), Now);
+        conversation.AssignTo(OperatorId, Now);
         conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("b"), Now);
 
         conversation.MarkReadByOperator(OperatorId, upToSequence: 2);
@@ -842,12 +946,13 @@ public class ConversationTests
     {
         // `5-15`'s stated asymmetry, pinned by a test so it cannot drift silently: the visitor side
         // is deliberately unchanged, because nothing reads it yet.
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
-        conversation.AddOperatorMessage(OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
-        conversation.IncrementUnreadCount(MessageAuthorKind.Operator, sequence: 1);
+        var operatorMessage = conversation.AddOperatorMessage(
+            OperatorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.IncrementUnreadCount(MessageAuthorKind.Operator, operatorMessage.Sequence);
 
-        conversation.MarkReadByOperator(OperatorId, upToSequence: 1);
+        conversation.MarkReadByOperator(OperatorId, upToSequence: operatorMessage.Sequence);
 
         Assert.Equal(1, conversation.VisitorUnreadCount);
     }
@@ -907,7 +1012,7 @@ public class ConversationTests
     [Fact]
     public void SetOutcome_IsIndependentOfState_SettableWhileWaiting()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
 
         conversation.SetOutcome(ConversationOutcome.FollowUpNeeded);
 
@@ -918,7 +1023,7 @@ public class ConversationTests
     [Fact]
     public void SetOutcome_AfterClose_StillWorks()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now.AddMinutes(5));
 
@@ -953,7 +1058,7 @@ public class ConversationTests
     [Fact]
     public void ClearDomainEvents_RemovesEverythingRaisedSoFar()
     {
-        var conversation = StartConversation();
+        var conversation = StartWaitingConversation();
         conversation.AssignTo(OperatorId, Now);
 
         conversation.ClearDomainEvents();
@@ -1016,8 +1121,10 @@ public class ConversationTests
         var conversation = Conversation.Start(
             new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, source);
 
-        // Every other mutation on this aggregate (AssignTo, Close, SetOutcome, ...) still leaves the
-        // originally captured source untouched.
+        // Every other mutation on this aggregate (AddVisitorMessage, AssignTo, Close, SetOutcome, ...)
+        // still leaves the originally captured source untouched. `25-221`: a real visitor message has
+        // to exist before AssignTo is legal at all.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         conversation.AssignTo(OperatorId, Now);
 
         Assert.Equal("shop.example", conversation.Source!.ReferrerHost);
