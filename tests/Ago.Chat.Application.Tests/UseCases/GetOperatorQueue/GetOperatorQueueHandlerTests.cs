@@ -483,23 +483,30 @@ public class GetOperatorQueueHandlerTests
         Assert.True(result.IsSuccess);
         var summary = Assert.Single(result.Value.AssignedToMe);
         Assert.Null(summary.LastMessagePreview);
+        // `26-76`: an attachment-only latest message is unaffected by this item - still no preview, and
+        // still no content kind, since AddOperatorMessage above records no MessageContent at all.
+        Assert.Null(summary.LastMessageContentKind);
         Assert.Equal(lastMessageAt, summary.LastMessageAt);
     }
 
-    // `26-29`: the identical "no sensible plain-text preview" treatment for structured content (a
-    // module step, or any other non-prose MessageContentKind) - Message.Body stays mandatory even
-    // here, but this DTO deliberately does not trust it as a one-line summary.
+    // `26-76`: a module step's Body is already Chat's own PrimitiveTextRenderer output, shipped verbatim
+    // to text-only channels - the preview shows its first line, not null, and carries the raw content
+    // kind so a client can render its own icon. The fixture is shaped exactly like real
+    // PrimitiveTextRenderer.Render output for a choice-shaped kind: a prompt line, a `\n`-separated
+    // numbered list, then the localized "Ответьте номером." trailer - everything after the first `\n`
+    // is chrome that must NOT survive into the preview.
     [Fact]
-    public async Task HandleAsync_TheLatestMessageCarriesStructuredContent_PreviewIsNullButTimestampIsSet()
+    public async Task HandleAsync_TheLatestMessageIsAModuleStep_PreviewsOnlyTheFirstLine_AndCarriesTheContentKind()
     {
         var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
         assignedToMe.AssignTo(OperatorId, Now);
         var lastMessageAt = Now.AddMinutes(5);
-        var content = MessageContent.Create(new MessageContentKind("booking.confirmation"));
+        var kind = new MessageContentKind(PrimitiveKinds.ChoiceList);
+        var content = MessageContent.Create(kind);
+        var renderedBody = "Выберите дату\n1) Понедельник\n2) Вторник\nОтветьте номером.";
         assignedToMe.AddSystemMessage(
-            new MessageId(Guid.NewGuid()), new MessageBody("Your booking is confirmed for Tuesday."), lastMessageAt,
-            content: content);
+            new MessageId(Guid.NewGuid()), new MessageBody(renderedBody), lastMessageAt, content: content);
 
         var conversations = new FakeConversationRepository();
         conversations.Seed(assignedToMe);
@@ -516,8 +523,81 @@ public class GetOperatorQueueHandlerTests
 
         Assert.True(result.IsSuccess);
         var summary = Assert.Single(result.Value.AssignedToMe);
-        Assert.Null(summary.LastMessagePreview);
+        Assert.Equal("Выберите дату", summary.LastMessagePreview);
+        Assert.Equal(PrimitiveKinds.ChoiceList, summary.LastMessageContentKind);
         Assert.Equal(lastMessageAt, summary.LastMessageAt);
+    }
+
+    // `26-76`: PrimitiveTextRenderer's own ConfirmationCard shape - the title line, then each
+    // `label: value` detail on its own `\n`-separated line. The preview must show the title alone, not
+    // the detail lines under it.
+    [Fact]
+    public async Task HandleAsync_TheLatestMessageIsAConfirmationCard_PreviewsTheTitleLine_NotTheDetailLines()
+    {
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        var lastMessageAt = Now.AddMinutes(5);
+        var kind = new MessageContentKind(PrimitiveKinds.ConfirmationCard);
+        var content = MessageContent.Create(kind);
+        var renderedBody = "✅ Готово!\nДата: вторник\nВремя: 14:00";
+        assignedToMe.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody(renderedBody), lastMessageAt, content: content);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var summary = Assert.Single(result.Value.AssignedToMe);
+        Assert.Equal("✅ Готово!", summary.LastMessagePreview);
+        Assert.Equal(PrimitiveKinds.ConfirmationCard, summary.LastMessageContentKind);
+        Assert.Equal(lastMessageAt, summary.LastMessageAt);
+    }
+
+    // `26-76`: a module step's own rendered first line is still subject to the identical truncation
+    // ceiling plain text already has - MaxPreviewLength is a wire-size bound, not a plain-text-only rule.
+    [Fact]
+    public async Task HandleAsync_ALongModuleStepFirstLine_IsTruncatedToTheStatedMaximum()
+    {
+        var longFirstLine = string.Concat(Enumerable.Repeat("0123456789", 20)); // 200 characters
+        var assignedToMe = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        assignedToMe.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        assignedToMe.AssignTo(OperatorId, Now);
+        var kind = new MessageContentKind(PrimitiveKinds.Form);
+        var content = MessageContent.Create(kind);
+        assignedToMe.AddSystemMessage(
+            new MessageId(Guid.NewGuid()), new MessageBody(longFirstLine + "\nignored second line"), Now,
+            content: content);
+
+        var conversations = new FakeConversationRepository();
+        conversations.Seed(assignedToMe);
+        var readStore = new FakeConversationReadStore();
+        readStore.Seed(assignedToMe);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var handler = new GetOperatorQueueHandler(
+            conversations, new FakeVisitorRepository(), new FakeTagRepository(), permissions,
+            new FakeVisitorContactDetailRepository(), readStore);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorQueue.GetOperatorQueue(OperatorId, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var preview = Assert.Single(result.Value.AssignedToMe).LastMessagePreview;
+        Assert.NotNull(preview);
+        Assert.Equal(80, preview!.Length);
+        Assert.EndsWith("…", preview);
+        Assert.StartsWith(longFirstLine[..79], preview);
     }
 
     // `26-29`'s own Done-when: "a conversation with no messages at all sends both as null, and no
