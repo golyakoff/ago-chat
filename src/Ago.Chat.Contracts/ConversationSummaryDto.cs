@@ -66,13 +66,25 @@
 /// exists.</b> A system message counts as the last message when it genuinely is one - hiding it would
 /// make this field and <see cref="LastMessageAt"/> disagree about whether anything was said since
 /// <see cref="LastMessageAt"/>. What *does* suppress the preview is the message's own shape, not its
-/// author: a message that references an attachment or carries structured content (a module step, any
-/// non-prose <c>MessageContentKind</c>) has no <see cref="LastMessagePreview"/> - the backend cannot
-/// tell a real human caption apart from a client-supplied placeholder standing in for a file, and
-/// inventing a server-composed label ("[attachment]") would be exactly the kind of localized string
-/// this contract must not own, since the same wire shape also feeds an English console locale.
-/// <see cref="LastMessageAt"/> is still populated in that case - the timestamp is honest regardless of
-/// whether the words themselves are safe to preview.</para>
+/// author: `26-76`: only a message that references an attachment has no <see cref="LastMessagePreview"/>
+/// - an attachment caption really is client-supplied, opaque, unverifiable text, and inventing a
+/// server-composed label ("[attachment]") would be exactly the kind of localized string this contract
+/// must not own, since the same wire shape also feeds an English console locale. A module step (a
+/// non-null <see cref="LastMessageContentKind"/>) is the opposite case, not the same one - its
+/// <see cref="LastMessagePreview"/> is the server's own already-rendered plain text, not a guess dressed
+/// up as one, so it is shown rather than withheld; see <see cref="LastMessageContentKind"/>'s own
+/// remarks. <see cref="LastMessageAt"/> is still populated in the attachment case - the timestamp is
+/// honest regardless of whether the words themselves are safe to preview.</para>
+///
+/// <para><b><see cref="LastMessageContentKind"/></b> - `26-76`: the raw <c>MessageContentKind</c> value
+/// of the latest message, exposed exactly as this DTO's own remarks above already anticipated ("a
+/// localized client-side label is a client concern; the DTO should be honest about the content kind
+/// rather than sending a server-composed Russian string"). <see langword="null"/> for plain prose and
+/// for an attachment-only message, non-null for a module step - a client renders its own icon/prefix
+/// from this rather than trying to infer "structured" from <see cref="LastMessagePreview"/> alone, which
+/// can no longer distinguish "structured, suppressed" from "structured, shown" now that a module step's
+/// preview is populated rather than withheld. Populated in <c>GetOperatorQueueHandler.ToSummary</c> from
+/// <c>latestMessage?.ContentKind</c> - no read-model change, that field was already selected.</para>
 ///
 /// <para><b>Truncated to 80 characters, collapsed to one line.</b> A list row has room for a
 /// few dozen characters, never a full 8000-character <c>MessageBody</c>, so
@@ -85,7 +97,8 @@ public sealed record ConversationSummaryDto(
     Guid? OperatorId = null, string? OperatorName = null, bool HasAttachmentUploadGrant = false,
     DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null,
     string? EmojiCreature = null, string? EmojiFood = null, string? VisitorName = null,
-    string? LastMessagePreview = null, DateTimeOffset? LastMessageAt = null);
+    string? LastMessagePreview = null, DateTimeOffset? LastMessageAt = null,
+    string? LastMessageContentKind = null);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the
