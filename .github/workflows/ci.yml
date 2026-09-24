@@ -69,10 +69,20 @@ jobs:
 
       # Ago.Chat.Architecture.Tests is an ordinary test project in this solution, so the layering
       # and platform-boundary rules it encodes run here with no separate job.
+      #
+      # Ago.Chat.Integration.Tests is excluded here, temporarily (26-95): every fixture in it pulls
+      # postgres/rabbitmq via Testcontainers, and this runner's Docker Hub pulls are anonymous - no
+      # login exists here, only to ghcr.io - so they hit Docker Hub's per-IP anonymous rate limit on
+      # GitHub's shared runner pool. The failure is `Docker.DotNet.DockerApiException: unauthorized`
+      # on the very first container a fixture starts, confirmed on two separate real runs
+      # (ago-chat#358, ago-chat#359) with the identical signature. Restore this project to the
+      # command below once 26-95 lands a Docker Hub credential for CI to authenticate with - until
+      # then it runs locally only, where Docker Desktop already holds the images.
       - name: Test
         run: >
           dotnet test Ago.Chat.slnx --no-build -c Release
           --logger trx --results-directory TestResults
+          --filter "FullyQualifiedName!~Ago.Chat.Integration.Tests"
 
       - name: Publish test results
         if: always()
