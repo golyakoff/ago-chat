@@ -292,5 +292,8 @@ public sealed class UnreadCountEndpointTests
 
         public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A visitor-only read must never check operator permissions.");
+
+        public Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A visitor-only read must never check operator permissions.");
     }
 }

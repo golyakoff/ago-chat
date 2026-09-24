@@ -39,10 +39,16 @@ namespace Ago.Chat.Application.UseCases.NotifyOperatorDevices;
 /// (`26-18`) are what actually collapse a redelivery, not a database write here.</para>
 /// </summary>
 public sealed class NotifyOperatorDevicesHandler(
-    IOperatorDeviceRepository devices, IConversationRepository conversations, IPushSender pushSender, IClock clock)
+    IOperatorDeviceRepository devices, IConversationRepository conversations, IPushSender pushSender, IClock clock,
+    IPermissionChecker permissions)
 {
     private const string ReasonAssigned = "assigned";
     private const string ReasonMessage = "message";
+
+    /// <summary>`26-86`: the third kind - see <see cref="HandleWaitingAsync"/>'s own remarks. The three
+    /// constants here are also, as of `26-81`, the only three values <see cref="SendToOperatorAsync"/>
+    /// ever writes into <c>data["reason"]</c> on the wire - see that method's own remarks.</summary>
+    private const string ReasonWaiting = "waiting";
 
     /// <summary>`ConversationAssignedToOperator` already names both the conversation and the operator -
     /// no load, the identical property `ResolveConversationAssignmentTargetsHandler` relies on for the
@@ -114,6 +120,58 @@ public sealed class NotifyOperatorDevicesHandler(
         return Result.Success();
     }
 
+    /// <summary>
+    /// `26-86`: the third arm - a brand-new conversation entered `Waiting` with nobody assigned at all,
+    /// so unlike the two arms above there is no single recipient to resolve. Every non-removed operator
+    /// on <see cref="NotifyOperatorDeviceForWaiting.SiteId"/> who holds `Permission.ConversationRead` is
+    /// a recipient (this item's own backlog scope: "every operator on the site who holds
+    /// conversation:read", not one assignee - there is no assignee yet) - resolved through
+    /// <see cref="IPermissionChecker.ListNonRemovedHolderIdsAsync"/> rather than a new query, the same
+    /// role-based resolution `PermissionChecker.CountNonRemovedHoldersAsync` already gives
+    /// `RemoveOperatorHandler`'s own last-manager guard, restated as a list of ids instead of a count.
+    ///
+    /// <para>No conversation load, for the identical reason <see cref="HandleAssignmentAsync"/>'s own
+    /// remarks state: `ConversationWaitingForOperator` already names the conversation, site and visitor
+    /// directly.</para>
+    ///
+    /// <para>Whether a plain Operator role (holds `conversation:send` but not `conversation:assign`)
+    /// can act on this notification is explicitly left open by this item's own backlog - this handler
+    /// does not gate on `conversation:assign` at all, only `conversation:read`, per that same scope
+    /// note ("do not hide the notification... from a plain Operator as part of this item").</para>
+    /// </summary>
+    public async Task<Result> HandleWaitingAsync(NotifyOperatorDeviceForWaiting command, CancellationToken cancellationToken)
+    {
+        var operatorIds = await permissions.ListNonRemovedHolderIdsAsync(
+            command.SiteId, Permission.ConversationRead, cancellationToken);
+        if (operatorIds.Count == 0)
+        {
+            // Distinct from "no_devices" below: nobody on this site is even eligible to be notified,
+            // as opposed to an eligible operator who simply has no registered device.
+            ChatMetrics.RecordPushSuppressed("no_eligible_operators");
+            return Result.Success();
+        }
+
+        var who = ShortVisitorId(command.VisitorId);
+        var data = new Dictionary<string, string> { ["conversationId"] = command.ConversationId.Value.ToString() };
+        foreach (var operatorId in operatorIds)
+        {
+            await SendToOperatorAsync(
+                operatorId,
+                ReasonWaiting,
+                title: "New conversation waiting",
+                body: $"{who} is waiting for an operator.",
+                groupKey: GroupKeyFor(command.ConversationId),
+                data,
+                cancellationToken);
+        }
+
+        return Result.Success();
+    }
+
+    /// <summary>`26-81`: <paramref name="data"/> arrives from each of the three arms above carrying only
+    /// its own domain keys (<c>conversationId</c>, and <c>messageId</c> for the message kind) - the
+    /// explicit `reason` key every kind now puts on the wire is added exactly once, here, rather than at
+    /// each of the three call sites, so there is exactly one place that can forget it.</summary>
     private async Task SendToOperatorAsync(
         OperatorId operatorId, string reason, string title, string body, string groupKey,
         IReadOnlyDictionary<string, string> data, CancellationToken cancellationToken)
@@ -125,12 +183,14 @@ public sealed class NotifyOperatorDevicesHandler(
             return;
         }
 
+        var wireData = new Dictionary<string, string>(data) { ["reason"] = reason };
+
         // `push-notifications.md`'s own "The port, and what crosses it": TimeToLive is
         // PushMessage.RecommendedTimeToLive, this item's own only caller of that value.
         foreach (var device in activeDevices)
         {
             var message = new PushMessage(
-                device.Token, title, body, groupKey, PushMessage.RecommendedTimeToLive, data);
+                device.Token, title, body, groupKey, PushMessage.RecommendedTimeToLive, wireData);
             var providerTag = device.Provider.ToString().ToLowerInvariant();
 
             // Deliberately not caught here: IPushSender.SendAsync's own remarks state that only a

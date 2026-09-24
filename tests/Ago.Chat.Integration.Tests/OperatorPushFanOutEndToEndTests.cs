@@ -309,6 +309,133 @@ public sealed class OperatorPushFanOutEndToEndTests
         }
     }
 
+    /// <summary>
+    /// `26-86`'s own Done-when: a brand-new conversation entering the queue reaches **every** eligible
+    /// operator's device, never an ineligible one's - proven against a real RabbitMQ queue and a real
+    /// Postgres-backed <see cref="PermissionChecker"/>, the identical "own, non-shared containers per
+    /// test method" shape the two tests above already use, extended to this third, solo-topic consumer.
+    /// </summary>
+    [Fact]
+    public async Task WaitingEvent_FiresAPushToEveryEligibleOperatorsDevice_ButNeverToAnIneligibleOperatorsDevice()
+    {
+        var postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
+        var rabbitMq = new RabbitMqBuilder("rabbitmq:4-management")
+            .WithUsername(Username).WithPassword(Password)
+            .WithPortBinding(RabbitMqManagementPort, true)
+            .Build();
+        await Task.WhenAll(postgres.StartAsync(), rabbitMq.StartAsync());
+
+        try
+        {
+            await using var dataSource = new NpgsqlDataSourceBuilder(postgres.GetConnectionString()).Build();
+            var dbOptions = new DbContextOptionsBuilder<AgoChatDbContext>().UseNpgsql(dataSource).Options;
+            await using (var migrate = new AgoChatDbContext(dbOptions))
+            {
+                await migrate.Database.MigrateAsync();
+            }
+
+            var siteId = new SiteId(Guid.NewGuid());
+            var visitorId = new VisitorId(Guid.NewGuid());
+            var eligibleOperatorId = new OperatorId(Guid.NewGuid());
+            var ineligibleOperatorId = new OperatorId(Guid.NewGuid());
+            var conversationId = new ConversationId(Guid.NewGuid());
+            var roleId = Guid.NewGuid();
+
+            await using (var seed = new AgoChatDbContext(dbOptions))
+            {
+                seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+                seed.Visitors.Add(new Visitor(visitorId, siteId, Now));
+                seed.Operators.Add(new Operator(eligibleOperatorId, siteId, OperatorStatus.Online, capacity: 5));
+                seed.Operators.Add(new Operator(ineligibleOperatorId, siteId, OperatorStatus.Online, capacity: 5));
+                // Only the eligible operator holds a role granting conversation:read - the ineligible
+                // one is a real operator on this same site with no role at all, not merely a stranger.
+                seed.Roles.Add(new RoleRecord
+                {
+                    Id = roleId,
+                    SiteId = siteId,
+                    Name = "Operator",
+                    Permissions = [Permission.ConversationRead.Value],
+                });
+                seed.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = eligibleOperatorId, RoleId = roleId });
+                seed.OperatorDevices.Add(OperatorDevice.Register(
+                    new OperatorDeviceId(Guid.NewGuid()), siteId, eligibleOperatorId, "install-eligible", PushProvider.RuStore, "android",
+                    "token-eligible", Now));
+                seed.OperatorDevices.Add(OperatorDevice.Register(
+                    new OperatorDeviceId(Guid.NewGuid()), siteId, ineligibleOperatorId, "install-ineligible", PushProvider.RuStore, "android",
+                    "token-ineligible", Now));
+                await seed.SaveChangesAsync(CancellationToken.None);
+            }
+
+            var rabbitOptions = Options.Create(new RabbitMqOptions
+            {
+                HostName = rabbitMq.Hostname,
+                Port = rabbitMq.GetMappedPublicPort(5672),
+                UserName = Username,
+                Password = Password,
+            });
+
+            var pushSender = new RecordingPushSender();
+            await using var services = BuildWaitingServiceProvider(dataSource, pushSender);
+
+            await using var pushConsumerConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
+            var pushConsumer = new OperatorWaitingPushConsumer(
+                new RabbitMqEventConsumer(pushConsumerConnection), services.GetRequiredService<IServiceScopeFactory>(),
+                Options.Create(new OperatorWaitingPushConsumerOptions()), NullLogger<OperatorWaitingPushConsumer>.Instance);
+
+            using var management = CreateRabbitMqManagementClient(rabbitMq, Username, Password);
+
+            await pushConsumer.StartAsync(CancellationToken.None);
+            try
+            {
+                await RabbitMqSubscriptionTestHelpers.AwaitAllCompetingSubscriptionsAsync(
+                    management, TimeSpan.FromSeconds(10),
+                    (nameof(ConversationWaitingForOperator), OperatorWaitingPushConsumer.ConsumerName));
+
+                await using var publisherConnection = new RabbitMqConnection(rabbitOptions, NullLogger<RabbitMqConnection>.Instance);
+                var publisher = new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance);
+
+                // Run through the real production mapper, not a hand-built envelope - the identical
+                // "feed the mapper's real output through the real path" proof the transfer case above
+                // already gives for its own mapper.
+                var domainEvent = new ConversationEnteredQueue(conversationId, siteId, visitorId, Now);
+                var envelope = ConversationWaitingForOperatorMapper.ToEnvelope(domainEvent, new UuidV7Generator());
+                await publisher.PublishAsync(envelope, CancellationToken.None);
+
+                var caughtUp = await OutboxTestHelpers.WaitUntilAsync(() => pushSender.Calls.Count >= 1, TimeSpan.FromSeconds(15));
+                Assert.True(caughtUp, "Push consumer received no calls - the waiting consumer may not have landed.");
+
+                // Only the eligible operator's device, and no more than once - never the ineligible
+                // operator's, and never a second push to the same one either.
+                Assert.Single(pushSender.Calls);
+                Assert.Equal("token-eligible", pushSender.Calls.Single().DeviceToken);
+            }
+            finally
+            {
+                await pushConsumer.StopAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await postgres.DisposeAsync();
+            await rabbitMq.DisposeAsync();
+        }
+    }
+
+    private static ServiceProvider BuildWaitingServiceProvider(NpgsqlDataSource dataSource, IPushSender pushSender)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(dataSource);
+        services.AddDbContext<AgoChatDbContext>((provider, options) =>
+            options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
+        services.AddScoped<IConversationRepository, ConversationRepository>();
+        services.AddScoped<IOperatorDeviceRepository, OperatorDeviceRepository>();
+        services.AddScoped<IPermissionChecker, PermissionChecker>();
+        services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton(pushSender);
+        services.AddScoped<NotifyOperatorDevicesHandler>();
+        return services.BuildServiceProvider();
+    }
+
     private static ServiceProvider BuildAssignmentServiceProvider(
         NpgsqlDataSource dataSource, IPushSender pushSender, INodeFanoutPublisher fanoutPublisher)
     {
@@ -318,6 +445,11 @@ public sealed class OperatorPushFanOutEndToEndTests
             options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IOperatorDeviceRepository, OperatorDeviceRepository>();
+        // `26-86`: NotifyOperatorDevicesHandler's new fourth dependency - neither test in this file
+        // exercises HandleWaitingAsync, but DI still has to resolve the constructor in full for the
+        // two arms it does exercise. The real Postgres-backed implementation, matching every other
+        // port registered here real rather than faked.
+        services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton(pushSender);
         services.AddSingleton(fanoutPublisher);
@@ -334,6 +466,8 @@ public sealed class OperatorPushFanOutEndToEndTests
             options.UseNpgsql(provider.GetRequiredService<NpgsqlDataSource>()));
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IOperatorDeviceRepository, OperatorDeviceRepository>();
+        // `26-86`: see BuildAssignmentServiceProvider's own identical remarks just above.
+        services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IUnreadCounterStore, UnreadCounterStore>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
         services.AddOutboxInbox<AgoChatDbContext>();

@@ -81,6 +81,21 @@ public class NotifyOperatorDevicesHandlerTests
         Assert.False(call.Data.ContainsKey("messageId"));
     }
 
+    /// <summary>`26-81`'s own close: the assignment kind now puts its reason on the wire too, not only
+    /// in the metric tag.</summary>
+    [Fact]
+    public async Task HandleAssignmentAsync_DataCarriesTheAssignedReason()
+    {
+        var (handler, devices, _, pushSender) = CreateHandler();
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        await handler.HandleAssignmentAsync(
+            new NotifyOperatorDeviceForAssignment(new ConversationId(Guid.NewGuid()), VisitorId, OperatorId), CancellationToken.None);
+
+        var call = Assert.Single(pushSender.Calls);
+        Assert.Equal("assigned", call.Data["reason"]);
+    }
+
     [Fact]
     public async Task HandleAssignmentAsync_NoActiveDevices_NeverCallsThePushSender()
     {
@@ -194,6 +209,28 @@ public class NotifyOperatorDevicesHandlerTests
         Assert.Equal(conversation.Id.Value.ToString(), call.Data["conversationId"]);
         Assert.Equal(messageId.Value.ToString(), call.Data["messageId"]);
         Assert.Equal($"ago-conversation-{conversation.Id.Value}", call.GroupKey);
+    }
+
+    /// <summary>`26-81`'s own close: the message kind now puts its reason on the wire too, not only in
+    /// the metric tag.</summary>
+    [Fact]
+    public async Task HandleMessageAsync_VisitorAuthored_DataCarriesTheMessageReason()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
+        // visitor's own real first message before AssignTo, which still only accepts Waiting.
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.AssignTo(OperatorId, Now);
+        var (handler, devices, conversations, pushSender) = CreateHandler();
+        conversations.Seed(conversation);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        await handler.HandleMessageAsync(
+            new NotifyOperatorDeviceForMessage(conversation.Id, new MessageId(Guid.NewGuid()), nameof(MessageAuthorKind.Visitor)),
+            CancellationToken.None);
+
+        var call = Assert.Single(pushSender.Calls);
+        Assert.Equal("message", call.Data["reason"]);
     }
 
     /// <summary>`alerts.ts`'s own first filter, verbatim: an operator's own echoed-back send is not
@@ -380,17 +417,181 @@ public class NotifyOperatorDevicesHandlerTests
         Assert.Single(pushSender.Calls); // fired anyway - the registry above was never consulted
     }
 
+    /// <summary>`26-86`'s own third arm: there is no assignee, so every non-removed operator on the site
+    /// who holds `conversation:read` is a recipient - proven here with two such operators, each with
+    /// their own single device.</summary>
+    [Fact]
+    public async Task HandleWaitingAsync_SendsOnePushPerActiveDeviceOfEveryEligibleOperator()
+    {
+        var otherOperatorId = new OperatorId(Guid.NewGuid());
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        permissions.Grant(otherOperatorId, SiteId, Permission.ConversationRead);
+        var (handler, devices, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+        devices.Seed(RegisterDevice(otherOperatorId, "install-2", "token-2"));
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        var result = await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(conversationId, SiteId, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, pushSender.Calls.Count);
+        Assert.Equal(["token-1", "token-2"], pushSender.Calls.Select(c => c.DeviceToken).OrderBy(t => t));
+    }
+
+    /// <summary>Runs the real production mapper, not an assumption about its shape - the identical
+    /// "feed the mapper's real output through the real handler" proof
+    /// <see cref="Transfer_MappedThroughTheRealConversationTransferredMapper_ProducesAPushToTheNewAssignee"/>
+    /// already gives for the assignment kind, restated for the third.</summary>
+    [Fact]
+    public async Task HandleWaitingAsync_MappedThroughTheRealConversationEnteredQueueMapper_ProducesAPushToTheEligibleOperator()
+    {
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var (handler, devices, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var domainEvent = new ConversationEnteredQueue(conversationId, SiteId, VisitorId, Now);
+        var envelope = ConversationWaitingForOperatorMapper.ToEnvelope(domainEvent, new UuidV7Generator());
+        var contract = JsonSerializer.Deserialize<ConversationWaitingForOperator>(envelope.Payload)!;
+
+        await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(
+                new ConversationId(contract.ConversationId), new SiteId(contract.SiteId), new VisitorId(contract.VisitorId)),
+            CancellationToken.None);
+
+        var call = Assert.Single(pushSender.Calls);
+        Assert.Equal("token-1", call.DeviceToken);
+        Assert.Equal("waiting", call.Data["reason"]);
+    }
+
+    /// <summary>An operator who holds `conversation:read` on a *different* site must never be notified -
+    /// the query is scoped per site, not merely per permission.</summary>
+    [Fact]
+    public async Task HandleWaitingAsync_OperatorHoldingThePermissionOnADifferentSite_IsNeverSentTo()
+    {
+        var otherSiteId = new SiteId(Guid.NewGuid());
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, otherSiteId, Permission.ConversationRead);
+        var (handler, devices, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(new ConversationId(Guid.NewGuid()), SiteId, VisitorId), CancellationToken.None);
+
+        Assert.Empty(pushSender.Calls);
+    }
+
+    [Fact]
+    public async Task HandleWaitingAsync_UsesItsOwnTitleAndBodyAndTheWaitingReason()
+    {
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var (handler, devices, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(conversationId, SiteId, VisitorId), CancellationToken.None);
+
+        var call = Assert.Single(pushSender.Calls);
+        Assert.Equal("New conversation waiting", call.Title);
+        Assert.Equal($"Visitor {VisitorId.Value.ToString()[..8]} is waiting for an operator.", call.Body);
+        Assert.Equal($"ago-conversation-{conversationId.Value}", call.GroupKey);
+    }
+
+    /// <summary>Matches the assignment kind's own Done-when: no message body, no visitor identity beyond
+    /// the same short visitor id the other two kinds already show - only `conversationId` and `reason`
+    /// travel in `data`.</summary>
+    [Fact]
+    public async Task HandleWaitingAsync_DataCarriesOnlyConversationIdAndTheWaitingReason()
+    {
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var (handler, devices, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(conversationId, SiteId, VisitorId), CancellationToken.None);
+
+        var call = Assert.Single(pushSender.Calls);
+        Assert.Equal(conversationId.Value.ToString(), call.Data["conversationId"]);
+        Assert.Equal("waiting", call.Data["reason"]);
+        Assert.Equal(2, call.Data.Count);
+    }
+
+    [Fact]
+    public async Task HandleWaitingAsync_NoEligibleOperators_NeverSends_AndRecordsSuppressedWithNoEligibleOperatorsReason()
+    {
+        var (handler, _, _, pushSender) = CreateHandler();
+        using var listener = ListenToPushMetrics();
+
+        var result = await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(new ConversationId(Guid.NewGuid()), SiteId, VisitorId), CancellationToken.None);
+        listener.ForceFlush();
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(pushSender.Calls);
+        AssertSuppressedReason(listener.Metrics, "no_eligible_operators");
+    }
+
+    [Fact]
+    public async Task HandleWaitingAsync_EligibleOperatorWithNoDevices_RecordsSuppressedWithNoDevicesReason()
+    {
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var (handler, _, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        using var listener = ListenToPushMetrics();
+
+        await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(new ConversationId(Guid.NewGuid()), SiteId, VisitorId), CancellationToken.None);
+        listener.ForceFlush();
+
+        Assert.Empty(pushSender.Calls);
+        AssertSuppressedReason(listener.Metrics, "no_devices");
+    }
+
+    /// <summary>`adr/0179` §3 restated for the third arm - see
+    /// `HandleAsync_SendsAPushEvenWhenThePresenceRegistryReportsTheOperatorConnected`'s own remarks for
+    /// why seeding a registry this handler is never given is what actually proves the architectural
+    /// absence rather than merely asserting it.</summary>
+    [Fact]
+    public async Task HandleWaitingAsync_SendsAPushEvenWhenThePresenceRegistryReportsTheOperatorConnected()
+    {
+        var connectionRegistry = new FakeConnectionRegistry();
+        connectionRegistry.SeedConnected(
+            PrincipalKeys.ForOperator(OperatorId),
+            new RegisteredConnection(new ConnectionId("console-connection"), new NodeId("node-a")));
+
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(OperatorId, SiteId, Permission.ConversationRead);
+        var (handler, devices, _, pushSender) = CreateHandlerWithPermissions(permissions);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        var result = await handler.HandleWaitingAsync(
+            new NotifyOperatorDeviceForWaiting(new ConversationId(Guid.NewGuid()), SiteId, VisitorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Single(pushSender.Calls); // fired anyway - the registry above was never consulted
+    }
+
     private static OperatorDevice RegisterDevice(OperatorId operatorId, string installationId, string token) =>
         OperatorDevice.Register(
             new OperatorDeviceId(Guid.NewGuid()), SiteId, operatorId, installationId, PushProvider.RuStore, "android", token, Now);
 
     private static (NotifyOperatorDevicesHandler Handler, FakeOperatorDeviceRepository Devices, FakeConversationRepository Conversations, FakePushSender PushSender)
-        CreateHandler()
+        CreateHandler() => CreateHandlerWithPermissions(new FakePermissionChecker());
+
+    private static (NotifyOperatorDevicesHandler Handler, FakeOperatorDeviceRepository Devices, FakeConversationRepository Conversations, FakePushSender PushSender)
+        CreateHandlerWithPermissions(FakePermissionChecker permissions)
     {
         var devices = new FakeOperatorDeviceRepository();
         var conversations = new FakeConversationRepository();
         var pushSender = new FakePushSender();
-        var handler = new NotifyOperatorDevicesHandler(devices, conversations, pushSender, new FakeClock(Now));
+        var handler = new NotifyOperatorDevicesHandler(devices, conversations, pushSender, new FakeClock(Now), permissions);
         return (handler, devices, conversations, pushSender);
     }
 
@@ -400,7 +601,7 @@ public class NotifyOperatorDevicesHandlerTests
         var devices = new FakeOperatorDeviceRepository();
         var conversations = new FakeConversationRepository();
         var pushSender = new FakePushSender(outcome);
-        var handler = new NotifyOperatorDevicesHandler(devices, conversations, pushSender, new FakeClock(Now));
+        var handler = new NotifyOperatorDevicesHandler(devices, conversations, pushSender, new FakeClock(Now), new FakePermissionChecker());
         return (handler, devices, conversations, pushSender);
     }
 

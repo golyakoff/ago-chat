@@ -601,6 +601,15 @@ public sealed class Conversation
         if (State == ConversationState.Pending)
         {
             State = ConversationState.Waiting;
+
+            // `26-86`: the first-ever entry into the queue - see ConversationEnteredQueue's own
+            // remarks for why this is the correct hook (not Start, which only ever produces Pending)
+            // and why a routing-suppressed conversation is silently excluded here rather than left for
+            // a caller to filter back out.
+            if (!IsRoutingSuppressed)
+            {
+                _domainEvents.Add(new ConversationEnteredQueue(Id, SiteId, VisitorId, now));
+            }
         }
 
         return AddMessage(

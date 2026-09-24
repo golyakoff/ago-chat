@@ -44,4 +44,22 @@ public interface IPermissionChecker
     /// contract.</para>
     /// </summary>
     Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `26-86`: the `NotifyOperatorDevicesHandler.HandleWaitingAsync` reads this instead of
+    /// <see cref="CountNonRemovedHoldersAsync"/> - a new-conversation push has no single assignee to
+    /// notify, so it needs the identities to send to, not merely how many there are. Same resolution as
+    /// <see cref="CountNonRemovedHoldersAsync"/> (every non-removed operator on the site whose roles
+    /// grant <paramref name="permission"/>), restated as a list rather than a count - not a new
+    /// mechanism, the identical role-join query with a different projection, the same relationship
+    /// <see cref="GetPermissionsAsync"/> already has to <see cref="HasPermissionAsync"/>.
+    ///
+    /// <para><b>No site row lock, unlike <see cref="CountNonRemovedHoldersAsync"/>.</b> That method locks
+    /// because it backs a last-manager compare-and-set a caller is about to act on inside a transaction
+    /// (CLAUDE.md rule 8). This is an ordinary fan-out read - "who should this best-effort push go to
+    /// right now" - with no write decision riding on the exact answer staying frozen until a later
+    /// statement commits; the identical distinction <c>IOperatorRepository.AnyOnlineForSiteAsync</c>'s
+    /// own remarks draw between a write-gating question and an operational one.</para>
+    /// </summary>
+    Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken);
 }

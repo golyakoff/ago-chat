@@ -50,8 +50,16 @@ public sealed class OutboxDispatcherTests(OutboxDispatcherFixture fixture)
             var result = await handler.HandleAsync(new SendVisitorMessage(conversationId, visitorId, "hello"), CancellationToken.None);
             Assert.True(result.IsSuccess);
 
+            // `26-86`: this visitor's own first-ever message also graduates the conversation out of
+            // Pending into Waiting (`Conversation.AddVisitorMessage`'s own remarks), which stages a
+            // second outbox row alongside `MessageAccepted` - `ConversationWaitingForOperator`, on the
+            // identical partition key. A bare, untyped `SingleAsync()` over the whole table (correct
+            // when this test was written, when a fresh conversation's first message produced exactly
+            // one row) now has two candidates; filtering by `Type` is what this test actually means by
+            // "the row this send produced".
             await using var verify = fixture.CreateDbContext();
-            messageId = (await verify.Set<Ago.Platform.Persistence.Postgres.OutboxMessage>().SingleAsync(CancellationToken.None)).Id;
+            messageId = (await verify.Set<Ago.Platform.Persistence.Postgres.OutboxMessage>()
+                .SingleAsync(o => o.Type == "MessageAccepted", CancellationToken.None)).Id;
         }
 
         await using var connection = fixture.CreateRabbitMqConnection();

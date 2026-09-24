@@ -157,5 +157,10 @@ public sealed class OverSeatsDerivedConditionConcurrencyTests(ConcurrencyTestFix
         // unreachable-but-honest value rather than a real count this test has no seeded roles to answer.
         public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             Task.FromResult(1);
+
+        // `26-86`: not exercised by this class's own seat-count race either - same reasoning as
+        // CountNonRemovedHoldersAsync right above.
+        public Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<OperatorId>>([]);
     }
 }
