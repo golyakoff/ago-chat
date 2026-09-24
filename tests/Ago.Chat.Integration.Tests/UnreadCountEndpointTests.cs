@@ -181,7 +181,8 @@ public sealed class UnreadCountEndpointTests
             Task.FromResult(count);
 
         public Task<ConversationListPage> GetAllForSiteAsync(
-            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken) =>
+            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+            IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
         public Task<ConversationSummaryItem?> GetByIdAsync(ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken) =>
@@ -225,7 +226,8 @@ public sealed class UnreadCountEndpointTests
         }
 
         public Task<ConversationListPage> GetAllForSiteAsync(
-            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken) =>
+            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+            IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
         public Task<ConversationSummaryItem?> GetByIdAsync(ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken) =>
@@ -261,7 +263,8 @@ public sealed class UnreadCountEndpointTests
             throw new InvalidOperationException("A caller refused before the read store must never reach it.");
 
         public Task<ConversationListPage> GetAllForSiteAsync(
-            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken) =>
+            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+            IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
         public Task<ConversationSummaryItem?> GetByIdAsync(ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken) =>

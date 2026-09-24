@@ -619,7 +619,8 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
 
         public Task<ConversationListPage> GetAllForSiteAsync(
-            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken) =>
+            SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+            IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
 
         public Task<ConversationSummaryItem?> GetByIdAsync(ConversationId conversationId, SiteId siteId, CancellationToken cancellationToken) =>

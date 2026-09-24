@@ -92,13 +92,33 @@
 /// row that reads as one line) before this DTO is built; nothing this thin needs the client to
 /// re-truncate for wire-size reasons, only for whatever width its own layout actually has.</para>
 /// </summary>
+/// <summary>
+/// `26-90`: <see cref="MessageCount"/> - how many messages this conversation holds in total, from
+/// first to last, including system-authored ones. Additive/defaulted the identical way every field
+/// above already is: <c>0</c> for any caller that does not populate it, which today is every caller
+/// but <c>GetAllConversationsForSiteHandler</c> (the admin site-wide list, the one screen that shows
+/// "how long is this conversation" as a fact about a conversation the reader has never opened).
+///
+/// <para><b>It is a total, never an unread count.</b> <see cref="OperatorUnreadCount"/> keeps its
+/// existing meaning untouched and is not reused for this - the two answer different questions ("is
+/// there something here for me to read" versus "how big is this thing"), and the admin list shows the
+/// second one with no badge at all, because a supervisor scanning a site's whole history has no
+/// personal read position in a conversation that was never theirs.</para>
+///
+/// <para><b>No sibling "how many conversations are there" field, here or anywhere.</b> `26-90`'s own
+/// Out of scope, decided against a live site holding tens of thousands of closed conversations: a
+/// per-state tally is a <c>COUNT(*)</c> over the whole history on every open of the screen, for a
+/// number nobody acts on. This per-row count is the opposite case - it is bounded by one
+/// conversation's own length and served by the index the row's own last-message lookup already
+/// uses.</para>
+/// </summary>
 public sealed record ConversationSummaryDto(
     Guid ConversationId, Guid VisitorId, string State, DateTimeOffset CreatedAt, int OperatorUnreadCount,
     Guid? OperatorId = null, string? OperatorName = null, bool HasAttachmentUploadGrant = false,
     DateTimeOffset? AttachmentUploadGrantedAt = null, Guid? AttachmentUploadGrantedByOperatorId = null,
     string? EmojiCreature = null, string? EmojiFood = null, string? VisitorName = null,
     string? LastMessagePreview = null, DateTimeOffset? LastMessageAt = null,
-    string? LastMessageContentKind = null);
+    string? LastMessageContentKind = null, int MessageCount = 0);
 
 /// <summary>
 /// `GET /api/v1/conversations/queue`'s response body. Two lists rather than one filterable list: the

@@ -77,16 +77,27 @@ public sealed class FakeConversationReadStore : IConversationReadStore
     /// over whatever this fake was seeded with for the requested site - good enough to test a
     /// handler's own access-check and paging-forwarding logic without a real Postgres.</summary>
     public Task<ConversationListPage> GetAllForSiteAsync(
-        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken)
+        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+        IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken)
     {
         var items = _bySource.Values
             .Where(c => c.SiteId == siteId && (beforeId is null || c.Id.Value.CompareTo(beforeId) < 0))
             .Where(c => tagId is null || (_taggedBy.TryGetValue(tagId.Value, out var set) && set.Contains(c.Id)))
+            // `26-90`: mirrors the real `cardinality(@States) = 0 or c.state = any(@States)` clause -
+            // null *and* empty both mean unfiltered, exactly as the real query treats them, so a test
+            // proving "an empty filter is not a filter that matches nothing" is testing the same rule
+            // both sides implement.
+            .Where(c => states is null || states.Count == 0 || states.Contains(c.State))
             .OrderByDescending(c => c.Id.Value)
             .Take(pageSize)
             .Select(c => new ConversationSummaryItem(
                 c.Id, c.VisitorId, c.OperatorId, c.State.ToString(), c.CreatedAt, c.OperatorUnreadCount,
-                c.Outcome.ToString(), VisitorName: _visitorNames.GetValueOrDefault(c.VisitorId)))
+                c.Outcome.ToString(), VisitorName: _visitorNames.GetValueOrDefault(c.VisitorId),
+                // `26-90`: mirrors the real store's own two `messages` laterals - the seeded aggregate
+                // already carries its whole message list, so "last message" and "how many" are the same
+                // two facts the real SQL computes, read from the object graph instead of from SQL.
+                LatestMessage: ToLatestMessage(c),
+                MessageCount: c.Messages.Count))
             .ToList();
 
         var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
@@ -106,7 +117,12 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         return Task.FromResult<ConversationSummaryItem?>(new ConversationSummaryItem(
             conversation.Id, conversation.VisitorId, conversation.OperatorId, conversation.State.ToString(),
             conversation.CreatedAt, conversation.OperatorUnreadCount, conversation.Outcome.ToString(),
-            VisitorName: _visitorNames.GetValueOrDefault(conversation.VisitorId)));
+            VisitorName: _visitorNames.GetValueOrDefault(conversation.VisitorId),
+            // `26-90`: the same two facts GetAllForSiteAsync above mirrors - the real `ByIdSql` selects
+            // them too (that statement's own remarks on why both queries must select the same set), so
+            // a fake that left them empty here would be a fake of a shape the adapter never produces.
+            LatestMessage: ToLatestMessage(conversation),
+            MessageCount: conversation.Messages.Count));
     }
 
     /// <summary>`18-07`: mirrors the real store's keyset shape (id descending, `beforeId` exclusive,
@@ -187,17 +203,29 @@ public sealed class FakeConversationReadStore : IConversationReadStore
                 continue;
             }
 
-            var lastMessage = conversation.Messages.OrderByDescending(m => m.Sequence).FirstOrDefault();
-            if (lastMessage is null)
+            if (ToLatestMessage(conversation) is not { } latestMessage)
             {
                 continue;
             }
 
-            result[conversationId] = new LatestMessageSummary(
-                conversationId, lastMessage.Body.Value, lastMessage.CreatedAt,
-                lastMessage.Content?.Kind.Value, lastMessage.AttachmentId?.Value);
+            result[conversationId] = latestMessage;
         }
 
         return Task.FromResult<IReadOnlyDictionary<ConversationId, LatestMessageSummary>>(result);
+    }
+
+    /// <summary>`26-90`: the one "what did this conversation last say" reduction both
+    /// <see cref="GetAllForSiteAsync"/> and <see cref="GetLatestMessagesAsync"/> answer - shared here
+    /// once for the same reason the production side shares <c>LastMessagePreviewMapper</c>: two fakes
+    /// of the same fact are two chances to disagree with each other about it.</summary>
+    private static LatestMessageSummary? ToLatestMessage(Conversation conversation)
+    {
+        var lastMessage = conversation.Messages.OrderByDescending(m => m.Sequence).FirstOrDefault();
+
+        return lastMessage is null
+            ? null
+            : new LatestMessageSummary(
+                conversation.Id, lastMessage.Body.Value, lastMessage.CreatedAt,
+                lastMessage.Content?.Kind.Value, lastMessage.AttachmentId?.Value);
     }
 }
