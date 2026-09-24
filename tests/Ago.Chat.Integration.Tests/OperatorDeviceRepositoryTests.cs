@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Domain;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Microsoft.EntityFrameworkCore;
 
@@ -59,7 +60,15 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
 
     /// <summary>The row's own identity (`OperatorDevice`'s own remarks) - the storage-level backstop
     /// `RegisterOperatorDeviceHandler`'s upsert relies on to never produce two rows for one
-    /// `(operatorId, installationId)`.</summary>
+    /// `(operatorId, installationId)`.
+    ///
+    /// <para>`26-82`: the index still refuses the second row, but what a caller *sees* changed - EF's
+    /// own <c>DbUpdateException</c> was what made the live race a raw 500, so this adapter now
+    /// translates exactly this constraint into <see cref="OperatorDeviceConcurrencyConflictException"/>
+    /// at the port boundary (this class's own remarks, and `clean-architecture.md`'s dependency rule:
+    /// no handler may see an Npgsql type). The change tracker is cleared with it, asserted below,
+    /// because the handler's recovery is a re-read on this same context and must see Postgres rather
+    /// than the identity map's copy of a row whose insert never committed.</para></summary>
     [Fact]
     public async Task UniqueOperatorInstallationIndex_RefusesASecondRowForTheSamePair()
     {
@@ -78,9 +87,11 @@ public class OperatorDeviceRepositoryTests(PostgresFixture fixture)
             new OperatorDeviceId(Guid.NewGuid()), siteId, operatorId, "installation-1", PushProvider.RuStore, "android",
             UniqueToken("token"), Now);
 
-        var thrown = await Assert.ThrowsAsync<DbUpdateException>(
+        var thrown = await Assert.ThrowsAsync<OperatorDeviceConcurrencyConflictException>(
             () => new OperatorDeviceRepository(conflictingDb).SaveAsync(second, CancellationToken.None));
-        Assert.Contains("ux_operator_devices_operator_installation", thrown.InnerException?.Message ?? thrown.Message);
+        Assert.Equal(operatorId, thrown.OperatorId);
+        Assert.Equal("installation-1", thrown.InstallationId);
+        Assert.Empty(conflictingDb.ChangeTracker.Entries());
     }
 
     /// <summary>`adr/0179` §1: a token must never be live on two rows - the restored-backup case this

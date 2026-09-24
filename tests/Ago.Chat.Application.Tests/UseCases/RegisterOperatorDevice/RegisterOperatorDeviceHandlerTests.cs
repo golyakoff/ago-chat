@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Tests.Fakes;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.RegisterOperatorDevice;
 using Ago.Chat.Domain;
 
@@ -120,5 +121,75 @@ public class RegisterOperatorDeviceHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("OperatorDevice.Invalid", result.Error!.Value.Code);
+    }
+
+    /// <summary>
+    /// `26-82`, the handler's own half of the fix, stated against the port's contract rather than
+    /// against Postgres: when <see cref="IOperatorDeviceRepository.SaveAsync"/> reports that a
+    /// concurrent caller already committed this exact pair, the losing call must still succeed, must
+    /// reapply its own token to the winner's row, and must not leave a second row behind.
+    /// <c>RegisterOperatorDeviceConcurrencyTests</c> proves the same behaviour against a real Postgres
+    /// and a real race; this one proves the handler alone does the right thing with the signal, with no
+    /// container in the loop.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenItsInsertLosesARace_RefreshesTheWinnersRowAndSucceeds()
+    {
+        var devices = new FakeOperatorDeviceRepository();
+        var clock = new FakeClock(Now);
+        // The winner: already committed, holding the older token, by the time this handler's own insert
+        // is attempted. Seeded (not saved through the handler) so the handler's own FindAsync still
+        // answers null on its first read - which is exactly the check-then-act window this item exists
+        // to close.
+        var winner = OperatorDevice.Register(
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore,
+            "android", "token-from-the-winner", Now);
+        var racing = new ConflictOnFirstInsertRepository(devices, winner);
+        var handler = new RegisterOperatorDeviceHandler(racing, new FakeIdGenerator(), clock);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-from-the-loser"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, racing.SaveAttempts);
+        var all = await devices.ListActiveForOperatorAsync(OperatorId, CancellationToken.None);
+        var only = Assert.Single(all);
+        Assert.Equal(winner.Id, only.Id);
+        // The losing call's own write was reapplied, not discarded - the whole point of the retry.
+        Assert.Equal("token-from-the-loser", only.Token);
+    }
+
+    /// <summary>Delegates every read to a real <see cref="FakeOperatorDeviceRepository"/> untouched. On
+    /// the first <c>SaveAsync</c> it commits the winner's row and then raises exactly what
+    /// <c>OperatorDeviceRepository</c>'s own unique-violation clause raises - so the handler under test
+    /// is answering the real port contract, not a mock's invented one.</summary>
+    private sealed class ConflictOnFirstInsertRepository(FakeOperatorDeviceRepository inner, OperatorDevice winner)
+        : IOperatorDeviceRepository
+    {
+        private int _saveAttempts;
+
+        public int SaveAttempts => _saveAttempts;
+
+        public Task<OperatorDevice?> FindAsync(OperatorId operatorId, string installationId, CancellationToken cancellationToken) =>
+            inner.FindAsync(operatorId, installationId, cancellationToken);
+
+        public Task<OperatorDevice?> FindActiveByTokenAsync(PushProvider provider, string token, CancellationToken cancellationToken) =>
+            inner.FindActiveByTokenAsync(provider, token, cancellationToken);
+
+        public Task<IReadOnlyList<OperatorDevice>> ListActiveForOperatorAsync(OperatorId operatorId, CancellationToken cancellationToken) =>
+            inner.ListActiveForOperatorAsync(operatorId, cancellationToken);
+
+        public async Task SaveAsync(OperatorDevice device, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _saveAttempts) == 1)
+            {
+                inner.Seed(winner);
+                throw new OperatorDeviceConcurrencyConflictException(device.OperatorId, device.InstallationId);
+            }
+
+            await inner.SaveAsync(device, cancellationToken);
+        }
     }
 }
