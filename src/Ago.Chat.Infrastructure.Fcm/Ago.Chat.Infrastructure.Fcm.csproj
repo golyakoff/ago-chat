@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- `26-100`/`adr/0181`: a project of its own because Firebase Cloud Messaging is a distinct external
+       technology - `naming-and-structure.md`'s "one project per external technology" rule, the same
+       reason Ago.Chat.Infrastructure.RuStore and the six channel adapters each exist. Everything that
+       knows FCM's own HTTP shape (its send-API DTOs, its OAuth2 token exchange, its error envelope)
+       lives here and nowhere above it - ChannelPortTests.NoProviderVocabulary_AppearsAboveInfrastructure
+       adds "Fcm" to its forbidden name fragments above this boundary for the identical reason it already
+       lists RuStore and the six channel providers.
+
+       No Google SDK reference: the OAuth2 access token is minted by hand from the service account
+       (FcmServiceAccountTokenProvider) using only BCL crypto, the same "hand-roll the provider's HTTP,
+       do not pull a vendor SDK" discipline every other adapter in this repo already follows. See that
+       class's own remarks for why Google.Apis.Auth was evaluated and declined. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+</Project>

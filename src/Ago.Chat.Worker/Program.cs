@@ -2,6 +2,8 @@
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.NotifyOperatorDevices;
 using Ago.Chat.Contracts;
+using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Fcm;
 using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Postgres;
@@ -191,13 +193,16 @@ builder.Services.AddSingleton<OperatorConversationReleaser>();
 // `26-03`: OperatorDeviceRevoker is the identical shape, for the identical reason.
 builder.Services.AddSingleton<OperatorDeviceRevoker>();
 
-// `26-04`/`adr/0180`: IPushSender's own registration - deliberately here, in Ago.Chat.Worker's own
-// Program.cs, and not in ChatModule.ConfigureServices (which Ago.Chat.Api and Ago.Chat.Webhooks call
-// too). RuStoreOptions.ServiceToken is the one credential `push-notifications.md`'s own secrets table
-// says must reach exactly one deployable - binding it with .ValidateOnStart() from the shared method
-// would make the other two hosts' startup depend on a value they must never hold. No provider registry,
-// no IPushSenderFactory (`adr/0179` §5): RuStorePushSender, wrapped once in ResilientPushSender, is
-// registered directly as the only IPushSender this codebase has.
+// `26-04`/`adr/0180`/`26-100`/`adr/0181`: operator-push registration - deliberately here, in
+// Ago.Chat.Worker's own Program.cs, and not in ChatModule.ConfigureServices (which Ago.Chat.Api and
+// Ago.Chat.Webhooks call too). Both providers' credentials - RuStore's static bearer and FCM's
+// service-account key - are the credentials `secrets.md` says must reach exactly one deployable, so
+// binding either with .ValidateOnStart() from the shared method would make the other two hosts' startup
+// depend on values they must never hold. FCM (`adr/0181`) is the primary transport, RuStore the fallback;
+// there are now genuinely two providers, so IPushSenderResolver (`adr/0179` §5's dispatch table, no longer
+// premature) maps each device's Provider to its own ResilientPushSender, and NotifyOperatorDevicesHandler
+// selects per device. Each sender wraps its own PushResiliencePipeline instance so one provider's outage
+// trips only its own breaker.
 builder.Services
     .AddOptions<RuStoreOptions>()
     .Bind(builder.Configuration.GetSection(RuStoreOptions.SectionName))
@@ -215,6 +220,30 @@ builder.Services.AddHttpClient<RuStorePushSender>((sp, client) =>
     client.BaseAddress = new Uri($"{baseUrl}v1/projects/{options.ProjectId}/");
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.ServiceToken);
 });
+
+// `26-100`/`adr/0181`: FCM (primary transport). ProjectId (ago-chat-783f7) is a public identifier;
+// ServiceAccountJson is the one real secret (FCM_SERVICE_ACCOUNT_JSON), validated on start so the Worker
+// refuses to boot without it rather than silently failing every FCM send at runtime.
+builder.Services
+    .AddOptions<FcmOptions>()
+    .Bind(builder.Configuration.GetSection(FcmOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ProjectId), "Push:Fcm:ProjectId must be set.")
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ServiceAccountJson), "Push:Fcm:ServiceAccountJson must be set.")
+    .ValidateOnStart();
+// The token-endpoint client and the send client are separate: the mint talks to Google's OAuth2 host,
+// the send talks to fcm.googleapis.com. The access token is short-lived and minted per send by the
+// singleton token provider (its cache shared across sends), so - unlike RuStore's static bearer above -
+// no Authorization header is set on the send client here; FcmPushSender sets it per request.
+builder.Services.AddHttpClient(FcmServiceAccountTokenProvider.HttpClientName);
+builder.Services.AddSingleton<IFcmAccessTokenProvider>(sp => new FcmServiceAccountTokenProvider(
+    sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IOptions<FcmOptions>>()));
+builder.Services.AddHttpClient<FcmPushSender>((sp, client) =>
+{
+    var options = sp.GetRequiredService<IOptions<FcmOptions>>().Value;
+    var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
+    client.BaseAddress = new Uri($"{baseUrl}v1/projects/{options.ProjectId}/");
+});
+
 // Starting points, not measured numbers - the identical caveat every resilience default in this
 // codebase carries (CLAUDE.md rule 7). Close to Ago.Chat.Module.Channels.ChannelResiliencePipelines'
 // own channel-send defaults, because the boundary is the same kind of thing - an HTTP call to a third
@@ -241,10 +270,30 @@ builder.Services.AddResiliencePipelineOptions(
         };
         options.Bulkhead = new ResilienceBulkheadOptions { MaxConcurrency = 4, MaxQueuedActions = 16 };
     });
-builder.Services.AddSingleton(sp => new PushResiliencePipeline(
+// One PushResiliencePipeline instance per provider, keyed by the enum, so an FCM outage trips only FCM's
+// breaker and RuStore fallback sends keep flowing (and vice versa) - the per-provider breaker isolation
+// ChannelResiliencePipelines already keys per ChannelKind for the identical reason. Both instances read
+// the same `Resilience:Push:*` thresholds (the boundary is the same kind of thing); only the state
+// differs. Keyed singletons, never scoped: a scoped lifetime would rebuild a fresh, un-tripped breaker
+// per DI scope, the failure every resilience-pipeline registration in this codebase warns against.
+builder.Services.AddKeyedSingleton<PushResiliencePipeline>(PushProvider.RuStore, (sp, _) => new PushResiliencePipeline(
     sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(PushResiliencePipeline.PipelineName)));
-builder.Services.AddScoped<IPushSender>(sp => new ResilientPushSender(
-    sp.GetRequiredService<RuStorePushSender>(), sp.GetRequiredService<PushResiliencePipeline>()));
+builder.Services.AddKeyedSingleton<PushResiliencePipeline>(PushProvider.Fcm, (sp, _) => new PushResiliencePipeline(
+    sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(PushResiliencePipeline.PipelineName)));
+
+// The dispatch table itself: each provider to its own resilience-wrapped adapter. The thin adapters
+// (RuStorePushSender/FcmPushSender) are per-scope typed HttpClients; the stateful breaker lives in the
+// keyed singleton each is wrapped with.
+builder.Services.AddScoped<IPushSenderResolver>(sp => new PushSenderResolver(
+    new Dictionary<PushProvider, IPushSender>
+    {
+        [PushProvider.RuStore] = new ResilientPushSender(
+            sp.GetRequiredService<RuStorePushSender>(),
+            sp.GetRequiredKeyedService<PushResiliencePipeline>(PushProvider.RuStore)),
+        [PushProvider.Fcm] = new ResilientPushSender(
+            sp.GetRequiredService<FcmPushSender>(),
+            sp.GetRequiredKeyedService<PushResiliencePipeline>(PushProvider.Fcm)),
+    }));
 
 // `26-05`/`push-notifications.md`'s own "Fan-out": NotifyOperatorDevicesHandler's own registration -
 // deliberately here, next to IPushSender, and not in ChatModule.ConfigureServices (which Ago.Chat.Api

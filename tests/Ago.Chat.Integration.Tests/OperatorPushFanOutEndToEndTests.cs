@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Module.Push;
 using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases.NotifyOperatorDevices;
 using Ago.Chat.Application.UseCases.RecordUnread;
@@ -431,7 +432,9 @@ public sealed class OperatorPushFanOutEndToEndTests
         services.AddScoped<IOperatorDeviceRepository, OperatorDeviceRepository>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddSingleton<IClock, SystemClock>();
-        services.AddSingleton(pushSender);
+        // `26-100`: the handler resolves its sender per device through IPushSenderResolver now; these
+        // tests route every provider to the one RecordingPushSender via PushSenderResolver.Single.
+        services.AddSingleton<IPushSenderResolver>(PushSenderResolver.Single(pushSender));
         services.AddScoped<NotifyOperatorDevicesHandler>();
         return services.BuildServiceProvider();
     }
@@ -451,7 +454,9 @@ public sealed class OperatorPushFanOutEndToEndTests
         // port registered here real rather than faked.
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddSingleton<IClock, SystemClock>();
-        services.AddSingleton(pushSender);
+        // `26-100`: the handler resolves its sender per device through IPushSenderResolver now; these
+        // tests route every provider to the one RecordingPushSender via PushSenderResolver.Single.
+        services.AddSingleton<IPushSenderResolver>(PushSenderResolver.Single(pushSender));
         services.AddSingleton(fanoutPublisher);
         services.AddScoped<NotifyOperatorDevicesHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
@@ -472,7 +477,9 @@ public sealed class OperatorPushFanOutEndToEndTests
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
         services.AddOutboxInbox<AgoChatDbContext>();
         services.AddSingleton<IClock, SystemClock>();
-        services.AddSingleton(pushSender);
+        // `26-100`: the handler resolves its sender per device through IPushSenderResolver now; these
+        // tests route every provider to the one RecordingPushSender via PushSenderResolver.Single.
+        services.AddSingleton<IPushSenderResolver>(PushSenderResolver.Single(pushSender));
         services.AddScoped<NotifyOperatorDevicesHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         return services.BuildServiceProvider();

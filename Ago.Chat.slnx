@@ -17,6 +17,7 @@
     <Project Path="src/Ago.Chat.Infrastructure.YooKassa/Ago.Chat.Infrastructure.YooKassa.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.TenantScopeDiagnostics/Ago.Chat.Infrastructure.TenantScopeDiagnostics.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.RuStore/Ago.Chat.Infrastructure.RuStore.csproj" />
+    <Project Path="src/Ago.Chat.Infrastructure.Fcm/Ago.Chat.Infrastructure.Fcm.csproj" />
     <Project Path="src/Ago.Chat.Module/Ago.Chat.Module.csproj" />
     <Project Path="src/Ago.Chat.Migrator/Ago.Chat.Migrator.csproj" />
     <Project Path="src/Ago.Chat.RoleAssignmentBackfill/Ago.Chat.RoleAssignmentBackfill.csproj" />
