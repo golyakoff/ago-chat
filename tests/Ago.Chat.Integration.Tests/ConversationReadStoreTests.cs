@@ -151,7 +151,7 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         Assert.Equal(ConversationBlockOutcome.Applied, outcome);
 
         var store = new ConversationReadStore(fixture.DataSource);
-        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, CancellationToken.None);
+        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, states: null, CancellationToken.None);
 
         Assert.Equal([kept.Id], page.Conversations.Select(c => c.Id));
     }
@@ -208,7 +208,7 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         }
 
         var store = new ConversationReadStore(fixture.DataSource);
-        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, CancellationToken.None);
+        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, states: null, CancellationToken.None);
 
         Assert.Null(Assert.Single(page.Conversations).VisitorName);
     }
@@ -337,5 +337,148 @@ public class ConversationReadStoreTests(PostgresFixture fixture)
         var latest = await store.GetLatestMessagesAsync(otherSiteId, [conversationId], CancellationToken.None);
 
         Assert.False(latest.ContainsKey(conversationId));
+    }
+
+    // `26-90`, the item's own first Done-when box in words: "an integration test paging a site holding
+    // a mix of Waiting/Assigned/Closed". Three things are proven together here because they only fail
+    // together - a filter that is not really in SQL, a keyset that does not survive a filter, and a
+    // per-row projection that is really an in-memory afterthought all look identical from one page:
+    //   1. `state = any(@States)` is applied by Postgres, not by the caller - the two Closed rows and
+    //      the Pending one never appear, on any page.
+    //   2. Paging through the filtered list with a page size smaller than the result set walks every
+    //      matching row exactly once, id-descending, with no gap and no duplicate - which is the whole
+    //      reason this filter could not have been a client-side `.filter()` over an unfiltered page.
+    //   3. Each row carries its own last message and its own total message count, from this very query.
+    [Fact]
+    public async Task GetAllForSiteAsync_WithAStateFilter_PagesOnlyTheMatchingStates_CarryingLastMessageAndCount()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var waitingOne = BuildConversation(siteId, messageCount: 1);
+        var waitingTwo = BuildConversation(siteId, messageCount: 4);
+        var assigned = BuildConversation(siteId, messageCount: 2);
+        assigned.AssignTo(operatorId, Now);
+        var closedOne = BuildConversation(siteId, messageCount: 12);
+        closedOne.AssignTo(operatorId, Now);
+        closedOne.Close(Now);
+        var closedTwo = BuildConversation(siteId, messageCount: 3);
+        closedTwo.Close(Now);
+        // `25-221`: never messaged, so never routed - Pending is a real fourth state the filter must
+        // exclude just as firmly as Closed, and it is the one a "did you remember every state?" bug
+        // would quietly let through.
+        var pending = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, new VisitorId(Guid.NewGuid()), Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5, displayName: "Мария П."));
+            foreach (var conversation in new[] { waitingOne, waitingTwo, assigned, closedOne, closedTwo, pending })
+            {
+                db.Visitors.Add(new Visitor(conversation.VisitorId, siteId, Now));
+                db.Conversations.Add(conversation);
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        ConversationState[] states = [ConversationState.Waiting, ConversationState.Assigned];
+
+        var seen = new List<ConversationSummaryItem>();
+        Guid? cursor = null;
+        do
+        {
+            // Page size 2 against three matching rows - deliberately smaller than the result set, so
+            // the second page is reached and the cursor is exercised rather than assumed.
+            var page = await store.GetAllForSiteAsync(siteId, cursor, pageSize: 2, tagId: null, states, CancellationToken.None);
+            seen.AddRange(page.Conversations);
+            cursor = page.NextBeforeId;
+        } while (cursor is not null);
+
+        Assert.Equal(
+            new[] { waitingOne.Id.Value, waitingTwo.Id.Value, assigned.Id.Value }.Select(Hex).Order(),
+            seen.Select(c => Hex(c.Id.Value)).Order());
+        Assert.Equal(seen.Select(c => c.Id).Distinct().Count(), seen.Count);
+        // Descending by id across the page boundary, compared as hex rather than through
+        // `Guid.CompareTo` - Postgres orders `uuid` by its 16 bytes, which is the hex string's own
+        // order, while .NET's Guid comparison orders by field and would disagree with the server for
+        // exactly the ids this assertion exists to catch a mis-ordering of.
+        Assert.Equal(seen.Select(c => Hex(c.Id.Value)).OrderDescending(), seen.Select(c => Hex(c.Id.Value)));
+
+        var assignedRow = seen.Single(c => c.Id == assigned.Id);
+        Assert.Equal(nameof(ConversationState.Assigned), assignedRow.State);
+        Assert.Equal("Мария П.", assignedRow.OperatorName);
+        Assert.Equal(2, assignedRow.MessageCount);
+        Assert.Equal("message 1", assignedRow.LatestMessage?.Body);
+        Assert.Equal(Now, assignedRow.LatestMessage?.CreatedAt);
+        Assert.Equal(4, seen.Single(c => c.Id == waitingTwo.Id).MessageCount);
+    }
+
+    // The same query, unfiltered - the closed rows and the never-messaged one must come back, because
+    // `cardinality(@States) = 0` is "no filter", not "a filter nothing matches". Without this, a bug
+    // that dropped every row whenever the caller sent no states would pass every test above.
+    [Fact]
+    public async Task GetAllForSiteAsync_WithNoStateFilter_ReturnsEveryStateIncludingClosedAndPending()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var waiting = BuildConversation(siteId, messageCount: 1);
+        var closed = BuildConversation(siteId, messageCount: 2);
+        closed.Close(Now);
+        var pending = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, new VisitorId(Guid.NewGuid()), Now);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            foreach (var conversation in new[] { waiting, closed, pending })
+            {
+                db.Visitors.Add(new Visitor(conversation.VisitorId, siteId, Now));
+                db.Conversations.Add(conversation);
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var page = await store.GetAllForSiteAsync(siteId, beforeId: null, pageSize: 50, tagId: null, states: null, CancellationToken.None);
+
+        Assert.Equal(3, page.Conversations.Count);
+        // The never-messaged row is the one the two `messages` laterals find nothing for - null rather
+        // than an empty-string body, and a count of zero rather than a missing row.
+        var pendingRow = page.Conversations.Single(c => c.Id == pending.Id);
+        Assert.Null(pendingRow.LatestMessage);
+        Assert.Equal(0, pendingRow.MessageCount);
+    }
+
+    // `26-90`: the point lookup carries the same two new facts the list does, and - the reason this
+    // test exists at all rather than being left to the list's own coverage - **it can still be
+    // materialized**. Dapper matches a record constructor by exact parameter count, so widening
+    // `ConversationSummaryRow` for `AllForSiteSql` alone silently broke every caller of this method
+    // until `ByIdSql` selected the same columns (that statement's own remarks). Thirteen integration
+    // tests across four unrelated files caught it; this one names the cause, so the next column added
+    // to that record fails here with an obvious reason rather than in `SiteErasureJob`.
+    [Fact]
+    public async Task GetByIdAsync_CarriesTheSameLastMessageAndCountTheListDoes()
+    {
+        var (conversationId, siteId) = await SeedConversationWithMessages(3);
+
+        var store = new ConversationReadStore(fixture.DataSource);
+        var item = await store.GetByIdAsync(conversationId, siteId, CancellationToken.None);
+
+        Assert.Equal(3, item?.MessageCount);
+        Assert.Equal("message 2", item?.LatestMessage?.Body);
+    }
+
+    private static string Hex(Guid id) => id.ToString("N");
+
+    private static Conversation BuildConversation(SiteId siteId, int messageCount)
+    {
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), siteId, visitorId, Now);
+        for (var i = 0; i < messageCount; i++)
+        {
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody($"message {i}"), Now);
+        }
+
+        return conversation;
     }
 }

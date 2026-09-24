@@ -23,4 +23,18 @@ internal sealed record ConversationSummaryRow(
     // `visitor_contact_details` for this visitor's own most recent `Name`-kind row's `value`. `left`,
     // not `inner` - most visitors have never given one, and that is a real, common case, not an
     // exceptional one.
-    string? VisitorName = null);
+    string? VisitorName = null,
+    // `26-90`: selected by **both** call sites (`AllForSiteSql`/`ByIdSql`), not one - the defaults
+    // below exist for source compatibility, never as a shape either query actually produces. Dapper
+    // matches a constructor by exact parameter count, so a statement that omitted these would fail to
+    // materialize this record at all; `ByIdSql`'s own remarks carry that finding in full.
+    // All four last-message columns are null together exactly when the conversation has no messages at
+    // all (the `left join lateral` matched nothing), which is what `ConversationReadStore.ToSummaryItem`
+    // tests to decide whether to build a `LatestMessageSummary` at all. `LastMessageAt` is `DateTime`,
+    // not `DateTimeOffset`, for the same reason `CreatedAt` above is (this type's own doc comment) -
+    // converted before it crosses back over the port.
+    string? LastMessageBody = null,
+    DateTime? LastMessageAt = null,
+    string? LastMessageContentKind = null,
+    Guid? LastMessageAttachmentId = null,
+    int MessageCount = 0);

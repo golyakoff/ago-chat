@@ -57,6 +57,10 @@ public static class ConversationsEndpoints
         // plural `conversations` resource" reasoning as this file's own doc comment already gives for
         // `/queue`. `beforeId`/`pageSize` are query parameters, not a route segment, because they page
         // one already-identified resource rather than select which resource this is (api-design.md).
+        // `26-90`: `state` joins them as a repeatable query key, applied in SQL rather than by the
+        // client - see HandleGetAllForSiteAsync's own remarks and IConversationReadStore
+        // .GetAllForSiteAsync's, which explain why a keyset-paginated list cannot be filtered after the
+        // page has already been cut.
         app.MapGet("/api/v1/conversations/all", HandleGetAllForSiteAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
@@ -259,10 +263,16 @@ public static class ConversationsEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
+    // `26-90`: `string[]? state` - the same repeatable-query-key binding `HandleGetQueueAsync`'s own
+    // `Guid[]? tag` above already relies on (`?state=Waiting&state=Assigned`), left as raw strings
+    // rather than bound straight to `ConversationState[]`: the handler owns the vocabulary check and
+    // answers a bad value with a real problem-details body naming it, which a binder failure could only
+    // turn into a bare 400 (GetAllConversationsForSite.States' own remarks).
     private static async Task<IResult> HandleGetAllForSiteAsync(
         Guid? beforeId,
         int? pageSize,
         Guid? tag,
+        string[]? state,
         GetAllConversationsForSiteHandler handler,
         HttpContext httpContext,
         CancellationToken cancellationToken)
@@ -270,7 +280,8 @@ public static class ConversationsEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new GetAllConversationsForSite(
-                user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 50, tag is { } t ? new TagId(t) : null),
+                user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 50, tag is { } t ? new TagId(t) : null,
+                state),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);

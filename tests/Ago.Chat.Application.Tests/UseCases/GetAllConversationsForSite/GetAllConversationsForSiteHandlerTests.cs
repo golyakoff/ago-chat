@@ -82,6 +82,148 @@ public class GetAllConversationsForSiteHandlerTests
         Assert.Null(result.Value.Conversations.Single(c => c.ConversationId == unnamed.Id.Value).VisitorName);
     }
 
+    // `26-90`: the fields Android's "Все" tab renders on its second and third lines. Both were absent
+    // from this list before this item - the DTO carried them, this handler never filled them - so this
+    // test is the one that would have failed against the old code.
+    [Fact]
+    public async Task HandleAsync_CarriesTheLastMessagePreviewItsTimestampAndTheTotalMessageCount()
+    {
+        var (handler, readStore) = CreateFixture();
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, visitorId, Now);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("первое"), Now);
+        conversation.AddVisitorMessage(
+            visitorId, new MessageId(Guid.NewGuid()), new MessageBody("оплата не прошла"), Now.AddMinutes(3));
+        readStore.Seed(conversation);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(AdminId, SiteId, null, 50),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var row = Assert.Single(result.Value.Conversations);
+        Assert.Equal("оплата не прошла", row.LastMessagePreview);
+        Assert.Equal(Now.AddMinutes(3), row.LastMessageAt);
+        // A total, never an unread count - OperatorUnreadCount keeps its own separate meaning, which is
+        // why both are asserted here rather than only the new one.
+        Assert.Equal(2, row.MessageCount);
+    }
+
+    // The empty-conversation edge: `25-221`'s Pending row has no messages at all, and must read as
+    // "nothing said yet" rather than as a zero-length message or a placeholder string.
+    [Fact]
+    public async Task HandleAsync_AConversationWithNoMessages_HasNoPreviewNoTimestampAndACountOfZero()
+    {
+        var (handler, readStore) = CreateFixture();
+        readStore.Seed(Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, new VisitorId(Guid.NewGuid()), Now));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(AdminId, SiteId, null, 50),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var row = Assert.Single(result.Value.Conversations);
+        Assert.Null(row.LastMessagePreview);
+        Assert.Null(row.LastMessageAt);
+        Assert.Equal(0, row.MessageCount);
+    }
+
+    // `26-90`: the tab's own default filter - Не начат + Назначен on, Закрыт off. The assertion that
+    // matters is that the *closed* one is absent: the whole reason this is a query parameter and not a
+    // client-side `.filter()` is that this list is keyset-paginated.
+    [Fact]
+    public async Task HandleAsync_WithAStateFilter_ReturnsOnlyConversationsInThoseStates()
+    {
+        var (handler, readStore) = CreateFixture();
+        var waiting = Seed(readStore, assignTo: null, close: false);
+        var assigned = Seed(readStore, assignTo: OtherOperatorId, close: false);
+        var closed = Seed(readStore, assignTo: OtherOperatorId, close: true);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(
+                AdminId, SiteId, null, 50, Tag: null,
+                States: [nameof(ConversationState.Waiting), nameof(ConversationState.Assigned)]),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Conversations.Count);
+        Assert.Contains(result.Value.Conversations, c => c.ConversationId == waiting.Id.Value);
+        Assert.Contains(result.Value.Conversations, c => c.ConversationId == assigned.Id.Value);
+        Assert.DoesNotContain(result.Value.Conversations, c => c.ConversationId == closed.Id.Value);
+    }
+
+    // An empty list is not a filter that matches nothing - it is the absence of a filter, the same rule
+    // `AllForSiteSql`'s own `cardinality(@States) = 0` branch implements.
+    [Fact]
+    public async Task HandleAsync_WithAnEmptyStateFilter_IsUnfiltered()
+    {
+        var (handler, readStore) = CreateFixture();
+        Seed(readStore, assignTo: null, close: false);
+        Seed(readStore, assignTo: OtherOperatorId, close: true);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(
+                AdminId, SiteId, null, 50, Tag: null, States: []),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Conversations.Count);
+    }
+
+    // Refused, not silently dropped - a dropped typo would answer "every state" while looking exactly
+    // like a filter that worked (this handler's own remarks).
+    [Fact]
+    public async Task HandleAsync_WithAStateThatIsNotAConversationState_ReturnsInvalidState()
+    {
+        var (handler, readStore) = CreateFixture();
+        Seed(readStore, assignTo: null, close: false);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(
+                AdminId, SiteId, null, 50, Tag: null, States: [nameof(ConversationState.Waiting), "Archived"]),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.InvalidState", result.Error!.Value.Code);
+        Assert.Contains("Archived", result.Error!.Value.Message);
+    }
+
+    // The permission check runs before the states are even parsed - a caller with no standing on this
+    // site must not learn whether the values they sent were valid (GetSiteConsentAcceptancesHandler's
+    // own precedent for the identical ordering).
+    [Fact]
+    public async Task HandleAsync_WithoutSiteConfigureAndAnInvalidState_ReturnsForbiddenRatherThanInvalidState()
+    {
+        var (handler, _) = CreateFixture(grantPermission: false);
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetAllConversationsForSite.GetAllConversationsForSite(
+                AdminId, SiteId, null, 50, Tag: null, States: ["Archived"]),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
+    }
+
+    private static Conversation Seed(FakeConversationReadStore readStore, OperatorId? assignTo, bool close)
+    {
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, visitorId, Now);
+        conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        if (assignTo is { } operatorId)
+        {
+            conversation.AssignTo(operatorId, Now);
+        }
+
+        if (close)
+        {
+            conversation.Close(Now);
+        }
+
+        readStore.Seed(conversation);
+        return conversation;
+    }
+
     [Fact]
     public async Task HandleAsync_WithoutSiteConfigure_ReturnsForbidden()
     {

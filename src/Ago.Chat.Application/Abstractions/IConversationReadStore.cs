@@ -60,8 +60,21 @@ public interface IConversationReadStore
     /// so filtering after a page was already cut would return fewer than <paramref name="pageSize"/>
     /// items whenever a tag is rare, with no way for the caller to tell "this page is short" apart
     /// from "this is the last page".</summary>
+    /// <summary><paramref name="states"/>: `26-90`'s own state filter - <see langword="null"/> or empty
+    /// means unfiltered, any other set means "only these states". Pushed into this method's own query
+    /// for exactly the reason <paramref name="tagId"/> already is, and the item that added it states the
+    /// consequence in words: this list is keyset-paginated, so a page of 50 narrowed client-side can
+    /// legitimately come back empty while more matching rows sit one page further down - a caller
+    /// filtering after the fact cannot tell that apart from "there are no more".
+    ///
+    /// <para>The row shape grows with it: <see cref="ConversationSummaryItem.LatestMessage"/> and
+    /// <see cref="ConversationSummaryItem.MessageCount"/> are populated by this query too, not by a
+    /// second read over the ids it returned - same reason again. A per-conversation count is bounded by
+    /// one conversation's own length, not by the site's history; the count this item's own Out of scope
+    /// refuses is the other one, <c>COUNT(*)</c> over the whole filtered list.</para></summary>
     Task<ConversationListPage> GetAllForSiteAsync(
-        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken);
+        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+        IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken);
 
     /// <summary>
     /// `16-02`: one conversation by id, scoped to <paramref name="siteId"/> - <see langword="null"/>

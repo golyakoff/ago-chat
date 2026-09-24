@@ -27,6 +27,27 @@ namespace Ago.Chat.Application.Abstractions;
 /// picking that visitor's own most recent `Name`-kind row (`IVisitorContactDetailRepository
 /// .GetNamesForVisitorsAsync`'s own remarks on why "most recent" is the right reduction when more than
 /// one exists).</param>
+/// <param name="LatestMessage">`26-90`: this conversation's own last message, or <see langword="null"/>
+/// when it has none at all - additive, the identical rule every parameter above already follows.
+/// Populated by both read-store call sites, not just the list: this record means one thing regardless
+/// of which query produced it, and a point lookup quietly reporting "nothing was ever said" for a
+/// conversation full of messages would break that (<c>ByIdSql</c>'s own remarks). Deliberately
+/// the same <see cref="LatestMessageSummary"/> record
+/// <see cref="IConversationReadStore.GetLatestMessagesAsync"/> already returns, rather than four loose
+/// fields flattened onto this row: both feed the same wire fields through the same
+/// <c>LastMessagePreviewMapper</c>, and a second near-identical shape would be a second chance for the
+/// two to disagree about what "the latest message" means.
+///
+/// <para>Populated inside <c>AllForSiteSql</c>'s own <c>left join lateral</c>, never by a second read
+/// after the page comes back - <see cref="IConversationReadStore.GetAllForSiteAsync"/>'s own remarks
+/// about `18-04`'s tag filter give the reason: this is the one genuinely paginated list on this table,
+/// so anything done after the page was already cut is done to the wrong rows.</para></param>
+/// <param name="MessageCount">`26-90`: how many messages this conversation holds in total - a total,
+/// never an unread count (<see cref="Contracts.ConversationSummaryDto.MessageCount"/>'s own remarks).
+/// <c>0</c> means a conversation with no messages at all; the default exists for source compatibility
+/// with callers that construct this record by hand (tests, fakes), never for a read-store query, both
+/// of which select it. One conversation's own length is bounded by that conversation - it is not the
+/// <c>COUNT(*)</c>-over-the-whole-site tally `26-90`'s own Out of scope rules out.</param>
 public sealed record ConversationSummaryItem(
     ConversationId Id,
     VisitorId VisitorId,
@@ -38,4 +59,6 @@ public sealed record ConversationSummaryItem(
     string? OperatorName = null,
     string? EmojiCreature = null,
     string? EmojiFood = null,
-    string? VisitorName = null);
+    string? VisitorName = null,
+    LatestMessageSummary? LatestMessage = null,
+    int MessageCount = 0);

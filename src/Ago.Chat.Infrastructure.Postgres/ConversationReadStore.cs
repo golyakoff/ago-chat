@@ -127,11 +127,35 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // correlates on `visitor_id` alone, ordered by `recorded_at desc limit 1` - the identical
     // "most recent wins" reduction `IVisitorContactDetailRepository.GetNamesForVisitorsAsync` uses for
     // GetOperatorQueueHandler's own batch lookup, expressed here as SQL instead of a second round trip.
+    // `26-90`: `lm`/`mc` - the last message and the total message count, per row, inside this one
+    // statement. Not a second GetLatestMessagesAsync call over the ids this page returned, and not an
+    // in-memory reduction afterwards: IConversationReadStore.GetAllForSiteAsync's own remarks about
+    // `18-04`'s tag filter already state why work done after this page was cut is work done on the
+    // wrong rows, and the same logic applies to a field that must be present on every row the page
+    // actually contains. `lm` is the identical `left join lateral ... order by sequence desc limit 1`
+    // shape VisitorHistorySql right below already uses for the same question against the same table,
+    // correlated on `c.site_id` so `messages`' own `PARTITION BY HASH (site_id)` prunes to one bucket
+    // (`15-09`/`adr/0087`) with no new bind parameter.
+    // `mc` is a second lateral rather than a scalar subquery in the select list purely so both reads of
+    // `messages` sit together and read as one thing; `count(*)::int` because Postgres counts in `bigint`
+    // and ConversationSummaryRow.MessageCount is an `int` - the cast belongs in the SQL, where the
+    // narrowing is visible, rather than in a silent Dapper conversion. This count is bounded by one
+    // conversation's own length and served by the same `(conversation_id, sequence, site_id)` unique
+    // index the lateral above uses (MessageConfiguration) - it is not the `COUNT(*)`-over-the-whole-site
+    // read `26-90`'s own Out of scope rules out, which would be a tally of the list itself.
+    // `26-90`: `@States` - a text array, always sent (empty when unfiltered) rather than a nullable one,
+    // so Postgres never has to type-check `any()` against a bare NULL of unknown type; `cardinality(...) = 0`
+    // is the "no filter" branch, the same "one statement handles both" shape `@BeforeId`/`@TagId` above
+    // already use. Dapper hands Npgsql a native array here rather than expanding it into a parameter
+    // list - the same binding `LatestMessagesSql`'s own `= any(@ConversationIds)` already relies on.
     private const string AllForSiteSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
                op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood",
-               vn.value as "VisitorName"
+               vn.value as "VisitorName",
+               lm.body as "LastMessageBody", lm.created_at as "LastMessageAt",
+               lm.content_kind as "LastMessageContentKind", lm.attachment_id as "LastMessageAttachmentId",
+               mc.total as "MessageCount"
         from conversations c
         left join operators op on op.id = c.operator_id
         join visitors v on v.id = c.visitor_id
@@ -142,11 +166,26 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
             order by vcd.recorded_at desc
             limit 1
         ) vn on true
+        left join lateral (
+            select m.body, m.created_at, m.content_kind, m.attachment_id
+            from messages m
+            where m.conversation_id = c.id
+              and m.site_id = c.site_id
+            order by m.sequence desc
+            limit 1
+        ) lm on true
+        left join lateral (
+            select count(*)::int as total
+            from messages m2
+            where m2.conversation_id = c.id
+              and m2.site_id = c.site_id
+        ) mc on true
         where c.site_id = @SiteId
           and c.blocked_at is null
           and (@BeforeId is null or c.id < @BeforeId)
           and (@TagId is null or exists(
               select 1 from conversation_tags ct where ct.conversation_id = c.id and ct.tag_id = @TagId))
+          and (cardinality(@States) = 0 or c.state = any(@States))
         order by c.id desc
         limit @PageSize
         """;
@@ -192,11 +231,29 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     // does; the console's own "see that a conversation is blocked" need is answered by
     // BlockConversationHandler/UnblockConversationHandler's own response instead (that handler's own
     // remarks on ConversationBlockStatus).
+    // `26-90`: the same two `messages` laterals `AllForSiteSql` above gains, added here too - and this
+    // is not merely tidiness. **Dapper matches a constructor by exact parameter count**, not by name
+    // subset: `SqlMapper.GetConstructor` skips any constructor whose arity differs from the number of
+    // columns the query returned, so a record with sixteen parameters cannot be materialized from an
+    // eleven-column result set at all. Leaving this statement narrow threw
+    // "A parameterless default constructor or one matching signature ... is required" at runtime for
+    // every caller of this method - found by running the integration suite, not by reading the code,
+    // which is exactly why this comment is here: the next column added to `ConversationSummaryRow`
+    // must be selected by *both* statements or neither.
+    //
+    // It is also the honest shape independently of that. Both methods return the same
+    // `ConversationSummaryItem`, so a point lookup quietly reporting "no last message, zero messages"
+    // for a conversation that has plenty would make that type mean two different things depending on
+    // which query produced it. The cost is two index-bounded lookups on a single-row read - the same
+    // `(conversation_id, sequence, site_id)` index the list's own laterals use.
     private const string ByIdSql = """
         select c.id as "Id", c.visitor_id as "VisitorId", c.operator_id as "OperatorId", c.state as "State",
                c.created_at as "CreatedAt", c.operator_unread_count as "OperatorUnreadCount", c.outcome as "Outcome",
                op.display_name as "OperatorName", v.emoji_creature as "EmojiCreature", v.emoji_food as "EmojiFood",
-               vn.value as "VisitorName"
+               vn.value as "VisitorName",
+               lm.body as "LastMessageBody", lm.created_at as "LastMessageAt",
+               lm.content_kind as "LastMessageContentKind", lm.attachment_id as "LastMessageAttachmentId",
+               mc.total as "MessageCount"
         from conversations c
         left join operators op on op.id = c.operator_id
         join visitors v on v.id = c.visitor_id
@@ -207,6 +264,20 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
             order by vcd.recorded_at desc
             limit 1
         ) vn on true
+        left join lateral (
+            select m.body, m.created_at, m.content_kind, m.attachment_id
+            from messages m
+            where m.conversation_id = c.id
+              and m.site_id = c.site_id
+            order by m.sequence desc
+            limit 1
+        ) lm on true
+        left join lateral (
+            select count(*)::int as total
+            from messages m2
+            where m2.conversation_id = c.id
+              and m2.site_id = c.site_id
+        ) mc on true
         where c.id = @ConversationId and c.site_id = @SiteId and c.blocked_at is null
         """;
 
@@ -310,13 +381,25 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
     }
 
     public async Task<ConversationListPage> GetAllForSiteAsync(
-        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId, CancellationToken cancellationToken)
+        SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
+        IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
 
         var rows = await connection.QueryAsync<ConversationSummaryRow>(new CommandDefinition(
             AllForSiteSql,
-            new { SiteId = siteId.Value, BeforeId = beforeId, PageSize = pageSize, TagId = tagId.HasValue ? tagId.Value.Value : (Guid?)null },
+            new
+            {
+                SiteId = siteId.Value,
+                BeforeId = beforeId,
+                PageSize = pageSize,
+                TagId = tagId.HasValue ? tagId.Value.Value : (Guid?)null,
+                // `26-90`: the member *name* of the enum, not its numeric value - `conversations.state`
+                // is stored as text (`HasConversion<string>()`, ConversationConfiguration), which is
+                // also why ConversationSummaryItem.State is a string all the way out to the wire.
+                // Empty, never null, for the unfiltered case - see AllForSiteSql's own remarks.
+                States = states?.Select(s => s.ToString()).Distinct().ToArray() ?? Array.Empty<string>(),
+            },
             cancellationToken: cancellationToken));
 
         var items = rows.Select(ToSummaryItem).ToList();
@@ -407,7 +490,22 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.OperatorName,
         r.EmojiCreature,
         r.EmojiFood,
-        r.VisitorName);
+        r.VisitorName,
+        // `26-90`: a LatestMessageSummary only when the lateral actually matched a row - `Body` is
+        // `not null` on `messages`, so a null body here means "no message", never "an empty message".
+        // Absent rather than a placeholder, the identical choice GetLatestMessagesAsync already makes
+        // for the same question (LatestMessageSummary's own remarks): the caller turns absence into the
+        // DTO's own null preview/timestamp pair, so a sentinel would only give it a second way to say
+        // the same thing.
+        r.LastMessageBody is { } lastMessageBody && r.LastMessageAt is { } lastMessageAt
+            ? new LatestMessageSummary(
+                new ConversationId(r.Id),
+                lastMessageBody,
+                new DateTimeOffset(DateTime.SpecifyKind(lastMessageAt, DateTimeKind.Utc)),
+                r.LastMessageContentKind,
+                r.LastMessageAttachmentId)
+            : null,
+        r.MessageCount);
 
     private static VisitorHistoryItem ToVisitorHistoryItem(VisitorHistoryRow r) => new(
         new ConversationId(r.Id),
