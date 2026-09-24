@@ -26,3 +26,15 @@ public sealed record NotifyOperatorDeviceForAssignment(ConversationId Conversati
 /// so the handler is the one place that turns "was this from a visitor" into a decision.
 /// </summary>
 public sealed record NotifyOperatorDeviceForMessage(ConversationId ConversationId, MessageId MessageId, string AuthorKind);
+
+/// <summary>
+/// `26-86`: the Worker-side reaction to a persisted `ConversationWaitingForOperator`
+/// (`OperatorWaitingPushConsumer`). Unlike the two commands above, there is no single operator to
+/// notify at all - `NotifyOperatorDevicesHandler.HandleWaitingAsync` resolves every non-removed
+/// operator on <see cref="SiteId"/> who holds `Permission.ConversationRead`
+/// (`IPermissionChecker.ListNonRemovedHolderIdsAsync`) rather than reading a single id off this
+/// command, the same reason there is no conversation load here either: everything this command needs
+/// is already on the wire contract, the identical property
+/// <see cref="NotifyOperatorDeviceForAssignment"/>'s own remarks state for the assignment kind.
+/// </summary>
+public sealed record NotifyOperatorDeviceForWaiting(ConversationId ConversationId, SiteId SiteId, VisitorId VisitorId);

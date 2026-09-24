@@ -264,5 +264,8 @@ public sealed class SiteInstallationSignalTests(SiteCachingFixture fixture)
         // never called here.
         public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the installation-signal path under test.");
+
+        public Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the installation-signal path under test.");
     }
 }

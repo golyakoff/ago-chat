@@ -63,6 +63,60 @@ public class ConversationTests
         Assert.Equal(ConversationState.Waiting, conversation.State);
     }
 
+    /// <summary>`26-86`: the actual missing signal `26-18`/`adr/0179` named - see
+    /// <see cref="ConversationEnteredQueue"/>'s own remarks for why this is raised here, from the
+    /// visitor's real first message, rather than from <see cref="Conversation.Start"/> (which produces
+    /// <see cref="ConversationState.Pending"/>, never <see cref="ConversationState.Waiting"/>).</summary>
+    [Fact]
+    public void AddVisitorMessage_OnAPendingConversation_RaisesConversationEnteredQueue()
+    {
+        var conversation = StartConversation();
+
+        conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
+
+        var raised = Assert.Single(conversation.DomainEvents.OfType<ConversationEnteredQueue>());
+        Assert.Equal(conversation.Id, raised.ConversationId);
+        Assert.Equal(SiteId, raised.SiteId);
+        Assert.Equal(VisitorId, raised.VisitorId);
+        Assert.Equal(Now, raised.OccurredAt);
+    }
+
+    /// <summary>The transition only ever runs once (this file's own
+    /// <see cref="AddVisitorMessage_OnAConversationAlreadyWaiting_LeavesItWaiting"/>), so the event tied
+    /// to it must not fire a second time either - a second real message must never produce a second
+    /// "someone is waiting" push for a conversation an operator may already be looking at.</summary>
+    [Fact]
+    public void AddVisitorMessage_OnAConversationAlreadyWaiting_DoesNotRaiseConversationEnteredQueueAgain()
+    {
+        var conversation = StartConversation();
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now);
+        conversation.ClearDomainEvents();
+
+        conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(1));
+
+        Assert.Empty(conversation.DomainEvents.OfType<ConversationEnteredQueue>());
+    }
+
+    /// <summary>`26-86`: the routing-suppression carve-out <see cref="ConversationEnteredQueue"/>'s own
+    /// remarks describe - a silently-suppressed conversation still transitions to
+    /// <see cref="ConversationState.Waiting"/> exactly like an ordinary one (this file's own
+    /// <see cref="AddVisitorMessage_OnARoutingSuppressedConversation_StillAcceptsAndStoresIt"/>), but
+    /// must never announce itself to an operator's phone - that would leak exactly the attention
+    /// `23-69`/`23-77`'s own silence guarantee exists to withhold.</summary>
+    [Fact]
+    public void AddVisitorMessage_OnARoutingSuppressedConversation_DoesNotRaiseConversationEnteredQueue()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now, suppressRouting: true);
+
+        conversation.AddVisitorMessage(
+            VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hello?"), Now.AddMinutes(1));
+
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Empty(conversation.DomainEvents.OfType<ConversationEnteredQueue>());
+    }
+
     /// <summary>`25-221`: the exact case the backlog item's own root-cause trace calls out by name -
     /// `AddAutoGreetingMessage` may materialise a message on this same conversation, in this same
     /// transaction, before the visitor's own first real message ever reaches

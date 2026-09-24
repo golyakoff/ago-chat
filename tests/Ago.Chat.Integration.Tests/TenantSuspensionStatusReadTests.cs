@@ -210,6 +210,11 @@ public sealed class TenantSuspensionStatusReadTests(PostgresFixture fixture)
         public Task<int> CountNonRemovedHoldersAsync(
             SiteId requestedSiteId, Permission requestedPermission, CancellationToken cancellationToken) =>
             Task.FromResult(requestedSiteId == siteId && requestedPermission == permission ? 1 : 0);
+
+        public Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(
+            SiteId requestedSiteId, Permission requestedPermission, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<OperatorId>>(
+                requestedSiteId == siteId && requestedPermission == permission ? [operatorId] : []);
     }
 
     /// <summary>The same per-file local <c>IClock</c> stand-in every other file in this project already

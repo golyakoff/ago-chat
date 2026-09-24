@@ -50,13 +50,25 @@ public class SendMessageOutboxTests(PostgresFixture fixture)
         await using var verify = fixture.CreateDbContext();
         var message = await verify.Set<Message>()
             .SingleAsync(m => m.ConversationId == conversationId, CancellationToken.None);
-        var outboxRow = await verify.Set<OutboxMessage>()
-            .SingleAsync(o => o.PartitionKey == conversationId.Value.ToString(), CancellationToken.None);
+        var outboxRows = await verify.Set<OutboxMessage>()
+            .Where(o => o.PartitionKey == conversationId.Value.ToString())
+            .ToListAsync(CancellationToken.None);
 
-        Assert.Equal(message.Id.Value, outboxRow.Id);
-        Assert.Equal("MessageAccepted", outboxRow.Type);
-        Assert.Equal(conversationId.Value.ToString(), outboxRow.PartitionKey);
-        Assert.Null(outboxRow.PublishedAt);
+        // `26-86`: this visitor's own first-ever message is also the one that graduates the
+        // conversation out of Pending into Waiting (`Conversation.AddVisitorMessage`'s own remarks),
+        // so - unlike an ordinary message on an already-Waiting/Assigned conversation - it stages a
+        // second outbox row alongside `MessageAccepted`: `ConversationWaitingForOperator`, sharing the
+        // identical partition key (both are keyed on this conversation).
+        var messageAcceptedRow = Assert.Single(outboxRows, o => o.Type == "MessageAccepted");
+        Assert.Equal(message.Id.Value, messageAcceptedRow.Id);
+        Assert.Equal(conversationId.Value.ToString(), messageAcceptedRow.PartitionKey);
+        Assert.Null(messageAcceptedRow.PublishedAt);
+
+        var waitingRow = Assert.Single(outboxRows, o => o.Type == "ConversationWaitingForOperator");
+        Assert.Equal(conversationId.Value.ToString(), waitingRow.PartitionKey);
+        Assert.Null(waitingRow.PublishedAt);
+
+        Assert.Equal(2, outboxRows.Count);
     }
 
     [Fact]

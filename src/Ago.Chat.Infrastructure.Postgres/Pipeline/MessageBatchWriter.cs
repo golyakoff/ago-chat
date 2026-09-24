@@ -369,6 +369,15 @@ public sealed class MessageBatchWriter(
                         }
                     }
 
+                    // `26-86`: captured before the call below, not read back via OfType<>() afterward -
+                    // ConversationEnteredQueue is raised at most once, ever, per conversation, so a
+                    // second item for this same conversation later in this same flush would still find
+                    // the first item's own (already-enqueued) event sitting in the list if this checked
+                    // "does the aggregate currently hold one" instead of "did *this* call just add one".
+                    // Slicing to what AddVisitorMessage appended is what keeps a duplicate outbox row
+                    // from going out for every subsequent message in a multi-item batch for one visitor.
+                    var domainEventCountBeforeMessage = conversation.DomainEvents.Count;
+
                     // `14-06`: Content is forwarded verbatim and never inspected - it was validated
                     // for shape by the send handler and is meaningless to everything from here down.
                     var message = item.Message.AuthorKind == MessageAuthorKind.Visitor
@@ -415,6 +424,21 @@ public sealed class MessageBatchWriter(
                     // covering several senders must not tag every row with whichever trace happened
                     // to parent the shared DB-write span.
                     outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator), item.Message.TraceParent);
+
+                    // `26-86`: only ever present among the events *this* call just appended (see the
+                    // capture above) - an operator message never raises one (AddOperatorMessage requires
+                    // State == Assigned, which is never Pending), and a visitor message raises one only
+                    // on the single item, ever, that performs this conversation's Pending -> Waiting
+                    // transition.
+                    var enteredQueue = conversation.DomainEvents
+                        .Skip(domainEventCountBeforeMessage)
+                        .OfType<ConversationEnteredQueue>()
+                        .SingleOrDefault();
+                    if (enteredQueue is not null)
+                    {
+                        outbox.Enqueue(ConversationWaitingForOperatorMapper.ToEnvelope(enteredQueue, idGenerator), item.Message.TraceParent);
+                    }
+
                     pendingSuccesses.Add((item, message.Sequence));
                 }
                 catch (ConversationParticipantMismatchException)

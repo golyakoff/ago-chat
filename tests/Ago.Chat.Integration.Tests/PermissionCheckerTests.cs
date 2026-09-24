@@ -171,4 +171,115 @@ public class PermissionCheckerTests(PostgresFixture fixture)
         Assert.Contains(Permission.SiteConfigure.Value, permissions);
         Assert.Contains(Permission.AttachmentDelete.Value, permissions);
     }
+
+    /// <summary>`26-86`: the list sibling of <see cref="HasPermissionAsync_WhenTheOperatorsRoleGrantsIt_ReturnsTrue"/>
+    /// - `NotifyOperatorDevicesHandler.HandleWaitingAsync`'s own resolution query, proven against real
+    /// Postgres rather than only the handler-level fake.</summary>
+    [Fact]
+    public async Task ListNonRemovedHolderIdsAsync_ReturnsEveryNonRemovedOperatorHoldingThePermission()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var holderId = new OperatorId(Guid.NewGuid());
+        var nonHolderId = new OperatorId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        // `26-86`'s own fails-before: SeedSiteAndOperator inserts both a Site and an Operator row per
+        // call, so calling it twice for the same siteId (one real site, two operators on it) would
+        // insert the site twice and violate PK_sites - the site is seeded here exactly once, and both
+        // operators separately, on purpose.
+        await using (var seed = fixture.CreateDbContext())
+        {
+            seed.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            seed.Operators.Add(new Operator(holderId, siteId, OperatorStatus.Online, capacity: 5));
+            seed.Operators.Add(new Operator(nonHolderId, siteId, OperatorStatus.Online, capacity: 5));
+            await seed.SaveChangesAsync();
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationRead.Value, Permission.ConversationSend.Value],
+            });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = holderId, RoleId = roleId });
+            await db.SaveChangesAsync();
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var checker = new PermissionChecker(readDb);
+
+        var holders = await checker.ListNonRemovedHolderIdsAsync(siteId, Permission.ConversationRead, CancellationToken.None);
+
+        Assert.Equal([holderId], holders);
+    }
+
+    [Fact]
+    public async Task ListNonRemovedHolderIdsAsync_ExcludesARemovedOperator()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var removedId = new OperatorId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            var removed = new Operator(removedId, siteId, OperatorStatus.Online, capacity: 5);
+            removed.Remove(Now);
+            db.Operators.Add(removed);
+            db.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = siteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationRead.Value],
+            });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = removedId, RoleId = roleId });
+            await db.SaveChangesAsync();
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var checker = new PermissionChecker(readDb);
+
+        var holders = await checker.ListNonRemovedHolderIdsAsync(siteId, Permission.ConversationRead, CancellationToken.None);
+
+        Assert.Empty(holders);
+    }
+
+    [Fact]
+    public async Task ListNonRemovedHolderIdsAsync_NeverReturnsAHolderOnADifferentSite()
+    {
+        var holderSiteId = new SiteId(Guid.NewGuid());
+        var queriedSiteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        await SeedSiteAndOperator(holderSiteId, operatorId);
+        await using (var siteDb = fixture.CreateDbContext())
+        {
+            siteDb.Sites.Add(new Site(queriedSiteId, $"site_{queriedSiteId.Value:N}", []));
+            await siteDb.SaveChangesAsync();
+        }
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Roles.Add(new RoleRecord
+            {
+                Id = roleId,
+                SiteId = holderSiteId,
+                Name = "Operator",
+                Permissions = [Permission.ConversationRead.Value],
+            });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+            await db.SaveChangesAsync();
+        }
+
+        await using var readDb = fixture.CreateDbContext();
+        var checker = new PermissionChecker(readDb);
+
+        var holders = await checker.ListNonRemovedHolderIdsAsync(queriedSiteId, Permission.ConversationRead, CancellationToken.None);
+
+        Assert.Empty(holders);
+    }
 }

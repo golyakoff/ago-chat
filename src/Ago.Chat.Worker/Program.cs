@@ -268,6 +268,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<OperatorMessagePushConsumer>();
 
+// `26-86`: the third - see its own remarks for why it gets a solo new topic rather than crowding onto
+// either sibling's own.
+builder.Services
+    .AddOptions<OperatorWaitingPushConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorWaitingPushConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorWaitingPushConsumer>();
+
 builder.Services
     .AddOptions<OperatorDisconnectGraceConsumerOptions>()
     .Bind(builder.Configuration.GetSection(OperatorDisconnectGraceConsumerOptions.SectionName))

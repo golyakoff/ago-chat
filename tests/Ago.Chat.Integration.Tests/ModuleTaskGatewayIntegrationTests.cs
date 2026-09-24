@@ -403,6 +403,9 @@ public class ModuleTaskGatewayIntegrationTests
 
         public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FixedOutboxWriter : IOutboxWriter

@@ -57,6 +57,22 @@ public sealed class PermissionChecker(AgoChatDbContext db) : IPermissionChecker
             .CountAsync(cancellationToken);
     }
 
+    /// <summary>`26-86`: the list sibling of <see cref="CountNonRemovedHoldersAsync"/> right above -
+    /// same role-join, no <see cref="LockSiteAsync"/> call, see the port's own remarks for why this read
+    /// needs none.</summary>
+    public async Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken)
+    {
+        var roleIds = db.Roles
+            .Where(r => r.SiteId == siteId && r.Permissions.Contains(permission.Value))
+            .Select(r => r.Id);
+
+        return await db.Operators
+            .Where(o => o.SiteId == siteId && o.RemovedAt == null)
+            .Where(o => db.OperatorRoles.Any(or => or.OperatorId == o.Id && roleIds.Contains(or.RoleId)))
+            .Select(o => o.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     private async Task LockSiteAsync(SiteId siteId, CancellationToken cancellationToken)
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();

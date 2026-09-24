@@ -30,4 +30,11 @@ public sealed class FakePermissionChecker : IPermissionChecker
 
     public Task<int> CountNonRemovedHoldersAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
         Task.FromResult(_granted.Count(g => g.Item2 == siteId && g.Item3 == permission && !_removed.Contains(g.Item1)));
+
+    public Task<IReadOnlyList<OperatorId>> ListNonRemovedHolderIdsAsync(SiteId siteId, Permission permission, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OperatorId>>(_granted
+            .Where(g => g.Item2 == siteId && g.Item3 == permission && !_removed.Contains(g.Item1))
+            .Select(g => g.Item1)
+            .Distinct()
+            .ToList());
 }
