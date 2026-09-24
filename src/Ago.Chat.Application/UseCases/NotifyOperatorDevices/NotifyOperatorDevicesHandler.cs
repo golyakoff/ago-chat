@@ -39,7 +39,7 @@ namespace Ago.Chat.Application.UseCases.NotifyOperatorDevices;
 /// (`26-18`) are what actually collapse a redelivery, not a database write here.</para>
 /// </summary>
 public sealed class NotifyOperatorDevicesHandler(
-    IOperatorDeviceRepository devices, IConversationRepository conversations, IPushSender pushSender, IClock clock,
+    IOperatorDeviceRepository devices, IConversationRepository conversations, IPushSenderResolver pushSenders, IClock clock,
     IPermissionChecker permissions)
 {
     private const string ReasonAssigned = "assigned";
@@ -193,8 +193,16 @@ public sealed class NotifyOperatorDevicesHandler(
                 device.Token, title, body, groupKey, PushMessage.RecommendedTimeToLive, wireData);
             var providerTag = device.Provider.ToString().ToLowerInvariant();
 
+            // `26-100`/`adr/0181`: route this one device to the sender for its own transport. FCM
+            // (primary) and RuStore (fallback) devices sit side by side in the same operator's list, so
+            // the selection is per device, not per fan-out - the resolver's whole reason to exist
+            // (IPushSenderResolver's own remarks). A device written before FCM existed carries RuStore
+            // and resolves to the unchanged RuStore adapter, which is why this change is a no-op for
+            // every existing row.
+            var pushSender = pushSenders.Resolve(device.Provider);
+
             // Deliberately not caught here: IPushSender.SendAsync's own remarks state that only a
-            // response it cannot parse into a definitive RuStore answer at all - a network failure, a
+            // response it cannot parse into a definitive provider answer at all - a network failure, a
             // timeout - is ever thrown, and that is exactly the "the provider or the network failed"
             // case `push-notifications.md`'s own "Quiet failure" section wants to reach the DLQ rather
             // than be swallowed here: the consumer rethrows, and the message lands in

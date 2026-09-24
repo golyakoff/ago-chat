@@ -18,6 +18,11 @@
          else - `push-notifications.md`'s own "the credential reaches exactly one deployable" property,
          so Ago.Chat.Api/Ago.Chat.Webhooks never reference this project at all. -->
     <ProjectReference Include="..\Ago.Chat.Infrastructure.RuStore\Ago.Chat.Infrastructure.RuStore.csproj" />
+    <!-- `26-100`/`adr/0181`: FCM is the primary push transport; its adapter, service-account credential
+         and OAuth2 mint reach only the Worker, the identical single-deployable isolation the RuStore
+         reference above states. Ago.Chat.Api (internet-facing, `adr/0181` §4) and Ago.Chat.Webhooks
+         never reference this project. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Fcm\Ago.Chat.Infrastructure.Fcm.csproj" />
   </ItemGroup>
 
   <ItemGroup>

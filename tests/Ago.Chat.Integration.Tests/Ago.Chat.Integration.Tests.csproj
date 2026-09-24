@@ -114,6 +114,9 @@
     <!-- `26-04`: RuStorePushSenderTests' own real HTTP boundary - the same reasoning as the MAX/
          Telegram/VK/WhatsApp/YooKassa references above. -->
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.RuStore\Ago.Chat.Infrastructure.RuStore.csproj" />
+    <!-- `26-100`: FcmPushSenderTests' own real HTTP boundary - the same reasoning as the RuStore
+         reference just above. -->
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Fcm\Ago.Chat.Infrastructure.Fcm.csproj" />
   </ItemGroup>
 
 

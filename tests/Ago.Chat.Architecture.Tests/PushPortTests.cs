@@ -14,7 +14,7 @@ public class PushPortTests
     [Fact]
     public void PushPort_LivesInApplicationAbstractions()
     {
-        foreach (var typeName in new[] { "IPushSender", "PushMessage", "PushSendOutcome" })
+        foreach (var typeName in new[] { "IPushSender", "IPushSenderResolver", "PushMessage", "PushSendOutcome" })
         {
             var type = TestAssemblies.Application.Reflection
                 .GetTypes()

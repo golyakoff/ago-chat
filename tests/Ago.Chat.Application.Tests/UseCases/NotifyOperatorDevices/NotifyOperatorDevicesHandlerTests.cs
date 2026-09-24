@@ -578,9 +578,41 @@ public class NotifyOperatorDevicesHandlerTests
         Assert.Single(pushSender.Calls); // fired anyway - the registry above was never consulted
     }
 
+    /// <summary>`26-100`/`adr/0181`: the routing proof. One operator's two devices sit on different
+    /// transports - one FCM (primary), one RuStore (fallback) - and each device's push must go to the
+    /// sender for its own <see cref="OperatorDevice.Provider"/>, resolved per device inside the loop, not
+    /// once per fan-out. Proven with a distinct fake per provider so a cross-wiring (both sends landing on
+    /// one sender) fails the assertion rather than passing silently.</summary>
+    [Fact]
+    public async Task HandleAssignmentAsync_RoutesEachDeviceToTheSenderForItsOwnProvider()
+    {
+        var fcmSender = new FakePushSender();
+        var ruStoreSender = new FakePushSender();
+        var resolver = new FakePushSenderResolver(new Dictionary<PushProvider, IPushSender>
+        {
+            [PushProvider.Fcm] = fcmSender,
+            [PushProvider.RuStore] = ruStoreSender,
+        });
+        var devices = new FakeOperatorDeviceRepository();
+        devices.Seed(RegisterDeviceWithProvider(OperatorId, "install-fcm", "token-fcm", PushProvider.Fcm));
+        devices.Seed(RegisterDeviceWithProvider(OperatorId, "install-rustore", "token-rustore", PushProvider.RuStore));
+        var handler = new NotifyOperatorDevicesHandler(
+            devices, new FakeConversationRepository(), resolver, new FakeClock(Now), new FakePermissionChecker());
+
+        await handler.HandleAssignmentAsync(
+            new NotifyOperatorDeviceForAssignment(new ConversationId(Guid.NewGuid()), VisitorId, OperatorId), CancellationToken.None);
+
+        Assert.Equal(["token-fcm"], fcmSender.Calls.Select(c => c.DeviceToken));
+        Assert.Equal(["token-rustore"], ruStoreSender.Calls.Select(c => c.DeviceToken));
+    }
+
     private static OperatorDevice RegisterDevice(OperatorId operatorId, string installationId, string token) =>
+        RegisterDeviceWithProvider(operatorId, installationId, token, PushProvider.RuStore);
+
+    private static OperatorDevice RegisterDeviceWithProvider(
+        OperatorId operatorId, string installationId, string token, PushProvider provider) =>
         OperatorDevice.Register(
-            new OperatorDeviceId(Guid.NewGuid()), SiteId, operatorId, installationId, PushProvider.RuStore, "android", token, Now);
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, operatorId, installationId, provider, "android", token, Now);
 
     private static (NotifyOperatorDevicesHandler Handler, FakeOperatorDeviceRepository Devices, FakeConversationRepository Conversations, FakePushSender PushSender)
         CreateHandler() => CreateHandlerWithPermissions(new FakePermissionChecker());
@@ -591,7 +623,8 @@ public class NotifyOperatorDevicesHandlerTests
         var devices = new FakeOperatorDeviceRepository();
         var conversations = new FakeConversationRepository();
         var pushSender = new FakePushSender();
-        var handler = new NotifyOperatorDevicesHandler(devices, conversations, pushSender, new FakeClock(Now), permissions);
+        var handler = new NotifyOperatorDevicesHandler(
+            devices, conversations, new FakePushSenderResolver(pushSender), new FakeClock(Now), permissions);
         return (handler, devices, conversations, pushSender);
     }
 
@@ -601,7 +634,8 @@ public class NotifyOperatorDevicesHandlerTests
         var devices = new FakeOperatorDeviceRepository();
         var conversations = new FakeConversationRepository();
         var pushSender = new FakePushSender(outcome);
-        var handler = new NotifyOperatorDevicesHandler(devices, conversations, pushSender, new FakeClock(Now), new FakePermissionChecker());
+        var handler = new NotifyOperatorDevicesHandler(
+            devices, conversations, new FakePushSenderResolver(pushSender), new FakeClock(Now), new FakePermissionChecker());
         return (handler, devices, conversations, pushSender);
     }
 
