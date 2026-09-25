@@ -106,7 +106,13 @@ public sealed class ReleaseInactiveConversationHandler(
         // it out as part of returning the conversation to the queue, so this is the last instant this
         // aggregate still knows who to release capacity for.
         var operatorId = conversation.OperatorId!.Value;
-        var consumedCapacityClaim = conversation.ReleaseToQueue(now);
+        // `26-138`: markReleasedForInactivity - this handler is the one and only inactivity-release caller,
+        // so it stamps Conversation.ReleasedWaitingAtSequence here. That marker is what stops the automatic
+        // assignment engine re-claiming this quiet conversation every cycle (the churn `26-83` measured):
+        // WaitingConversationClaimQuery will not re-claim it until a visitor message newer than the release
+        // point arrives. `4-04`'s OperatorConversationReleaser passes no flag (its default false) precisely
+        // because a disconnect release *does* want immediate re-routing - see ReleaseToQueue's own remarks.
+        var consumedCapacityClaim = conversation.ReleaseToQueue(now, markReleasedForInactivity: true);
 
         var domainEvent = conversation.DomainEvents.OfType<ConversationReleased>().Single();
         outbox.Enqueue(ConversationReleasedToQueueMapper.ToEnvelope(domainEvent, siteId, visitorId, idGenerator));

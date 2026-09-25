@@ -63,6 +63,27 @@ public static class WaitingConversationClaimQuery
         // Pending -> Waiting transition ever produces a `Waiting` row, and it always runs after
         // inserting that very message) - the subquery cannot return no rows for a real candidate, so
         // there is no `NULL`-comparison edge case to reason about here.
+        //
+        // `26-138`: the second, trailing predicate is this item's own extension of that same fix. `26-119`
+        // above catches the idle-released conversation whose *operator* replied last; it does not catch the
+        // one whose latest message is still the visitor's - an unanswered conversation that went quiet
+        // before anyone replied and was then released for inactivity. That row satisfies the `26-119`
+        // predicate (the visitor did write last), so before this item it was re-claimed - and re-pushed -
+        // every release cycle, which is the remaining half of `26-83`'s churn. `Conversation.ReleaseToQueue`
+        // now stamps `released_waiting_at_sequence` with the conversation's `last_sequence` at the moment the
+        // inactivity job releases it (and only then - `4-04`'s disconnect release deliberately leaves it
+        // null, because that path *does* want immediate re-routing). The predicate below therefore claims a
+        // released conversation only once a visitor message *newer than that release point* exists: the
+        // latest message's `sequence` (the same top-1 row `26-119` already inspects, guaranteed to be the
+        // visitor's by the predicate right above) must exceed the marker. A released-and-untouched
+        // conversation has `last_sequence == released_waiting_at_sequence`, so `> ` is false and it is never
+        // re-claimed; a new post-release visitor message bumps `last_sequence` past the marker and it is
+        // claimed and assigned exactly as before. The whole predicate is skipped when the marker is null
+        // (never released for inactivity - the ordinary queue, a fresh `ConversationEnteredQueue`, or a
+        // `4-04` disconnect release), so nothing but the idle-released case it exists to catch is affected.
+        // The second correlated subquery runs only for the marker-set rows the `OR` short-circuits into, and
+        // is the identical top-1-by-sequence scan `26-119`'s own subquery already performs (same
+        // `m.site_id = c.site_id` partition-key prune) - not a new access shape.
         const string sql = """
             SELECT c.id
             FROM conversations c
@@ -74,6 +95,16 @@ public static class WaitingConversationClaimQuery
                   ORDER BY m.sequence DESC
                   LIMIT 1
               ) = 'Visitor'
+              AND (
+                  c.released_waiting_at_sequence IS NULL
+                  OR (
+                      SELECT m.sequence
+                      FROM messages m
+                      WHERE m.conversation_id = c.id AND m.site_id = c.site_id
+                      ORDER BY m.sequence DESC
+                      LIMIT 1
+                  ) > c.released_waiting_at_sequence
+              )
             ORDER BY c.created_at
             LIMIT @batchSize
             FOR UPDATE SKIP LOCKED

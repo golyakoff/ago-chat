@@ -530,6 +530,53 @@ public class ConversationTests
         Assert.Equal(anotherOperator, conversation.OperatorId);
     }
 
+    /// <summary>`26-138`: an ordinary release (the default, `4-04`'s disconnect sweep) leaves
+    /// <see cref="Conversation.ReleasedWaitingAtSequence"/> null - a disconnect release *wants* the
+    /// conversation re-routed to another operator immediately, so it must never stamp the
+    /// no-reassign-until-newer-visitor-message marker. See ReleaseToQueue's own remarks.</summary>
+    [Fact]
+    public void ReleaseToQueue_WithoutTheInactivityFlag_DoesNotStampTheReleaseMarker()
+    {
+        var conversation = StartWaitingConversation();
+        conversation.AssignTo(OperatorId, Now);
+
+        conversation.ReleaseToQueue(Now.AddMinutes(5));
+
+        Assert.Null(conversation.ReleasedWaitingAtSequence);
+    }
+
+    /// <summary>`26-138`: an inactivity release stamps the marker with the conversation's current
+    /// <see cref="Conversation.LastSequence"/> - the release point the claim query then refuses to
+    /// re-claim past until a newer visitor message arrives. Here the visitor wrote once (seq 1) and
+    /// nobody replied, so the marker is that single message's sequence.</summary>
+    [Fact]
+    public void ReleaseToQueue_WithTheInactivityFlag_StampsTheReleaseMarkerWithLastSequence()
+    {
+        var conversation = StartWaitingConversation();
+        conversation.AssignTo(OperatorId, Now);
+        Assert.Equal(1, conversation.LastSequence);
+
+        conversation.ReleaseToQueue(Now.AddMinutes(5), markReleasedForInactivity: true);
+
+        Assert.Equal(1, conversation.ReleasedWaitingAtSequence);
+    }
+
+    /// <summary>`26-138`: the marker is stale the moment an operator holds the conversation again -
+    /// re-assigning clears it, so a later idle -> release -> new-message cycle is judged from a clean
+    /// slate rather than against a sequence from the previous assignment.</summary>
+    [Fact]
+    public void AssignTo_ClearsAnyPriorInactivityReleaseMarker()
+    {
+        var conversation = StartWaitingConversation();
+        conversation.AssignTo(OperatorId, Now);
+        conversation.ReleaseToQueue(Now.AddMinutes(5), markReleasedForInactivity: true);
+        Assert.Equal(1, conversation.ReleasedWaitingAtSequence);
+
+        conversation.AssignTo(new OperatorId(Guid.NewGuid()), Now.AddMinutes(6));
+
+        Assert.Null(conversation.ReleasedWaitingAtSequence);
+    }
+
     [Theory]
     [MemberData(nameof(NonClosedStates))]
     public void Close_WhenNotAlreadyClosed_TransitionsToClosed_AndRaisesConversationClosed(
