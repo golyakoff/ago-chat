@@ -279,9 +279,11 @@ public static class ServiceCollectionExtensions
         // write-only audit trail - see each interface's own remarks.
         services.AddScoped<ISiteSuspensionReadStore, SiteSuspensionReadStore>();
         services.AddScoped<ISiteSuspensionRecordRepository, SiteSuspensionRecordRepository>();
-        // `23-59`/`adr/0147`: "a grant carries over every contact ever collected" - the request-side
-        // half; `Ago.Chat.Worker.ContactCarryoverJob` does the actual, bounded, resumable work later.
-        services.AddScoped<IContactCarryoverRequestStore, ContactCarryoverRequestStore>();
+        // `adr/0184`: the account's person registry - the operator's notes about a person (O3), reachable
+        // from exactly two handlers, the same narrow-by-design shape INoteRepository has; and the
+        // consumer-side write that creates a Person a module minted an id for (decision 2).
+        services.AddScoped<IPersonNoteRepository, PersonNoteRepository>();
+        services.AddScoped<IPersonRegistrationStore, PersonRegistrationStore>();
         // `14-14`: unverified contact details - reachable from exactly three handlers, the same
         // narrow-by-design shape INoteRepository's own remarks describe for itself.
         services.AddScoped<IVisitorContactDetailRepository, VisitorContactDetailRepository>();

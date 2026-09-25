@@ -232,6 +232,12 @@ public sealed class ConversationErasureJob(
                     // this conversation.
                     var contactDetailsDeleted = await ConversationErasureQuery.DeleteContactDetailsForVisitorAsync(
                         connection, visitorId, cancellationToken);
+                    // `adr/0184` (O3): the operator's notes about the person, keyed to the visitor the same way
+                    // the contact details are - counted into the receipt's notes_deleted beside the
+                    // conversation's own notes, since both are "notes an operator wrote about this person's
+                    // data" and the receipt has one column for that (ErasureRecordQuery's own remarks).
+                    notesDeleted += await ConversationErasureQuery.DeletePersonNotesForVisitorAsync(
+                        connection, visitorId, cancellationToken);
                     // `24-09`: strip this conversation's own rows out of every archive object the site has
                     // that might still hold them - see this method's own remarks for why this must run
                     // before the conversation row goes, not after.

@@ -68,7 +68,7 @@ public class RecordChannelVisitorContactHandlerTests
 
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             conversations, contactDetails, sites, acceptances, permissions, new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+            new ContactDetailRateLimitOptions(), idGenerator, clock);
 
         var handler = new Application.UseCases.RecordChannelVisitorContact.RecordChannelVisitorContactHandler(
             identities, visitors, startConversation, recordContactDetail, clock, idGenerator, emojiPairs,

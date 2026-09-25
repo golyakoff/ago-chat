@@ -27,6 +27,9 @@ public static class ErrorExtensions
         var statusCode = error.Code switch
         {
             "Conversation.NotFound" or "Attachment.NotFound" or "WebhookEndpoint.NotFound" or "Site.NotFound"
+                // `adr/0184`: a person id that is unknown here, or another account's - the same
+                // "wrong tenant reads like no such row" 404 every code in this group already gets.
+                or "Person.NotFound"
                 or "ChannelCredential.NotFound" or "OperatorInvite.NotFound" or "Export.NotFound"
                 // `25-85`: the same 404 group as OperatorInvite.NotFound right above, deliberately -
                 // ConversationErrors.OperatorInviteNoAutoRedeemablePendingInvite's own remarks: "nothing
@@ -348,6 +351,9 @@ public static class ErrorExtensions
                 // checks), the identical "fix what you sent" shape every other code in this group
                 // already gets.
                 or "OperatorDevice.Invalid"
+                // `adr/0184`: the Person batch read names more ids than one screen could draw - the
+                // caller's own mistake to fix.
+                or "Person.TooManyIds"
                 => StatusCodes.Status400BadRequest,
             "Conversation.InvalidState" or "Attachment.VerificationFailed" or "Attachment.NotReady"
                 or "Conversation.ConcurrencyConflict" or "Site.AlreadyRegistered"

@@ -457,6 +457,22 @@ public static class TenantScopeExemptions
             + "can only ever match it against messages arriving on that same site (PendingChannelLinkRequest's own "
             + "cross-site-isolation remarks) - nothing is read back to any caller.",
 
+        ["Ago.Chat.Application.UseCases.RegisterExternalPerson.RegisterExternalPersonHandler.HandleAsync"] =
+            "`adr/0184` decision 2, consumer side (Ago.Chat.Worker) - the registry's half of \"a booking with no "
+            + "chat origin mints a person id locally in the calendar and publishes PersonRegistered; chat consumes "
+            + "it and creates the Person.\" The same category as RouteConversationToModuleHandler/"
+            + "HandleLinkIdentityCommandHandler above, differing only in that the envelope is another product's "
+            + "(AGO Calendar's) rather than chat's own: SiteId comes off the PersonRegistered envelope this "
+            + "deployment's own calendar published - the account id that is site id is tenant id (adr/0093), a fact "
+            + "the booking write that raised the event already established, never a claim an external caller could "
+            + "make. There is also no principal to check a permission for: nobody asked for this registration, a "
+            + "broker delivery did, and adr/0016 has no representation for that caller exactly as it has none for a "
+            + "visitor. What the site id is used for is narrow and self-scoping: the one Visitor it creates is "
+            + "stamped with exactly that SiteId, and IPersonRegistrationStore.RegisterIfAbsentAsync writes only "
+            + "that new person and its own contact details in one transaction - it reads nothing back to any "
+            + "caller and can reach no other tenant's row, the idempotent-on-person-id create (CLAUDE.md rule 5) "
+            + "this handler's own remarks describe.",
+
         // ---------------------------------------------------------------------------------------
         // The two deliberate cross-tenant/owner-only surfaces in the codebase.
         // ---------------------------------------------------------------------------------------

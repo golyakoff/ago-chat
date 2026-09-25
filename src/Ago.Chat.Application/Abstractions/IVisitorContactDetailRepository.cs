@@ -64,4 +64,10 @@ public interface IVisitorContactDetailRepository
     /// </summary>
     Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
         IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken);
+
+    /// <summary>`adr/0184`: every detail of every visitor named - one round trip for the Person read's
+    /// whole batch (<c>GetPersonsHandler</c>), the same batch shape <see cref="GetNamesForVisitorsAsync"/>
+    /// already has, but the full rows rather than only the most recent name.</summary>
+    Task<IReadOnlyList<VisitorContactDetail>> GetForVisitorsAsync(
+        IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken);
 }

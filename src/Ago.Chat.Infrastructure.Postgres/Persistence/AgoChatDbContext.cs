@@ -129,9 +129,9 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
     // `23-72`: migration-scaffolding only, the same shape - RoleChangeRecordEntity's own remarks.
     internal DbSet<RoleChangeRecordEntity> RoleChangeRecords => Set<RoleChangeRecordEntity>();
 
-    // `23-59`: read and written directly (ContactCarryoverBackfill/ContactCarryoverRequestStore), not
-    // migration-scaffolding only - see ContactCarryoverRequestEntity's own remarks.
-    internal DbSet<ContactCarryoverRequestEntity> ContactCarryoverRequests => Set<ContactCarryoverRequestEntity>();
+    // `adr/0184` (O3): operator notes about a person, on the account's person registry - PersonNote's
+    // own remarks on why this is a second table beside conversation_notes and not a widening of it.
+    public DbSet<PersonNote> PersonNotes => Set<PersonNote>();
 
     // `23-68`: migration-scaffolding only, the same shape - OperatorSeatRestoreOverrideEntity's own remarks.
     internal DbSet<OperatorSeatRestoreOverrideEntity> OperatorSeatRestoreOverrides => Set<OperatorSeatRestoreOverrideEntity>();

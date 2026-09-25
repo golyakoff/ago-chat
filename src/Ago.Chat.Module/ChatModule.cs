@@ -30,6 +30,7 @@ using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.AddConversationNote;
+using Ago.Chat.Application.UseCases.AddPersonNote;
 using Ago.Chat.Application.UseCases.RecordAcceptance;
 using Ago.Chat.Application.UseCases.GetAcceptancesForSubject;
 using Ago.Chat.Application.UseCases.PublishDocumentVersion;
@@ -117,6 +118,8 @@ using Ago.Chat.Application.UseCases.RevealVisitorContactDetail;
 using Ago.Chat.Application.UseCases.GetContactRevealsForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.GetPersonNotes;
+using Ago.Chat.Application.UseCases.GetPersons;
 using Ago.Chat.Application.UseCases.GetVisitorSummary;
 using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
 using Ago.Chat.Application.UseCases.ListModuleTaskChannelPriorityList;
@@ -184,6 +187,7 @@ using Ago.Chat.Application.UseCases.UpdateOfflineAutoReply;
 using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
+using Ago.Chat.Application.UseCases.RegisterExternalPerson;
 using Ago.Chat.Application.UseCases.GetConsentRequirement;
 using Ago.Chat.Application.UseCases.RecordVisitorConsent;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
@@ -1409,6 +1413,13 @@ public sealed class ChatModule : IProductModule
         // per-conversation tag picker.
         services.AddScoped<AddConversationNoteHandler>();
         services.AddScoped<GetConversationNotesHandler>();
+        // `adr/0184`: the account's person registry - the display-only Person read the consoles merge onto
+        // the calendar's own booking rows (decision 4), the operator's notes about a person (O3), and the
+        // consumer-side registration of a person a module minted an id for (decision 2).
+        services.AddScoped<GetPersonsHandler>();
+        services.AddScoped<AddPersonNoteHandler>();
+        services.AddScoped<GetPersonNotesHandler>();
+        services.AddScoped<RegisterExternalPersonHandler>();
         // `24-01`: the acceptance record's own two handlers - no host in this item maps a route to
         // either yet (Scope: showing anything to anybody is `24-03`/`24-04`/`24-05`'s job), registered
         // here anyway so any of those items, and this item's own Application-level tests, can resolve

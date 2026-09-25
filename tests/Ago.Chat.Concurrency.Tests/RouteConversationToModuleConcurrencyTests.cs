@@ -255,7 +255,7 @@ public sealed class RouteConversationToModuleConcurrencyTests(ConcurrencyTestFix
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             new ConversationRepository(db), new VisitorContactDetailRepository(db), new SiteRepository(db),
             new AcceptanceRepository(db), new PermissionChecker(db), new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+            new ContactDetailRateLimitOptions(), idGenerator, clock);
 
         var handler = new RouteConversationToModuleHandler(
             new ConversationRepository(db),
