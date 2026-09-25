@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Caching.Redis;
@@ -177,5 +178,75 @@ public sealed class RedisLockAssignmentConcurrencyTests(SiteCachingConcurrencyFi
         var conversation = await verify.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
         Assert.Equal(ConversationState.Assigned, conversation.State);
         Assert.Equal(seatedOperatorId, conversation.OperatorId);
+    }
+
+    /// <summary>`26-119`: mechanism B's own twin of
+    /// `WaitingConversationClaimQueryTests.ConversationAssignmentJob_NeverReassignsAnIdleReleasedConversation_ButAssignsItOnceANewVisitorMessageArrives` -
+    /// this file's own type-level remarks are why it is restated here rather than shared. An idle,
+    /// released-for-inactivity conversation (operator already answered, visitor gone quiet) must never
+    /// be re-claimed by <see cref="RedisLockAssignmentClaimer"/> either - both mechanisms sit behind
+    /// the identical <see cref="IAssignmentClaimer"/> port, and `26-83`'s churn does not care which one
+    /// a given deployment happens to run.</summary>
+    [Fact]
+    public async Task AssignWaitingConversationsAsync_NeverReassignsAnIdleReleasedConversation_ButAssignsItOnceANewVisitorMessageArrives()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+
+            // Assigned, answered, then released for inactivity - the same
+            // AutoCloseInactiveConversationsJob.ReleaseStaleAssignedWidgetBatchAsync churn `26-83`
+            // diagnosed, modelled directly through Conversation.ReleaseToQueue.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            conversation.AssignTo(operatorId, Now);
+            conversation.AddOperatorMessage(operatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), Now.AddSeconds(1));
+            conversation.ReleaseToQueue(Now.AddMinutes(10));
+            db.Conversations.Add(conversation);
+
+            await db.SaveChangesAsync();
+        }
+
+        var redisLock = new RedisDistributedLock(
+            fixture.RedisMultiplexer, new ResiliencePipelineBuilder().AddTimeout(TimeSpan.FromSeconds(2)).Build(),
+            NullLogger<RedisDistributedLock>.Instance);
+        var claimer = new RedisLockAssignmentClaimer(redisLock, fixture.DataSource, new SystemClock(), new UuidV7Generator());
+
+        var claimedByFirstTick = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+        Assert.Equal(0, claimedByFirstTick);
+
+        await using (var afterFirstTick = fixture.CreateDbContext())
+        {
+            var stillWaiting = await afterFirstTick.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+            Assert.Equal(ConversationState.Waiting, stillWaiting.State);
+            Assert.Null(stillWaiting.OperatorId);
+        }
+
+        await using (var messageDb = fixture.CreateDbContext())
+        {
+            var repository = new ConversationRepository(messageDb);
+            var conversation = await repository.GetByIdAsync(conversationId, CancellationToken.None);
+            conversation!.AddVisitorMessage(
+                visitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(11));
+            await repository.SaveAsync(conversation, CancellationToken.None);
+        }
+
+        var claimedBySecondTick = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
+        Assert.Equal(1, claimedBySecondTick);
+
+        await using var afterSecondTick = fixture.CreateDbContext();
+        var nowAssigned = await afterSecondTick.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Assigned, nowAssigned.State);
+        Assert.Equal(operatorId, nowAssigned.OperatorId);
     }
 }

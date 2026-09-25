@@ -35,11 +35,46 @@ public static class WaitingConversationClaimQuery
         // `Conversation.Start` created it (`Conversation.RoutingSuppressedAt`'s own remarks) and must
         // never be claimed here, the identical "never routed to an operator" guarantee `blocked_at`
         // already gives, restated for a second, deliberately separate flag.
+        //
+        // `26-119`: the trailing correlated subquery is this item's own fix for `26-83`'s churn - a
+        // `Waiting` conversation is claimable only when its own most recent message (highest
+        // `sequence`, never `created_at`: sequence is the server-assigned order `CLAUDE.md` rule 11
+        // requires, `created_at` is merely when it happened) was authored by the visitor.
+        // `AutoCloseInactiveConversationsJob.ReleaseStaleAssignedWidgetBatchAsync` moves an `Assigned`
+        // conversation back to `Waiting` purely because *neither side* has written anything recently -
+        // it never inspects who wrote last. Two shapes reach `Waiting` through that release, and only
+        // one of them is genuinely owed an operator: the operator already answered (or `14-04`'s
+        // offline auto-reply did, `MessageAuthorKind.System`) and the visitor simply went quiet - the
+        // latest message's author is `Operator`/`System`, nothing is pending, and re-assigning it every
+        // release cycle is exactly the push-notification churn `26-83` measured live. Or the visitor
+        // wrote and nobody answered before the inactivity window elapsed - the latest message's author
+        // is still `Visitor`, an operator genuinely owes this conversation a reply, and it must be
+        // assigned exactly as before. A conversation that reached `Waiting` any other way (a fresh
+        // `ConversationEnteredQueue`, `4-04`'s disconnect release) always has the visitor's own message
+        // as its latest by construction (`Conversation.AddOperatorMessage`/`AddSystemMessage` both
+        // require `Assigned`, so neither can ever be the newest message on a `Waiting` row unless a
+        // release like this one put it there) - so this predicate changes nothing for the ordinary
+        // queue, only for the idle-released case it exists to catch. `m.site_id = c.site_id` joins the
+        // correlated subquery on the partition key first, matching
+        // `AutoCloseInactiveConversationsQuery`'s own reasoning for why that keeps `messages`
+        // (`PARTITION BY HASH (site_id)`, `15-09`/`adr/0087`) pruned to one bucket per candidate row
+        // rather than scanned whole. Every `Waiting` conversation has at least one message by
+        // construction (`Conversation.Start` leaves it `Pending`; only `AddVisitorMessage`'s own
+        // Pending -> Waiting transition ever produces a `Waiting` row, and it always runs after
+        // inserting that very message) - the subquery cannot return no rows for a real candidate, so
+        // there is no `NULL`-comparison edge case to reason about here.
         const string sql = """
-            SELECT id
-            FROM conversations
-            WHERE site_id = @siteId AND state = 'Waiting' AND blocked_at IS NULL AND routing_suppressed_at IS NULL
-            ORDER BY created_at
+            SELECT c.id
+            FROM conversations c
+            WHERE c.site_id = @siteId AND c.state = 'Waiting' AND c.blocked_at IS NULL AND c.routing_suppressed_at IS NULL
+              AND (
+                  SELECT m.author_kind
+                  FROM messages m
+                  WHERE m.conversation_id = c.id AND m.site_id = c.site_id
+                  ORDER BY m.sequence DESC
+                  LIMIT 1
+              ) = 'Visitor'
+            ORDER BY c.created_at
             LIMIT @batchSize
             FOR UPDATE SKIP LOCKED
             """;

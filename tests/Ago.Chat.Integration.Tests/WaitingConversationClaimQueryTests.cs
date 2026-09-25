@@ -254,6 +254,147 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
         Assert.Equal(operatorId, nowAssigned.OperatorId);
     }
 
+    /// <summary>`26-119`'s own direct proof, at the raw-query level: two `Waiting` conversations that
+    /// both reached `Waiting` through `AutoCloseInactiveConversationsJob.ReleaseStaleAssignedWidgetBatchAsync`'s
+    /// release path (an `Assigned` conversation's own <see cref="Conversation.ReleaseToQueue"/>, not
+    /// the fresh-queue-entry path <see cref="SeedWaitingConversationsAsync"/> uses) - one where the
+    /// operator answered and the visitor simply went quiet (idle-released, nothing pending), one where
+    /// the visitor wrote again after being released and nobody has answered yet (genuinely waiting).
+    /// Only the second is claimable - the first must never re-enter the churn `26-83` measured.</summary>
+    [Fact]
+    public async Task ClaimBatchAsync_IgnoresAnIdleReleasedConversation_ButStillClaimsOneWithAPendingVisitorMessage()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        ConversationId idleReleasedId;
+        ConversationId pendingInboundId;
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+
+            // Idle-released: visitor wrote, the operator answered, the visitor went quiet, and
+            // AutoCloseInactiveConversationsJob's own release pass moved this back to Waiting purely
+            // for inactivity - the operator's own reply is still the latest message. Must stay
+            // unclaimed.
+            var idleVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(idleVisitorId, siteId, Now));
+            idleReleasedId = new ConversationId(Guid.NewGuid());
+            var idleReleased = Conversation.Start(idleReleasedId, siteId, idleVisitorId, Now);
+            idleReleased.AddVisitorMessage(idleVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            idleReleased.AssignTo(operatorId, Now);
+            idleReleased.AddOperatorMessage(operatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), Now.AddSeconds(1));
+            idleReleased.ReleaseToQueue(Now.AddMinutes(10));
+            db.Conversations.Add(idleReleased);
+
+            // Genuinely waiting: same release history, but the visitor wrote again afterward and
+            // nobody has answered that new message yet. Must still be claimable.
+            var pendingVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(pendingVisitorId, siteId, Now));
+            pendingInboundId = new ConversationId(Guid.NewGuid());
+            var pendingInbound = Conversation.Start(pendingInboundId, siteId, pendingVisitorId, Now);
+            pendingInbound.AddVisitorMessage(pendingVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            pendingInbound.AssignTo(operatorId, Now);
+            pendingInbound.AddOperatorMessage(operatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), Now.AddSeconds(1));
+            pendingInbound.ReleaseToQueue(Now.AddMinutes(10));
+            pendingInbound.AddVisitorMessage(pendingVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(11));
+            db.Conversations.Add(pendingInbound);
+
+            await db.SaveChangesAsync();
+        }
+
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        var claimed = await WaitingConversationClaimQuery.ClaimBatchAsync(
+            connection, transaction, siteId, batchSize: 10, CancellationToken.None);
+
+        Assert.Equal([pendingInboundId], claimed);
+        await transaction.CommitAsync();
+    }
+
+    /// <summary>`26-119`'s own Done-when, proven end to end through the real
+    /// <see cref="ConversationAssignmentJob"/>/<see cref="SkipLockedAssignmentClaimer"/> pair rather than
+    /// the raw query alone - the same "nearest the reported bug" level
+    /// <see cref="ConversationAssignmentJob_NeverAssignsAConversationWithNoRealMessage_ButAssignsItOnceOneArrives"/>
+    /// already uses for `25-221`'s own regression. First tick: an idle-released conversation (operator
+    /// already answered, visitor gone quiet) must not be re-claimed - it stays `Waiting`, unassigned,
+    /// exactly like `26-83` diagnosed it should have all along. Second tick, after the visitor writes
+    /// again: the identical conversation, now genuinely owed a reply, is assigned exactly as before.
+    /// </summary>
+    [Fact]
+    public async Task ConversationAssignmentJob_NeverReassignsAnIdleReleasedConversation_ButAssignsItOnceANewVisitorMessageArrives()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            // `25-170`: a real Operator-role seat - the claimer requires one regardless of status.
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+
+            // Assigned, answered, then released for inactivity - AutoCloseInactiveConversationsJob's
+            // own release pass, modelled directly through the same Conversation.ReleaseToQueue call it
+            // uses (via ReleaseInactiveConversationHandler), not the job itself: this test's own
+            // concern is the assignment side of the churn, not the release side, which
+            // AutoCloseInactiveConversationsJobTests already covers.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            conversation.AssignTo(operatorId, Now);
+            conversation.AddOperatorMessage(operatorId, new MessageId(Guid.NewGuid()), new MessageBody("how can I help?"), Now.AddSeconds(1));
+            conversation.ReleaseToQueue(Now.AddMinutes(10));
+            db.Conversations.Add(conversation);
+
+            await db.SaveChangesAsync();
+        }
+
+        var job = new ConversationAssignmentJob(
+            fixture.DataSource,
+            new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator()),
+            Options.Create(new ConversationAssignmentJobOptions()), NullLogger<ConversationAssignmentJob>.Instance);
+
+        // Fails-before this item: the release above put the conversation back in Waiting, an eligible
+        // operator is online and seated with room, and a real assignment cycle still must not touch it -
+        // nothing is actually pending.
+        await job.RunOnceAsync(CancellationToken.None);
+
+        await using (var afterFirstCycle = fixture.CreateDbContext())
+        {
+            var stillWaiting = await afterFirstCycle.Conversations.AsNoTracking()
+                .SingleAsync(c => c.Id == conversationId);
+            Assert.Equal(ConversationState.Waiting, stillWaiting.State);
+            Assert.Null(stillWaiting.OperatorId);
+        }
+
+        // The visitor writes again - the new inbound is the signal this item's own backlog text names
+        // as what should make it claimable again.
+        await using (var messageDb = fixture.CreateDbContext())
+        {
+            var repository = new ConversationRepository(messageDb);
+            var conversation = await repository.GetByIdAsync(conversationId, CancellationToken.None);
+            conversation!.AddVisitorMessage(
+                visitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(11));
+            await repository.SaveAsync(conversation, CancellationToken.None);
+        }
+
+        // Passes-after: the identical cycle, against the identical row, now claims it.
+        await job.RunOnceAsync(CancellationToken.None);
+
+        await using var afterSecondCycle = fixture.CreateDbContext();
+        var nowAssigned = await afterSecondCycle.Conversations.AsNoTracking()
+            .SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Assigned, nowAssigned.State);
+        Assert.Equal(operatorId, nowAssigned.OperatorId);
+    }
+
     private async Task<List<ConversationId>> SeedWaitingConversationsAsync(SiteId siteId, int count)
     {
         var ids = new List<ConversationId>();
