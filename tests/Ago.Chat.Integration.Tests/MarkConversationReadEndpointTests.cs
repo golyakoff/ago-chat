@@ -19,6 +19,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
+using Ago.Chat.Application.UseCases.GetVisitorSummary;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.SearchConversations;
@@ -262,8 +263,16 @@ public class MarkConversationReadEndpointTests(PostgresFixture fixture)
         // `18-07`: same reason as the three above it - MapConversationsEndpoints now also maps
         // GET .../visitor-history, whose GetVisitorHistoryHandler parameter must resolve as a
         // registered service or the whole route table fails to build.
-        builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
+        //
+        // `26-114`/`adr/0182`: `IChannelIdentityRepository` is gone from this list - it was only ever
+        // here for `GetVisitorHistoryHandler`'s own now-removed channel-identity gate (that handler's
+        // own remarks), and nothing else this file registers needs it.
         builder.Services.AddScoped<GetVisitorHistoryHandler>();
+        // `26-114`: same reason again - MapConversationsEndpoints now also maps GET .../visitor-summary,
+        // whose GetVisitorSummaryHandler parameter must resolve as a registered service. No test in
+        // this file exercises that route; its own dependencies (IConversationRepository,
+        // IConversationReadStore, IPermissionChecker) are all registered above already.
+        builder.Services.AddScoped<GetVisitorSummaryHandler>();
         // `18-01`: same reason again - MapConversationsEndpoints now also maps GET .../search, whose
         // SearchConversationsHandler parameter must resolve as a registered service.
         builder.Services.AddScoped<IConversationSearchStore, ConversationSearchStore>();

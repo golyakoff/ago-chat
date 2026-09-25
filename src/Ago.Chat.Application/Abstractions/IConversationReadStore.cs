@@ -98,10 +98,39 @@ public interface IConversationReadStore
     /// at - always excluded, since a panel showing "this visitor's other conversations" that includes
     /// the one already on screen would be confusing rather than useful, and the caller
     /// (<c>GetVisitorHistoryHandler</c>) already knows exactly which id that is.
+    ///
+    /// <para><b>`26-114`/`adr/0182`: scoped by <paramref name="visitorId"/> alone, the same as it always
+    /// was.</b> This query never carried the channel-identity gate at all - that gate lived one layer up,
+    /// in <c>GetVisitorHistoryHandler</c>, as a short-circuit before this method was ever called for a
+    /// widget-only visitor. `26-114` removed that short-circuit; this method's own SQL, and therefore its
+    /// scope, is unchanged by that - it always meant "this visitor's other conversations on this site,"
+    /// which is exactly the widened meaning the handler now lets every visitor reach.</para>
     /// </summary>
     Task<VisitorHistoryPage> GetVisitorHistoryAsync(
         VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `26-114`: the contact-detail panel's own header facts - <see cref="VisitorSummaryItem.FirstSeenAt"/>
+    /// (<see cref="Domain.Visitor.FirstSeenAt"/>, projected onto a wire DTO for the first time) and
+    /// <see cref="VisitorSummaryItem.ConversationCount"/>, this visitor's distinct conversations on this
+    /// site <b>including</b> the one currently open - both from one query, one round trip.
+    ///
+    /// <para><b>Deliberately the identical scope <see cref="GetVisitorHistoryAsync"/> uses</b> (visitor id
+    /// alone, blocked conversations excluded) rather than a second, independently-written predicate -
+    /// the backlog item's own hard requirement is that this count and that list's length always agree
+    /// (`docs/design/26-111-thread-contact-detail-panel.md`'s decision #5), and the only way two queries
+    /// reliably agree forever is to share one <c>WHERE</c> shape rather than two that started identical
+    /// and could drift. The count differs from the list's own length by exactly one, by design: this
+    /// counts the current conversation too, the list excludes it - see
+    /// <c>Contracts.VisitorSummaryResponse</c>'s own remarks.</para>
+    ///
+    /// <para>No separate <c>siteId</c> parameter - the identical reasoning <see cref="GetVisitorHistoryAsync"/>
+    /// already states for itself: a <see cref="Domain.Visitor"/>, and therefore every conversation hanging
+    /// off one, belongs to exactly one site, and the caller already proved this <paramref name="visitorId"/>
+    /// belongs to its own site by loading the anchor <see cref="Domain.Conversation"/> first.</para>
+    /// </summary>
+    Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken);
 
     /// <summary>
     /// `23-06`: the second of the install screen's two facts - "the product was used", read from

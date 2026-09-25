@@ -21,13 +21,20 @@ namespace Ago.Chat.Application.UseCases.GetVisitorHistory;
 /// a narrower "you may not see history" code, because from this handler's point of view it is the
 /// same failure: not a party to the conversation that would identify the visitor at all.</para>
 ///
-/// <para><b>The gate lives here, not in the read store.</b> <see cref="IChannelIdentityRepository.FindMostRecentForVisitorAsync"/>
-/// already exists (`14-02`) and already answers "does this visitor have a channel identity" - reusing
-/// it, rather than teaching <see cref="IConversationReadStore.GetVisitorHistoryAsync"/> a
-/// <c>channel_identities</c> join of its own, keeps the structural precondition (`14-01`'s model: a
-/// widget visitor has no <see cref="ChannelIdentity"/> row, ever) where the write-side aggregate for
-/// that exact question already lives, and means a widget visitor never reaches the paginated read at
-/// all - not even to discover it returns nothing.</para>
+/// <para><b>`26-114`/`adr/0182`: the channel-identity gate this paragraph used to describe is gone.</b>
+/// Until this item, a widget visitor - one with no <see cref="ChannelIdentity"/> row at all, `14-01`'s
+/// structural model - short-circuited here to an empty, gated result before <see cref="IConversationReadStore.GetVisitorHistoryAsync"/>
+/// ever ran, on the theory that "past dialogs" was a channel-routing feature and a widget visitor
+/// structurally has nothing for it to show. `docs/design/26-111-thread-contact-detail-panel.md`'s
+/// decision #3 names the actual cost of that theory: **most** AGO Chat visitors are widget-only, so for
+/// most conversations the panel always read empty and never opened, which is a dead row wearing a
+/// feature's clothes. The scope this method now grants is <em>per-visitor-on-site</em> - "this visitor's
+/// other conversations here," full stop - never gated on how the visitor happens to reach the widget.
+/// The authorization boundary that actually matters was never the channel-identity check anyway: it is,
+/// and remains, "is this operator assigned to *a* live conversation with this exact visitor" - the two
+/// checks directly below, unchanged by this item. See `adr/0182` for the trade-off and
+/// `docs/architecture/personal-data.md`'s updated `18-07` row for what erasure/access-record coverage
+/// this widening does and does not touch.</para>
 ///
 /// <para><b><see cref="HandleHistoricalConversationAsOperatorAsync"/> is a second, deliberately
 /// separate access rule, found while wiring "opening one shows its real message history" - the
@@ -62,7 +69,6 @@ namespace Ago.Chat.Application.UseCases.GetVisitorHistory;
 public sealed class GetVisitorHistoryHandler(
     IConversationRepository conversations,
     IConversationReadStore readStore,
-    IChannelIdentityRepository channelIdentities,
     IPermissionChecker permissions,
     IAccessRecordRepository accessRecords,
     IClock clock,
@@ -97,20 +103,14 @@ public sealed class GetVisitorHistoryHandler(
             return ConversationErrors.NotFound(query.ConversationId.Value);
         }
 
-        // `14-01`'s structural gate: a widget visitor has no ChannelIdentity row, ever (see this
-        // type's own remarks) - short-circuit before the paginated read runs at all, so a widget
-        // visitor's conversation never even queries for history it structurally cannot have.
-        var identity = await channelIdentities.FindMostRecentForVisitorAsync(conversation.VisitorId, cancellationToken);
-        if (identity is null)
-        {
-            return new VisitorHistoryResponse(HasChannelIdentity: false, Conversations: [], NextBeforeId: null);
-        }
-
+        // `26-114`/`adr/0182`: no channel-identity short-circuit any more - every visitor on this site,
+        // widget-only or channel-identified, reaches the identical paginated read below. See this
+        // type's own remarks for why removing the gate here is safe: the real authorization boundary
+        // (the two checks above) is unchanged.
         var page = await readStore.GetVisitorHistoryAsync(
             conversation.VisitorId, query.ConversationId, query.BeforeId, query.PageSize, cancellationToken);
 
-        return new VisitorHistoryResponse(
-            HasChannelIdentity: true, page.Conversations.Select(ToDto).ToList(), page.NextBeforeId);
+        return new VisitorHistoryResponse(page.Conversations.Select(ToDto).ToList(), page.NextBeforeId);
     }
 
     /// <summary>"Open one" - see this type's own remarks for why this is not a second caller of

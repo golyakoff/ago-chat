@@ -630,6 +630,10 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
             VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
 
+        // `26-114`: not part of the rate-limited path under test either.
+        public Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
         public Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
 

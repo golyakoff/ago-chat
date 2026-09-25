@@ -20,6 +20,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
+using Ago.Chat.Application.UseCases.GetVisitorSummary;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.SearchConversations;
@@ -216,8 +217,12 @@ public class ClaimConversationEndpointTests(PostgresFixture fixture)
         builder.Services.AddScoped<ExportConversationHandler>();
         builder.Services.AddScoped<ExportVisitorHandler>();
         builder.Services.AddSingleton(new PersonExportRateLimitOptions());
-        builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
+        // `26-114`/`adr/0182`: `IChannelIdentityRepository` no longer registered here - it was only
+        // ever for `GetVisitorHistoryHandler`'s own now-removed channel-identity gate.
         builder.Services.AddScoped<GetVisitorHistoryHandler>();
+        // `26-114`: same reason as every other handler in this list - MapConversationsEndpoints now
+        // also maps GET .../visitor-summary.
+        builder.Services.AddScoped<GetVisitorSummaryHandler>();
         builder.Services.AddScoped<IConversationSearchStore, ConversationSearchStore>();
         builder.Services.AddScoped<SearchConversationsHandler>();
         builder.Services.AddScoped<IOperatorAnalyticsReadStore, OperatorAnalyticsReadStore>();

@@ -21,6 +21,7 @@ using Ago.Chat.Application.UseCases.GetOperatorQueue;
 using Ago.Chat.Application.UseCases.GetOwnAnalyticsForOperator;
 using Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
+using Ago.Chat.Application.UseCases.GetVisitorSummary;
 using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.RequestConversationErasure;
 using Ago.Chat.Application.UseCases.SearchConversations;
@@ -224,6 +225,14 @@ public static class ConversationsEndpoints
         // way (the widget already reuses one active conversation - `IConversationRepository.
         // GetActiveForVisitorAsync` - so there is nothing here for a visitor caller to ask for).
         app.MapGet("/api/v1/conversations/{conversationId:guid}/visitor-history", HandleGetVisitorHistoryAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+        // `26-114`: the same panel's own header - "Первый визит {date} · N диалог(ов)"
+        // (`docs/design/26-111-thread-contact-detail-panel.md`'s decision #4). Its own sub-resource,
+        // not a field folded onto `/visitor-history`'s response, because the two are independently
+        // useful reads sharing one scoping query rather than one compound one (that design's own
+        // §5-Q3, Option A) - see `GetVisitorSummaryHandler`'s own remarks.
+        app.MapGet("/api/v1/conversations/{conversationId:guid}/visitor-summary", HandleGetVisitorSummaryAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
         // `16-02`: the single-conversation admin fetch this codebase did not have - see
@@ -740,6 +749,22 @@ public static class ConversationsEndpoints
         var result = await handler.HandleAsOperatorAsync(
             new GetVisitorHistory(
                 new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId(), beforeId, pageSize ?? 20),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    /// <summary>`26-114`: the contact-detail panel's own header read - see `GetVisitorSummaryHandler`'s
+    /// own remarks for the two access checks and why this endpoint carries no channel-identity gate.</summary>
+    private static async Task<IResult> HandleGetVisitorSummaryAsync(
+        Guid conversationId,
+        GetVisitorSummaryHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsOperatorAsync(
+            new GetVisitorSummary(new ConversationId(conversationId), user.GetOperatorId(), user.GetSiteId()),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
