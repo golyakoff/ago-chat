@@ -80,9 +80,9 @@ public static class ChatMetrics
 
     /// <summary>The number that tells "push is broken" apart from "nobody has ever registered a
     /// device" (`push-notifications.md`'s own words) - tagged <c>reason</c>
-    /// (<c>"no_devices"</c>/<c>"not_visitor"</c>/<c>"unassigned"</c>), one point per candidate `26-05`'s
-    /// handler decided not to send for. Not yet called - see <see cref="PushSendsInstrumentName"/>'s own
-    /// remarks.</summary>
+    /// (<c>"no_devices"</c>/<c>"not_visitor"</c>/<c>"unassigned"</c>/<c>"deduped"</c>), one point per
+    /// candidate `26-05`'s handler decided not to send for. `26-120` adds <c>"deduped"</c>: a repeat
+    /// notification for the same (operator, conversation, kind) suppressed inside the safety-net TTL.</summary>
     public const string PushSuppressedInstrumentName = "ago.chat.push.suppressed";
 
     /// <summary>One point per <see cref="Domain.OperatorDevice"/> row `26-05`'s handler (or
@@ -184,7 +184,7 @@ public static class ChatMetrics
         PushSendsInstrumentName, unit: "{send}", description: "IPushSender.SendAsync outcomes, tagged reason (assigned/message), provider, and outcome (delivered/token_gone/failed) - 26-04/26-05.");
 
     private static readonly Counter<long> PushSuppressed = Meter.CreateCounter<long>(
-        PushSuppressedInstrumentName, unit: "{candidate}", description: "Push candidates the fan-out handler decided not to send for, tagged reason (no_devices/not_visitor/unassigned) - the number that tells \"push is broken\" apart from \"nobody has ever registered a device\".");
+        PushSuppressedInstrumentName, unit: "{candidate}", description: "Push candidates the fan-out handler decided not to send for, tagged reason (no_devices/not_visitor/unassigned/deduped) - the number that tells \"push is broken\" apart from \"nobody has ever registered a device\"; deduped is 26-120's safety-net suppression of a repeat notification for the same (operator, conversation, kind) within the TTL.");
 
     private static readonly Counter<long> PushTokensRevoked = Meter.CreateCounter<long>(
         PushTokensRevokedInstrumentName, unit: "{device}", description: "operator_devices rows revoked, tagged cause (signed_out/provider_unregistered/operator_removed) - none of the three is a timer.");

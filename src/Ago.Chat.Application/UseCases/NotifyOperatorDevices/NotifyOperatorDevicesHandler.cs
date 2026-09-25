@@ -2,6 +2,7 @@
 using Ago.Chat.Application.UseCases;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.NotifyOperatorDevices;
@@ -37,10 +38,24 @@ namespace Ago.Chat.Application.UseCases.NotifyOperatorDevices;
 /// outboxed event may publish directly, and a redelivered event just re-sends the same, harmless
 /// push - the client-side notification tag (<see cref="GroupKeyFor"/>) and message-id dedupe
 /// (`26-18`) are what actually collapse a redelivery, not a database write here.</para>
+///
+/// <para><b>`26-120`: a server-side safety-net dedup</b> on top of that client-side collapse, for
+/// fix C of the operator-push storm. Before dispatching to any device, <see cref="SendToOperatorAsync"/>
+/// claims a short-TTL per-(operator, conversation, push-kind[, message-id]) marker through
+/// <see cref="IRateLimiter"/> - the identical atomic, cross-replica claim `26-108`'s
+/// `OperatorPresencePublisher` uses for `OperatorPresenceLost`, reusing the existing
+/// `RedisRateLimiter` rather than a new port or an `IConnectionMultiplexer` reference (the dependency
+/// rule, `clean-architecture.md`; `IRateLimiter` is already this layer's own for every request-path
+/// rate limit, e.g. `SendVisitorMessageHandler`). A repeat of the <em>same</em> notification inside
+/// the window (a reconnect, a broker redelivery, a future job) finds the marker already claimed and
+/// is skipped; a genuinely new message is a new key (see <see cref="SendToOperatorAsync"/>) and still
+/// pushes. <b>Fail-open</b>: if the marker store is unreachable the push is sent - this dedup is an
+/// optimisation on top of an already-idempotent path, so the safe failure mode is "send anyway,"
+/// never "drop a genuine first push."</para>
 /// </summary>
 public sealed class NotifyOperatorDevicesHandler(
     IOperatorDeviceRepository devices, IConversationRepository conversations, IPushSenderResolver pushSenders, IClock clock,
-    IPermissionChecker permissions)
+    IPermissionChecker permissions, IRateLimiter rateLimiter, OperatorPushDedupOptions dedupOptions)
 {
     private const string ReasonAssigned = "assigned";
     private const string ReasonMessage = "message";
@@ -60,9 +75,15 @@ public sealed class NotifyOperatorDevicesHandler(
         await SendToOperatorAsync(
             command.OperatorId,
             ReasonAssigned,
+            command.ConversationId,
+            // `26-120`: no per-message discriminator for an assignment - the natural identity of "this
+            // conversation was assigned to this operator" is the tuple itself, so a re-assignment churn
+            // for the same conversation+operator inside the TTL is exactly the repeat to suppress. A
+            // transfer to a *different* operator carries a different OperatorId, hence a different key,
+            // and still pushes.
+            dedupDiscriminator: string.Empty,
             title: "New conversation assigned",
             body: $"{who} is waiting for you.",
-            groupKey: GroupKeyFor(command.ConversationId),
             data: new Dictionary<string, string> { ["conversationId"] = command.ConversationId.Value.ToString() },
             cancellationToken);
 
@@ -107,9 +128,13 @@ public sealed class NotifyOperatorDevicesHandler(
         await SendToOperatorAsync(
             operatorId,
             ReasonMessage,
+            command.ConversationId,
+            // `26-120`: the message id *is* the discriminator - a genuinely new message is a new key and
+            // must still push, so the dedup only ever collapses a redelivery of the same MessageAccepted
+            // (same message id) within the TTL, never a distinct second message the operator needs.
+            dedupDiscriminator: command.MessageId.Value.ToString(),
             title: "New message",
             body: $"{who} sent a message.",
-            groupKey: GroupKeyFor(command.ConversationId),
             data: new Dictionary<string, string>
             {
                 ["conversationId"] = command.ConversationId.Value.ToString(),
@@ -158,9 +183,14 @@ public sealed class NotifyOperatorDevicesHandler(
             await SendToOperatorAsync(
                 operatorId,
                 ReasonWaiting,
+                command.ConversationId,
+                // `26-120`: like the assignment kind, no per-message discriminator - the marker is keyed
+                // per (operator, conversation, "waiting"), so a re-queue of the same conversation inside
+                // the TTL is suppressed while each eligible operator is deduped independently (their own
+                // OperatorId is in the key).
+                dedupDiscriminator: string.Empty,
                 title: "New conversation waiting",
                 body: $"{who} is waiting for an operator.",
-                groupKey: GroupKeyFor(command.ConversationId),
                 data,
                 cancellationToken);
         }
@@ -173,8 +203,8 @@ public sealed class NotifyOperatorDevicesHandler(
     /// explicit `reason` key every kind now puts on the wire is added exactly once, here, rather than at
     /// each of the three call sites, so there is exactly one place that can forget it.</summary>
     private async Task SendToOperatorAsync(
-        OperatorId operatorId, string reason, string title, string body, string groupKey,
-        IReadOnlyDictionary<string, string> data, CancellationToken cancellationToken)
+        OperatorId operatorId, string reason, ConversationId conversationId, string dedupDiscriminator,
+        string title, string body, IReadOnlyDictionary<string, string> data, CancellationToken cancellationToken)
     {
         var activeDevices = await devices.ListActiveForOperatorAsync(operatorId, cancellationToken);
         if (activeDevices.Count == 0)
@@ -183,6 +213,16 @@ public sealed class NotifyOperatorDevicesHandler(
             return;
         }
 
+        // `26-120`: claimed only *after* confirming there is something to send - a "no_devices" attempt
+        // must not consume the marker, or a later attempt that does have devices (a device registered in
+        // between) would be wrongly suppressed. This gates the real dispatch, nothing else.
+        if (!await TryClaimPushMarkerAsync(operatorId, conversationId, reason, dedupDiscriminator, cancellationToken))
+        {
+            ChatMetrics.RecordPushSuppressed("deduped");
+            return;
+        }
+
+        var groupKey = GroupKeyFor(conversationId);
         var wireData = new Dictionary<string, string>(data) { ["reason"] = reason };
 
         // `push-notifications.md`'s own "The port, and what crosses it": TimeToLive is
@@ -232,6 +272,44 @@ public sealed class NotifyOperatorDevicesHandler(
                     await devices.SaveAsync(device, cancellationToken);
                     break;
             }
+        }
+    }
+
+    /// <summary>`26-120`: the safety-net claim. A <c>RateLimitRule</c> with <c>Capacity: 1</c> and a
+    /// <c>RefillPerSecond</c> tuned so exactly one token refills after
+    /// <see cref="OperatorPushDedupOptions.Ttl"/> gives the same atomic, cross-replica,
+    /// single-Lua-round-trip "claim once per window" a `SET key value NX EX ttl` would - the first check
+    /// for a key finds a full bucket (<c>Allowed</c>, consumes the only token) and every check inside the
+    /// TTL finds an empty one (<c>!Allowed</c>), the identical arithmetic `26-108`'s
+    /// `OperatorPresencePublisher` relies on (`caching.md`'s own "Rate limiting and counters").
+    ///
+    /// <para>The key is <c>operator-push-dedup:{operator}:{conversation}:{push-kind}:{discriminator}</c>.
+    /// The push-kind (<c>assigned</c>/<c>message</c>/<c>waiting</c>) keeps the three kinds from
+    /// suppressing each other, and the discriminator is what lets a genuinely new message reset the
+    /// marker: it is the message id for the message kind and empty for the other two (see each caller's
+    /// own remarks).</para>
+    ///
+    /// <para><b>Fail-open.</b> `RedisRateLimiter`'s own documented posture already returns
+    /// <c>Allowed</c> on a Redis outage (`caching.md`; `26-108`'s own remarks), so an unreachable store
+    /// degrades to "send anyway." The catch here is the second belt for any `IRateLimiter` that throws
+    /// instead of returning <c>Allowed</c>: this dedup is best-effort on top of an already-idempotent
+    /// push path, so its own failure must never drop a genuine first push. <see cref="OperationCanceledException"/>
+    /// is deliberately not swallowed - a cancelled request is not a store failure.</para></summary>
+    private async Task<bool> TryClaimPushMarkerAsync(
+        OperatorId operatorId, ConversationId conversationId, string pushKind, string dedupDiscriminator,
+        CancellationToken cancellationToken)
+    {
+        var key = new RateLimitKey(
+            $"operator-push-dedup:{operatorId.Value}:{conversationId.Value}:{pushKind}:{dedupDiscriminator}");
+        var rule = new RateLimitRule(Capacity: 1, RefillPerSecond: 1.0 / dedupOptions.Ttl.TotalSeconds);
+        try
+        {
+            var claim = await rateLimiter.CheckAsync(key, rule, cancellationToken);
+            return claim.Allowed;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return true;
         }
     }
 

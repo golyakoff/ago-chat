@@ -302,6 +302,19 @@ builder.Services.AddScoped<IPushSenderResolver>(sp => new PushSenderResolver(
 // point this handler is conspicuously absent from its neighbours.
 builder.Services.AddScoped<NotifyOperatorDevicesHandler>();
 
+// `26-120`: fix C's safety-net dedup option, bound here alongside its only consumer (the handler above)
+// for the same reason the handler itself is registered here and not in ChatModule - the plain-value,
+// not-IOptions<T> shape MessageSendRateLimitOptions/OperatorPresenceLostSuppressionOptions already use.
+// IRateLimiter the handler now also takes is already registered for every host by ChatModule's own
+// AddRedisCaching, so nothing new to wire for it. `.Validate` keeps the TTL a genuinely validated
+// option (a zero/negative TTL would make RefillPerSecond infinite/negative - never a valid claim window).
+builder.Services
+    .AddOptions<OperatorPushDedupOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorPushDedupOptions.SectionName))
+    .Validate(o => o.Ttl > TimeSpan.Zero, "OperatorPushDedup:Ttl must be greater than zero.")
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<OperatorPushDedupOptions>>().Value);
+
 // `26-05`/`push-notifications.md`'s own "Fan-out": the two consumers that actually call IPushSender -
 // see each class's own remarks for its queue/DLQ naming and why a per-subscriber ConsumerName is what
 // makes OperatorMessagePushConsumer a safe new subscriber on an already-crowded MessageAccepted topic.

@@ -29,3 +29,31 @@ public sealed class SelectiveFakeRateLimiter(string denyKeyContains, TimeSpan re
             ? new RateLimitDecision(false, retryAfter)
             : new RateLimitDecision(true, TimeSpan.Zero));
 }
+
+/// <summary>`26-120`: allows the first check for each distinct key and denies every later check for that
+/// same key - the "claim once per window" contract `RedisRateLimiter` gives with <c>Capacity: 1</c>,
+/// reduced to exactly what a handler-level test needs to tell "same notification repeated" (same key,
+/// suppressed) from "new message in the same conversation" (new key, allowed) without a real Redis
+/// token bucket. Records every key it was asked about so a test can assert which marker the handler
+/// actually claimed.</summary>
+public sealed class ClaimOncePerKeyFakeRateLimiter : IRateLimiter
+{
+    private readonly HashSet<string> _claimed = [];
+
+    public List<string> Keys { get; } = [];
+
+    public Task<RateLimitDecision> CheckAsync(RateLimitKey key, RateLimitRule rule, CancellationToken cancellationToken)
+    {
+        Keys.Add(key.Value);
+        var firstClaim = _claimed.Add(key.Value);
+        return Task.FromResult(new RateLimitDecision(firstClaim, firstClaim ? TimeSpan.Zero : TimeSpan.FromSeconds(1)));
+    }
+}
+
+/// <summary>`26-120`: throws on every check - the marker store is unreachable. A handler that fails open
+/// must send anyway (never drop a genuine first push); one that let this propagate would drop it.</summary>
+public sealed class ThrowingFakeRateLimiter : IRateLimiter
+{
+    public Task<RateLimitDecision> CheckAsync(RateLimitKey key, RateLimitRule rule, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("marker store unreachable");
+}

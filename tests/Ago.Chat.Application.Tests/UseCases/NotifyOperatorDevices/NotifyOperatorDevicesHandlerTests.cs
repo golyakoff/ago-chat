@@ -597,13 +597,119 @@ public class NotifyOperatorDevicesHandlerTests
         devices.Seed(RegisterDeviceWithProvider(OperatorId, "install-fcm", "token-fcm", PushProvider.Fcm));
         devices.Seed(RegisterDeviceWithProvider(OperatorId, "install-rustore", "token-rustore", PushProvider.RuStore));
         var handler = new NotifyOperatorDevicesHandler(
-            devices, new FakeConversationRepository(), resolver, new FakeClock(Now), new FakePermissionChecker());
+            devices, new FakeConversationRepository(), resolver, new FakeClock(Now), new FakePermissionChecker(),
+            new FakeRateLimiter(), new OperatorPushDedupOptions());
 
         await handler.HandleAssignmentAsync(
             new NotifyOperatorDeviceForAssignment(new ConversationId(Guid.NewGuid()), VisitorId, OperatorId), CancellationToken.None);
 
         Assert.Equal(["token-fcm"], fcmSender.Calls.Select(c => c.DeviceToken));
         Assert.Equal(["token-rustore"], ruStoreSender.Calls.Select(c => c.DeviceToken));
+    }
+
+    // `26-120` (fix C, safety-net dedup): a repeat of the *same* notification for one (operator,
+    // conversation, push-kind) within the TTL is suppressed; a genuinely new message still pushes; and if
+    // the marker store is unreachable the push is sent (fail-open, never drop a genuine first push).
+
+    /// <summary>`26-120`'s core Done-when for the message kind: the same `MessageAccepted` redelivered
+    /// within the window (a broker redelivery, a reconnect-triggered re-fan-out) claims the marker once
+    /// and is suppressed on the repeat - the message id is part of the key, so this only ever collapses a
+    /// repeat of the identical message.</summary>
+    [Fact]
+    public async Task HandleMessageAsync_TheSameMessageDeliveredTwiceWithinTheWindow_SendsOnlyOnce()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.AssignTo(OperatorId, Now);
+        var (handler, devices, conversations, pushSender) =
+            CreateHandlerWithPermissions(new FakePermissionChecker(), new ClaimOncePerKeyFakeRateLimiter());
+        conversations.Seed(conversation);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+        var command = new NotifyOperatorDeviceForMessage(conversation.Id, new MessageId(Guid.NewGuid()), nameof(MessageAuthorKind.Visitor));
+
+        await handler.HandleMessageAsync(command, CancellationToken.None); // claims the marker, sends
+        await handler.HandleMessageAsync(command, CancellationToken.None); // same message id -> suppressed
+
+        Assert.Single(pushSender.Calls);
+    }
+
+    /// <summary>`26-120`'s "a genuinely new, distinct message must still push": two different message ids
+    /// in the same conversation are two different keys, so the marker never hides the second - the dedup
+    /// suppresses a repeated notification, not a real second message the operator needs to see.</summary>
+    [Fact]
+    public async Task HandleMessageAsync_ADistinctSecondMessageInTheSameConversation_StillPushes()
+    {
+        var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+        conversation.AssignTo(OperatorId, Now);
+        var (handler, devices, conversations, pushSender) =
+            CreateHandlerWithPermissions(new FakePermissionChecker(), new ClaimOncePerKeyFakeRateLimiter());
+        conversations.Seed(conversation);
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        await handler.HandleMessageAsync(
+            new NotifyOperatorDeviceForMessage(conversation.Id, new MessageId(Guid.NewGuid()), nameof(MessageAuthorKind.Visitor)),
+            CancellationToken.None);
+        await handler.HandleMessageAsync(
+            new NotifyOperatorDeviceForMessage(conversation.Id, new MessageId(Guid.NewGuid()), nameof(MessageAuthorKind.Visitor)),
+            CancellationToken.None);
+
+        Assert.Equal(2, pushSender.Calls.Count);
+    }
+
+    /// <summary>`26-120` for the assignment kind: a re-assignment churn for the same conversation+operator
+    /// (the exact `26-83` storm this fix is the safety net for) is suppressed after the first within the
+    /// window - no per-message discriminator, so the (operator, conversation, "assigned") tuple is the
+    /// whole identity.</summary>
+    [Fact]
+    public async Task HandleAssignmentAsync_RepeatedForTheSameConversationAndOperatorWithinTheWindow_SendsOnlyOnce()
+    {
+        var (handler, devices, _, pushSender) =
+            CreateHandlerWithPermissions(new FakePermissionChecker(), new ClaimOncePerKeyFakeRateLimiter());
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+        var command = new NotifyOperatorDeviceForAssignment(new ConversationId(Guid.NewGuid()), VisitorId, OperatorId);
+
+        await handler.HandleAssignmentAsync(command, CancellationToken.None);
+        await handler.HandleAssignmentAsync(command, CancellationToken.None);
+
+        Assert.Single(pushSender.Calls);
+    }
+
+    /// <summary>`26-120`: a suppressed repeat is counted under the `deduped` reason on
+    /// <see cref="ChatMetrics.PushSuppressedInstrumentName"/> - the number that tells the safety net
+    /// firing apart from the other non-send reasons.</summary>
+    [Fact]
+    public async Task HandleAssignmentAsync_SuppressedRepeat_RecordsSuppressedWithDedupedReason()
+    {
+        var (handler, devices, _, _) =
+            CreateHandlerWithPermissions(new FakePermissionChecker(), new ClaimOncePerKeyFakeRateLimiter());
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+        var command = new NotifyOperatorDeviceForAssignment(new ConversationId(Guid.NewGuid()), VisitorId, OperatorId);
+
+        await handler.HandleAssignmentAsync(command, CancellationToken.None); // claims + sends
+        using var listener = ListenToPushMetrics();
+        await handler.HandleAssignmentAsync(command, CancellationToken.None); // suppressed
+        listener.ForceFlush();
+
+        AssertSuppressedReason(listener.Metrics, "deduped");
+    }
+
+    /// <summary>`26-120`'s fail-open Done-when: when the marker store throws (Redis unreachable), the
+    /// handler must send anyway rather than let the exception drop a genuine first push - the dedup is a
+    /// best-effort optimisation on top of an already-idempotent push path, so its own failure is never a
+    /// reason to skip the send.</summary>
+    [Fact]
+    public async Task HandleAssignmentAsync_WhenTheMarkerStoreIsUnreachable_FailsOpenAndSendsAnyway()
+    {
+        var (handler, devices, _, pushSender) =
+            CreateHandlerWithPermissions(new FakePermissionChecker(), new ThrowingFakeRateLimiter());
+        devices.Seed(RegisterDevice(OperatorId, "install-1", "token-1"));
+
+        var result = await handler.HandleAssignmentAsync(
+            new NotifyOperatorDeviceForAssignment(new ConversationId(Guid.NewGuid()), VisitorId, OperatorId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Single(pushSender.Calls);
     }
 
     private static OperatorDevice RegisterDevice(OperatorId operatorId, string installationId, string token) =>
@@ -618,13 +724,16 @@ public class NotifyOperatorDevicesHandlerTests
         CreateHandler() => CreateHandlerWithPermissions(new FakePermissionChecker());
 
     private static (NotifyOperatorDevicesHandler Handler, FakeOperatorDeviceRepository Devices, FakeConversationRepository Conversations, FakePushSender PushSender)
-        CreateHandlerWithPermissions(FakePermissionChecker permissions)
+        CreateHandlerWithPermissions(FakePermissionChecker permissions, IRateLimiter? rateLimiter = null)
     {
         var devices = new FakeOperatorDeviceRepository();
         var conversations = new FakeConversationRepository();
         var pushSender = new FakePushSender();
+        // `26-120`: default to an always-allow limiter so the tests that predate the dedup are unchanged -
+        // the dedup-specific tests pass a claiming/throwing fake explicitly.
         var handler = new NotifyOperatorDevicesHandler(
-            devices, conversations, new FakePushSenderResolver(pushSender), new FakeClock(Now), permissions);
+            devices, conversations, new FakePushSenderResolver(pushSender), new FakeClock(Now), permissions,
+            rateLimiter ?? new FakeRateLimiter(), new OperatorPushDedupOptions());
         return (handler, devices, conversations, pushSender);
     }
 
@@ -635,7 +744,8 @@ public class NotifyOperatorDevicesHandlerTests
         var conversations = new FakeConversationRepository();
         var pushSender = new FakePushSender(outcome);
         var handler = new NotifyOperatorDevicesHandler(
-            devices, conversations, new FakePushSenderResolver(pushSender), new FakeClock(Now), new FakePermissionChecker());
+            devices, conversations, new FakePushSenderResolver(pushSender), new FakeClock(Now), new FakePermissionChecker(),
+            new FakeRateLimiter(), new OperatorPushDedupOptions());
         return (handler, devices, conversations, pushSender);
     }
 

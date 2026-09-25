@@ -435,6 +435,12 @@ public sealed class OperatorPushFanOutEndToEndTests
         // `26-100`: the handler resolves its sender per device through IPushSenderResolver now; these
         // tests route every provider to the one RecordingPushSender via PushSenderResolver.Single.
         services.AddSingleton<IPushSenderResolver>(PushSenderResolver.Single(pushSender));
+        // `26-120`: the handler now claims a per-(operator, conversation, kind) dedup marker through
+        // IRateLimiter before dispatching. An always-allow fake here - each test uses fresh ids, so no
+        // key ever repeats and the safety-net dedup never suppresses a genuine push - plus its options
+        // at the default TTL, the same "resolve the constructor in full" note the deps above carry.
+        services.AddSingleton<IRateLimiter, FakeRateLimiter>();
+        services.AddSingleton(new OperatorPushDedupOptions());
         services.AddScoped<NotifyOperatorDevicesHandler>();
         return services.BuildServiceProvider();
     }
@@ -458,6 +464,12 @@ public sealed class OperatorPushFanOutEndToEndTests
         // tests route every provider to the one RecordingPushSender via PushSenderResolver.Single.
         services.AddSingleton<IPushSenderResolver>(PushSenderResolver.Single(pushSender));
         services.AddSingleton(fanoutPublisher);
+        // `26-120`: the handler now claims a per-(operator, conversation, kind) dedup marker through
+        // IRateLimiter before dispatching. An always-allow fake here - each test uses fresh ids, so no
+        // key ever repeats and the safety-net dedup never suppresses a genuine push - plus its options
+        // at the default TTL, the same "resolve the constructor in full" note the deps above carry.
+        services.AddSingleton<IRateLimiter, FakeRateLimiter>();
+        services.AddSingleton(new OperatorPushDedupOptions());
         services.AddScoped<NotifyOperatorDevicesHandler>();
         services.AddScoped<ResolveConversationAssignmentTargetsHandler>();
         return services.BuildServiceProvider();
@@ -480,6 +492,12 @@ public sealed class OperatorPushFanOutEndToEndTests
         // `26-100`: the handler resolves its sender per device through IPushSenderResolver now; these
         // tests route every provider to the one RecordingPushSender via PushSenderResolver.Single.
         services.AddSingleton<IPushSenderResolver>(PushSenderResolver.Single(pushSender));
+        // `26-120`: the handler now claims a per-(operator, conversation, kind) dedup marker through
+        // IRateLimiter before dispatching. An always-allow fake here - each test uses fresh ids, so no
+        // key ever repeats and the safety-net dedup never suppresses a genuine push - plus its options
+        // at the default TTL, the same "resolve the constructor in full" note the deps above carry.
+        services.AddSingleton<IRateLimiter, FakeRateLimiter>();
+        services.AddSingleton(new OperatorPushDedupOptions());
         services.AddScoped<NotifyOperatorDevicesHandler>();
         services.AddScoped<RecordUnreadMessageHandler>();
         return services.BuildServiceProvider();
