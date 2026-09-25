@@ -316,6 +316,10 @@ public sealed class MessageDeliveredLiveDeliveryEndToEndTests(ConnectionFanoutFi
         builder.Services.AddSingleton<IRateLimiter, FakeRateLimiter>();
         builder.Services.AddSingleton(new ConversationCreateRateLimitOptions());
         builder.Services.AddSingleton(new MessageSendRateLimitOptions());
+        // `26-108`: OperatorPresencePublisher (resolved by OperatorHub on disconnect below) now also
+        // depends on OperatorPresenceLostSuppressionOptions - this hand-built host registers the
+        // publisher's deps itself rather than running ChatModule, so it must register this one too.
+        builder.Services.AddSingleton(new OperatorPresenceLostSuppressionOptions());
         builder.Services.AddSingleton<IClock, SystemClock>();
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();

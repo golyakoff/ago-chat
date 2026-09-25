@@ -359,7 +359,10 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             new SystemClock(), new UuidV7Generator());
         var getVisitorPresence = new GetVisitorPresenceHandler(new ConversationRepository(db), new PermissionChecker(db), registry);
         var registration = new HubConnectionRegistration(registry, tracker, node);
-        var presencePublisher = new OperatorPresencePublisher(new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator());
+        // `26-108`: FakeRateLimiter always allows - this fixture is not testing the dedup marker.
+        var presencePublisher = new OperatorPresencePublisher(
+            new NoOpEventPublisher(), new SystemClock(), new UuidV7Generator(),
+            new FakeRateLimiter(), new OperatorPresenceLostSuppressionOptions());
         var operatorPresence = new SetOperatorPresenceHandler(new OperatorRepository(db));
         var getOperatorPresence = new GetOperatorPresenceHandler(new OperatorRepository(db));
         var consoleOrigin = new ConsoleOriginValidator(

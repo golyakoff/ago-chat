@@ -1503,8 +1503,20 @@ public sealed class ChatModule : IProductModule
         // ReplyDraft's own `if (configured)` branch, is unconditional).
         services.AddScoped<IPhoneVerificationSender, UnconfiguredPhoneVerificationSender>();
 
+        // `26-108`: bound here, not a host's own Program.cs - the same "registered for every host,
+        // plain value, not IOptions<T>" shape as MessageSendRateLimitOptions/AttachmentRateLimitOptions
+        // above, because OperatorPresencePublisher (registered right below) is the only consumer and
+        // is itself registered for every host.
+        services
+            .AddOptions<OperatorPresenceLostSuppressionOptions>()
+            .Bind(configuration.GetSection(OperatorPresenceLostSuppressionOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<OperatorPresenceLostSuppressionOptions>>().Value);
+
         // 4-04: needed by both hosts - Ago.Chat.Api's OperatorHub (the query-at-disconnect fast
-        // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop).
+        // path) and Ago.Chat.Worker's OperatorDisconnectSweepJob (the periodic backstop). `26-108`
+        // adds the IRateLimiter-backed dedup marker inside PublishLostAsync itself - IRateLimiter is
+        // already registered for every host by AddRedisCaching above, so nothing new to wire here.
         services.AddSingleton<OperatorPresencePublisher>();
 
         // `15-04`'s own IMessageArchiveGate registration lived here as AlwaysConfirmedMessageArchiveGate
