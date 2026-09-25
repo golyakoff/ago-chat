@@ -395,6 +395,165 @@ public class WaitingConversationClaimQueryTests(PostgresFixture fixture)
         Assert.Equal(operatorId, nowAssigned.OperatorId);
     }
 
+    /// <summary>`26-138`'s own direct proof, at the raw-query level, of the churn `26-119` did not reach:
+    /// a conversation the visitor wrote to, that <em>nobody answered</em> before it went idle and was
+    /// released for inactivity, has the visitor's own message as its latest - so `26-119`'s
+    /// latest-author-is-Visitor predicate alone would (wrongly) re-claim it every release cycle, which is
+    /// the remaining half of the push churn `26-83` measured. The inactivity release now stamps
+    /// <see cref="Conversation.ReleasedWaitingAtSequence"/> (modelled here through the same
+    /// <see cref="Conversation.ReleaseToQueue"/> call `ReleaseInactiveConversationHandler` uses, with the
+    /// inactivity flag set), and this test proves the released-and-untouched conversation is no longer
+    /// claimed, while a never-released one alongside it (same shape, no marker) still is. Fails-before:
+    /// without the marker predicate, both would be claimed.</summary>
+    [Fact]
+    public async Task ClaimBatchAsync_IgnoresAnUnansweredInactivityReleasedConversation_ButStillClaimsANeverReleasedOne()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        ConversationId inactivityReleasedId;
+        ConversationId neverReleasedId;
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+
+            // The 26-138 case: visitor wrote, was assigned, NOBODY replied, then the inactivity job
+            // released it back to Waiting - the visitor's own message is still the latest, and the marker
+            // captures last_sequence (1) at the release point.
+            var unansweredVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(unansweredVisitorId, siteId, Now));
+            inactivityReleasedId = new ConversationId(Guid.NewGuid());
+            var inactivityReleased = Conversation.Start(inactivityReleasedId, siteId, unansweredVisitorId, Now);
+            inactivityReleased.AddVisitorMessage(unansweredVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            inactivityReleased.AssignTo(operatorId, Now);
+            inactivityReleased.ReleaseToQueue(Now.AddMinutes(10), markReleasedForInactivity: true);
+            db.Conversations.Add(inactivityReleased);
+
+            // The control: an ordinary waiting conversation that was never released for inactivity (marker
+            // null) - must still be claimable exactly as before, proving the new predicate only touches
+            // the marked case.
+            var freshVisitorId = new VisitorId(Guid.NewGuid());
+            db.Visitors.Add(new Visitor(freshVisitorId, siteId, Now));
+            neverReleasedId = new ConversationId(Guid.NewGuid());
+            var neverReleased = Conversation.Start(neverReleasedId, siteId, freshVisitorId, Now);
+            neverReleased.AddVisitorMessage(freshVisitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            db.Conversations.Add(neverReleased);
+
+            await db.SaveChangesAsync();
+        }
+
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        {
+            await using var transaction = await connection.BeginTransactionAsync();
+            var claimed = await WaitingConversationClaimQuery.ClaimBatchAsync(
+                connection, transaction, siteId, batchSize: 10, CancellationToken.None);
+
+            // Only the never-released one - the inactivity-released-and-untouched conversation is skipped.
+            Assert.Equal([neverReleasedId], claimed);
+            await transaction.CommitAsync();
+        }
+
+        // A new visitor message after the release point (last_sequence 1 -> 2, above the marker) is exactly
+        // what should make the released conversation owed an operator again.
+        await using (var messageDb = fixture.CreateDbContext())
+        {
+            var repository = new ConversationRepository(messageDb);
+            var conversation = await repository.GetByIdAsync(inactivityReleasedId, CancellationToken.None);
+            conversation!.AddVisitorMessage(
+                conversation.VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(11));
+            await repository.SaveAsync(conversation, CancellationToken.None);
+        }
+
+        await using (var connection = await fixture.DataSource.OpenConnectionAsync())
+        {
+            await using var transaction = await connection.BeginTransactionAsync();
+            var claimed = await WaitingConversationClaimQuery.ClaimBatchAsync(
+                connection, transaction, siteId, batchSize: 10, CancellationToken.None);
+
+            // Now both are claimable; assert the previously-skipped one is present, oldest-first ordering
+            // aside.
+            Assert.Contains(inactivityReleasedId, claimed);
+            await transaction.CommitAsync();
+        }
+    }
+
+    /// <summary>`26-138`'s own Done-when, proven end to end through the real
+    /// <see cref="ConversationAssignmentJob"/>/<see cref="SkipLockedAssignmentClaimer"/> pair - the sibling
+    /// of <see cref="ConversationAssignmentJob_NeverReassignsAnIdleReleasedConversation_ButAssignsItOnceANewVisitorMessageArrives"/>
+    /// for the case `26-119` did not cover: a conversation released for inactivity while <em>unanswered</em>
+    /// (the visitor wrote last). First tick: it must not be re-claimed, the churn stopped. Second tick,
+    /// after a new visitor message clears the release marker: it is assigned exactly as before.</summary>
+    [Fact]
+    public async Task ConversationAssignmentJob_NeverReassignsAnUnansweredInactivityReleasedConversation_ButAssignsItOnceANewVisitorMessageArrives()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+
+            // Assigned, NEVER answered, then released for inactivity - the visitor's own message is the
+            // latest, and the marker captures the release point (last_sequence 1). Modelled through the same
+            // Conversation.ReleaseToQueue call ReleaseInactiveConversationHandler uses (with the inactivity
+            // flag), not the job itself: this test's concern is the assignment side of the churn.
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("is anyone there?"), Now);
+            conversation.AssignTo(operatorId, Now);
+            conversation.ReleaseToQueue(Now.AddMinutes(10), markReleasedForInactivity: true);
+            db.Conversations.Add(conversation);
+
+            await db.SaveChangesAsync();
+        }
+
+        var job = new ConversationAssignmentJob(
+            fixture.DataSource,
+            new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator()),
+            Options.Create(new ConversationAssignmentJobOptions()), NullLogger<ConversationAssignmentJob>.Instance);
+
+        // Fails-before this item: an eligible operator is online and seated with room, the conversation's
+        // latest message is the visitor's (so `26-119` alone would claim it), and a real assignment cycle
+        // still must not touch it - it was released for inactivity and nothing new has arrived.
+        await job.RunOnceAsync(CancellationToken.None);
+
+        await using (var afterFirstCycle = fixture.CreateDbContext())
+        {
+            var stillWaiting = await afterFirstCycle.Conversations.AsNoTracking()
+                .SingleAsync(c => c.Id == conversationId);
+            Assert.Equal(ConversationState.Waiting, stillWaiting.State);
+            Assert.Null(stillWaiting.OperatorId);
+        }
+
+        // The visitor writes again - past the release marker, the one signal that makes it owed again.
+        await using (var messageDb = fixture.CreateDbContext())
+        {
+            var repository = new ConversationRepository(messageDb);
+            var conversation = await repository.GetByIdAsync(conversationId, CancellationToken.None);
+            conversation!.AddVisitorMessage(
+                visitorId, new MessageId(Guid.NewGuid()), new MessageBody("still there?"), Now.AddMinutes(11));
+            await repository.SaveAsync(conversation, CancellationToken.None);
+        }
+
+        // Passes-after: the identical cycle, against the identical row, now claims it - and assignment
+        // clears the marker so a later idle -> release -> new-message cycle works again.
+        await job.RunOnceAsync(CancellationToken.None);
+
+        await using var afterSecondCycle = fixture.CreateDbContext();
+        var nowAssigned = await afterSecondCycle.Conversations.AsNoTracking()
+            .SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Assigned, nowAssigned.State);
+        Assert.Equal(operatorId, nowAssigned.OperatorId);
+        Assert.Null(nowAssigned.ReleasedWaitingAtSequence);
+    }
+
     private async Task<List<ConversationId>> SeedWaitingConversationsAsync(SiteId siteId, int count)
     {
         var ids = new List<ConversationId>();

@@ -27,6 +27,16 @@ internal sealed class ConversationConfiguration : IEntityTypeConfiguration<Conve
         builder.Property(c => c.LastSequence).HasColumnName("last_sequence");
         builder.Property(c => c.CreatedAt).HasColumnName("created_at");
 
+        // `26-138`: nullable - null for every conversation never released for inactivity, and (permanently)
+        // for one released before this column existed. See Conversation.ReleasedWaitingAtSequence's own
+        // remarks. No dedicated index: WaitingConversationClaimQuery (Ago.Chat.Worker) reads this column in
+        // raw SQL as a per-row predicate on rows the existing ix_conversations_waiting partial index has
+        // already located by (site_id, state = 'Waiting'), never filters or orders the table by it, and
+        // every other reader gets it for free as part of an aggregate already loaded by primary key - the
+        // identical "no index, it arrives with a filtering reader and this has none" reasoning
+        // operator_last_read_sequence right below already states.
+        builder.Property(c => c.ReleasedWaitingAtSequence).HasColumnName("released_waiting_at_sequence");
+
         // `18-07`: nullable - null for every conversation that predates this column, and for every
         // conversation still open. See Conversation.ClosedAt's own remarks.
         builder.Property(c => c.ClosedAt).HasColumnName("closed_at");

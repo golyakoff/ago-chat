@@ -18,7 +18,14 @@ public sealed class AutoCloseInactiveConversationsJobOptions
 {
     public const string SectionName = "AutoCloseInactiveConversationsJob";
 
-    public TimeSpan Interval { get; set; } = TimeSpan.FromMinutes(5);
+    /// <summary>`26-138`: raised from 5 to 15 minutes. The release pass is not time-critical - a quiet
+    /// conversation's operator slot freeing three cycles later than before is immaterial next to what the
+    /// old cadence cost: at 5-minute ticks every idle conversation was re-evaluated (and, before `26-119`
+    /// /`26-138` tightened the claim predicate, re-assigned and re-pushed) twelve times an hour. Fifteen
+    /// minutes is the coarsest tick that still reacts to a genuinely new visitor message within a support
+    /// SLA's own tolerance, and the claim-side marker (`Conversation.ReleasedWaitingAtSequence`) is what
+    /// actually stops the churn - this interval only decides how often the pass looks.</summary>
+    public TimeSpan Interval { get; set; } = TimeSpan.FromMinutes(15);
 
     /// <summary>Candidates closed per (channel-kind, tick) pair - the same batching shape
     /// <c>AttachmentOrphanSweepJobOptions.BatchSize</c> already uses, so one tick with an unusually

@@ -34,6 +34,34 @@ public sealed class Conversation
 
     public int LastSequence { get; private set; }
 
+    /// <summary>
+    /// `26-138`: the <see cref="LastSequence"/> captured at the moment
+    /// <see cref="ReleaseToQueue"/> released this conversation back to
+    /// <see cref="ConversationState.Waiting"/> <em>for inactivity</em> - <see langword="null"/> for
+    /// every conversation that has never been released that way (and, permanently, for one released
+    /// before this column existed - the migration backfills nothing, the same "null means predates the
+    /// column, or genuinely never happened, and no reader needs to tell those apart" shape
+    /// <see cref="ClosedAt"/>/<see cref="OperatorLastReadSequence"/> already established on this
+    /// aggregate).
+    ///
+    /// <para><b>Why this exists.</b> `26-119` stopped the automatic assignment engine re-claiming an
+    /// idle-released conversation whose <em>latest</em> message was the operator's own reply. It did not
+    /// stop re-claiming one whose latest message is still the visitor's - an unanswered conversation that
+    /// went idle before anyone replied - because that row looks identical to a genuinely-owed one: the
+    /// visitor wrote last. Re-assigning it every release cycle (and pushing on every re-assignment) is
+    /// the churn `26-83` measured. This marker is what tells the two apart: a conversation is only owed an
+    /// operator again once a visitor message <em>newer than the release point</em> arrives, i.e. a message
+    /// whose <see cref="Message.Sequence"/> exceeds this value. See
+    /// <c>WaitingConversationClaimQuery</c>'s own predicate for the read side.</para>
+    ///
+    /// <para><b>Sequence, never a clock</b> (`CLAUDE.md` rule 11 / concurrency.md): "newer than the
+    /// release point" is a server-assigned-ordering question, and <see cref="LastSequence"/> is exactly
+    /// that ordering. Cleared back to <see langword="null"/> the instant this conversation is assigned
+    /// again (<see cref="AssignTo"/>) - once an operator holds it, any prior release marker is stale, so a
+    /// later idle -> release -> new-message cycle starts from a clean slate.</para>
+    /// </summary>
+    public int? ReleasedWaitingAtSequence { get; private set; }
+
     public DateTimeOffset CreatedAt { get; }
 
     /// <summary>
@@ -403,6 +431,10 @@ public sealed class Conversation
         OperatorId = operatorId;
         State = ConversationState.Assigned;
         HoldsCapacityClaim = holdsCapacityClaim;
+        // `26-138`: any inactivity-release marker is stale the moment an operator holds this again - clear
+        // it so a later idle -> release -> new-message cycle is judged from a clean slate rather than
+        // against a sequence from the previous assignment. See ReleasedWaitingAtSequence's own remarks.
+        ReleasedWaitingAtSequence = null;
         _domainEvents.Add(new ConversationAssigned(Id, operatorId, now));
     }
 
@@ -463,8 +495,18 @@ public sealed class Conversation
     /// the same reason without an assignment in between, so any call while already `Waiting` is a
     /// genuine caller bug, not a redundant retry to tolerate.
     /// </summary>
+    /// <param name="markReleasedForInactivity">`26-138`: <see langword="true"/> only when this release is
+    /// the inactivity job returning a quiet conversation to the pool
+    /// (<c>ReleaseInactiveConversationHandler</c>) - it stamps <see cref="ReleasedWaitingAtSequence"/> with
+    /// the current <see cref="LastSequence"/>, the release point the automatic assignment engine then
+    /// refuses to re-claim past until a newer visitor message arrives. Defaults to <see langword="false"/>,
+    /// the honest value for every other caller: `4-04`'s operator-disconnect sweep
+    /// (<c>OperatorConversationReleaser</c>) genuinely does want the conversation re-routed to another
+    /// operator immediately, so it must <em>not</em> set the marker - the same "optional, defaulting to the
+    /// value that leaves existing callers untouched" shape <see cref="AddVisitorMessage"/>'s own
+    /// <c>retentionClass</c> already uses on this aggregate.</param>
     /// <returns>`6-09`: whether this transition consumed a capacity claim - see <see cref="Close"/>.</returns>
-    public bool ReleaseToQueue(DateTimeOffset now)
+    public bool ReleaseToQueue(DateTimeOffset now, bool markReleasedForInactivity = false)
     {
         if (State != ConversationState.Assigned)
         {
@@ -477,6 +519,11 @@ public sealed class Conversation
         HoldsCapacityClaim = false;
         OperatorId = null;
         State = ConversationState.Waiting;
+        if (markReleasedForInactivity)
+        {
+            ReleasedWaitingAtSequence = LastSequence;
+        }
+
         _domainEvents.Add(new ConversationReleased(Id, previousOperatorId, now));
         return claimConsumed;
     }

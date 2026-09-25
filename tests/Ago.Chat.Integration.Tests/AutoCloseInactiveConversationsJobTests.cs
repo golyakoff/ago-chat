@@ -80,6 +80,11 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
         Assert.Equal(ConversationState.Waiting, conversation.State);
         Assert.Null(conversation.OperatorId);
 
+        // `26-138`: the release pass stamps the marker (last_sequence 1 - the visitor's single "hi",
+        // SeedAssignedConversationAsync adds no operator reply) so the automatic assignment engine will
+        // not re-claim this quiet conversation until a newer visitor message arrives.
+        Assert.Equal(1, conversation.ReleasedWaitingAtSequence);
+
         // The outbox row is ConversationReleasedToQueueMapper's own ConversationReleasedToQueue - the
         // release pass's own contract, distinct from the close pass's ConversationEnded.
         var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(o => o.PartitionKey == seeded.ConversationId.Value.ToString());
