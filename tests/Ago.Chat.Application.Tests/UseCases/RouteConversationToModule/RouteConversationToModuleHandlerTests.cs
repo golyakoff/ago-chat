@@ -229,6 +229,24 @@ public class RouteConversationToModuleHandlerTests
         Assert.Equal("Ru", call.Request.Locale);
     }
 
+    /// <summary>`26-136`/`adr/0184`: chat owns the person, so the very first call to a module carries this
+    /// conversation's own visitor (person) id and conversation id - the ids the calendar stamps onto a
+    /// chat-origin booking.</summary>
+    [Fact]
+    public async Task HandleAsync_WithATriggerMatch_ForwardsThePersonIdAndOriginConversationIdToTheGateway()
+    {
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ => new StartModuleTaskResult(
+            "external-1", ChoiceStep("Which service?", ("Haircut", "svc-1")), false);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.StartCalls);
+        Assert.Equal(VisitorId.Value, call.Request.PersonId);
+        Assert.Equal(fixture.Conversation.Id.Value, call.Request.OriginConversationId);
+    }
+
     /// <summary>`25-37`: no site resolves at all (a genuinely narrow window - deleted between the
     /// trigger's own dedup check and this read) reads as the safe English default, never a hard
     /// failure of a reply this handler can otherwise still serve - <c>ResolveLocaleAsync</c>'s own
@@ -403,6 +421,23 @@ public class RouteConversationToModuleHandlerTests
 
         var call = Assert.Single(fixture.Gateway.ReplyCalls);
         Assert.Equal("svc-2", call.Request.Value);
+    }
+
+    /// <summary>`26-136`/`adr/0184`: the reply is the call a booking is actually written on, so it too
+    /// carries this conversation's own person id and conversation id - the ids the calendar stamps onto
+    /// the booked <c>Event</c>.</summary>
+    [Fact]
+    public async Task HandleAsync_WithAReply_ForwardsThePersonIdAndOriginConversationIdToTheGateway()
+    {
+        var fixture = CreateFixture(arrange: c => ConversationWithActiveTask(c, "Which service?", ("Haircut", "svc-1"), ("Manicure", "svc-2")));
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("2"), Now);
+        fixture.Gateway.OnSubmitReply = _ => new SubmitModuleReplyResult(null, true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        var call = Assert.Single(fixture.Gateway.ReplyCalls);
+        Assert.Equal(VisitorId.Value, call.Request.PersonId);
+        Assert.Equal(fixture.Conversation.Id.Value, call.Request.OriginConversationId);
     }
 
     /// <summary>`25-37`: resent on every reply, not merely at task start -

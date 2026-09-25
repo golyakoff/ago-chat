@@ -243,6 +243,13 @@ public class ModuleTaskGatewayIntegrationTests
         Assert.Equal("+79990000001", ExtractField(body, "value"));
         Assert.True(body.RootElement.TryGetProperty("phoneVerifiedAt", out var phoneVerifiedAtElement));
         Assert.Equal(verifiedAt, phoneVerifiedAtElement.GetDateTimeOffset());
+
+        // `26-136`/`adr/0184`: the reply also carries this conversation's own person id and conversation
+        // id, over the real wire under the exact camelCase names the calendar's own DTO deserializes.
+        Assert.True(body.RootElement.TryGetProperty("personId", out var personIdElement));
+        Assert.Equal(VisitorId.Value, personIdElement.GetGuid());
+        Assert.True(body.RootElement.TryGetProperty("originConversationId", out var originConversationIdElement));
+        Assert.Equal(conversation.Id.Value, originConversationIdElement.GetGuid());
     }
 
     private static Conversation StartConversationAwaitingVerifiedPhone()
