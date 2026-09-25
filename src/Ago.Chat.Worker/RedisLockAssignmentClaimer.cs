@@ -231,10 +231,30 @@ public sealed class RedisLockAssignmentClaimer(
         return true;
     }
 
+    /// <summary>`26-119`: the identical "latest message must be the visitor's own" predicate
+    /// <see cref="WaitingConversationClaimQuery"/>'s own remarks explain in full - restated here rather
+    /// than shared because this file's own type-level remarks already establish that mechanism A and
+    /// mechanism B deliberately do not share code. Expressed as a correlated <c>Message</c> subquery
+    /// (<c>db.Set&lt;Message&gt;()</c> - <see cref="Message"/> is a real, independently-configured
+    /// entity type on this <see cref="AgoChatDbContext"/>, not an owned collection, so this needs no
+    /// navigation to be loaded) rather than raw SQL, matching this method's own pre-existing plain-EF
+    /// shape - this is a read, not the atomic claim <see cref="WaitingConversationClaimQuery"/> exists
+    /// to be. Cast to <c>MessageAuthorKind?</c> before <c>FirstOrDefault()</c> - the identical
+    /// nullable-projection shape <see cref="FindCandidateOperatorAsync"/> already uses in this file, so
+    /// an empty subquery compares as <see langword="null"/> rather than silently matching
+    /// <see cref="MessageAuthorKind.Visitor"/> (its own default enum value, `0`) by accident. Never
+    /// actually empty for a real `Waiting` row in practice - <see cref="WaitingConversationClaimQuery"/>'s
+    /// own remarks explain why - but this is the one place in this query correctness cannot lean on
+    /// that invariant holding forever.</summary>
     private static async Task<List<ConversationId>> GetWaitingConversationIdsAsync(
         AgoChatDbContext db, SiteId siteId, int batchSize, CancellationToken cancellationToken) =>
         await db.Conversations.AsNoTracking()
             .Where(c => c.SiteId == siteId && c.State == ConversationState.Waiting)
+            .Where(c => db.Set<Message>()
+                .Where(m => m.ConversationId == c.Id && m.SiteId == c.SiteId)
+                .OrderByDescending(m => m.Sequence)
+                .Select(m => (MessageAuthorKind?)m.AuthorKind)
+                .FirstOrDefault() == MessageAuthorKind.Visitor)
             .OrderBy(c => c.CreatedAt)
             .Take(batchSize)
             .Select(c => c.Id)
