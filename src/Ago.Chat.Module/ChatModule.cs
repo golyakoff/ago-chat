@@ -117,6 +117,7 @@ using Ago.Chat.Application.UseCases.RevealVisitorContactDetail;
 using Ago.Chat.Application.UseCases.GetContactRevealsForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.GetVisitorSummary;
 using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
 using Ago.Chat.Application.UseCases.ListModuleTaskChannelPriorityList;
 using Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
@@ -1131,6 +1132,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<GetTagBreakdownReportForSiteHandler>();
         // `18-07`: the returning-visitor-history panel's own read - see the handler's own remarks.
         services.AddScoped<GetVisitorHistoryHandler>();
+        // `26-114`: the same panel's own header facts (first-seen date, conversation count) - a
+        // dedicated small read, not a widened queue DTO (see the handler's own remarks).
+        services.AddScoped<GetVisitorSummaryHandler>();
         // `24-12`: the tenant's own read of who accessed their data - see the handler's own remarks.
         services.AddScoped<GetAccessRecordsForSiteHandler>();
         // `23-11`: the account-wide contact-visibility rung - read, write, and its own reveal audit

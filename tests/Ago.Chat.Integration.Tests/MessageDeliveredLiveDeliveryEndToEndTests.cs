@@ -344,7 +344,8 @@ public sealed class MessageDeliveredLiveDeliveryEndToEndTests(ConnectionFanoutFi
         builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         builder.Services.AddScoped<ISiteSuspensionReadStore>(_ => new SiteSuspensionReadStore(fixture.DataSource));
-        builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
+        // `26-114`/`adr/0182`: no `IChannelIdentityRepository` registration here any more - it was only
+        // ever for `GetVisitorHistoryHandler`'s own now-removed channel-identity gate.
         builder.Services.AddScoped<IAccessRecordRepository>(_ => new AccessRecordRepository(fixture.DataSource));
         builder.Services.AddScoped<ITeamChatRepository>(sp => new TeamChatRepository(
             sp.GetRequiredService<AgoChatDbContext>(), fixture.DataSource,

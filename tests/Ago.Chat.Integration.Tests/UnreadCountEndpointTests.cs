@@ -192,6 +192,10 @@ public sealed class UnreadCountEndpointTests
             VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
+        // `26-114`: not part of this endpoint's own read path either.
+        public Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of this endpoint's own read path.");
+
         public Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
@@ -237,6 +241,10 @@ public sealed class UnreadCountEndpointTests
             VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
+        // `26-114`: not part of this endpoint's own read path either.
+        public Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of this endpoint's own read path.");
+
         public Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
@@ -272,6 +280,10 @@ public sealed class UnreadCountEndpointTests
 
         public Task<VisitorHistoryPage> GetVisitorHistoryAsync(
             VisitorId visitorId, ConversationId excludeConversationId, Guid? beforeId, int pageSize, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of this endpoint's own read path.");
+
+        // `26-114`: not part of this endpoint's own read path either.
+        public Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of this endpoint's own read path.");
 
         public Task<DateTimeOffset?> GetMostRecentCreatedAtAsync(SiteId siteId, CancellationToken cancellationToken) =>

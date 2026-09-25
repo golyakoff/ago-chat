@@ -16,7 +16,6 @@ public class GetVisitorHistoryHandlerTests
         GetVisitorHistoryHandler Handler,
         FakeConversationRepository Conversations,
         FakeConversationReadStore ReadStore,
-        FakeChannelIdentityRepository ChannelIdentities,
         FakePermissionChecker Permissions,
         FakeAccessRecordRepository AccessRecords,
         Conversation CurrentConversation);
@@ -25,7 +24,6 @@ public class GetVisitorHistoryHandlerTests
     {
         var conversations = new FakeConversationRepository();
         var readStore = new FakeConversationReadStore();
-        var channelIdentities = new FakeChannelIdentityRepository();
         var permissions = new FakePermissionChecker();
         var accessRecords = new FakeAccessRecordRepository();
         if (grantConversationRead)
@@ -43,23 +41,18 @@ public class GetVisitorHistoryHandlerTests
         readStore.Seed(current);
 
         var handler = new GetVisitorHistoryHandler(
-            conversations, readStore, channelIdentities, permissions, accessRecords, new FakeClock(Now), new FakeIdGenerator());
-        return new Fixture(handler, conversations, readStore, channelIdentities, permissions, accessRecords, current);
+            conversations, readStore, permissions, accessRecords, new FakeClock(Now), new FakeIdGenerator());
+        return new Fixture(handler, conversations, readStore, permissions, accessRecords, current);
     }
 
-    private static void LinkChannelIdentity(FakeChannelIdentityRepository channelIdentities, DateTimeOffset lastSeenAt)
-    {
-        var identity = ChannelIdentity.Link(
-            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Sms,
-            new ExternalChannelAddress("+15551234567"), VisitorId, lastSeenAt);
-        channelIdentities.SaveAsync(identity, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
+    /// <summary>`26-114`/`adr/0182`: no channel identity is linked anywhere in this file any more - the
+    /// whole point of the widening this item makes is that <see cref="GetVisitorHistoryHandler.HandleAsOperatorAsync"/>
+    /// no longer cares whether one exists. Every test below exercises a widget-only visitor by
+    /// construction.</summary>
     [Fact]
-    public async Task HandleAsOperatorAsync_ForAChannelIdentifiedVisitor_ReturnsPriorConversations_MostRecentFirst_ExcludingTheCurrentOne()
+    public async Task HandleAsOperatorAsync_ForAWidgetOnlyVisitorWithNoChannelIdentity_ReturnsPriorConversations_MostRecentFirst_ExcludingTheCurrentOne()
     {
         var fixture = CreateFixture();
-        LinkChannelIdentity(fixture.ChannelIdentities, Now);
 
         var older = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now.AddDays(-2));
         older.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("older visit"), Now.AddDays(-2));
@@ -80,7 +73,6 @@ public class GetVisitorHistoryHandlerTests
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.True(result.Value.HasChannelIdentity);
         Assert.DoesNotContain(result.Value.Conversations, c => c.ConversationId == fixture.CurrentConversation.Id.Value);
         // The fake's own "most recent first" ordering sorts by raw conversation-id byte order, the
         // same cursor production's real uuid v7 ids give for free (IIdGenerator's own remarks) - the
@@ -94,12 +86,13 @@ public class GetVisitorHistoryHandlerTests
         Assert.Contains(result.Value.Conversations, c => c.ConversationId == older.Id.Value);
     }
 
+    /// <summary>`26-114`/`adr/0182`: the case the old channel-identity gate used to refuse outright -
+    /// this widget-only visitor now gets an ordinary, empty-but-real list, the same "nothing to show
+    /// yet" shape a channel-identified visitor with no priors already got before this item.</summary>
     [Fact]
-    public async Task HandleAsOperatorAsync_ForAWidgetVisitorWithNoChannelIdentity_ReturnsHasChannelIdentityFalse_AndAnEmptyList_WithoutQueryingHistory()
+    public async Task HandleAsOperatorAsync_ForAWidgetOnlyVisitorWithNoPriorConversations_ReturnsAnEmptyList()
     {
         var fixture = CreateFixture();
-        // No LinkChannelIdentity call - this visitor has never been heard from on any channel, the
-        // ordinary shape for a widget-only visitor (14-01's model).
 
         var result = await fixture.Handler.HandleAsOperatorAsync(
             new Application.UseCases.GetVisitorHistory.GetVisitorHistory(
@@ -107,7 +100,6 @@ public class GetVisitorHistoryHandlerTests
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.False(result.Value.HasChannelIdentity);
         Assert.Empty(result.Value.Conversations);
         Assert.Null(result.Value.NextBeforeId);
     }
@@ -116,7 +108,6 @@ public class GetVisitorHistoryHandlerTests
     public async Task HandleAsOperatorAsync_WhenTheOperatorIsNotAssignedToTheConversation_ReturnsForbidden_EvenThoughTheyHoldConversationReadAtTheSameSite()
     {
         var fixture = CreateFixture();
-        LinkChannelIdentity(fixture.ChannelIdentities, Now);
 
         var result = await fixture.Handler.HandleAsOperatorAsync(
             new Application.UseCases.GetVisitorHistory.GetVisitorHistory(
@@ -252,10 +243,9 @@ public class GetVisitorHistoryHandlerTests
     /// (<see cref="GetVisitorHistoryHandler.HandleAsOperatorAsync"/>) never writes an access record,
     /// only opening one historical conversation does - see that handler's own remarks for why.</summary>
     [Fact]
-    public async Task HandleAsOperatorAsync_ForAChannelIdentifiedVisitor_RecordsNothing()
+    public async Task HandleAsOperatorAsync_ForAWidgetOnlyVisitor_RecordsNothing()
     {
         var fixture = CreateFixture();
-        LinkChannelIdentity(fixture.ChannelIdentities, Now);
 
         var result = await fixture.Handler.HandleAsOperatorAsync(
             new Application.UseCases.GetVisitorHistory.GetVisitorHistory(
@@ -273,7 +263,6 @@ public class GetVisitorHistoryHandlerTests
     public async Task HandleAsOperatorAsync_WhenTheCurrentConversationIsBlocked_ReturnsNotFound()
     {
         var fixture = CreateFixture();
-        LinkChannelIdentity(fixture.ChannelIdentities, Now);
         fixture.CurrentConversation.MarkBlockedForTesting(new OperatorId(Guid.NewGuid()), Now);
 
         var result = await fixture.Handler.HandleAsOperatorAsync(

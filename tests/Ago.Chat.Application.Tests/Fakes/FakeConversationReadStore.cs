@@ -10,8 +10,16 @@ public sealed class FakeConversationReadStore : IConversationReadStore
     private readonly Dictionary<ConversationId, Conversation> _bySource = [];
     private readonly Dictionary<TagId, HashSet<ConversationId>> _taggedBy = [];
     private readonly Dictionary<VisitorId, string> _visitorNames = [];
+    private readonly Dictionary<VisitorId, DateTimeOffset> _visitorFirstSeenAt = [];
 
     public void Seed(Conversation conversation) => _bySource[conversation.Id] = conversation;
+
+    /// <summary>`26-114`: mirrors the real store's own `visitors.first_seen_at` read
+    /// (<see cref="GetVisitorSummaryAsync"/>) - a test seeds this the same way it seeds a visitor's
+    /// name, without needing a real Postgres or a Visitor aggregate of its own (this fake seeds
+    /// Conversation aggregates only).</summary>
+    public void SeedVisitorFirstSeenAt(VisitorId visitorId, DateTimeOffset firstSeenAt) =>
+        _visitorFirstSeenAt[visitorId] = firstSeenAt;
 
     /// <summary>`18-04`: mirrors the real `conversation_tags` join for
     /// <see cref="GetAllForSiteAsync"/>'s own filter - a test seeds this the same way it seeds a
@@ -154,6 +162,19 @@ public sealed class FakeConversationReadStore : IConversationReadStore
 
         var nextCursor = items.Count == pageSize ? items[^1].Id.Value : (Guid?)null;
         return Task.FromResult(new VisitorHistoryPage(items, nextCursor));
+    }
+
+    /// <summary>`26-114`: mirrors the real store's own scope exactly - every one of this visitor's
+    /// non-blocked conversations, the identical predicate <see cref="GetVisitorHistoryAsync"/> above
+    /// uses, <b>including</b> <paramref name="visitorId"/>'s current one (no exclusion here, unlike that
+    /// method) - good enough to test a handler's own access-check logic and the count-agrees-with-the-list
+    /// invariant without a real Postgres.</summary>
+    public Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        var count = _bySource.Values.Count(c => c.VisitorId == visitorId && !c.IsBlocked);
+        var firstSeenAt = _visitorFirstSeenAt.GetValueOrDefault(visitorId);
+
+        return Task.FromResult(new VisitorSummaryItem(firstSeenAt, count));
     }
 
     /// <summary>`23-06`: the newest conversation's own `CreatedAt` for this site, or <see

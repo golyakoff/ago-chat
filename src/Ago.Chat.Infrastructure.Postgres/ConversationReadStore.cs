@@ -353,6 +353,37 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return new VisitorHistoryPage(items, nextCursor);
     }
 
+    // `26-114`/`adr/0182`: the header's two facts, one query. `left join`, not `join` - a visitor with
+    // zero conversations (should not exist in practice, since every visitor is created alongside their
+    // first one, but this method makes no assumption about that) still returns one row with `count = 0`
+    // rather than none, the same "the join direction must not turn absence into a missing row" choice
+    // VisitorHistorySql's own `lm`/AllForSiteSql's own `lm`/`mc` laterals already make for a different
+    // shape of the identical concern. `c.blocked_at is null` is the exact predicate VisitorHistorySql
+    // below already applies - this file's own remarks on IConversationReadStore.GetVisitorSummaryAsync
+    // explain why the two must never drift apart. Served by the existing `ix_conversations_visitor_id`
+    // index (ConversationConfiguration) - bounded by one visitor's own conversation count, never by
+    // site or table size.
+    private const string VisitorSummarySql = """
+        select v.first_seen_at as "FirstSeenAt", count(c.id)::int as "ConversationCount"
+        from visitors v
+        left join conversations c on c.visitor_id = v.id and c.blocked_at is null
+        where v.id = @VisitorId
+        group by v.first_seen_at
+        """;
+
+    public async Task<VisitorSummaryItem> GetVisitorSummaryAsync(VisitorId visitorId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var row = await connection.QuerySingleAsync<VisitorSummaryRow>(new CommandDefinition(
+            VisitorSummarySql,
+            new { VisitorId = visitorId.Value },
+            cancellationToken: cancellationToken));
+
+        return new VisitorSummaryItem(
+            new DateTimeOffset(DateTime.SpecifyKind(row.FirstSeenAt, DateTimeKind.Utc)), row.ConversationCount);
+    }
+
     // `24-11`: unpaginated by design - ListAllForVisitorAsync's own remarks on why a visitor-scoped
     // export needs every id in one round trip rather than a page at a time.
     // `24-10`: `blocked_at is null` - ExportVisitorHandler's own export must not hand back a

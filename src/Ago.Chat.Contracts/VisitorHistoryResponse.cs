@@ -3,16 +3,17 @@
 /// <summary>
 /// `18-07`: `GET /api/v1/conversations/{conversationId}/visitor-history`'s response body.
 ///
-/// <see cref="HasChannelIdentity"/> is the gate the backlog item's own Scope names as a hard
-/// requirement - "a widget visitor has no such identity and the feature must not appear to have
-/// anything to show for one". It is carried on every response, including the empty-but-gated one
-/// (a widget visitor, or a channel visitor this is their first-ever conversation about), rather than
-/// expressed as an HTTP status: the two "nothing to show" cases are semantically different
-/// (structurally cannot exist, versus can exist and simply does not yet) and the console needs to
-/// render them differently - no panel at all for the first, an empty-state panel for the second -
-/// which a single "empty list" or a 404 could not distinguish without an extra round trip.
+/// <para><b>`26-114`/`adr/0182` removed <c>HasChannelIdentity</c>.</b> Before this item, the field
+/// carried the channel-identity gate - <see langword="false"/> meant "this visitor structurally cannot
+/// have past-dialog history" (a widget visitor, `14-01`'s model) and the console rendered no panel at
+/// all for that case, versus an empty-but-real list for a channel visitor with no priors yet. That gate
+/// is gone: every visitor now reaches the identical, widened per-visitor-on-site scope
+/// (`docs/design/26-111-thread-contact-detail-panel.md`'s decision #3), so the distinction the field
+/// used to carry no longer exists to report - an empty <see cref="Conversations"/> list is now the one
+/// and only "nothing to show yet" case, for every visitor alike. A console still rendering the removed
+/// field's old gate needs its own follow-up change to show the row unconditionally instead - out of
+/// this item's own scope (backend-only, `docs/backlog/26-114-*.md`).</para>
 /// </summary>
 public sealed record VisitorHistoryResponse(
-    bool HasChannelIdentity,
     IReadOnlyList<VisitorHistoryConversationDto> Conversations,
     Guid? NextBeforeId);
