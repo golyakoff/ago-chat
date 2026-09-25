@@ -39,7 +39,11 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         try
         {
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), new UuidV7Generator());
+            // `26-108`: FakeRateLimiter always allows - these three tests each publish a Lost exactly
+            // once and are not themselves testing the dedup marker (OperatorPresenceLostDedupTests is).
+            var publisher = new OperatorPresencePublisher(
+                new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance),
+                new SystemClock(), new UuidV7Generator(), new FakeRateLimiter(), new OperatorPresenceLostSuppressionOptions());
             await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
 
             var released = await OutboxTestHelpers.WaitUntilAsync(
@@ -69,7 +73,11 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         try
         {
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), new UuidV7Generator());
+            // `26-108`: FakeRateLimiter always allows - these three tests each publish a Lost exactly
+            // once and are not themselves testing the dedup marker (OperatorPresenceLostDedupTests is).
+            var publisher = new OperatorPresencePublisher(
+                new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance),
+                new SystemClock(), new UuidV7Generator(), new FakeRateLimiter(), new OperatorPresenceLostSuppressionOptions());
             await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
 
             // Reconnect partway through the grace period - well before it elapses, well after the
@@ -106,7 +114,11 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         try
         {
             await using var publisherConnection = fixture.CreateRabbitMqConnection();
-            var publisher = new OperatorPresencePublisher(new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance), new SystemClock(), new UuidV7Generator());
+            // `26-108`: FakeRateLimiter always allows - these three tests each publish a Lost exactly
+            // once and are not themselves testing the dedup marker (OperatorPresenceLostDedupTests is).
+            var publisher = new OperatorPresencePublisher(
+                new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance),
+                new SystemClock(), new UuidV7Generator(), new FakeRateLimiter(), new OperatorPresenceLostSuppressionOptions());
             await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
 
             var released = await OutboxTestHelpers.WaitUntilAsync(
