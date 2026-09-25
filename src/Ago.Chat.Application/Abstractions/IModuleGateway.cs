@@ -64,8 +64,24 @@ public sealed record ModuleStep(MessageContentKind Kind, MessagePayload? Payload
 /// reply in the same task - see that parameter's own remarks for why this is resent rather than
 /// remembered.
 /// </param>
+/// <param name="PersonId">
+/// `26-136`/`adr/0184`: this conversation's own visitor id - chat's account-scoped person. Chat owns
+/// the person and the calendar references it opaquely (`adr/0184`), so a chat-origin booking carries
+/// the id chat already assigned rather than the calendar minting a fresh one. Sent on every call this
+/// item touches (the calendar accepts it on Start and ignores it there, only needing it at booking time
+/// on the reply); the identical "a value chat resends on each module call rather than persisting it in a
+/// chat-side task table" shape <see cref="SubmitModuleReplyRequest.KnownPhone"/> already established.
+/// </param>
+/// <param name="OriginConversationId">
+/// `26-136`/`adr/0184`: this conversation's own id, so a chat-origin booking can be traced back to the
+/// conversation that produced it (subsuming `26-112 C1`). The same value as
+/// <see cref="ConversationId"/> on this Start request - carried under its booking-domain name too so the
+/// Start and reply wire shapes stay symmetric and the reply, which has no conversation id of its own, can
+/// carry it where the booking write actually happens.
+/// </param>
 public sealed record StartModuleTaskRequest(
-    Guid ChatTaskId, SiteId SiteId, ConversationId ConversationId, string TriggerText, string Locale);
+    Guid ChatTaskId, SiteId SiteId, ConversationId ConversationId, string TriggerText, string Locale,
+    Guid? PersonId, Guid? OriginConversationId);
 
 public sealed record StartModuleTaskResult(string ExternalTaskId, ModuleStep Step, bool Complete);
 
@@ -109,8 +125,21 @@ public sealed record StartModuleTaskResult(string ExternalTaskId, ModuleStep Ste
 /// already known, otherwise show it without the verification requirement) -
 /// <c>Ago.Calendar.Application.UseCases.ChatModuleTask.ReplyToModuleTaskHandler</c>'s own remarks.
 /// </param>
+/// <param name="PersonId">
+/// `26-136`/`adr/0184`: this conversation's own visitor id (chat's account-scoped person), threaded onto
+/// the booked calendar <c>Event</c> when this reply completes a booking - see
+/// <see cref="StartModuleTaskRequest.PersonId"/>. Resent on every reply for the identical "never persisted
+/// on the calendar's task, resend each call" reason <see cref="KnownPhone"/> is.
+/// </param>
+/// <param name="OriginConversationId">
+/// `26-136`/`adr/0184`: this conversation's own id, threaded opaquely onto the booked <c>Event</c> so a
+/// booking can be traced to the conversation that produced it (subsuming `26-112 C1`). The reply route
+/// carries no conversation id of its own, so this is the field that gets it to the calendar at booking
+/// time.
+/// </param>
 public sealed record SubmitModuleReplyRequest(
     string ExternalTaskId, Guid ChatTaskId, MessageContentKind Kind, string Value,
-    DateTimeOffset? PhoneVerifiedAt, string Locale, string? KnownPhone, bool AcceptUnverifiedPhone);
+    DateTimeOffset? PhoneVerifiedAt, string Locale, string? KnownPhone, bool AcceptUnverifiedPhone,
+    Guid? PersonId, Guid? OriginConversationId);
 
 public sealed record SubmitModuleReplyResult(ModuleStep? Step, bool Complete);

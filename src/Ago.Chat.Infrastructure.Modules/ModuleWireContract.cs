@@ -9,12 +9,19 @@ namespace Ago.Chat.Infrastructure.Modules;
 /// </summary>
 /// <param name="Locale">`25-37`: additive - see <c>Ago.Chat.Application.Abstractions.StartModuleTaskRequest.Locale</c>'s
 /// own remarks.</param>
+/// <param name="PersonId">`26-136`/`adr/0184`: additive and nullable - the visitor (person) id. See
+/// <c>Ago.Chat.Application.Abstractions.StartModuleTaskRequest.PersonId</c>'s own remarks.</param>
+/// <param name="OriginConversationId">`26-136`/`adr/0184`: additive and nullable - the originating
+/// conversation id. See <c>Ago.Chat.Application.Abstractions.StartModuleTaskRequest.OriginConversationId</c>'s
+/// own remarks.</param>
 internal sealed record StartTaskWireRequest(
     [property: JsonPropertyName("chatTaskId")] Guid ChatTaskId,
     [property: JsonPropertyName("siteId")] Guid SiteId,
     [property: JsonPropertyName("conversationId")] Guid ConversationId,
     [property: JsonPropertyName("triggerText")] string TriggerText,
-    [property: JsonPropertyName("locale")] string Locale);
+    [property: JsonPropertyName("locale")] string Locale,
+    [property: JsonPropertyName("personId")] Guid? PersonId,
+    [property: JsonPropertyName("originConversationId")] Guid? OriginConversationId);
 
 internal sealed record StartTaskWireResponse(
     [property: JsonPropertyName("externalTaskId")] string ExternalTaskId,
@@ -32,6 +39,11 @@ internal sealed record StartTaskWireResponse(
 /// <param name="AcceptUnverifiedPhone">`25-39`: additive - see
 /// <c>Ago.Chat.Application.Abstractions.SubmitModuleReplyRequest.AcceptUnverifiedPhone</c>'s
 /// own remarks.</param>
+/// <param name="PersonId">`26-136`/`adr/0184`: additive and nullable - the visitor (person) id. See
+/// <c>Ago.Chat.Application.Abstractions.SubmitModuleReplyRequest.PersonId</c>'s own remarks.</param>
+/// <param name="OriginConversationId">`26-136`/`adr/0184`: additive and nullable - the originating
+/// conversation id. See <c>Ago.Chat.Application.Abstractions.SubmitModuleReplyRequest.OriginConversationId</c>'s
+/// own remarks.</param>
 internal sealed record SubmitReplyWireRequest(
     [property: JsonPropertyName("chatTaskId")] Guid ChatTaskId,
     [property: JsonPropertyName("kind")] string Kind,
@@ -39,7 +51,9 @@ internal sealed record SubmitReplyWireRequest(
     [property: JsonPropertyName("phoneVerifiedAt")] DateTimeOffset? PhoneVerifiedAt,
     [property: JsonPropertyName("locale")] string Locale,
     [property: JsonPropertyName("knownPhone")] string? KnownPhone,
-    [property: JsonPropertyName("acceptUnverifiedPhone")] bool AcceptUnverifiedPhone);
+    [property: JsonPropertyName("acceptUnverifiedPhone")] bool AcceptUnverifiedPhone,
+    [property: JsonPropertyName("personId")] Guid? PersonId,
+    [property: JsonPropertyName("originConversationId")] Guid? OriginConversationId);
 
 internal sealed record SubmitReplyWireResponse(
     [property: JsonPropertyName("step")] StepWireDto? Step,

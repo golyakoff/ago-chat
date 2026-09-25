@@ -427,7 +427,12 @@ public sealed class RouteConversationToModuleHandler(
         {
             startResult = await gateway.StartTaskAsync(
                 new EnabledModuleEndpoint(key, command.SiteId, enabledModule.EntryPoint, enabledModule.Credential),
-                new StartModuleTaskRequest(chatTaskId, command.SiteId, command.ConversationId, trigger.Body.Value, locale),
+                // `26-136`/`adr/0184`: chat owns the person and the calendar references it opaquely, so the
+                // module call carries this conversation's own visitor (person) id and conversation id. Same
+                // "resend on every call, never persisted on the module's side" shape KnownPhone already uses.
+                new StartModuleTaskRequest(
+                    chatTaskId, command.SiteId, command.ConversationId, trigger.Body.Value, locale,
+                    conversation.VisitorId.Value, conversation.Id.Value),
                 cancellationToken);
         }
         catch (ModuleUnreachableException)
@@ -839,7 +844,11 @@ public sealed class RouteConversationToModuleHandler(
                 new EnabledModuleEndpoint(active.ModuleKey, conversation.SiteId, enabledModule.EntryPoint, enabledModule.Credential),
                 new SubmitModuleReplyRequest(
                     active.ExternalTaskId, active.Id.Value, active.LastStepKind!.Value, value, phoneVerifiedAt,
-                    locale, knownPhone, acceptUnverifiedPhone),
+                    locale, knownPhone, acceptUnverifiedPhone,
+                    // `26-136`/`adr/0184`: the reply is the call a booking is actually written on, so this
+                    // conversation's own person id and conversation id ride it - threaded onto the booked
+                    // calendar Event. See StartModuleTaskRequest above for the ownership reasoning.
+                    conversation.VisitorId.Value, conversation.Id.Value),
                 cancellationToken);
         }
         catch (ModuleUnreachableException)
