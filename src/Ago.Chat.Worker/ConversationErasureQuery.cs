@@ -216,6 +216,20 @@ public static class ConversationErasureQuery
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>`adr/0184` (O3): the operator's notes <em>about the person</em> - keyed to the visitor,
+    /// not to this conversation, for exactly the reason <see cref="DeleteContactDetailsForVisitorAsync"/>
+    /// gives: a note about a person is the person's data, and "a person's erasure request takes the
+    /// conversation and the contact, it is all their data" (`decisions.md` §4) reaches it too. Explicit,
+    /// with the visitor cascade as the backstop (PersonNoteConfiguration).</summary>
+    public static async Task<int> DeletePersonNotesForVisitorAsync(
+        NpgsqlConnection connection, Guid visitorId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "delete from person_notes where visitor_id = @visitorId", connection);
+        command.Parameters.AddWithValue("visitorId", visitorId);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>The conversation row itself - last, once every row and object it owns is confirmed
     /// gone. A stray message or attachment this sequence somehow missed would still cascade-delete
     /// with it (`ConversationConfiguration`'s own `OnDelete(DeleteBehavior.Cascade)` on `_messages`;

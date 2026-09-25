@@ -7,6 +7,7 @@ using Ago.Chat.Api.Consent;
 using Ago.Chat.Api.ContactDetails;
 using Ago.Chat.Api.PhoneVerification;
 using Ago.Chat.Api.Notes;
+using Ago.Chat.Api.Persons;
 using Ago.Chat.Api.Tags;
 using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Billing;
@@ -495,6 +496,9 @@ public static class CompositionRoot
         app.MapCannedResponseEndpoints();
         // `18-04`
         app.MapNoteEndpoints();
+        // `adr/0184`: the account's person registry, read for display by the consoles - and the
+        // operator's notes about a person (O3).
+        app.MapPersonEndpoints();
         app.MapTagEndpoints();
         // `14-12`: verified channel-identity linking/unlinking - the console-initiated link request, the
         // VisitorPanel listing, and the operator-gated unlink. The platform owner's own unconditional unlink is

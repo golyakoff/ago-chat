@@ -593,13 +593,14 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<EntitlementWatchdogJob>();
 
-// `23-59`/`adr/0147`: the automatic retroactive contact carry-over - see ContactCarryoverJob's own
-// remarks for why this is a recurring sweep rather than a manually-run tool.
+// `adr/0184` decision 2: a module took a booking with no chat origin and minted a person id locally -
+// this consumer creates the Person in the account's registry under that id. Replaces `23-59`'s
+// ContactCarryoverJob, which copied contacts the other way into a customer table that no longer exists.
 builder.Services
-    .AddOptions<ContactCarryoverJobOptions>()
-    .Bind(builder.Configuration.GetSection(ContactCarryoverJobOptions.SectionName))
+    .AddOptions<PersonRegisteredConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(PersonRegisteredConsumerOptions.SectionName))
     .ValidateOnStart();
-builder.Services.AddHostedService<ContactCarryoverJob>();
+builder.Services.AddHostedService<PersonRegisteredConsumer>();
 
 // `16-03`: tenant export. SiteExportJobOptions is bound both as IOptions<T> (SiteExportJob itself,
 // the same shape SiteErasureJobOptions uses) and as a plain singleton value

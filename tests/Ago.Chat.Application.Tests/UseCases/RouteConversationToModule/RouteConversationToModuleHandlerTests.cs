@@ -83,7 +83,7 @@ public class RouteConversationToModuleHandlerTests
         // this gate makes is visible to everything else the fixture asserts against.
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             conversations, contactDetails, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+            new ContactDetailRateLimitOptions(), idGenerator, clock);
 
         var handler = new RouteConversationToModuleHandler(
             conversations, readStore, gateway, channelIdentities, outbox, inbox, clock,
@@ -1417,7 +1417,7 @@ public class RouteConversationToModuleHandlerTests
         // exist, so it is built the same way `CreateFixture`'s own remarks build one.
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             repository, contactDetailsRepository, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+            new ContactDetailRateLimitOptions(), idGenerator, clock);
         var handler = new RouteConversationToModuleHandler(
             repository, readStore, gateway, new FakeChannelIdentityRepository(), outbox, new FakeInboxChecker(),
             clock, idGenerator, sites, contactDetailsRepository,
@@ -1459,7 +1459,7 @@ public class RouteConversationToModuleHandlerTests
         // exist, so it is built the same way `CreateFixture`'s own remarks build one.
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             repository, contactDetailsRepository, sites, acceptances, new FakePermissionChecker(), new FakeRateLimiter(),
-            new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+            new ContactDetailRateLimitOptions(), idGenerator, clock);
         var handler = new RouteConversationToModuleHandler(
             repository, readStore, gateway, new FakeChannelIdentityRepository(), outbox, new FakeInboxChecker(),
             clock, idGenerator, sites, contactDetailsRepository,

@@ -1,5 +1,4 @@
 ﻿using Ago.Chat.Application.Abstractions;
-using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -53,16 +52,12 @@ namespace Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 /// an item that did not spell out which path(s) it meant - stated here rather than silently
 /// assumed.</para>
 ///
-/// <para><b>`23-59`/`adr/0147`: both entry points now stage <see cref="Ago.Chat.Contracts.ContactCollected"/>
-/// through the outbox, before the write it describes - the same "enqueue, then call the repository's
-/// own SaveAsync" ordering <c>UpdateContactVisibilityHandler</c>'s own remarks establish, so the one
-/// <c>SaveChangesAsync</c> that write makes is what commits the row and the event together
-/// (`CLAUDE.md` rule 4).</b> This handler does not know, and must not come to know, whether AGO
-/// Calendar or any other product exists - the identical ignorance <c>RoleRepository.AddPermissionsAsync</c>'s
-/// own remarks describe for a module grant. <see cref="IOutboxWriter"/> is injected directly rather
-/// than the write moving into Infrastructure, the same "dependency-free platform port, no reason to
-/// leave Application" shape <c>ConfirmAttachmentHandler</c>'s own remarks already give for
-/// themselves.</para>
+/// <para><b>`adr/0184`: a contact recorded here updates chat's own Person and nothing else.</b> `23-59`
+/// used to stage a <c>ContactCollected</c> event from both entry points so AGO Calendar could build its
+/// own customer copy; that copy is deleted and the event with it - chat is the account's person registry,
+/// and a module that needs the person reads it (display-only, console-side) or references it by the id a
+/// chat-origin booking already carries. This handler does not know, and must not come to know, whether
+/// any other product exists.</para>
 /// </summary>
 public sealed class RecordVisitorContactDetailHandler(
     IConversationRepository conversations,
@@ -72,7 +67,6 @@ public sealed class RecordVisitorContactDetailHandler(
     IPermissionChecker permissions,
     IRateLimiter rateLimiter,
     ContactDetailRateLimitOptions rateLimitOptions,
-    IOutboxWriter outbox,
     IIdGenerator idGenerator,
     IClock clock)
 {
@@ -117,7 +111,6 @@ public sealed class RecordVisitorContactDetailHandler(
             return ConversationErrors.ContactDetailInvalid(ex.Message);
         }
 
-        outbox.Enqueue(ContactCollectedMapper.ToEnvelope(detail, conversation.SiteId, now, idGenerator));
         await contactDetails.SaveAsync(detail, cancellationToken);
 
         return ToResult(detail);
@@ -182,7 +175,6 @@ public sealed class RecordVisitorContactDetailHandler(
             return ConversationErrors.ContactDetailInvalid(ex.Message);
         }
 
-        outbox.Enqueue(ContactCollectedMapper.ToEnvelope(detail, conversation.SiteId, now, idGenerator));
         await contactDetails.SaveAsync(detail, cancellationToken);
 
         return ToResult(detail);

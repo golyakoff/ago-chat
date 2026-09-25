@@ -53,6 +53,21 @@ public sealed class VisitorContactDetailRepository(AgoChatDbContext db) : IVisit
     // over (IVisitorContactDetailRepository's own remarks - "small and bounded, nobody records hundreds
     // of these per visitor"), and the queue's own two lists are already the same small/unpaginated shape
     // that justifies GetManyByIdsAsync's own single query.
+    public async Task<IReadOnlyList<VisitorContactDetail>> GetForVisitorsAsync(
+        IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken)
+    {
+        if (visitorIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await db.VisitorContactDetails
+            .AsNoTracking()
+            .Where(d => visitorIds.Contains(d.VisitorId))
+            .OrderBy(d => d.RecordedAt)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyDictionary<VisitorId, string>> GetNamesForVisitorsAsync(
         IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken)
     {

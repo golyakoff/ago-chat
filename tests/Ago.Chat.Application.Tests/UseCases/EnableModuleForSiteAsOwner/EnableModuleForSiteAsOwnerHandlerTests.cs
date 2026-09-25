@@ -21,8 +21,7 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         EnableModuleForSiteAsOwnerHandler Handler, FakeEnabledModuleRepository Modules,
         FakeEnabledModuleReadStore ReadStore, FakeModuleRegistrationGateway RegistrationGateway,
         FakeModuleProvisioningSecretProvider ProvisioningSecrets, FakeModuleEntryPointProvider EntryPoints,
-        FakeModulePermissionsProvider ModulePermissions, FakeRoleRepository Roles, FakeSiteRepository Sites,
-        FakeContactCarryoverRequestStore ContactCarryover);
+        FakeModulePermissionsProvider ModulePermissions, FakeRoleRepository Roles, FakeSiteRepository Sites);
 
     private static Fixture CreateFixture()
     {
@@ -34,15 +33,14 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         var modulePermissions = new FakeModulePermissionsProvider();
         var roles = new FakeRoleRepository();
         var sites = new FakeSiteRepository();
-        var contactCarryover = new FakeContactCarryoverRequestStore();
         sites.Seed(new Site(SiteId, "owner-grant-target", allowedOrigins: [], name: "Prospect Barbershop"));
 
         var handler = new EnableModuleForSiteAsOwnerHandler(
             modules, readStore, registrationGateway, provisioningSecrets, entryPoints, modulePermissions, roles,
-            contactCarryover, sites, new FakeClock(Now), new FakeIdGenerator());
+            sites, new FakeClock(Now), new FakeIdGenerator());
         return new Fixture(
             handler, modules, readStore, registrationGateway, provisioningSecrets, entryPoints, modulePermissions,
-            roles, sites, contactCarryover);
+            roles, sites);
     }
 
     private static Application.UseCases.EnableModuleForSiteAsOwner.EnableModuleForSiteAsOwner Command(
@@ -63,14 +61,6 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         var saved = Assert.Single(fixture.Modules.All);
         Assert.True(saved.GrantedByOwner);
         Assert.Null(saved.ExpiresAt);
-
-        // `23-59`/`adr/0147`: a successful grant also requests the site's own retroactive contact
-        // carry-over - unconditionally, regardless of which module was granted (this handler's own
-        // remarks on why ModuleKey is not checked here). Fails before this item: the handler took no
-        // IContactCarryoverRequestStore dependency at all.
-        var requested = Assert.Single(fixture.ContactCarryover.Requested);
-        Assert.Equal(SiteId, requested.SiteId);
-        Assert.Equal(Now, requested.Now);
     }
 
     [Fact]
@@ -101,7 +91,6 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         Assert.Equal("Module.GrantExpiryInvalid", result.Error!.Value.Code);
         Assert.Empty(fixture.Modules.All);
         Assert.Empty(fixture.RegistrationGateway.RegisterCalls);
-        Assert.Empty(fixture.ContactCarryover.Requested);
     }
 
     [Fact]
@@ -153,7 +142,6 @@ public class EnableModuleForSiteAsOwnerHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Module.RegistrationFailed", result.Error!.Value.Code);
         Assert.Empty(fixture.Modules.All);
-        Assert.Empty(fixture.ContactCarryover.Requested);
     }
 
     /// <summary>The same trigger-conflict rule the self-service handler enforces - an owner-granted

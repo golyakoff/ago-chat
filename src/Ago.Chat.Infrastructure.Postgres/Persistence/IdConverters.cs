@@ -36,6 +36,7 @@ internal static class IdConverters
     public static readonly ValueConverter<DownloadOverageChargeId, Guid> DownloadOverageCharge = new(
         id => id.Value, value => new DownloadOverageChargeId(value));
     public static readonly ValueConverter<ConversationNoteId, Guid> ConversationNote = new(id => id.Value, value => new ConversationNoteId(value));
+    public static readonly ValueConverter<PersonNoteId, Guid> PersonNote = new(id => id.Value, value => new PersonNoteId(value));
 
     // `24-01`
     public static readonly ValueConverter<AcceptanceRecordId, Guid> AcceptanceRecord = new(id => id.Value, value => new AcceptanceRecordId(value));

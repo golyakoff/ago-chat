@@ -294,7 +294,7 @@ public class ModuleTaskGatewayIntegrationTests
         // NoteLeakProofTests already documents for an unrelated handler.
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             conversations, contactDetailsRepository, sites, acceptances, new NeverCalledPermissionChecker(),
-            new FakeRateLimiter(), new ContactDetailRateLimitOptions(), outbox, idGenerator, clock);
+            new FakeRateLimiter(), new ContactDetailRateLimitOptions(), idGenerator, clock);
 
         var handler = new RouteConversationToModuleHandler(
             conversations, readStore, gateway, channelIdentities ?? new FixedChannelIdentityRepository(),
@@ -459,6 +459,11 @@ public class ModuleTaskGatewayIntegrationTests
         public Task<IReadOnlyList<VisitorContactDetail>> GetForVisitorAsync(
             VisitorId visitorId, CancellationToken cancellationToken) =>
             Task.FromResult(seeded ?? (IReadOnlyList<VisitorContactDetail>)[]);
+
+        public Task<IReadOnlyList<VisitorContactDetail>> GetForVisitorsAsync(
+            IReadOnlyCollection<VisitorId> visitorIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<VisitorContactDetail>>(
+                (seeded ?? []).Where(d => visitorIds.Contains(d.VisitorId)).ToList());
 
         public Task<VisitorContactDetail?> GetByIdAsync(VisitorContactDetailId id, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

@@ -26,14 +26,8 @@ namespace Ago.Chat.Application.UseCases.EditVisitorContactDetail;
 /// reassign who originally supplied the fact. See that method's own remarks for why this is the backlog
 /// item's own explicit warning, not an incidental property of the implementation.</para>
 ///
-/// <para>No outbox event on a successful edit, unlike <c>RecordVisitorContactDetailHandler</c>'s
-/// <c>ContactCollected</c>. <c>ContactCollected</c>'s own remarks describe a
-/// <see cref="VisitorContactDetail"/> as "written once and never edited," and key a far-side consumer's
-/// idempotency and non-merge behaviour on <see cref="VisitorContactDetail.Id"/> staying a stable pointer
-/// to one unchanging fact. Republishing on every edit would hand a future consumer of that event a
-/// value that silently changed under an id it was told never would - a real, open question for whoever
-/// builds that consumer, not one this item resolves unilaterally by guessing at a republish shape
-/// nothing downstream yet exists to receive.</para>
+/// <para>No outbox event on a successful edit - since `adr/0184` no contact write in this product publishes
+/// one: chat is the person registry, and nothing downstream copies a contact any more.</para>
 /// </summary>
 public sealed class EditVisitorContactDetailHandler(
     IConversationRepository conversations, IVisitorContactDetailRepository contactDetails, IPermissionChecker permissions)
