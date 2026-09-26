@@ -294,6 +294,16 @@ internal sealed class SiteConfiguration : IEntityTypeConfiguration<Site>
         // backfill (Stage23AddSiteAssignmentPenalty).
         builder.Property(s => s.AssignmentPenaltySeconds).HasColumnName("assignment_penalty_seconds").HasDefaultValue(120);
 
+        // `adr/0186` S1: same "ordinary mapped property, private setter, no backing field" shape once
+        // more - Site.TimeZone's own remarks explain why there is nothing for a Property<T>("_field")
+        // indirection to buy here. No CHECK constraint: IANA zone names are an open, evolving set, not
+        // a closed enumerable one like ContactVisibility's two-member rung. Database default matches
+        // the property initialiser, so every row written before this migration reads back
+        // "Europe/Moscow" with no separate backfill statement - Postgres applies a column's own
+        // DEFAULT to every pre-existing row the moment ADD COLUMN runs, the identical "additive column,
+        // database default, no data migration" shape Tier's own remarks describe for itself.
+        builder.Property(s => s.TimeZone).HasColumnName("time_zone").IsRequired().HasDefaultValue("Europe/Moscow");
+
         // `23-11`: same "ordinary mapped property, private setter, no backing field" shape once more -
         // ContactVisibility's own remarks explain why there is nothing for a Property<T>("_field")
         // indirection to buy here, and why the CHECK constraint above enumerates only two values.

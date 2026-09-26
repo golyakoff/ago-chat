@@ -64,7 +64,8 @@ public class RecordChannelVisitorContactHandlerTests
         var startConversation = new StartConversationHandler(
             visitors, conversations, new FakeVisitorRestrictionRepository(),
             new GetSiteConfigByIdHandler(sites, new FakeCache()),
-            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs);
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs,
+            outbox, identities);
 
         var recordContactDetail = new RecordVisitorContactDetailHandler(
             conversations, contactDetails, sites, acceptances, permissions, new FakeRateLimiter(),

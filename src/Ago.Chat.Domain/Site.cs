@@ -256,6 +256,36 @@ public sealed class Site
     /// that type's own remarks.</para></summary>
     public int AssignmentPenaltySeconds { get; private set; } = 120;
 
+    /// <summary>`adr/0186`: the tenant's own IANA time zone (e.g. <c>"Europe/Moscow"</c>, never a fixed
+    /// offset), the same "no wrapping value object, private setter, no backing field" shape
+    /// <see cref="Tier"/>/<see cref="AssignmentPenaltySeconds"/> already establish - there is no
+    /// cross-field invariant here either, only a free-text column no CHECK constraint can usefully
+    /// enumerate (IANA zone names are an open, evolving set, unlike <see cref="ContactVisibility"/>'s
+    /// closed two-member rung).
+    ///
+    /// <para><b>Why this exists at all.</b> AGO Chat itself never needed a time zone before - the
+    /// calendar product owns zones (`adr/0049`) - but the analytics rollups this column feeds
+    /// (`docs/design/analytics-precompute.md` S9) bucket a conversation into a <em>tenant-local
+    /// calendar day</em>, and a day boundary is meaningless without one. Storage stays UTC
+    /// <see cref="DateTimeOffset"/> everywhere else on this aggregate (`CLAUDE.md` rule 11) - this
+    /// column never changes how <see cref="Conversation"/> timestamps are stored, only how a future
+    /// reader buckets them by day.</para>
+    ///
+    /// <para><b>Defaults to <c>"Europe/Moscow"</c> for every site, existing and new.</b> The first
+    /// clients are Russian, and MSK carries no DST, so a tenant who never sets one gets the correct
+    /// zone for the common case rather than an arbitrary "UTC" that would misattribute every non-MSK
+    /// business's local day. No constructor parameter, unlike <see cref="Tier"/>/<see cref="SeatLimit"/>:
+    /// nothing chooses a different value at construction time yet (`10-02`'s registration flow has no
+    /// zone question to ask), so a plain field initialiser - not a fourth/fifth optional constructor
+    /// argument - is the entire change, and every one of this codebase's ~60 existing
+    /// <c>new Site(...)</c> call sites keeps compiling untouched. Per-site editing is deliberately out
+    /// of scope here (`docs/design/analytics-precompute.md` S1's own scope note) - there is no writer
+    /// method on this aggregate yet, the identical "the column exists, nothing calls
+    /// <c>ActivateSubscription</c>-style write path for it yet" gap <see cref="Tier"/> itself sat in
+    /// between `13-01` and `13-02`.</para>
+    /// </summary>
+    public string TimeZone { get; private set; } = "Europe/Moscow";
+
     // `18-03`: a fourth flat-backing-field list, the same shape `14-04`'s _offlineAutoReplyRules
     // established just above - opaque to SQL, read and written as a unit, mapped through a converter
     // to one column (CannedResponseConverters' own remarks restate OfflineAutoReplyConverters' - text,

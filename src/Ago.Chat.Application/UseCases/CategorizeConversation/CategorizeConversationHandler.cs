@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AiAddOn;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Logging;
 
@@ -53,6 +54,7 @@ public sealed class CategorizeConversationHandler(
     Lazy<IConversationCategorizer> categorizer,
     AiProcessingGate aiGate,
     CategorizationOptions options,
+    IClock clock,
     ILogger<CategorizeConversationHandler> logger)
 {
     public async Task<Result<CategorizationOutcome>> HandleAsync(
@@ -111,7 +113,8 @@ public sealed class CategorizeConversationHandler(
 
         return result switch
         {
-            CategorizationResult.Success success => await ApplyAsync(command.ConversationId, success.TagIds, candidates, cancellationToken),
+            CategorizationResult.Success success =>
+                await ApplyAsync(command.ConversationId, command.SiteId, success.TagIds, candidates, cancellationToken),
             CategorizationResult.Unavailable => CategorizationOutcome.ProviderUnavailable,
             _ => throw new InvalidOperationException($"Unhandled {nameof(CategorizationResult)} case: {result.GetType()}."),
         };
@@ -119,6 +122,7 @@ public sealed class CategorizeConversationHandler(
 
     private async Task<CategorizationOutcome> ApplyAsync(
         ConversationId conversationId,
+        SiteId siteId,
         IReadOnlyList<TagId> returnedTagIds,
         IReadOnlyList<CategorizationCandidateTag> candidates,
         CancellationToken cancellationToken)
@@ -139,7 +143,7 @@ public sealed class CategorizeConversationHandler(
                 continue;
             }
 
-            await tags.AddToConversationAsync(conversationId, tagId, TagSource.Ai, cancellationToken);
+            await tags.AddToConversationAsync(conversationId, siteId, tagId, TagSource.Ai, clock.UtcNow, cancellationToken);
             applied++;
         }
 

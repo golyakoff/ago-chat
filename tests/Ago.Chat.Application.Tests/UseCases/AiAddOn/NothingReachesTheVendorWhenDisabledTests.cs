@@ -70,7 +70,7 @@ public sealed class NothingReachesTheVendorWhenDisabledTests
 
         var categorizer = new Lazy<IConversationCategorizer>(ThrowingCategorizer);
         var handler = new CategorizeConversationHandler(
-            readStore, tags, categorizer, AiGates.Denying(), new CategorizationOptions(),
+            readStore, tags, categorizer, AiGates.Denying(), new CategorizationOptions(), new FakeClock(Now),
             NullLogger<CategorizeConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(new global::Ago.Chat.Application.UseCases.CategorizeConversation.CategorizeConversation(conversation.Id, Site), CancellationToken.None);
@@ -99,7 +99,7 @@ public sealed class NothingReachesTheVendorWhenDisabledTests
         var categorizer = new Lazy<IConversationCategorizer>(ThrowingCategorizer);
         var handler = new CategorizeConversationHandler(
             readStore, tags, categorizer, AiGates.Allowing(Site, effectiveFrom: Now.AddHours(1)),
-            new CategorizationOptions(), NullLogger<CategorizeConversationHandler>.Instance);
+            new CategorizationOptions(), new FakeClock(Now), NullLogger<CategorizeConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(new global::Ago.Chat.Application.UseCases.CategorizeConversation.CategorizeConversation(conversation.Id, Site), CancellationToken.None);
 

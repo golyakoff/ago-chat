@@ -6,10 +6,12 @@ using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
 using Ago.Chat.Module.Pipeline;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -94,7 +96,7 @@ public sealed class ReceiveChannelMessageDrainedByTheRealPipelineTests(PostgresF
                     visitors, conversations, new VisitorRestrictionRepository(fixture.DataSource),
                     new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                     new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-                    clock, idGenerator, emojiPairs),
+                    clock, idGenerator, emojiPairs, new EfOutboxWriter<AgoChatDbContext>(db), identities),
                 new SendVisitorMessageHandler(
                     conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
                 new AlwaysEntitledBillingOptionEntitlementProvider(),

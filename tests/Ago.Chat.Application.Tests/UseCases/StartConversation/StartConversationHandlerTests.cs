@@ -15,17 +15,19 @@ public class StartConversationHandlerTests
 
     private static (
         StartConversationHandler Handler, FakeVisitorRepository Visitors, FakeConversationRepository Conversations,
-        FakeVisitorRestrictionRepository Restrictions)
+        FakeVisitorRestrictionRepository Restrictions, FakeOutboxWriter Outbox, FakeChannelIdentityRepository ChannelIdentities)
         CreateHandler(FakeSiteRepository? sites = null, IRateLimiter? rateLimiter = null, FakeVisitorRestrictionRepository? restrictions = null)
     {
         var visitors = new FakeVisitorRepository();
         var conversations = new FakeConversationRepository();
         var restrictionRepository = restrictions ?? new FakeVisitorRestrictionRepository();
         var siteConfig = new GetSiteConfigByIdHandler(sites ?? new FakeSiteRepository(), new FakeCache());
+        var outbox = new FakeOutboxWriter();
+        var channelIdentities = new FakeChannelIdentityRepository();
         var handler = new StartConversationHandler(
             visitors, conversations, restrictionRepository, siteConfig, rateLimiter ?? new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new FakeClock(Now), new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
-        return (handler, visitors, conversations, restrictionRepository);
+            new FakeClock(Now), new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator(), outbox, channelIdentities);
+        return (handler, visitors, conversations, restrictionRepository, outbox, channelIdentities);
     }
 
     /// <summary>`23-78`: a site whose own `WidgetConfig.AllowAttachmentUploadsByDefault` is
@@ -46,7 +48,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenVisitorHasNoActiveConversation_StartsANewOne()
     {
-        var (handler, _, _, _) = CreateHandler();
+        var (handler, _, _, _, _, _) = CreateHandler();
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -54,10 +56,137 @@ public class StartConversationHandlerTests
         Assert.True(result.Value.IsNew);
     }
 
+    // -----------------------------------------------------------------------------------------
+    // `adr/0186` S1: the analytics `ConversationOpened` event - published in the same call this
+    // handler already makes to conversations.SaveAsync (rule 4). The real transaction guarantee is
+    // Ago.Chat.Integration.Tests' job (`CloseConversationHandlerTests`' own remarks on the identical
+    // split); these tests only prove the handler enqueues the right envelope, with the right
+    // attribution, for the right conversations.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>The common case: a brand-new widget visitor with no linked channel identity and no
+    /// captured traffic source reads back exactly as <c>OperatorAnalyticsReadStore</c>'s own read-time
+    /// query would label it - <c>"Widget"</c>, no referrer, no campaign - and the tenant's zone falls
+    /// back to the platform default because no site was ever seeded for this test's <see cref="SiteId"/>.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenVisitorHasNoActiveConversation_PublishesConversationOpened_WithWidgetDefaults()
+    {
+        var (handler, _, _, _, outbox, _) = CreateHandler();
+
+        var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        Assert.Equal("ConversationOpened", envelope.Type);
+        Assert.Equal(result.Value.ConversationId.Value, envelope.MessageId);
+        Assert.Equal(result.Value.ConversationId.Value.ToString(), envelope.PartitionKey);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<Ago.Chat.Contracts.ConversationOpened>(envelope.Payload);
+        Assert.Equal(SiteId.Value, contract!.SiteId);
+        Assert.Equal(VisitorId.Value, contract.VisitorId);
+        Assert.Equal("Widget", contract.Channel);
+        Assert.Null(contract.ReferrerHost);
+        Assert.Null(contract.UtmCampaign);
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
+    }
+
+    /// <summary>A visitor already linked to an external channel (the `ReceiveChannelMessageHandler`
+    /// path, which links the identity and only then calls this handler - see this handler's own class
+    /// remarks) gets that channel's own label, not <c>"Widget"</c>.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenVisitorHasALinkedChannelIdentity_PublishesTheResolvedChannelLabel()
+    {
+        var (handler, _, _, _, outbox, channelIdentities) = CreateHandler();
+        await channelIdentities.SaveAsync(
+            ChannelIdentity.Link(
+                new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Telegram,
+                new ExternalChannelAddress("123456"), VisitorId, Now),
+            CancellationToken.None);
+
+        await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<Ago.Chat.Contracts.ConversationOpened>(envelope.Payload);
+        Assert.Equal(nameof(ChannelKind.Telegram), contract!.Channel);
+    }
+
+    /// <summary>An unlinked channel identity must not keep winning - the same "excluded from
+    /// routing/preference/lookup" rule `IChannelIdentityRepository.FindMostRecentForVisitorAsync`'s own
+    /// remarks state, restated here for the analytics event's own resolution.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheVisitorsOnlyChannelIdentityIsUnlinked_FallsBackToWidget()
+    {
+        var (handler, _, _, _, outbox, channelIdentities) = CreateHandler();
+        var identity = ChannelIdentity.Link(
+            new ChannelIdentityId(Guid.NewGuid()), SiteId, ChannelKind.Telegram,
+            new ExternalChannelAddress("123456"), VisitorId, Now);
+        identity.Unlink(Now);
+        await channelIdentities.SaveAsync(identity, CancellationToken.None);
+
+        await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<Ago.Chat.Contracts.ConversationOpened>(envelope.Payload);
+        Assert.Equal("Widget", contract!.Channel);
+    }
+
+    /// <summary>`18-12`'s own captured attribution rides straight through onto the analytics event -
+    /// denormalized at publish time (`docs/design/analytics-precompute.md` §8.1), so the future rollup
+    /// never has to join back to this conversation's own row for it.</summary>
+    [Fact]
+    public async Task HandleAsync_WithACapturedTrafficSource_PublishesItsReferrerAndCampaign()
+    {
+        var (handler, _, _, _, outbox, _) = CreateHandler();
+        var source = new TrafficSource("shop.example", "google", "cpc", "spring-sale");
+
+        await handler.HandleAsync(new Command(SiteId, VisitorId, source), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<Ago.Chat.Contracts.ConversationOpened>(envelope.Payload);
+        Assert.Equal("shop.example", contract!.ReferrerHost);
+        Assert.Equal("spring-sale", contract.UtmCampaign);
+    }
+
+    /// <summary>The tenant's own <see cref="Site.TimeZone"/> is stamped onto the event, read through the
+    /// identical cached <see cref="GetSiteConfigById.SiteConfigDto"/> this handler already reads for
+    /// <c>WidgetAllowAttachmentUploadsByDefault</c> - `adr/0031`'s "a stamp, not a gate" carve-out
+    /// (`SiteConfigDto`'s own remarks).</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteHasANonDefaultTimeZone_StampsItOntoTheEvent()
+    {
+        var sites = new FakeSiteRepository();
+        var site = new Site(SiteId, $"pk_{Guid.NewGuid():N}", []);
+        sites.Seed(site);
+        var (handler, _, _, _, outbox, _) = CreateHandler(sites);
+
+        await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        var envelope = Assert.Single(outbox.Enqueued);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<Ago.Chat.Contracts.ConversationOpened>(envelope.Payload);
+        // No writer exists yet to set a non-default zone (out of scope for this slice - Site.TimeZone's
+        // own remarks) - this proves the value actually comes from the site's own column, not a
+        // hardcoded literal in the handler, by confirming it reads back the aggregate's own default.
+        Assert.Equal(site.TimeZone, contract!.TenantZone);
+    }
+
+    /// <summary>Resuming an already-open conversation must not publish a second `ConversationOpened` -
+    /// the fact "this conversation started" happened once, and `Conversation.Start` (the only raiser of
+    /// the underlying domain event) never runs on this branch.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenResumingAnExistingConversation_PublishesNothing()
+    {
+        var (handler, _, conversations, _, outbox, _) = CreateHandler();
+        var existing = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
+        conversations.Seed(existing);
+
+        var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
+
+        Assert.False(result.Value.IsNew);
+        Assert.Empty(outbox.Enqueued);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenVisitorAlreadyHasAWaitingConversation_ResumesIt()
     {
-        var (handler, _, conversations, _) = CreateHandler();
+        var (handler, _, conversations, _, _, _) = CreateHandler();
         var existing = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(existing);
 
@@ -71,7 +200,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenVisitorAlreadyHasAClosedConversation_StartsANewOneInstead()
     {
-        var (handler, _, conversations, _) = CreateHandler();
+        var (handler, _, conversations, _, _, _) = CreateHandler();
         var closed = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         closed.Close(Now);
         conversations.Seed(closed);
@@ -86,7 +215,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenVisitorIsNew_CreatesTheVisitorRecord()
     {
-        var (handler, visitors, _, _) = CreateHandler();
+        var (handler, visitors, _, _, _, _) = CreateHandler();
 
         await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -108,7 +237,7 @@ public class StartConversationHandlerTests
         var emojiPairs = new FakeVisitorEmojiPairGenerator("🐳", "🌭");
         var handler = new StartConversationHandler(
             visitors, conversations, new FakeVisitorRestrictionRepository(), siteConfig, new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new FakeClock(Now), new FakeIdGenerator(), emojiPairs);
+            new FakeClock(Now), new FakeIdGenerator(), emojiPairs, new FakeOutboxWriter(), new FakeChannelIdentityRepository());
 
         var first = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
         var afterFirstContact = await visitors.GetByIdAsync(VisitorId, CancellationToken.None);
@@ -143,7 +272,8 @@ public class StartConversationHandlerTests
         var siteConfig = new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache());
         var handler = new StartConversationHandler(
             visitors, conversations, new FakeVisitorRestrictionRepository(), siteConfig, new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new FakeClock(returnVisit), new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
+            new FakeClock(returnVisit), new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator(), new FakeOutboxWriter(),
+            new FakeChannelIdentityRepository());
 
         await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -161,7 +291,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenSiteHasNoAttachmentUploadDefault_StartsWithNoGrant()
     {
-        var (handler, _, conversations, _) = CreateHandler();
+        var (handler, _, conversations, _, _, _) = CreateHandler();
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -180,7 +310,7 @@ public class StartConversationHandlerTests
     public async Task HandleAsync_WhenSiteAllowsAttachmentUploadsByDefault_StartsWithAGrantAndNoOperatorAttribution()
     {
         var sites = CreateSites(allowAttachmentUploadsByDefault: true);
-        var (handler, _, conversations, _) = CreateHandler(sites);
+        var (handler, _, conversations, _, _, _) = CreateHandler(sites);
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -201,7 +331,7 @@ public class StartConversationHandlerTests
     public async Task HandleAsync_WhenResumingAnExistingConversation_TenantDefaultIsNeverConsulted()
     {
         var sites = CreateSites(allowAttachmentUploadsByDefault: true);
-        var (handler, _, conversations, _) = CreateHandler(sites);
+        var (handler, _, conversations, _, _, _) = CreateHandler(sites);
         var existing = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(existing);
 
@@ -219,7 +349,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenTheRateLimitIsExceeded_ReturnsConversationCreateRateLimited_WithoutStartingOne()
     {
-        var (handler, _, conversations, _) = CreateHandler(rateLimiter: new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(7)));
+        var (handler, _, conversations, _, _, _) = CreateHandler(rateLimiter: new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(7)));
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -234,7 +364,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenOnlyThePerSiteRateLimitIsExceeded_ReturnsConversationCreateRateLimited()
     {
-        var (handler, _, _, _) = CreateHandler(rateLimiter: new SelectiveFakeRateLimiter("site", TimeSpan.FromSeconds(7)));
+        var (handler, _, _, _, _, _) = CreateHandler(rateLimiter: new SelectiveFakeRateLimiter("site", TimeSpan.FromSeconds(7)));
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -247,7 +377,7 @@ public class StartConversationHandlerTests
     [Fact]
     public async Task HandleAsync_WhenOnlyThePerVisitorRateLimitIsExceeded_ReturnsConversationCreateRateLimited()
     {
-        var (handler, _, _, _) = CreateHandler(rateLimiter: new SelectiveFakeRateLimiter("visitor", TimeSpan.FromSeconds(7)));
+        var (handler, _, _, _, _, _) = CreateHandler(rateLimiter: new SelectiveFakeRateLimiter("visitor", TimeSpan.FromSeconds(7)));
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -262,7 +392,7 @@ public class StartConversationHandlerTests
     public async Task HandleAsync_WhenResumingAnExistingConversation_TheRateLimitIsNeverConsulted()
     {
         var deniedLimiter = new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(7));
-        var (handler, _, conversations, _) = CreateHandler(rateLimiter: deniedLimiter);
+        var (handler, _, conversations, _, _, _) = CreateHandler(rateLimiter: deniedLimiter);
         var existing = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(existing);
 
@@ -285,7 +415,7 @@ public class StartConversationHandlerTests
         await restrictions.RestrictAsync(
             SiteId, VisitorId, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Spam, Now.AddHours(24),
             new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
-        var (handler, _, conversations, _) = CreateHandler(restrictions: restrictions);
+        var (handler, _, conversations, _, _, _) = CreateHandler(restrictions: restrictions);
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -312,7 +442,7 @@ public class StartConversationHandlerTests
         await restrictions.RestrictAsync(
             SiteId, restrictedVisitor, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Block, expiresAt: null,
             new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
-        var (handler, _, _, _) = CreateHandler(restrictions: restrictions);
+        var (handler, _, _, _, _, _) = CreateHandler(restrictions: restrictions);
 
         var restrictedResult = await handler.HandleAsync(new Command(SiteId, restrictedVisitor), CancellationToken.None);
         var ordinaryResult = await handler.HandleAsync(new Command(SiteId, ordinaryVisitor), CancellationToken.None);
@@ -334,7 +464,7 @@ public class StartConversationHandlerTests
         await restrictions.RestrictAsync(
             SiteId, VisitorId, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Spam, Now.AddHours(-1),
             new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now.AddHours(-2), CancellationToken.None);
-        var (handler, _, conversations, _) = CreateHandler(restrictions: restrictions);
+        var (handler, _, conversations, _, _, _) = CreateHandler(restrictions: restrictions);
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -355,7 +485,7 @@ public class StartConversationHandlerTests
             SiteId, VisitorId, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Block, expiresAt: null,
             new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
         await restrictions.LiftAsync(SiteId, VisitorId, new OperatorId(Guid.NewGuid()), Now.AddMinutes(1), CancellationToken.None);
-        var (handler, _, conversations, _) = CreateHandler(restrictions: restrictions);
+        var (handler, _, conversations, _, _, _) = CreateHandler(restrictions: restrictions);
 
         var result = await handler.HandleAsync(new Command(SiteId, VisitorId), CancellationToken.None);
 
@@ -376,7 +506,7 @@ public class StartConversationHandlerTests
         await restrictions.RestrictAsync(
             SiteId, VisitorId, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Block, expiresAt: null,
             new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
-        var (handler, _, conversations, _) = CreateHandler(restrictions: restrictions);
+        var (handler, _, conversations, _, _, _) = CreateHandler(restrictions: restrictions);
         var existing = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         conversations.Seed(existing);
 

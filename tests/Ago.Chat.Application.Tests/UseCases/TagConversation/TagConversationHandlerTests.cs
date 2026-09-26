@@ -29,7 +29,8 @@ public class TagConversationHandlerTests
         var tag = Tag.Create(new TagId(Guid.NewGuid()), SiteId, "VIP", Now);
         tags.Seed(tag);
 
-        return new Fixture(new TagConversationHandler(readStore, tags, permissions), tags, conversation.Id, tag.Id);
+        return new Fixture(
+            new TagConversationHandler(readStore, tags, permissions, new FakeClock(Now)), tags, conversation.Id, tag.Id);
     }
 
     [Fact]
@@ -49,6 +50,25 @@ public class TagConversationHandlerTests
         Assert.Equal(TagSource.Operator, applied.Source);
     }
 
+    /// <summary>`adr/0186` S1: proves the analytics-relevant fact was recorded with the right ids - the
+    /// real publish (an outbox row) happens one layer down, in the real `TagRepository` adapter this
+    /// fake stands in for (its own remarks), so this is as far as a handler-level test can see.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenPermitted_RecordsTheAnalyticsFactOnce()
+    {
+        var fixture = CreateFixture();
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.TagConversation.TagConversation(fixture.ConversationId, SiteId, fixture.TagId, OperatorId),
+            CancellationToken.None);
+
+        var recorded = Assert.Single(fixture.Tags.Tagged);
+        Assert.Equal(fixture.ConversationId, recorded.ConversationId);
+        Assert.Equal(SiteId, recorded.SiteId);
+        Assert.Equal(fixture.TagId, recorded.TagId);
+        Assert.Equal(Now, recorded.Now);
+    }
+
     [Fact]
     public async Task HandleAsync_AppliedTwice_IsIdempotent()
     {
@@ -60,6 +80,8 @@ public class TagConversationHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Single(await fixture.Tags.GetForConversationAsync(fixture.ConversationId, CancellationToken.None));
+        // `adr/0186` S1: the second, no-op call must not fabricate a second analytics fact.
+        Assert.Single(fixture.Tags.Tagged);
     }
 
     [Fact]

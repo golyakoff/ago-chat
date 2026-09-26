@@ -1,14 +1,21 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.TagConversation;
 
 /// <summary>`18-04`: gated by <see cref="Permission.ConversationTag"/> - see that permission's own
 /// remarks for why applying an existing tag to one conversation is a narrower capability than
-/// managing the tag vocabulary itself (<see cref="Permission.SiteConfigure"/>).</summary>
+/// managing the tag vocabulary itself (<see cref="Permission.SiteConfigure"/>).
+///
+/// <para><b>`adr/0186` S1: <see cref="clock"/> joins this handler's dependencies</b> only to hand a
+/// timestamp down to <see cref="ITagRepository.AddToConversationAsync"/> - the analytics
+/// <c>ConversationTagged</c> event is staged and published by that adapter itself, not by this handler
+/// (<see cref="ITagRepository"/>'s own remarks explain why: tags have no aggregate for this handler to
+/// route a domain event through the way <c>CloseConversationHandler</c> does).</para></summary>
 public sealed class TagConversationHandler(
-    IConversationReadStore readStore, ITagRepository tags, IPermissionChecker permissions)
+    IConversationReadStore readStore, ITagRepository tags, IPermissionChecker permissions, IClock clock)
 {
     public async Task<Result> HandleAsync(TagConversation command, CancellationToken cancellationToken)
     {
@@ -33,7 +40,8 @@ public sealed class TagConversationHandler(
 
         // `19-02`: an operator's own explicit action - always TagSource.Operator, never Ai
         // (ITagRepository.AddToConversationAsync's own remarks on why this is never defaulted).
-        await tags.AddToConversationAsync(command.ConversationId, command.TagId, TagSource.Operator, cancellationToken);
+        await tags.AddToConversationAsync(
+            command.ConversationId, command.SiteId, command.TagId, TagSource.Operator, clock.UtcNow, cancellationToken);
 
         return Result.Success();
     }

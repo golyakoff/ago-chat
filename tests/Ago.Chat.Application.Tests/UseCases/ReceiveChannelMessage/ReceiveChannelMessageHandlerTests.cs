@@ -59,7 +59,7 @@ public class ReceiveChannelMessageHandlerTests
             visitors, conversations, new FakeVisitorRestrictionRepository(),
             new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
-            idGenerator, emojiPairs),
+            idGenerator, emojiPairs, new FakeOutboxWriter(), identities),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             new AlwaysEntitledBillingOptionEntitlementProvider(),
@@ -454,7 +454,7 @@ public class ReceiveChannelMessageHandlerTests
             visitors, conversations, new FakeVisitorRestrictionRepository(),
             new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
-            idGenerator, emojiPairs),
+            idGenerator, emojiPairs, new FakeOutboxWriter(), identities),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             new AlwaysEntitledBillingOptionEntitlementProvider(),
@@ -508,7 +508,7 @@ public class ReceiveChannelMessageHandlerTests
             visitors, conversations, new FakeVisitorRestrictionRepository(),
             new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
-            idGenerator, emojiPairs),
+            idGenerator, emojiPairs, new FakeOutboxWriter(), identities),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             entitlements, grants, clock, idGenerator, emojiPairs);
@@ -546,7 +546,7 @@ public class ReceiveChannelMessageHandlerTests
             visitors, conversations, new FakeVisitorRestrictionRepository(),
             new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
-            idGenerator, emojiPairs),
+            idGenerator, emojiPairs, new FakeOutboxWriter(), identities),
             new SendVisitorMessageHandler(
                 conversations,
                 new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5)),

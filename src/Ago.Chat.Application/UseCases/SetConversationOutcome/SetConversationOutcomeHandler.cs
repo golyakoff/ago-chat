@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Domain;
+using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
 
 namespace Ago.Chat.Application.UseCases.SetConversationOutcome;
@@ -27,9 +29,17 @@ namespace Ago.Chat.Application.UseCases.SetConversationOutcome;
 /// races the same row's `xmin` against an ordinary message send the way <c>CloseConversationHandler</c>
 /// does, so it reuses that handler's own retry-once shape rather than surfacing a spurious `409` for a
 /// routine, narrow-window collision with a message that happened to land at the same moment.</para>
+///
+/// <para><b>`adr/0186` S1: <see cref="outbox"/>/<see cref="idGenerator"/>/<see cref="clock"/> join this
+/// handler's dependencies to publish the analytics <c>ConversationOutcomeRecorded</c> event.</b> This is
+/// an Application concern (rule 1): <see cref="Conversation.SetOutcome"/> now raises the bare
+/// <see cref="ConversationOutcomeSet"/> domain event, and this handler - the outbox's own owner for this
+/// write, matching <c>CloseConversationHandler</c>'s own shape - maps and stages it in the same
+/// transaction as <see cref="conversations"/>' own <c>SaveAsync</c> (rule 4).</para>
 /// </summary>
 public sealed class SetConversationOutcomeHandler(
-    IConversationRepository conversations, IPermissionChecker permissions)
+    IConversationRepository conversations, IPermissionChecker permissions, IOutboxWriter outbox,
+    IIdGenerator idGenerator, IClock clock)
 {
     public async Task<Result> HandleAsync(SetConversationOutcome command, CancellationToken cancellationToken)
     {
@@ -84,7 +94,10 @@ public sealed class SetConversationOutcomeHandler(
     private async Task<Result> SetAndSaveAsync(
         Conversation conversation, ConversationOutcome outcome, CancellationToken cancellationToken)
     {
-        conversation.SetOutcome(outcome);
+        conversation.SetOutcome(outcome, clock.UtcNow);
+        var domainEvent = conversation.DomainEvents.OfType<ConversationOutcomeSet>().Single();
+        outbox.Enqueue(ConversationOutcomeRecordedMapper.ToEnvelope(domainEvent, idGenerator));
+        conversation.ClearDomainEvents();
         await conversations.SaveAsync(conversation, cancellationToken);
         return Result.Success();
     }

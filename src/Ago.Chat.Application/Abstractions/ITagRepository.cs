@@ -50,13 +50,26 @@ public interface ITagRepository
     /// always passes <see cref="TagSource.Operator"/>, `CategorizeConversationHandler` always passes
     /// <see cref="TagSource.Ai"/>. Not optional/defaulted: an implicit default here is exactly the kind
     /// of silent-fallback shape that could make an AI write look operator-applied by a missed
-    /// parameter, so every caller states it.</para></summary>
+    /// parameter, so every caller states it.</para>
+    ///
+    /// <para><b>`adr/0186` S1: <paramref name="siteId"/>/<paramref name="now"/> join this signature</b>
+    /// so the adapter (<c>Ago.Chat.Infrastructure.Postgres.TagRepository</c>) can stage the analytics
+    /// <c>ConversationTagged</c> event in the same transaction as the write it describes (rule 4) -
+    /// tags have no aggregate of their own to carry a domain event, so the values a mapper would
+    /// otherwise read off one arrive as plain parameters instead, the identical shape
+    /// <c>ModuleQuantityGrantedMapper</c>'s own callers already use. Every existing caller already has
+    /// both in hand (a site-scoped command, a clock) before calling this.</para></summary>
     Task AddToConversationAsync(
-        ConversationId conversationId, TagId tagId, TagSource source, CancellationToken cancellationToken);
+        ConversationId conversationId, SiteId siteId, TagId tagId, TagSource source, DateTimeOffset now,
+        CancellationToken cancellationToken);
 
     /// <summary>Idempotent the same way - removing a tag that was never applied, or already removed,
-    /// is a no-op.</summary>
-    Task RemoveFromConversationAsync(ConversationId conversationId, TagId tagId, CancellationToken cancellationToken);
+    /// is a no-op. `adr/0186` S1: <paramref name="siteId"/>/<paramref name="now"/> join this signature
+    /// on the identical terms <see cref="AddToConversationAsync"/>'s own remarks give, for the mirror
+    /// <c>ConversationUntagged</c> event.</summary>
+    Task RemoveFromConversationAsync(
+        ConversationId conversationId, SiteId siteId, TagId tagId, DateTimeOffset now,
+        CancellationToken cancellationToken);
 
     /// <summary>`19-02`: returns each tag's own <see cref="TagSource"/> alongside it, unlike
     /// <see cref="GetAllForSiteAsync"/> (a site's vocabulary has no per-conversation "who applied it" -

@@ -33,7 +33,8 @@ public class ClockBoundaryTests
             visitors, conversations, new FakeVisitorRestrictionRepository(),
             new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock,
-            new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
+            new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator(), new FakeOutboxWriter(),
+            new FakeChannelIdentityRepository());
 
         await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
         var afterFirstContact = await visitors.GetByIdAsync(visitorId, CancellationToken.None);

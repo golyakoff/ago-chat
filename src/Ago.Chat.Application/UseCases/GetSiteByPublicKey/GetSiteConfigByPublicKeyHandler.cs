@@ -46,6 +46,6 @@ public sealed class GetSiteConfigByPublicKeyHandler(ISiteRepository sites, ICach
             site.WidgetConfig.AutoOpenDelaySeconds, site.WidgetConfig.AutoOpenGreetingText,
             site.WidgetConfig.AllowAttachmentUploadsByDefault, site.WidgetConfig.ContactCaptureConfirmationText,
             site.WidgetConfig.ChannelSwitcherPlacement, site.WidgetConfig.ChannelSwitcherIconSize,
-            site.WidgetConfig.PanelTitle));
+            site.WidgetConfig.PanelTitle, site.TimeZone));
     }
 }

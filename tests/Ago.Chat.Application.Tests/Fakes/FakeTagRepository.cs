@@ -8,6 +8,17 @@ public sealed class FakeTagRepository : ITagRepository
     private readonly Dictionary<TagId, Tag> _byId = [];
     private readonly Dictionary<(ConversationId ConversationId, TagId TagId), TagSource> _associations = [];
 
+    /// <summary>`adr/0186` S1: mirrors what the real <c>TagRepository</c> adapter would have staged to
+    /// the outbox - one entry per call that actually changed something, none for a no-op. Stands in for
+    /// the real adapter's own <c>IOutboxWriter</c> so a handler-level test (which only ever sees this
+    /// fake, never the real Postgres-backed adapter) can still assert the analytics-relevant fact was
+    /// recorded with the right ids, without pulling in a Testcontainers-backed integration test just to
+    /// prove parameter plumbing.</summary>
+    public List<(ConversationId ConversationId, SiteId SiteId, TagId TagId, DateTimeOffset Now)> Tagged { get; } = [];
+
+    /// <summary>The mirror list for <see cref="RemoveFromConversationAsync"/>.</summary>
+    public List<(ConversationId ConversationId, SiteId SiteId, TagId TagId, DateTimeOffset Now)> Untagged { get; } = [];
+
     public void Seed(Tag tag) => _byId[tag.Id] = tag;
 
     /// <summary>Defaults to <see cref="TagSource.Operator"/> - every existing caller of this fake seeds
@@ -52,7 +63,8 @@ public sealed class FakeTagRepository : ITagRepository
     }
 
     public Task AddToConversationAsync(
-        ConversationId conversationId, TagId tagId, TagSource source, CancellationToken cancellationToken)
+        ConversationId conversationId, SiteId siteId, TagId tagId, TagSource source, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         // `19-02`: mirrors the real adapter's own ON CONFLICT DO NOTHING - a second write for an
         // already-associated pair never overwrites the first writer's source (TagRepository's own
@@ -60,14 +72,23 @@ public sealed class FakeTagRepository : ITagRepository
         if (!_associations.ContainsKey((conversationId, tagId)))
         {
             _associations[(conversationId, tagId)] = source;
+            // `adr/0186` S1: only on a real change - the identical "never publish for a no-op" guard
+            // the real adapter's own remarks state, mirrored here.
+            Tagged.Add((conversationId, siteId, tagId, now));
         }
 
         return Task.CompletedTask;
     }
 
-    public Task RemoveFromConversationAsync(ConversationId conversationId, TagId tagId, CancellationToken cancellationToken)
+    public Task RemoveFromConversationAsync(
+        ConversationId conversationId, SiteId siteId, TagId tagId, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
-        _associations.Remove((conversationId, tagId));
+        if (_associations.Remove((conversationId, tagId)))
+        {
+            Untagged.Add((conversationId, siteId, tagId, now));
+        }
+
         return Task.CompletedTask;
     }
 

@@ -107,7 +107,7 @@ public class ConversionReportReadStoreTests(PostgresFixture fixture)
         }
 
         var conversation = Conversation.Start(conversationId, siteId, visitorId, createdAt);
-        conversation.SetOutcome(ConversationOutcome.Converted);
+        conversation.SetOutcome(ConversationOutcome.Converted, createdAt);
         await using (var writeDb = fixture.CreateDbContext())
         {
             writeDb.Conversations.Add(conversation);
@@ -365,7 +365,7 @@ public class ConversionReportReadStoreTests(PostgresFixture fixture)
 
         if (outcome is { } realOutcome)
         {
-            conversation.SetOutcome(realOutcome);
+            conversation.SetOutcome(realOutcome, createdAt);
         }
 
         await using var writeDb = fixture.CreateDbContext();

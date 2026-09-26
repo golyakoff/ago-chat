@@ -1097,7 +1097,7 @@ public class ConversationTests
     {
         var conversation = StartConversation();
 
-        conversation.SetOutcome(outcome);
+        conversation.SetOutcome(outcome, Now);
 
         Assert.Equal(outcome, conversation.Outcome);
     }
@@ -1107,7 +1107,7 @@ public class ConversationTests
     {
         var conversation = StartConversation();
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => conversation.SetOutcome(ConversationOutcome.Unset));
+        Assert.Throws<ArgumentOutOfRangeException>(() => conversation.SetOutcome(ConversationOutcome.Unset, Now));
     }
 
     [Fact]
@@ -1115,7 +1115,7 @@ public class ConversationTests
     {
         var conversation = StartWaitingConversation();
 
-        conversation.SetOutcome(ConversationOutcome.FollowUpNeeded);
+        conversation.SetOutcome(ConversationOutcome.FollowUpNeeded, Now);
 
         Assert.Equal(ConversationState.Waiting, conversation.State);
         Assert.Equal(ConversationOutcome.FollowUpNeeded, conversation.Outcome);
@@ -1128,7 +1128,7 @@ public class ConversationTests
         conversation.AssignTo(OperatorId, Now);
         conversation.Close(Now.AddMinutes(5));
 
-        conversation.SetOutcome(ConversationOutcome.Converted);
+        conversation.SetOutcome(ConversationOutcome.Converted, Now);
 
         Assert.Equal(ConversationState.Closed, conversation.State);
         Assert.Equal(ConversationOutcome.Converted, conversation.Outcome);
@@ -1138,22 +1138,29 @@ public class ConversationTests
     public void SetOutcome_CalledTwice_TheSecondCallOverwritesTheFirst()
     {
         var conversation = StartConversation();
-        conversation.SetOutcome(ConversationOutcome.FollowUpNeeded);
+        conversation.SetOutcome(ConversationOutcome.FollowUpNeeded, Now);
 
-        conversation.SetOutcome(ConversationOutcome.Converted);
+        conversation.SetOutcome(ConversationOutcome.Converted, Now);
 
         Assert.Equal(ConversationOutcome.Converted, conversation.Outcome);
     }
 
+    /// <summary>`adr/0186` S1: replaces the old `SetOutcome_RaisesNoDomainEvent` - a real consumer
+    /// (analytics) now exists, so this reverses that earlier decision on purpose. See
+    /// <see cref="Conversation.SetOutcome"/>'s own remarks.</summary>
     [Fact]
-    public void SetOutcome_RaisesNoDomainEvent()
+    public void SetOutcome_RaisesConversationOutcomeSet()
     {
         var conversation = StartConversation();
         conversation.ClearDomainEvents();
 
-        conversation.SetOutcome(ConversationOutcome.Converted);
+        conversation.SetOutcome(ConversationOutcome.Converted, Now);
 
-        Assert.Empty(conversation.DomainEvents);
+        var raised = Assert.Single(conversation.DomainEvents.OfType<ConversationOutcomeSet>());
+        Assert.Equal(conversation.Id, raised.ConversationId);
+        Assert.Equal(conversation.SiteId, raised.SiteId);
+        Assert.Equal(ConversationOutcome.Converted, raised.Outcome);
+        Assert.Equal(Now, raised.OccurredAt);
     }
 
     [Fact]
