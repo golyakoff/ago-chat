@@ -161,6 +161,16 @@ public readonly record struct Permission(string Value)
     public static readonly Permission BookingReject = new("booking:reject");
     public static readonly Permission BookingCancel = new("booking:cancel");
     public static readonly Permission BookingMarkNoShow = new("booking:mark_no_show");
+
+    // `26-208`/`adr/0187`: dedicated, not a reuse of BookingCancel - the same adr/0016 granularity
+    // split that already separates BookingReject from BookingCancel, applied once more. Moving a
+    // confirmed appointment to a new time is a materially different trust than cancelling it: a tenant
+    // may want a senior operator to reschedule an appointment without granting a junior one that power,
+    // independently of who may cancel (reschedule contains a cancel at the data level, but the two are
+    // different capabilities). Operator-role by default (OperatorRolePermissions below), the same
+    // day-to-day placement the other booking:* actions already have. Per adr/0093 this string must
+    // match Ago.Calendar.Domain.Permission.BookingReschedule byte-for-byte.
+    public static readonly Permission BookingReschedule = new("booking:reschedule");
     public static readonly Permission CustomerRead = new("customer:read");
     public static readonly Permission CustomerEdit = new("customer:edit");
     public static readonly Permission CalendarConfigure = new("calendar:configure");

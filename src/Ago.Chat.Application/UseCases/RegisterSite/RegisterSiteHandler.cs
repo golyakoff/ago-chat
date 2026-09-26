@@ -88,6 +88,14 @@ public sealed class RegisterSiteHandler(
             // *existing* site's roles get brought up to when the calendar module is actually granted.
             Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
             Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
+            // `26-208`/`adr/0187`: BookingReschedule joins the Operator set - the operator-facing
+            // «Перенести оператором» action is ordinary day-to-day work, the same category the other
+            // booking:* actions already occupy here (adr/0093 mirror; matches
+            // Ago.Calendar.Domain.Permission.BookingReschedule). Note the fourth-restatement gap the
+            // note above flags: `ago-deploy`'s ModulePermissions__calendar__Operator__* configuration
+            // is what an existing site's roles get brought up to when the calendar module is granted;
+            // adding the string there is a separate ago-deploy change, not reached by this handler.
+            Permission.BookingReschedule.Value,
             // `23-69`: ConversationMarkSpam joins the Operator set - see Permission's own remarks on
             // why this, unlike ConversationBlock, is Operator- rather than Admin-scoped.
             Permission.ConversationMarkSpam.Value,
