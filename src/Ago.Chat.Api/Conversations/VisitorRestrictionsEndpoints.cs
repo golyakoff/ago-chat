@@ -39,6 +39,12 @@ public static class VisitorRestrictionsEndpoints
     /// <summary>The wire shape of one page of restrictions - every field
     /// <see cref="VisitorRestrictionItem"/> carries, `Kind`/timestamps as the console needs to render
     /// them.</summary>
+    /// <param name="EmojiCreature">`26-202`: <see cref="VisitorRestrictionItem.EmojiCreature"/>, so a
+    /// client can show a name beside the restricted visitor's id the same way it already can for a
+    /// conversation row or a person profile - additive/nullable the identical way every field above
+    /// already is.</param>
+    /// <param name="EmojiFood">The other half of the pair - see <paramref name="EmojiCreature"/>'s own
+    /// remarks, which this parameter shares in full.</param>
     public sealed record VisitorRestrictionListItemDto(
         Guid Id,
         Guid VisitorId,
@@ -48,7 +54,9 @@ public static class VisitorRestrictionsEndpoints
         DateTimeOffset? ExpiresAt,
         Guid SourceConversationId,
         DateTimeOffset? LiftedAt,
-        Guid? LiftedBy);
+        Guid? LiftedBy,
+        string? EmojiCreature = null,
+        string? EmojiFood = null);
 
     public sealed record VisitorRestrictionListResponse(IReadOnlyList<VisitorRestrictionListItemDto> Items, Guid? NextBeforeId);
 
@@ -72,7 +80,7 @@ public static class VisitorRestrictionsEndpoints
         var items = page.Items
             .Select(i => new VisitorRestrictionListItemDto(
                 i.Id, i.VisitorId.Value, i.Kind.ToString(), i.RestrictedAt, i.RestrictedBy.Value, i.ExpiresAt,
-                i.SourceConversationId.Value, i.LiftedAt, i.LiftedBy?.Value))
+                i.SourceConversationId.Value, i.LiftedAt, i.LiftedBy?.Value, i.EmojiCreature, i.EmojiFood))
             .ToList();
 
         return Results.Ok(new VisitorRestrictionListResponse(items, page.NextBeforeId));

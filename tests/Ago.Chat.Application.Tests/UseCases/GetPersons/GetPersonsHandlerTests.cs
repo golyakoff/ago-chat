@@ -120,6 +120,33 @@ public class GetPersonsHandlerTests
         Assert.EndsWith("01", channel.Value, StringComparison.Ordinal);
     }
 
+    /// <summary>`26-202`: the identical operator-side memory aid <c>ConversationSummaryDto</c> already
+    /// exposes (`25-56`) - read straight off the same <see cref="Visitor.EmojiCreature"/>/
+    /// <see cref="Visitor.EmojiFood"/> pair, never recomputed, so a person profile and a conversation row
+    /// for the same visitor can never disagree about which pair they show.</summary>
+    [Fact]
+    public async Task HandleAsync_CarriesTheVisitorsOwnStoredEmojiPair_ForAKnownId()
+    {
+        var fixture = CreateFixture();
+        var anna = APerson(fixture.Visitors, SiteId, null);
+        anna.AssignEmojiPair(VisitorEmojiDictionary.Creatures[3], VisitorEmojiDictionary.Foods[7]);
+        var untouched = APerson(fixture.Visitors, SiteId, null);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.GetPersons.GetPersons(SiteId, OperatorId, [anna.Id, untouched.Id]), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        var annaProfile = Assert.Single(result.Value, p => p.PersonId == anna.Id.Value);
+        Assert.Equal(VisitorEmojiDictionary.Creatures[3], annaProfile.EmojiCreature);
+        Assert.Equal(VisitorEmojiDictionary.Foods[7], annaProfile.EmojiFood);
+
+        // A visitor row whose pair has never been assigned (predates `Stage25AddVisitorEmojiPair`'s
+        // backfill, in spirit) carries neither half - `null`, never a placeholder.
+        var untouchedProfile = Assert.Single(result.Value, p => p.PersonId == untouched.Id.Value);
+        Assert.Null(untouchedProfile.EmojiCreature);
+        Assert.Null(untouchedProfile.EmojiFood);
+    }
+
     [Fact]
     public async Task HandleAsync_OperatorWithoutPermission_ReturnsForbidden()
     {

@@ -139,13 +139,50 @@ public sealed class VisitorRestrictionRepositoryTests(PostgresFixture fixture)
         Assert.Null(page.NextBeforeId);
     }
 
-    private async Task<(SiteId SiteId, VisitorId VisitorId)> SeedSiteAndVisitorAsync()
+    /// <summary>`26-202`: <see cref="VisitorRestrictionRepository.ListForSiteAsync"/>'s own left join onto
+    /// <c>visitors</c> surfaces the visitor's already-stored, once-assigned pair (`25-56`) - the identical
+    /// pair <c>ConversationSummaryDto</c> and <c>PersonProfileDto</c> already show for the same visitor,
+    /// read here rather than recomputed so the three screens can never disagree.</summary>
+    [Fact]
+    public async Task ListForSiteAsync_CarriesTheVisitorsOwnStoredEmojiPair_ForAKnownId()
+    {
+        var (siteId, visitorId) = await SeedSiteAndVisitorAsync(
+            VisitorEmojiDictionary.Creatures[2], VisitorEmojiDictionary.Foods[5]);
+        var (_, untouchedVisitorId) = await SeedSiteAndVisitorAsync();
+        var repository = new VisitorRestrictionRepository(fixture.DataSource);
+
+        await repository.RestrictAsync(
+            siteId, visitorId, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Block, expiresAt: null,
+            new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+        await repository.RestrictAsync(
+            siteId, untouchedVisitorId, new OperatorId(Guid.NewGuid()), VisitorRestrictionKind.Block, expiresAt: null,
+            new ConversationId(Guid.NewGuid()), Guid.NewGuid(), Now, CancellationToken.None);
+
+        var page = await repository.ListForSiteAsync(siteId, null, 10, CancellationToken.None);
+
+        var row = Assert.Single(page.Items, i => i.VisitorId == visitorId);
+        Assert.Equal(VisitorEmojiDictionary.Creatures[2], row.EmojiCreature);
+        Assert.Equal(VisitorEmojiDictionary.Foods[5], row.EmojiFood);
+
+        // A visitor whose pair was never assigned carries neither half - `null`, never a placeholder.
+        var untouchedRow = Assert.Single(page.Items, i => i.VisitorId == untouchedVisitorId);
+        Assert.Null(untouchedRow.EmojiCreature);
+        Assert.Null(untouchedRow.EmojiFood);
+    }
+
+    private async Task<(SiteId SiteId, VisitorId VisitorId)> SeedSiteAndVisitorAsync(string? emojiCreature = null, string? emojiFood = null)
     {
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
+        var visitor = new Visitor(visitorId, siteId, Now);
+        if (emojiCreature is not null && emojiFood is not null)
+        {
+            visitor.AssignEmojiPair(emojiCreature, emojiFood);
+        }
+
         await using var db = fixture.CreateDbContext();
         db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
-        db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+        db.Visitors.Add(visitor);
         await db.SaveChangesAsync();
         return (siteId, visitorId);
     }
