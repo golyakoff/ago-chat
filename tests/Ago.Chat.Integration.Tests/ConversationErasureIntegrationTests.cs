@@ -8,6 +8,7 @@ using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -52,8 +53,8 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
         // per-conversation), plus one note each - both are personal data about a visitor
         // (ConversationNote's own remarks) and in scope for this same completeness claim.
         var tagId = await SeedTagAsync(siteId, "vip");
-        await TagConversationAsync(toErase.ConversationId, tagId);
-        await TagConversationAsync(toKeep.ConversationId, tagId);
+        await TagConversationAsync(siteId, toErase.ConversationId, tagId);
+        await TagConversationAsync(siteId, toKeep.ConversationId, tagId);
         await SeedNoteAsync(toErase.ConversationId, adminOperatorId, "erase-me note");
         await SeedNoteAsync(toKeep.ConversationId, adminOperatorId, "keep-me note");
 
@@ -433,14 +434,15 @@ public class ConversationErasureIntegrationTests(ErasureFixture fixture)
     {
         var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).SaveAsync(tag, CancellationToken.None);
         return tag.Id;
     }
 
-    private async Task TagConversationAsync(ConversationId conversationId, TagId tagId)
+    private async Task TagConversationAsync(SiteId siteId, ConversationId conversationId, TagId tagId)
     {
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
+        await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).AddToConversationAsync(
+            conversationId, siteId, tagId, TagSource.Operator, Now, CancellationToken.None);
     }
 
     private async Task SeedNoteAsync(ConversationId conversationId, OperatorId authorId, string body)

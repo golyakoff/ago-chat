@@ -18,7 +18,7 @@ public class GetConversationOutcomeHandlerTests
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         if (outcome != ConversationOutcome.Unset)
         {
-            conversation.SetOutcome(outcome);
+            conversation.SetOutcome(outcome, Now);
         }
 
         var readStore = new FakeConversationReadStore();

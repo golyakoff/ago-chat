@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.SetConversationOutcome;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.SetConversationOutcome;
@@ -12,7 +13,9 @@ public class SetConversationOutcomeHandlerTests
     private static readonly OperatorId OperatorId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
-    private sealed record Fixture(SetConversationOutcomeHandler Handler, FakeConversationRepository Conversations, ConversationId ConversationId);
+    private sealed record Fixture(
+        SetConversationOutcomeHandler Handler, FakeConversationRepository Conversations, FakeOutboxWriter Outbox,
+        ConversationId ConversationId);
 
     private static Fixture CreateFixture(bool grantPermission = true, bool alsoGrantOnOtherSite = false)
     {
@@ -31,7 +34,10 @@ public class SetConversationOutcomeHandlerTests
             permissions.Grant(OperatorId, OtherSiteId, Permission.ConversationClose);
         }
 
-        return new Fixture(new SetConversationOutcomeHandler(conversations, permissions), conversations, conversation.Id);
+        var outbox = new FakeOutboxWriter();
+        var handler = new SetConversationOutcomeHandler(
+            conversations, permissions, outbox, new FakeIdGenerator(), new FakeClock(Now));
+        return new Fixture(handler, conversations, outbox, conversation.Id);
     }
 
     [Theory]
@@ -51,6 +57,25 @@ public class SetConversationOutcomeHandlerTests
         var saved = await fixture.Conversations.GetByIdAsync(fixture.ConversationId, CancellationToken.None);
         Assert.Equal(
             Enum.Parse<ConversationOutcome>(wireValue, ignoreCase: true), saved!.Outcome);
+
+        // `adr/0186` S1: the analytics event, staged in the same call this handler makes to
+        // conversations.SaveAsync (rule 4) - the real transaction guarantee is
+        // Ago.Chat.Integration.Tests' job, this only proves the handler enqueues the right envelope.
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+        Assert.Equal(nameof(ConversationOutcomeRecorded), envelope.Type);
+        Assert.Equal(fixture.ConversationId.Value.ToString(), envelope.PartitionKey);
+    }
+
+    [Fact]
+    public async Task HandleAsync_OperatorWithoutPermission_PublishesNothing()
+    {
+        var fixture = CreateFixture(grantPermission: false);
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.SetConversationOutcome.SetConversationOutcome(fixture.ConversationId, SiteId, OperatorId, "Converted"),
+            CancellationToken.None);
+
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 
     [Fact]
@@ -68,6 +93,10 @@ public class SetConversationOutcomeHandlerTests
         Assert.True(result.IsSuccess);
         var saved = await fixture.Conversations.GetByIdAsync(fixture.ConversationId, CancellationToken.None);
         Assert.Equal(ConversationOutcome.Converted, saved!.Outcome);
+        // `adr/0186` S1: each recording is its own outbox row, a later one superseding the earlier one
+        // rather than merging with it - ConversationOutcomeRecordedMapper's own remarks on why the
+        // envelope's MessageId is a fresh id per publish, not the conversation's own id.
+        Assert.Equal(2, fixture.Outbox.Enqueued.Count);
     }
 
     [Fact]
@@ -134,5 +163,6 @@ public class SetConversationOutcomeHandlerTests
         Assert.Equal("Conversation.OutcomeInvalid", result.Error!.Value.Code);
         var saved = await fixture.Conversations.GetByIdAsync(fixture.ConversationId, CancellationToken.None);
         Assert.Equal(ConversationOutcome.Unset, saved!.Outcome);
+        Assert.Empty(fixture.Outbox.Enqueued);
     }
 }

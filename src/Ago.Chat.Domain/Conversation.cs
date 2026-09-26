@@ -583,13 +583,15 @@ public sealed class Conversation
     /// validate-then-translate split <c>UpdateWidgetConfigHandler</c> already draws for
     /// <c>Locale</c>/<c>Position</c>), not a business rejection this method needs to report as one.</para>
     ///
-    /// <para><b>No domain event.</b> Nothing downstream reacts to a conversation's outcome changing -
-    /// there is no consumer, no webhook, no capacity claim tied to it, the identical "no domain event:
-    /// nothing downstream reacts" reasoning <see cref="IncrementUnreadCount"/>'s own remarks already
-    /// give for a different scalar field on this same aggregate. If a real consumer ever needs to know,
-    /// that is new scope with its own event, not something to add speculatively here.</para>
+    /// <para><b>`adr/0186` S1: now raises <see cref="ConversationOutcomeSet"/> - the "no domain event"
+    /// paragraph this replaces no longer holds.</b> A real consumer exists as of this change: the
+    /// analytics conversion-report rollup (`docs/design/analytics-precompute.md` §4.1) needs to know
+    /// when an outcome is recorded, mapped to the <c>ConversationOutcomeRecorded</c> integration event
+    /// and staged to the outbox by <c>SetConversationOutcomeHandler</c> in the same transaction as this
+    /// write (rule 4). <paramref name="now"/> joins the signature for exactly this reason - nothing
+    /// about the outcome itself needed a timestamp before, only the event announcing it does.</para>
     /// </summary>
-    public void SetOutcome(ConversationOutcome outcome)
+    public void SetOutcome(ConversationOutcome outcome, DateTimeOffset now)
     {
         if (outcome == ConversationOutcome.Unset)
         {
@@ -598,6 +600,7 @@ public sealed class Conversation
         }
 
         Outcome = outcome;
+        _domainEvents.Add(new ConversationOutcomeSet(Id, SiteId, outcome, now));
     }
 
     /// <summary>

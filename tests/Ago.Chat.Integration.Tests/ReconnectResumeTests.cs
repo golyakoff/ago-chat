@@ -106,7 +106,8 @@ public sealed class ReconnectResumeTests(PostgresFixture fixture)
         var startConversation = new StartConversationHandler(
             new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource), siteConfig,
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new SystemClock(), new UuidV7Generator(), new VisitorEmojiPairGenerator());
+            new SystemClock(), new UuidV7Generator(), new VisitorEmojiPairGenerator(),
+            new EfOutboxWriter<AgoChatDbContext>(db), new ChannelIdentityRepository(db));
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var registration = new HubConnectionRegistration(

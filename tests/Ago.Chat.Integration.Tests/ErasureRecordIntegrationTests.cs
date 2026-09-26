@@ -10,6 +10,7 @@ using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Caching.Redis;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -79,7 +80,7 @@ public class ErasureRecordIntegrationTests(ErasureFixture fixture)
         var toErase = await SeedConversationWithAttachmentAsync(siteId);
 
         var tagId = await SeedTagAsync(siteId, "vip");
-        await TagConversationAsync(toErase.ConversationId, tagId);
+        await TagConversationAsync(siteId, toErase.ConversationId, tagId);
         await SeedNoteAsync(toErase.ConversationId, adminOperatorId, "note");
         await SeedContactDetailAsync(toErase.VisitorId, adminOperatorId, "+7 000 000-00-09");
 
@@ -480,14 +481,15 @@ public class ErasureRecordIntegrationTests(ErasureFixture fixture)
     {
         var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).SaveAsync(tag, CancellationToken.None);
         return tag.Id;
     }
 
-    private async Task TagConversationAsync(ConversationId conversationId, TagId tagId)
+    private async Task TagConversationAsync(SiteId siteId, ConversationId conversationId, TagId tagId)
     {
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
+        await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).AddToConversationAsync(
+            conversationId, siteId, tagId, TagSource.Operator, Now, CancellationToken.None);
     }
 
     private async Task SeedNoteAsync(ConversationId conversationId, OperatorId authorId, string body)

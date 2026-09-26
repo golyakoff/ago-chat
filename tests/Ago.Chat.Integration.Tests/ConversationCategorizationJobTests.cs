@@ -5,6 +5,7 @@ using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
+using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Persistence.Postgres;
 using Microsoft.EntityFrameworkCore;
@@ -79,8 +80,9 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
         var (siteId, conversationId) = await SeedClosedConversationAsync(closedAt: Now - TimeSpan.FromHours(1));
         var vipTagId = await SeedTagAsync(siteId, "VIP");
         await SeedTagAsync(siteId, "Billing");
-        await new TagRepository(fixture.CreateDbContext()).AddToConversationAsync(
-            conversationId, vipTagId, TagSource.Operator, CancellationToken.None);
+        var seedDb = fixture.CreateDbContext();
+        await new TagRepository(seedDb, new EfOutboxWriter<AgoChatDbContext>(seedDb), new UuidV7Generator()).AddToConversationAsync(
+            conversationId, siteId, vipTagId, TagSource.Operator, Now, CancellationToken.None);
 
         var categorizer = new RecordingCategorizer(new CategorizationResult.Success([]));
         await CreateJob(categorizer).RunOnceAsync(CancellationToken.None);
@@ -365,12 +367,13 @@ public sealed class ConversationCategorizationJobTests(PostgresFixture fixture)
             var db = fixture.CreateDbContext();
             var handler = new CategorizeConversationHandler(
                 new ConversationReadStore(fixture.DataSource),
-                new TagRepository(db),
+                new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()),
                 // `25-04`: lazily, so a refused candidate provably never constructs a categorizer at all -
                 // `categorizerFactory` throws in the tests that assert exactly that.
                 new Lazy<IConversationCategorizer>(categorizerFactory),
                 gate,
                 new CategorizationOptions(),
+                new SystemClock(),
                 NullLogger<CategorizeConversationHandler>.Instance);
             return new DirectScope(db, handler);
         }

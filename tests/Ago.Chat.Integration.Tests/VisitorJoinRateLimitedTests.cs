@@ -75,7 +75,8 @@ public sealed class VisitorJoinRateLimitedTests(PostgresFixture fixture)
         var startConversation = new StartConversationHandler(
             new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource), siteConfig,
             new RateLimitedFakeRateLimiter(TimeSpan.FromSeconds(5.1)), new ConversationCreateRateLimitOptions(), new SystemClock(),
-            new UuidV7Generator(), new VisitorEmojiPairGenerator());
+            new UuidV7Generator(), new VisitorEmojiPairGenerator(), new EfOutboxWriter<AgoChatDbContext>(db),
+            new ChannelIdentityRepository(db));
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var sendMessage = new SendVisitorMessageHandler(

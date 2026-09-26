@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Mapping;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
@@ -53,6 +54,19 @@ namespace Ago.Chat.Application.UseCases.StartConversation;
 /// <c>visitor_id</c>/<c>site_id</c> (only the emoji pair could differ, and nothing downstream reads
 /// "this visitor's own pair" as a decision worth serializing on), so this is a plain re-read, never a
 /// retry-and-reapply.</para>
+///
+/// <para><b>`adr/0186` S1: <see cref="outbox"/>/<see cref="channelIdentities"/> join this handler's
+/// dependencies to publish the analytics <c>ConversationOpened</c> event.</b> This is an Application
+/// concern, not a Domain one (`CLAUDE.md` rule 1): <see cref="Domain.Conversation.Start"/> raises the
+/// bare <see cref="Domain.ConversationStarted"/> domain event with only the ids Domain is allowed to
+/// know about, and this handler - which already has the just-started aggregate, the cached
+/// <see cref="GetSiteConfigById.SiteConfigDto"/>, and now a channel-identity lookup - is where the
+/// read-time attribution the analytics event needs actually gets assembled and staged to the outbox
+/// (`docs/design/analytics-precompute.md` §4.1), in the same transaction as
+/// <see cref="conversations"/>' own <c>SaveAsync</c> (rule 4). Resolving the channel here costs one
+/// extra read on the genuinely-new-conversation path only (never on a resumed one) - the same one-extra-read
+/// trade `ReceiveChannelMessageHandler`'s own channel-identity link already makes visible to this exact
+/// handler before it ever runs, for a channel-originated conversation.</para>
 /// </summary>
 public sealed class StartConversationHandler(
     IVisitorRepository visitors,
@@ -63,8 +77,15 @@ public sealed class StartConversationHandler(
     ConversationCreateRateLimitOptions rateLimitOptions,
     IClock clock,
     IIdGenerator idGenerator,
-    IVisitorEmojiPairGenerator emojiPairs)
+    IVisitorEmojiPairGenerator emojiPairs,
+    IOutboxWriter outbox,
+    IChannelIdentityRepository channelIdentities)
 {
+    // `adr/0186` S1: the read-time fallback `OperatorAnalyticsReadStore` already uses for a visitor
+    // with no linked ChannelIdentity row - see that class's own WidgetChannelLabel remarks, restated
+    // here so the analytics event's own channel resolution matches the report's read-time one exactly.
+    private const string WidgetChannelLabel = "Widget";
+
     public async Task<Result<StartConversationResult>> HandleAsync(
         StartConversation command, CancellationToken cancellationToken)
     {
@@ -159,6 +180,23 @@ public sealed class StartConversationHandler(
         var conversation = Conversation.Start(
             conversationId, command.SiteId, command.VisitorId, now, command.Source, attachmentUploadGrantedByDefault,
             suppressRouting: isRestricted);
+
+        // `adr/0186` S1: resolved once, here, from the same port `ReceiveChannelMessageHandler`'s own
+        // channel-identity link already populated before this handler ever ran for a channel-originated
+        // conversation - see this class's own remarks on why "most recently seen" (this port's tie-break)
+        // rather than "earliest seen" (the read store's own tie-break) is a known, un-reconciled
+        // divergence, not an oversight here.
+        var channelIdentity = await channelIdentities.FindMostRecentForVisitorAsync(command.VisitorId, cancellationToken);
+        var channel = channelIdentity?.Kind.ToString() ?? WidgetChannelLabel;
+        var tenantZone = config?.TimeZone ?? "Europe/Moscow";
+        var domainEvent = conversation.DomainEvents.OfType<ConversationStarted>().Single();
+        // conversation.Source, not command.Source - the value actually stored on the aggregate
+        // (Conversation.Start collapses an all-empty TrafficSource to null; reading it back off the
+        // aggregate is what a future reader of this same conversation would see too).
+        outbox.Enqueue(ConversationOpenedMapper.ToEnvelope(
+            domainEvent, channel, conversation.Source?.ReferrerHost, conversation.Source?.UtmCampaign, tenantZone,
+            idGenerator));
+        conversation.ClearDomainEvents();
         try
         {
             await conversations.SaveAsync(conversation, cancellationToken);

@@ -11,6 +11,7 @@ using Ago.Chat.Module.Modules;
 using Ago.Chat.Worker;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Ago.Platform.Resilience;
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,7 +125,8 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
         var tagId = await SeedTagAsync(siteId, "vip");
         await using (var db = fixture.CreateDbContext())
         {
-            await new TagRepository(db).AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
+            await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).AddToConversationAsync(
+                conversationId, siteId, tagId, TagSource.Operator, Now, CancellationToken.None);
             await new NoteRepository(db).SaveAsync(
                 ConversationNote.Write(new ConversationNoteId(Guid.NewGuid()), conversationId, operatorId, "export test note", Now),
                 CancellationToken.None);
@@ -492,7 +494,7 @@ public class SiteExportIntegrationTests(AttachmentFixture fixture)
     {
         var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).SaveAsync(tag, CancellationToken.None);
         return tag.Id;
     }
 

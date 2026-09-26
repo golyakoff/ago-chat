@@ -3,9 +3,11 @@ using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 
 namespace Ago.Chat.Concurrency.Tests;
 
@@ -72,7 +74,8 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
             new VisitorRepository(db), racing, new VisitorRestrictionRepository(fixture.DataSource),
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
+            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator(),
+            new EfOutboxWriter<AgoChatDbContext>(db), new ChannelIdentityRepository(db));
 
         var loserResult = await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
 
@@ -130,7 +133,8 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
             racing, new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource),
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
+            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator(),
+            new EfOutboxWriter<AgoChatDbContext>(db), new ChannelIdentityRepository(db));
 
         var loserResult = await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
 
@@ -304,7 +308,8 @@ public sealed class StartConversationConcurrencyTests(ConcurrencyTestFixture fix
             new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource),
             new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             new FakeRateLimiter(), new ConversationCreateRateLimitOptions(),
-            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator());
+            new SystemClock(), new UuidV7Generator(), new FixedVisitorEmojiPairGenerator(),
+            new EfOutboxWriter<AgoChatDbContext>(db), new ChannelIdentityRepository(db));
         return await handler.HandleAsync(new StartConversation(siteId, visitorId), CancellationToken.None);
     }
 }

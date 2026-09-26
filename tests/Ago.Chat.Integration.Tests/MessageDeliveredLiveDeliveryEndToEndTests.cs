@@ -325,6 +325,11 @@ public sealed class MessageDeliveredLiveDeliveryEndToEndTests(ConnectionFanoutFi
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
         builder.Services.AddScoped<IMessagePipeline>(_ => new SynchronousMessagePipeline(fixture.DataSource));
+        // `adr/0186` S1: StartConversationHandler's own new constructor dependency - re-adds the
+        // registration `26-114`/`adr/0182`'s own comment below removed for a different, now-gone
+        // reason. It now needs a real channel-identity lookup again, to resolve the analytics
+        // `ConversationOpened` event's own channel label.
+        builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
         builder.Services.AddScoped<GetConversationHistoryHandler>();
@@ -345,8 +350,9 @@ public sealed class MessageDeliveredLiveDeliveryEndToEndTests(ConnectionFanoutFi
         builder.Services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         builder.Services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         builder.Services.AddScoped<ISiteSuspensionReadStore>(_ => new SiteSuspensionReadStore(fixture.DataSource));
-        // `26-114`/`adr/0182`: no `IChannelIdentityRepository` registration here any more - it was only
-        // ever for `GetVisitorHistoryHandler`'s own now-removed channel-identity gate.
+        // `26-114`/`adr/0182`: `IChannelIdentityRepository` was removed from here - it was only ever
+        // for `GetVisitorHistoryHandler`'s own now-removed channel-identity gate - and then re-added
+        // above for an unrelated reason (`adr/0186` S1's own comment on `StartConversationHandler`).
         builder.Services.AddScoped<IAccessRecordRepository>(_ => new AccessRecordRepository(fixture.DataSource));
         builder.Services.AddScoped<ITeamChatRepository>(sp => new TeamChatRepository(
             sp.GetRequiredService<AgoChatDbContext>(), fixture.DataSource,

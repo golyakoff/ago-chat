@@ -70,7 +70,8 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
         var tagId = await SeedTagAsync(siteId, "priority");
         await using (var db = fixture.CreateDbContext())
         {
-            await new TagRepository(db).AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
+            await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).AddToConversationAsync(
+                conversationId, siteId, tagId, TagSource.Operator, Now, CancellationToken.None);
             await new NoteRepository(db).SaveAsync(
                 ConversationNote.Write(new ConversationNoteId(Guid.NewGuid()), conversationId, adminOperatorId, "erasure test note", Now),
                 CancellationToken.None);
@@ -433,7 +434,7 @@ public class SiteErasureIntegrationTests(ErasureFixture fixture)
     {
         var tag = Tag.Create(new TagId(Guid.NewGuid()), siteId, name, Now);
         await using var db = fixture.CreateDbContext();
-        await new TagRepository(db).SaveAsync(tag, CancellationToken.None);
+        await new TagRepository(db, new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator()).SaveAsync(tag, CancellationToken.None);
         return tag.Id;
     }
 

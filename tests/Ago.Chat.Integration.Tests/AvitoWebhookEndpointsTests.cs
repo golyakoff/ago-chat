@@ -13,6 +13,7 @@ using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -297,6 +298,12 @@ public sealed class AvitoWebhookEndpointsTests(PostgresFixture fixture)
         // dependency - the identical "every hand-rolled test host needs this too" reasoning the
         // comments above already state for their own new dependencies.
         builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
+        // `adr/0186` S1: StartConversationHandler's own new constructor dependency - the identical
+        // "every hand-rolled test host needs this too" reasoning the comments above already state for
+        // their own new dependencies (it now stages the analytics `ConversationOpened` event to the
+        // outbox, the same real EfOutboxWriter WhatsAppWebhookEndpointsTests' own BuildHostAsync
+        // already registers).
+        builder.Services.AddScoped<IOutboxWriter, EfOutboxWriter<AgoChatDbContext>>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
         // `25-170`: ReceiveChannelMessageHandler now also composes the channel-entitlement guard's

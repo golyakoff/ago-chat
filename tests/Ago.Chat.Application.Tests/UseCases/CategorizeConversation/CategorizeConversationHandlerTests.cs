@@ -40,7 +40,8 @@ public class CategorizeConversationHandlerTests
 
         var handler = new CategorizeConversationHandler(
             readStore, tags, new Lazy<IConversationCategorizer>(() => categorizer), AiGates.Allowing(SiteId),
-            new CategorizationOptions(), Microsoft.Extensions.Logging.Abstractions.NullLogger<CategorizeConversationHandler>.Instance);
+            new CategorizationOptions(), new FakeClock(Now),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<CategorizeConversationHandler>.Instance);
 
         return new Fixture(handler, tags, categorizer, conversation);
     }

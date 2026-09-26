@@ -6,9 +6,11 @@ using Ago.Chat.Application.UseCases.SendMessage;
 using Ago.Chat.Application.UseCases.StartConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Infrastructure.Telegram;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -94,7 +96,8 @@ public sealed class TelegramLinkContinuityTests(PostgresFixture fixture)
             new StartConversationHandler(
                 visitors, conversations, new VisitorRestrictionRepository(fixture.DataSource),
                 new GetSiteConfigByIdHandler(new SiteRepository(db2), new NoOpCache()),
-                new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs),
+                new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs,
+                new EfOutboxWriter<AgoChatDbContext>(db2), identities),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             new AlwaysEntitledBillingOptionEntitlementProvider(),
@@ -183,7 +186,8 @@ public sealed class TelegramLinkContinuityTests(PostgresFixture fixture)
             new StartConversationHandler(
                 visitors, conversations, new VisitorRestrictionRepository(fixture.DataSource),
                 new GetSiteConfigByIdHandler(new SiteRepository(db2), new NoOpCache()),
-                new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs),
+                new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs,
+                new EfOutboxWriter<AgoChatDbContext>(db2), identities),
             new SendVisitorMessageHandler(
                 conversations, new FakeRateLimiter(), new MessageSendRateLimitOptions(), pipeline),
             new AlwaysEntitledBillingOptionEntitlementProvider(),

@@ -23,7 +23,7 @@ public class UntagConversationHandlerTests
         var tag = Tag.Create(new TagId(Guid.NewGuid()), SiteId, "VIP", Now);
         tags.Seed(tag);
         tags.SeedAssociation(conversation.Id, tag.Id);
-        var handler = new UntagConversationHandler(readStore, tags, permissions);
+        var handler = new UntagConversationHandler(readStore, tags, permissions, new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.UntagConversation.UntagConversation(conversation.Id, SiteId, tag.Id, OperatorId),
@@ -31,6 +31,14 @@ public class UntagConversationHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Empty(await tags.GetForConversationAsync(conversation.Id, CancellationToken.None));
+        // `adr/0186` S1: the real publish happens one layer down in `TagRepository` (its own remarks) -
+        // this only proves the fake stand-in recorded the fact with the right ids, which is as far as a
+        // handler-level test can see.
+        var recorded = Assert.Single(tags.Untagged);
+        Assert.Equal(conversation.Id, recorded.ConversationId);
+        Assert.Equal(SiteId, recorded.SiteId);
+        Assert.Equal(tag.Id, recorded.TagId);
+        Assert.Equal(Now, recorded.Now);
     }
 
     [Fact]
@@ -44,12 +52,14 @@ public class UntagConversationHandlerTests
         var tags = new FakeTagRepository();
         var tag = Tag.Create(new TagId(Guid.NewGuid()), SiteId, "VIP", Now);
         tags.Seed(tag);
-        var handler = new UntagConversationHandler(readStore, tags, permissions);
+        var handler = new UntagConversationHandler(readStore, tags, permissions, new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.UntagConversation.UntagConversation(conversation.Id, SiteId, tag.Id, OperatorId),
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
+        // `adr/0186` S1: never applied, so nothing to publish - no analytics fact fabricated for a no-op.
+        Assert.Empty(tags.Untagged);
     }
 }

@@ -60,7 +60,8 @@ public class ReceiveChannelAttachmentHandlerTests
         var restrictions = new FakeVisitorRestrictionRepository();
         var startConversation = new StartConversationHandler(
             visitors, conversations, restrictions, siteConfig,
-            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs);
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs,
+            outbox, identities);
 
         var permissions = new FakePermissionChecker();
         var createAttachment = new CreateAttachmentHandler(
@@ -120,7 +121,8 @@ public class ReceiveChannelAttachmentHandlerTests
         var restrictions = new FakeVisitorRestrictionRepository();
         var startConversation = new StartConversationHandler(
             visitors, conversations, restrictions, siteConfig,
-            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs);
+            new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), clock, idGenerator, emojiPairs,
+            outbox, identities);
         var permissions = new FakePermissionChecker();
         var createAttachment = new CreateAttachmentHandler(
             conversations, attachments, fileStorage, new FakeRateLimiter(), permissions,

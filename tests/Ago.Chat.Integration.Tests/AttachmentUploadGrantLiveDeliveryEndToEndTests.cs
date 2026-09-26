@@ -297,6 +297,10 @@ public sealed class AttachmentUploadGrantLiveDeliveryEndToEndTests(ConnectionFan
         builder.Services.AddSingleton<IIdGenerator, UuidV7Generator>();
         builder.Services.AddSingleton<IVisitorEmojiPairGenerator, VisitorEmojiPairGenerator>();
         builder.Services.AddScoped<IMessagePipeline>(_ => new SynchronousMessagePipeline(fixture.DataSource));
+        // `adr/0186` S1: StartConversationHandler's own new constructor dependency - the identical
+        // "every hand-rolled test host needs this too" reasoning this file's own comments already state
+        // for their own new dependencies (it now resolves the analytics event's own channel label).
+        builder.Services.AddScoped<IChannelIdentityRepository, ChannelIdentityRepository>();
         builder.Services.AddScoped<StartConversationHandler>();
         builder.Services.AddScoped<SendVisitorMessageHandler>();
         builder.Services.AddScoped<GetConversationHistoryHandler>();

@@ -308,7 +308,8 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
                 new VisitorRepository(db), new ConversationRepository(db), new VisitorRestrictionRepository(fixture.DataSource),
                 new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                 new FakeRateLimiter(), new ConversationCreateRateLimitOptions(), new SystemClock(),
-                new UuidV7Generator(), new VisitorEmojiPairGenerator()),
+                new UuidV7Generator(), new VisitorEmojiPairGenerator(), new EfOutboxWriter<AgoChatDbContext>(db),
+                new ChannelIdentityRepository(db)),
             new SendVisitorMessageHandler(
                 new ConversationRepository(db), new FakeRateLimiter(), new MessageSendRateLimitOptions(),
                 new SynchronousMessagePipeline(fixture.DataSource)),

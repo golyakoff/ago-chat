@@ -103,6 +103,16 @@ namespace Ago.Chat.Application.UseCases.GetSiteByPublicKey;
 /// exactly this value, falling back to its own built-in default greeting when it is `null` - `null` means
 /// "no override", never "no title", the same distinction `WidgetConfig.PanelTitle`'s own remarks draw
 /// against `WidgetNoticeText`'s "render nothing" posture.
+/// `adr/0186` S1: <see cref="TimeZone"/> joins on the identical "additive field on the existing cached
+/// DTO, populated identically by both loaders" terms <see cref="Tier"/> already established - and, like
+/// <see cref="Tier"/>/<see cref="ContactVisibility"/>, <b>never put on the wire by the widget
+/// handshake</b>: a tenant's own time zone is not something an anonymous visitor holding the public key
+/// needs to see. Its one real reader is <c>StartConversationHandler</c>, which stamps it onto the
+/// <c>ConversationOpened</c> analytics event at publish time
+/// (`docs/design/analytics-precompute.md` §9) - the identical `adr/0031` "a stamp, not a gate" carve-out
+/// from `CLAUDE.md` rule 8 that read already relies on for <see cref="WidgetAllowAttachmentUploadsByDefault"/>:
+/// nothing about whether the write may proceed depends on this value, so a cache entry up to five
+/// minutes stale costs nothing a fresh read would not itself already risk.
 public sealed record SiteConfigDto(
     Guid SiteId, string PublicKey, IReadOnlyList<string> AllowedOrigins,
     string? WidgetPrimaryColorHex, Position WidgetPosition, Locale WidgetLocale,
@@ -113,4 +123,5 @@ public sealed record SiteConfigDto(
     string? WidgetContactCaptureConfirmationText = null,
     ChannelSwitcherPlacement WidgetChannelSwitcherPlacement = ChannelSwitcherPlacement.AboveComposer,
     ChannelSwitcherIconSize WidgetChannelSwitcherIconSize = ChannelSwitcherIconSize.Medium,
-    string? WidgetPanelTitle = null);
+    string? WidgetPanelTitle = null,
+    string TimeZone = "Europe/Moscow");

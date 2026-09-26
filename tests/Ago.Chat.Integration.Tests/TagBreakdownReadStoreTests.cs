@@ -1,6 +1,9 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
+using Ago.Platform.Kernel;
+using Ago.Platform.Persistence.Postgres;
 
 namespace Ago.Chat.Integration.Tests;
 
@@ -113,8 +116,10 @@ public class TagBreakdownReadStoreTests(PostgresFixture fixture)
             await writeDb.SaveChangesAsync();
         }
 
-        var tagRepository = new TagRepository(fixture.CreateDbContext());
-        await tagRepository.AddToConversationAsync(conversationId, tagId, TagSource.Operator, CancellationToken.None);
+        var tagDb = fixture.CreateDbContext();
+        var tagRepository = new TagRepository(tagDb, new EfOutboxWriter<AgoChatDbContext>(tagDb), new UuidV7Generator());
+        await tagRepository.AddToConversationAsync(
+            conversationId, siteId, tagId, TagSource.Operator, createdAt, CancellationToken.None);
 
         var blocks = new ConversationBlockRepository(fixture.DataSource);
         var outcome = await blocks.BlockAsync(
@@ -303,7 +308,7 @@ public class TagBreakdownReadStoreTests(PostgresFixture fixture)
         var conversation = Conversation.Start(conversationId, siteId, visitorId, createdAt);
         if (outcome is { } realOutcome)
         {
-            conversation.SetOutcome(realOutcome);
+            conversation.SetOutcome(realOutcome, createdAt);
         }
 
         await using (var writeDb = fixture.CreateDbContext())
@@ -312,10 +317,11 @@ public class TagBreakdownReadStoreTests(PostgresFixture fixture)
             await writeDb.SaveChangesAsync();
         }
 
-        var tagRepository = new TagRepository(fixture.CreateDbContext());
+        var tagDb = fixture.CreateDbContext();
+        var tagRepository = new TagRepository(tagDb, new EfOutboxWriter<AgoChatDbContext>(tagDb), new UuidV7Generator());
         foreach (var (tagId, source) in tags)
         {
-            await tagRepository.AddToConversationAsync(conversationId, tagId, source, CancellationToken.None);
+            await tagRepository.AddToConversationAsync(conversationId, siteId, tagId, source, createdAt, CancellationToken.None);
         }
     }
 }
