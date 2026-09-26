@@ -98,6 +98,15 @@ public interface IVisitorRestrictionRepository
 /// <summary>One <c>visitor_restrictions</c> row, read back for the tenant's own report - every column
 /// <see cref="IVisitorRestrictionRepository.RestrictAsync"/> wrote, plus whether and by whom it was
 /// later lifted.</summary>
+/// <param name="EmojiCreature">`26-202`: one member of <see cref="Domain.VisitorEmojiDictionary.Creatures"/>,
+/// paired with <paramref name="EmojiFood"/> - the same operator-side memory aid
+/// <see cref="Contracts.ConversationSummaryDto"/> and <c>PersonProfileDto</c> already expose (`25-56`),
+/// read from <see cref="VisitorId"/>'s own <c>Visitor</c> row via the Infrastructure repository's own
+/// left join in <see cref="ListForSiteAsync"/> rather than a second round trip. Additive/nullable the
+/// identical way every other field on this record already is - <see langword="null"/> when the visitor
+/// row predates the pair.</param>
+/// <param name="EmojiFood">The other half of the pair - see <paramref name="EmojiCreature"/>'s own
+/// remarks, which this parameter shares in full.</param>
 public sealed record VisitorRestrictionItem(
     Guid Id,
     VisitorId VisitorId,
@@ -107,7 +116,9 @@ public sealed record VisitorRestrictionItem(
     DateTimeOffset? ExpiresAt,
     ConversationId SourceConversationId,
     DateTimeOffset? LiftedAt,
-    OperatorId? LiftedBy);
+    OperatorId? LiftedBy,
+    string? EmojiCreature = null,
+    string? EmojiFood = null);
 
 /// <summary>One keyset page of <see cref="IVisitorRestrictionRepository.ListForSiteAsync"/> - the same
 /// shape every other keyset read in this codebase returns (<c>NextBeforeId</c> <see langword="null"/>

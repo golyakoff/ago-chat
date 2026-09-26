@@ -95,7 +95,9 @@ public sealed class GetPersonsHandler(
                 d.Assessment.ToString(), d.RecordedAt))
             .ToList();
 
-        return new PersonProfileDto(visitor.Id.Value, displayName, channels, visitor.FirstSeenAt, visitor.LastSeenAt);
+        return new PersonProfileDto(
+            visitor.Id.Value, displayName, channels, visitor.FirstSeenAt, visitor.LastSeenAt,
+            visitor.EmojiCreature, visitor.EmojiFood);
     }
 
     // The identical masking ListVisitorContactDetailsHandler applies - restated rather than shared so a

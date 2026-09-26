@@ -134,10 +134,17 @@ public sealed class VisitorRestrictionRepository(NpgsqlDataSource dataSource) : 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
             """
-            select id, visitor_id, kind, restricted_at, restricted_by, expires_at, source_conversation_id, lifted_at, lifted_by
-            from visitor_restrictions
-            where site_id = @siteId and (@beforeId is null or id < @beforeId)
-            order by id desc
+            select vr.id, vr.visitor_id, vr.kind, vr.restricted_at, vr.restricted_by, vr.expires_at,
+                   vr.source_conversation_id, vr.lifted_at, vr.lifted_by,
+                   v.emoji_creature, v.emoji_food
+            from visitor_restrictions vr
+            -- `26-202`: left join, not inner - the same reason ConversationReadStore's own equivalent
+            -- join is a left join: a visitor row is expected to exist (the FK guarantees it did at
+            -- restriction time and visitor rows are never deleted), but this read must never turn a
+            -- missing/erased visitor into a missing restriction row.
+            left join visitors v on v.id = vr.visitor_id
+            where vr.site_id = @siteId and (@beforeId is null or vr.id < @beforeId)
+            order by vr.id desc
             limit @limit
             """,
             connection);
@@ -163,7 +170,9 @@ public sealed class VisitorRestrictionRepository(NpgsqlDataSource dataSource) : 
                 reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),
                 new ConversationId(reader.GetGuid(6)),
                 reader.IsDBNull(7) ? null : reader.GetFieldValue<DateTimeOffset>(7),
-                reader.IsDBNull(8) ? null : new OperatorId(reader.GetGuid(8))));
+                reader.IsDBNull(8) ? null : new OperatorId(reader.GetGuid(8)),
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10)));
         }
 
         var hasMore = items.Count > limit;
