@@ -502,6 +502,15 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<ContactRevealPruneJob>();
 
+// `26-123`/`adr/0185`: the fourth `operator_devices` revocation cause - a bounded, timer-based prune of
+// a row RuStore's own send API never reports dead (OperatorDevicePruneJob's own remarks). Same
+// registration shape as every prune job on this page.
+builder.Services
+    .AddOptions<OperatorDevicePruneJobOptions>()
+    .Bind(builder.Configuration.GetSection(OperatorDevicePruneJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<OperatorDevicePruneJob>();
+
 builder.Services
     .AddOptions<MessagePartitionPruneJobOptions>()
     .Bind(builder.Configuration.GetSection(MessagePartitionPruneJobOptions.SectionName))

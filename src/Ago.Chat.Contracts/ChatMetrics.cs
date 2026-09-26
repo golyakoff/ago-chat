@@ -85,11 +85,13 @@ public static class ChatMetrics
     /// notification for the same (operator, conversation, kind) suppressed inside the safety-net TTL.</summary>
     public const string PushSuppressedInstrumentName = "ago.chat.push.suppressed";
 
-    /// <summary>One point per <see cref="Domain.OperatorDevice"/> row `26-05`'s handler (or
-    /// `26-03`'s existing <c>OperatorRemovedConsumer</c>/`OperatorDeviceRevoker`) actually revoked,
-    /// tagged <c>cause</c> (<c>"signed_out"</c>/<c>"provider_unregistered"</c>/<c>"operator_removed"</c>)
-    /// - `push-notifications.md`'s own three revocation causes, none of them a timer. Not yet called -
-    /// see <see cref="PushSendsInstrumentName"/>'s own remarks.</summary>
+    /// <summary>One point per <see cref="Domain.OperatorDevice"/> row revoked, tagged <c>cause</c>
+    /// (<c>"signed_out"</c>/<c>"provider_unregistered"</c>/<c>"operator_removed"</c>/
+    /// <c>"stale_timeout"</c>) - `push-notifications.md`'s own revocation causes. The first three
+    /// predate this doc comment's own accuracy: only `provider_unregistered`
+    /// (<c>NotifyOperatorDevicesHandler</c>'s `TokenGone` path) actually calls this today.
+    /// `26-123`/`adr/0185` adds the fourth - the one genuinely new cause, a timer, which `adr/0179` §1
+    /// originally said would never exist (see that ADR's own amendment for why).</summary>
     public const string PushTokensRevokedInstrumentName = "ago.chat.push.tokens_revoked";
 
     /// <summary>`15-04`: one heartbeat instrument shared by every retention-pruning job
@@ -287,10 +289,24 @@ public static class ChatMetrics
     public static void RecordPushSuppressed(string reason) =>
         PushSuppressed.Add(1, new KeyValuePair<string, object?>("reason", reason));
 
-    /// <summary>`26-04`/`26-05`: one point per <c>OperatorDevice</c> row actually revoked. Not yet
-    /// called - see <see cref="PushSendsInstrumentName"/>'s own remarks.</summary>
-    public static void RecordPushTokenRevoked(string cause) =>
-        PushTokensRevoked.Add(1, new KeyValuePair<string, object?>("cause", cause));
+    /// <summary>`26-04`/`26-05`: one point per <c>OperatorDevice</c> row actually revoked.</summary>
+    public static void RecordPushTokenRevoked(string cause) => RecordPushTokenRevoked(cause, count: 1);
+
+    /// <summary>`26-123`/`adr/0185`: the batch-count overload - <c>OperatorDevicePruneJob</c> revokes
+    /// zero or more rows in a single statement per batch, and adding one point per row in a loop would
+    /// cost nothing correctness-wise but is needless overhead for a number the counter can already take
+    /// directly (<see cref="RecordRetentionPruneCycle"/>'s own <c>rowsRemoved</c> parameter is the same
+    /// shape). A no-op at <paramref name="count"/> 0 - the identical "only record when something
+    /// happened" guard <see cref="RecordRetentionPruneCycle"/> applies to its own row counter.</summary>
+    public static void RecordPushTokenRevoked(string cause, int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        PushTokensRevoked.Add(count, new KeyValuePair<string, object?>("cause", cause));
+    }
 
     public static void RecordCapacityClaimAttempt(bool claimed)
     {

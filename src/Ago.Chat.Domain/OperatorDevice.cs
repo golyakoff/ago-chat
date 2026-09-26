@@ -107,8 +107,12 @@ public sealed class OperatorDevice
     public DateTimeOffset LastSeenAt { get; private set; }
 
     /// <summary><see langword="null"/> for a live device. Set by sign-out, by the provider reporting the
-    /// token gone, or by `OperatorRemovedConsumer`'s own added call - never by a timer (`adr/0179`: "a
-    /// phone in a drawer for three weeks is not a revoked device").</summary>
+    /// token gone, by `OperatorRemovedConsumer`'s own added call, or (`26-123`/`adr/0185`) by
+    /// `OperatorDevicePruneJob` once <see cref="LastSeenAt"/> has not moved for
+    /// `OperatorDevicePruneJobOptions.Threshold` - `adr/0179`'s original "never by a timer" ruling held
+    /// only while the provider reliably reported a dead token, which `26-83`/`26-122` found is not true
+    /// for every RuStore token a reinstall leaves behind; see `adr/0185` for the full reasoning and why
+    /// the default threshold (14 days) is well clear of a live device's own real refresh cadence.</summary>
     public DateTimeOffset? RevokedAt { get; private set; }
 
     /// <summary>Not written by this item - `26-04`/`26-05`'s own transient-failure path
