@@ -52,7 +52,8 @@ public static class MeDeviceEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new RegisterOperatorDevice(
-                user.GetOperatorId(), user.GetSiteId(), installationId, provider, request.Platform, request.Token),
+                user.GetOperatorId(), user.GetSiteId(), installationId, provider, request.Platform, request.Token,
+                request.DeviceId),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
@@ -71,5 +72,9 @@ public static class MeDeviceEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.NoContent();
     }
 
-    public sealed record RegisterDeviceRequest(string Provider, string Platform, string Token);
+    /// <summary>`26-122`: <see cref="DeviceId"/> is nullable on the wire, not required - a request that
+    /// omits it (a client not yet updated) degrades gracefully to the pre-`26-122` installation-keyed
+    /// upsert (`RegisterOperatorDeviceHandler`'s own remarks) rather than a 400; the shipped Android
+    /// client always sends one.</summary>
+    public sealed record RegisterDeviceRequest(string Provider, string Platform, string Token, string? DeviceId = null);
 }

@@ -109,6 +109,91 @@ public class RegisterOperatorDeviceHandlerTests
         Assert.Null(fresh!.RevokedAt);
     }
 
+    /// <summary>
+    /// `26-122`'s own Done-when, stated as its own test: a reinstall regenerates
+    /// `installationId` (`DataStoreInstallationId`'s own doc comment), but the stable `deviceId`
+    /// travels with it - so the second call must replace the first row rather than add a second, which
+    /// is exactly the `26-83` bug (one operator, five stale rows) this item exists to remove.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_ReinstallWithANewInstallationIdButTheSameDeviceId_ReplacesTheRow()
+    {
+        var fixture = CreateFixture();
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-before-reinstall", PushProvider.RuStore, "android", "token-1",
+                "device-stable"),
+            CancellationToken.None);
+
+        fixture.Clock.UtcNow = Now.AddDays(1);
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-after-reinstall", PushProvider.RuStore, "android", "token-2",
+                "device-stable"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var all = await fixture.Devices.ListActiveForOperatorAsync(OperatorId, CancellationToken.None);
+        var only = Assert.Single(all);
+        Assert.Equal("token-2", only.Token);
+        Assert.Equal("installation-after-reinstall", only.InstallationId);
+        Assert.Equal("device-stable", only.DeviceId);
+    }
+
+    /// <summary>`26-100`'s own transport switch (RuStore-&gt;FCM), subsumed by `26-122`'s device-keyed
+    /// upsert per the backlog's own "fix C folded into A": a re-registration keyed on the same device
+    /// replaces the row regardless of which provider it now carries, with no separate revoke-on-switch
+    /// mechanism needed.</summary>
+    [Fact]
+    public async Task HandleAsync_SameDeviceSwitchingProvider_ReplacesTheRowRatherThanAddingASecond()
+    {
+        var fixture = CreateFixture();
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "rustore-token", "device-stable"),
+            CancellationToken.None);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-1", PushProvider.Fcm, "android", "fcm-token", "device-stable"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var all = await fixture.Devices.ListActiveForOperatorAsync(OperatorId, CancellationToken.None);
+        var only = Assert.Single(all);
+        Assert.Equal(PushProvider.Fcm, only.Provider);
+        Assert.Equal("fcm-token", only.Token);
+    }
+
+    /// <summary>A row written before this item's own migration has `DeviceId == null` - the very next
+    /// registration from the same install, now carrying a real device id, must adopt that row (backfill
+    /// its `DeviceId`) rather than fail the unique installation index with a second insert.</summary>
+    [Fact]
+    public async Task HandleAsync_APreExistingRowWithNoDeviceId_IsAdoptedAndBackfilled()
+    {
+        var fixture = CreateFixture();
+        // Simulates a row this table already held before `26-122`'s migration - registered with no
+        // device id at all, the only shape a pre-migration row can have.
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-1"),
+            CancellationToken.None);
+        var preMigration = await fixture.Devices.FindAsync(OperatorId, "installation-1", CancellationToken.None);
+        Assert.Null(preMigration!.DeviceId);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RegisterOperatorDevice.RegisterOperatorDevice(
+                OperatorId, SiteId, "installation-1", PushProvider.RuStore, "android", "token-2", "device-stable"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var all = await fixture.Devices.ListActiveForOperatorAsync(OperatorId, CancellationToken.None);
+        var only = Assert.Single(all);
+        Assert.Equal(preMigration.Id, only.Id);
+        Assert.Equal("device-stable", only.DeviceId);
+        Assert.Equal("token-2", only.Token);
+    }
+
     [Fact]
     public async Task HandleAsync_WithABlankToken_ReturnsOperatorDeviceInvalid()
     {
@@ -174,6 +259,9 @@ public class RegisterOperatorDeviceHandlerTests
 
         public Task<OperatorDevice?> FindAsync(OperatorId operatorId, string installationId, CancellationToken cancellationToken) =>
             inner.FindAsync(operatorId, installationId, cancellationToken);
+
+        public Task<OperatorDevice?> FindByDeviceAsync(OperatorId operatorId, string deviceId, CancellationToken cancellationToken) =>
+            inner.FindByDeviceAsync(operatorId, deviceId, cancellationToken);
 
         public Task<OperatorDevice?> FindActiveByTokenAsync(PushProvider provider, string token, CancellationToken cancellationToken) =>
             inner.FindActiveByTokenAsync(provider, token, cancellationToken);

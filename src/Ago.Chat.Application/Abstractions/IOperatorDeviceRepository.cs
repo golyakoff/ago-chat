@@ -26,6 +26,12 @@ public interface IOperatorDeviceRepository
 {
     Task<OperatorDevice?> FindAsync(OperatorId operatorId, string installationId, CancellationToken cancellationToken);
 
+    /// <summary>`26-122`: the primary identity lookup post-`26-122` (`OperatorDevice`'s own remarks on
+    /// why identity moved off <see cref="FindAsync"/>'s installation id). `RegisterOperatorDeviceHandler`
+    /// tries this first and falls back to <see cref="FindAsync"/> only to adopt a row written before this
+    /// column existed.</summary>
+    Task<OperatorDevice?> FindByDeviceAsync(OperatorId operatorId, string deviceId, CancellationToken cancellationToken);
+
     /// <summary>The restored-backup case (`adr/0179` §1): a token must never be live on two rows, so
     /// the upsert handler looks up whoever else currently holds this exact `(provider, token)` before
     /// writing its own row. `null` once revoked - the partial unique index

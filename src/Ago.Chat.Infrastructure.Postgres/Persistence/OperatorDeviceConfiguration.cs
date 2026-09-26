@@ -20,6 +20,13 @@ internal sealed class OperatorDeviceConfiguration : IEntityTypeConfiguration<Ope
         builder.Property(d => d.InstallationId).HasColumnName("installation_id")
             .HasMaxLength(OperatorDevice.MaxInstallationIdLength);
 
+        // `26-122`: nullable at the DB level - additive/expand-compatible with the image immediately
+        // before this migration (`docs/conventions/git-workflow.md`'s own expand/contract rule): that
+        // image's own INSERTs know nothing of this column and must keep succeeding. `null` only for a
+        // row written before this column existed (`OperatorDevice`'s own remarks); every registration
+        // from an updated client always supplies one.
+        builder.Property(d => d.DeviceId).HasColumnName("device_id").HasMaxLength(OperatorDevice.MaxDeviceIdLength);
+
         // Stored as the CLR member name, the same default HasConversion<string>() shape ChannelKind/
         // ConversationState/AttachmentState already use - nothing constrains this column beyond the
         // enum itself, so the plain default is honest (ChannelIdentityConfiguration's own remarks).
@@ -47,13 +54,27 @@ internal sealed class OperatorDeviceConfiguration : IEntityTypeConfiguration<Ope
         builder.HasOne<Site>().WithMany().HasForeignKey(d => d.SiteId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<Operator>().WithMany().HasForeignKey(d => d.OperatorId).OnDelete(DeleteBehavior.Cascade);
 
-        // The row's own identity (`OperatorDevice`'s own remarks) - an upsert target for
-        // RegisterOperatorDeviceHandler, and the storage-level backstop for "one device per install per
-        // tenancy" the same "index is the backstop, write path is the mechanism" division
-        // ChannelIdentityConfiguration's own remarks draw for its own unique index.
+        // Pre-`26-122`'s own identity, kept rather than dropped (expand/contract:
+        // `docs/conventions/git-workflow.md` - dropping it is a contract-phase change this migration does
+        // not make). Harmless to keep live: a genuinely new device's own installation id is always freshly
+        // generated (`DataStoreInstallationId`'s own doc comment), so this can only ever collide in the
+        // exact concurrent-first-registration race `ux_operator_devices_operator_device` below now also
+        // guards (`OperatorDeviceRepository.SaveAsync`'s own remarks on why both constraint names are
+        // translated).
         builder.HasIndex(d => new { d.OperatorId, d.InstallationId })
             .IsUnique()
             .HasDatabaseName("ux_operator_devices_operator_installation");
+
+        // `26-122`: the row's real identity now (`OperatorDevice`'s own remarks) - an upsert target for
+        // `RegisterOperatorDeviceHandler`, and the storage-level backstop for "one row per physical device
+        // per tenancy" the same "index is the backstop, write path is the mechanism" division
+        // ChannelIdentityConfiguration's own remarks draw for its own unique index. Not partial: Postgres
+        // already treats every `NULL` as distinct from every other, so the several pre-migration rows
+        // that have not yet been adopted (`device_id IS NULL`) never collide with each other or with a
+        // real value, the identical property the installation index above already relies on.
+        builder.HasIndex(d => new { d.OperatorId, d.DeviceId })
+            .IsUnique()
+            .HasDatabaseName("ux_operator_devices_operator_device");
 
         // `adr/0179` §1: a token must never be live on two rows - a restored device backup, or a
         // reinstall that inherits a token, can genuinely produce two rows holding the same value.

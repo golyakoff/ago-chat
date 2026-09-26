@@ -116,6 +116,65 @@ public class RegisterOperatorDeviceConcurrencyTests(PostgresFixture fixture)
         Assert.Null(only.RevokedAt);
     }
 
+    /// <summary>
+    /// `26-122`'s own new race, impossible before it: two concurrent first-ever registrations of the
+    /// *same physical device*, but each carrying its own fresh `installationId` (two app processes
+    /// racing a first launch, or a factory-reset device signing back in the instant a second install's
+    /// call happens to land) - identical to the classic `26-82` race except the pair that matters is
+    /// now `(operatorId, deviceId)`, not `(operatorId, installationId)`. Proves
+    /// `ux_operator_devices_operator_device` (`OperatorDeviceConfiguration`'s own new index) closes the
+    /// identical check-then-act window `ux_operator_devices_operator_installation` already closed for
+    /// installation, and that `OperatorDeviceRepository.SaveAsync`'s two-constraint-name `when` clause
+    /// actually catches this one.
+    ///
+    /// <para>Deliberately **different** tokens, unlike the classic installation race above: two distinct
+    /// installs of the same device each hold their own token from their own SDK instance, and giving them
+    /// the identical one would instead collide on `ux_operator_devices_provider_token_active` - a real
+    /// constraint, but the restored-backup case that index exists for
+    /// (`RegisterOperatorDeviceHandler`'s own step 1), not the race this test targets.</para>
+    /// </summary>
+    [Fact]
+    public async Task TwoConcurrentRegistrationsOfTheSameDevice_WithDifferentInstallationIds_BothSucceed_AndLeaveExactlyOneRow()
+    {
+        var (siteId, operatorId) = await SeedSiteAndOperatorAsync();
+        const string deviceId = "device-racing";
+        var tokenA = $"token-a-{Guid.NewGuid():N}";
+        var tokenB = $"token-b-{Guid.NewGuid():N}";
+
+        var rendezvous = new AsyncRendezvous(participants: 2);
+        await using var firstDb = fixture.CreateDbContext();
+        await using var secondDb = fixture.CreateDbContext();
+        var first = new RendezvousOperatorDeviceRepository(new OperatorDeviceRepository(firstDb), rendezvous);
+        var second = new RendezvousOperatorDeviceRepository(new OperatorDeviceRepository(secondDb), rendezvous);
+
+        var firstCall = Task.Run(() => new RegisterOperatorDeviceHandler(first, new UuidV7Generator(), new SystemClock())
+            .HandleAsync(
+                new RegisterOperatorDevice(operatorId, siteId, "installation-a", PushProvider.RuStore, "android", tokenA, deviceId),
+                CancellationToken.None));
+        var secondCall = Task.Run(() => new RegisterOperatorDeviceHandler(second, new UuidV7Generator(), new SystemClock())
+            .HandleAsync(
+                new RegisterOperatorDevice(operatorId, siteId, "installation-b", PushProvider.RuStore, "android", tokenB, deviceId),
+                CancellationToken.None));
+
+        var results = await Task.WhenAll(firstCall, secondCall);
+
+        Assert.All(results, result => Assert.True(result.IsSuccess));
+        Assert.Equal(1, first.ConflictsObserved + second.ConflictsObserved);
+
+        await using var verify = fixture.CreateDbContext();
+        var rows = await verify.OperatorDevices
+            .Where(d => d.OperatorId == operatorId && d.DeviceId == deviceId)
+            .ToListAsync(CancellationToken.None);
+        var only = Assert.Single(rows);
+        Assert.True(
+            only.Token == tokenA || only.Token == tokenB,
+            $"the surviving row must carry one of the two racing tokens, not '{only.Token}'");
+        Assert.Null(only.RevokedAt);
+        Assert.True(
+            only.InstallationId is "installation-a" or "installation-b",
+            $"the surviving row must carry one of the two racing installation ids, not '{only.InstallationId}'");
+    }
+
     private async Task<(SiteId SiteId, OperatorId OperatorId)> SeedSiteAndOperatorAsync()
     {
         var siteId = new SiteId(Guid.NewGuid());
@@ -154,6 +213,18 @@ public class RegisterOperatorDeviceConcurrencyTests(PostgresFixture fixture)
             OperatorId operatorId, string installationId, CancellationToken cancellationToken)
         {
             var found = await inner.FindAsync(operatorId, installationId, cancellationToken);
+            if (Interlocked.Increment(ref _findCalls) == 1)
+            {
+                await rendezvous.ArriveAndWaitAsync();
+            }
+
+            return found;
+        }
+
+        public async Task<OperatorDevice?> FindByDeviceAsync(
+            OperatorId operatorId, string deviceId, CancellationToken cancellationToken)
+        {
+            var found = await inner.FindByDeviceAsync(operatorId, deviceId, cancellationToken);
             if (Interlocked.Increment(ref _findCalls) == 1)
             {
                 await rendezvous.ArriveAndWaitAsync();

@@ -1,0 +1,12 @@
+feat(26-122): dedup operator_devices by stable device id, not installation id
+
+A reinstall/re-login/transport-switch regenerates installationId (DataStoreInstallationId
+is per-install, not per-device), so the pre-26-122 upsert on (operator_id, installation_id)
+left one stale row per reinstall (26-83: one operator, five live rows). Add a nullable
+device_id column (additive migration, expand/contract-compatible with the image immediately
+before it) and upsert primarily on (operator_id, device_id), falling back to the old
+installation-keyed lookup only to adopt and backfill a pre-migration row. installation_id is
+kept current on Refresh so sign-out DELETE from the current install still finds the row.
+Subsumes 26-83's fix C (revoke-on-transport-switch): a provider switch is just a
+re-registration of the same device now. Server half of 26-122; 26-123 (time-based prune, the
+safety net for a non-stable id) is a separate follow-up, not included here.

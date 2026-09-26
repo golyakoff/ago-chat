@@ -29,12 +29,19 @@ namespace Ago.Chat.Application.Abstractions;
 /// makes `PUT /api/v1/me/devices/{installationId}` the idempotent upsert `adr/0179` §1 already claims it
 /// is, under concurrency rather than only in sequence.</para>
 /// </summary>
-public sealed class OperatorDeviceConcurrencyConflictException(OperatorId operatorId, string installationId)
+public sealed class OperatorDeviceConcurrencyConflictException(OperatorId operatorId, string installationId, string? deviceId = null)
     : Exception(
-        $"A device row for operator {operatorId.Value} and installation '{installationId}' was created "
-        + "concurrently before it could be saved.")
+        $"A device row for operator {operatorId.Value}, installation '{installationId}'"
+        + (deviceId is null ? string.Empty : $" and device '{deviceId}'")
+        + " was created concurrently before it could be saved.")
 {
     public OperatorId OperatorId { get; } = operatorId;
 
     public string InstallationId { get; } = installationId;
+
+    /// <summary>`26-122`: the identity value the losing insert actually raced on, when known - see the
+    /// `Ago.Chat.Infrastructure.Postgres.OperatorDeviceRepository.SaveAsync` adapter (the one place
+    /// allowed to know which Postgres constraint fired) for why either identity index can be the one
+    /// named.</summary>
+    public string? DeviceId { get; } = deviceId;
 }

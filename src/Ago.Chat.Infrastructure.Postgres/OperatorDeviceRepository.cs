@@ -12,6 +12,10 @@ public sealed class OperatorDeviceRepository(AgoChatDbContext db) : IOperatorDev
         db.OperatorDevices.FirstOrDefaultAsync(
             d => d.OperatorId == operatorId && d.InstallationId == installationId, cancellationToken);
 
+    public Task<OperatorDevice?> FindByDeviceAsync(OperatorId operatorId, string deviceId, CancellationToken cancellationToken) =>
+        db.OperatorDevices.FirstOrDefaultAsync(
+            d => d.OperatorId == operatorId && d.DeviceId == deviceId, cancellationToken);
+
     public Task<OperatorDevice?> FindActiveByTokenAsync(PushProvider provider, string token, CancellationToken cancellationToken) =>
         db.OperatorDevices.FirstOrDefaultAsync(
             d => d.Provider == provider && d.Token == token && d.RevokedAt == null, cancellationToken);
@@ -30,21 +34,19 @@ public sealed class OperatorDeviceRepository(AgoChatDbContext db) : IOperatorDev
     /// already establish, and the rule <c>IOperatorCapacity</c>'s own remarks state as a prohibition
     /// ("a handler must never catch <c>PostgresException</c>").
     ///
-    /// <para><b>Scoped to `ux_operator_devices_operator_installation` by name, nothing wider</b> - the
-    /// same "translate exactly the constraint this call site can explain" precedent
-    /// <see cref="ConversationRepository"/>'s own three catches set. The sibling index on this very
-    /// table, `ux_operator_devices_provider_token_active`, means something else entirely (a token live
-    /// on somebody else's row - `adr/0179` §1's restored-backup case, which
-    /// <c>RegisterOperatorDeviceHandler</c>'s own step 1 revokes rather than retries), so folding both
-    /// into one translated type would hand the handler a conflict its re-read-and-refresh cannot
-    /// actually resolve. A losing INSERT in the real case violates <em>both</em> at once - two racing
-    /// calls from one device carry the identical token - and which one Postgres names is not a coin
-    /// toss: it fills a table's unique indexes in the order it lists them, which is by index oid, and
-    /// `Stage26AddOperatorDevices` creates this one first. Not taken on that reading of Postgres alone:
-    /// it is the constraint the live demo cluster's own nine 23505s named, and
-    /// <c>RegisterOperatorDeviceConcurrencyTests</c>'s same-token race asserts that exactly one
-    /// conflict of *this* translated type is observed, so a future Postgres that chose differently
-    /// would fail that test rather than quietly resurrect the 500.</para>
+    /// <para><b>Scoped to the two identity indexes by name, nothing wider</b> - the same "translate
+    /// exactly the constraint this call site can explain" precedent <see cref="ConversationRepository"/>'s
+    /// own three catches set. `26-122` added `ux_operator_devices_operator_device` alongside the
+    /// pre-existing `ux_operator_devices_operator_installation`: identity moved to `(operator_id,
+    /// device_id)`, but the old index stays (dropping it is a contract-phase change this migration does
+    /// not make, `docs/conventions/git-workflow.md`'s own expand/contract discipline), so a genuinely
+    /// concurrent first-ever registration - three call sites, identical fresh installation id *and*
+    /// device id - can still trip either one depending on Postgres's own index-oid fill order. Both
+    /// translate to the identical <see cref="OperatorDeviceConcurrencyConflictException"/>; the sibling
+    /// index on this table, `ux_operator_devices_provider_token_active`, means something else entirely (a
+    /// token live on somebody else's row - `adr/0179` §1's restored-backup case, which
+    /// <c>RegisterOperatorDeviceHandler</c>'s own step 1 revokes rather than retries), so it is
+    /// deliberately not part of this `when` clause.</para>
     ///
     /// <para><b><see cref="ChangeTracker.Clear"/>, not a targeted detach of <paramref name="device"/></b>
     /// - the same reasoning <see cref="VisitorRepository"/>'s own clause gives: the caller's next act is
@@ -68,11 +70,11 @@ public sealed class OperatorDeviceRepository(AgoChatDbContext db) : IOperatorDev
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException
         {
             SqlState: PostgresErrorCodes.UniqueViolation,
-            ConstraintName: "ux_operator_devices_operator_installation",
-        })
+        } postgres
+        && postgres.ConstraintName is "ux_operator_devices_operator_installation" or "ux_operator_devices_operator_device")
         {
             db.ChangeTracker.Clear();
-            throw new OperatorDeviceConcurrencyConflictException(device.OperatorId, device.InstallationId);
+            throw new OperatorDeviceConcurrencyConflictException(device.OperatorId, device.InstallationId, device.DeviceId);
         }
     }
 }
