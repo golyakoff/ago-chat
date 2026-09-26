@@ -66,6 +66,8 @@ public class RegisterSiteHandlerTests
                 // `22-05`/`adr/0093`: the calendar's own day-to-day permissions, joined here unchanged.
                 Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
                 Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
+                // `26-208`/`adr/0187`: BookingReschedule joins the Operator set, unchanged.
+                Permission.BookingReschedule.Value,
                 // `23-69`: ConversationMarkSpam, joined here unchanged.
                 Permission.ConversationMarkSpam.Value,
                 // `25-69`: ConversationClose, joined here unchanged - found granted by no seeded
