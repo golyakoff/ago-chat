@@ -87,6 +87,7 @@ using Ago.Chat.Application.UseCases.GetConversationById;
 using Ago.Chat.Application.UseCases.GetConversationOutcome;
 using Ago.Chat.Application.UseCases.SetConversationOutcome;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetConversationHistoryAsSiteConfigureHolder;
 using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.GetConversionReportForSite;
 using Ago.Chat.Application.UseCases.GetMyPermissions;
@@ -1110,6 +1111,10 @@ public sealed class ChatModule : IProductModule
         // GetOperatorQueueHandler/GetVisitorPresenceHandler closed for `5-07` - see each handler's
         // own remarks.
         services.AddScoped<GetAllConversationsForSiteHandler>();
+        // `26-98`: the «Все» list's own "open one" - shares that list's Permission.SiteConfigure gate,
+        // registered right beside it for the same reason GetVisitorSummaryHandler sits beside
+        // GetVisitorHistoryHandler below (the handler's own remarks explain the access rule).
+        services.AddScoped<GetConversationHistoryAsSiteConfigureHolderHandler>();
         // `18-01`
         services.AddScoped<SearchConversationsHandler>();
         // `18-08`: the console's own basic self-service report - see the handler's own remarks for

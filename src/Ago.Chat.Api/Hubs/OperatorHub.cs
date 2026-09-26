@@ -5,6 +5,7 @@ using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetConversationHistoryAsSiteConfigureHolder;
 using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetOperatorPresence;
@@ -36,6 +37,7 @@ public sealed class OperatorHub(
     AssignConversationHandler assignConversation,
     SendOperatorMessageHandler sendMessage,
     GetConversationHistoryHandler getHistory,
+    GetConversationHistoryAsSiteConfigureHolderHandler getHistoryAsSiteConfigureHolder,
     GetVisitorHistoryHandler getVisitorHistory,
     GetVisitorPresenceHandler getVisitorPresence,
     HubConnectionRegistration connectionRegistration,
@@ -291,6 +293,44 @@ public sealed class OperatorHub(
         }
 
         return new HistoryPage(ToDtos(page.Value.Messages, historicalId), page.Value.NextBeforeSequence);
+    }
+
+    /// <summary>
+    /// `26-98`: the «Все» list's own "open one" - opens *any* conversation on this operator's site for
+    /// reading, gated on `Permission.SiteConfigure` (`GetAllConversationsForSiteHandler`'s own gate,
+    /// which the list this method serves already uses) rather than an assignment. Never calls
+    /// `AssignConversationHandler`/`Conversation.AssignTo` the way <see cref="JoinConversationAsync"/>
+    /// above does - see `GetConversationHistoryAsSiteConfigureHolderHandler`'s own remarks for why this
+    /// could not reuse that method's operator entry point (its own `conversation.OperatorId !=
+    /// RequestedBy` check would reject nearly every «Все» row on sight) nor
+    /// <see cref="GetVisitorHistoryConversationAsync"/> (`26-144`'s own rule requires a *live*
+    /// assignment to *some other* conversation of the same visitor, which a site:configure holder
+    /// opening an arbitrary stranger's conversation from the admin-wide list has no reason to hold).
+    ///
+    /// <para>Paginated exactly like <see cref="GetHistoryAsync"/> above (<paramref name="beforeSequence"/>
+    /// <see langword="null"/> is the initial page, newest first) - deliberately not a
+    /// <see cref="JoinConversationAsync"/>-shaped subscription: nothing here adds this connection to any
+    /// delivery target, so a message sent while this view is open does not arrive live, the same
+    /// limitation <see cref="GetVisitorHistoryConversationAsync"/>'s own historical read already has.
+    /// This is a snapshot for a supervisor to review, not a second inbox to keep on screen - reported as
+    /// a scope finding, not silently assumed.</para>
+    /// </summary>
+    public async Task<HistoryPage> GetConversationHistoryAsSiteConfigureHolderAsync(
+        Guid conversationId, int? beforeSequence, int pageSize)
+    {
+        var operatorId = Context.User!.GetOperatorId();
+        var siteId = Context.User!.GetSiteId();
+        var id = new ConversationId(conversationId);
+
+        var page = await getHistoryAsSiteConfigureHolder.HandleAsync(
+            new GetConversationHistoryAsSiteConfigureHolderQuery(id, operatorId, siteId, beforeSequence, pageSize),
+            Context.ConnectionAborted);
+        if (page.IsFailure)
+        {
+            throw new HubException(page.Error!.Value.Message);
+        }
+
+        return new HistoryPage(ToDtos(page.Value.Messages, id), page.Value.NextBeforeSequence);
     }
 
     /// <summary>
