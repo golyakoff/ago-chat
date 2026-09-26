@@ -73,6 +73,9 @@ internal static class HubContractManifest
             + "returning-visitor-history panel's own \"open one\", not a caller of GetHistoryAsync "
             + "above: the authorization rule genuinely differs (assigned to *a* live conversation with "
             + "this visitor, not to the specific historical one being read)."),
+        new("OperatorHub.GetConversationHistoryAsSiteConfigureHolderAsync", 3,
+            "nobody yet - `26-98` created it; ago-android's own OperatorHubConnection.getConversationHistoryAsSiteConfigureHolder "
+            + "is the expected first caller, from the «Все» list's own read-only ThreadScreen open."),
         new("OperatorHub.SetAwayAsync", 1,
             "ago-console OperatorConnection.setAway (`23-20`) - the workspace's own away control."),
         new("OperatorHub.GetMyPresenceAsync", 0,

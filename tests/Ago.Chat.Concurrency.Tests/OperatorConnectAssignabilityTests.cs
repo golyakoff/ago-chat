@@ -5,6 +5,7 @@ using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Realtime;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetConversationHistoryAsSiteConfigureHolder;
 using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
@@ -353,6 +354,8 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             new SynchronousMessagePipeline(fixture.DataSource), new SystemClock());
         var getHistory = new GetConversationHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
+        var getHistoryAsSiteConfigureHolder = new GetConversationHistoryAsSiteConfigureHolderHandler(
+            new ConversationRepository(db), new ConversationReadStore(fixture.DataSource), new PermissionChecker(db));
         var getVisitorHistory = new GetVisitorHistoryHandler(
             new ConversationRepository(db), new ConversationReadStore(fixture.DataSource),
             new PermissionChecker(db), new AccessRecordRepository(fixture.DataSource),
@@ -379,7 +382,8 @@ public sealed class OperatorConnectAssignabilityTests(SiteCachingConcurrencyFixt
             new PermissionChecker(db), new SystemClock(), new UuidV7Generator());
 
         return new OperatorHub(
-            assignConversation, sendMessage, getHistory, getVisitorHistory, getVisitorPresence, registration, consoleOrigin,
+            assignConversation, sendMessage, getHistory, getHistoryAsSiteConfigureHolder, getVisitorHistory,
+            getVisitorPresence, registration, consoleOrigin,
             presencePublisher, operatorPresence, getOperatorPresence, sendTeamMessage, getTeamHistory, removeTeamMessage,
             new DrainState())
         {

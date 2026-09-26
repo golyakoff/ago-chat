@@ -9,6 +9,7 @@ using Ago.Chat.Application.Realtime;
 using Ago.Chat.Application.UseCases.AcknowledgeMessageDelivered;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.GetConversationHistory;
+using Ago.Chat.Application.UseCases.GetConversationHistoryAsSiteConfigureHolder;
 using Ago.Chat.Application.UseCases.GetOperatorPresence;
 using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.GetTeamMessageHistory;
@@ -358,6 +359,9 @@ public sealed class MessageDeliveredLiveDeliveryEndToEndTests(ConnectionFanoutFi
         builder.Services.AddScoped<AssignConversationHandler>();
         builder.Services.AddScoped<SendOperatorMessageHandler>();
         builder.Services.AddScoped<GetVisitorHistoryHandler>();
+        // `26-98`: OperatorHub's newest dependency - see this file's own remarks two lines up on why
+        // this hand-built host must register every one of the hub's constructor parameters itself.
+        builder.Services.AddScoped<GetConversationHistoryAsSiteConfigureHolderHandler>();
         builder.Services.AddScoped<GetVisitorPresenceHandler>();
         builder.Services.AddScoped<SetOperatorPresenceHandler>();
         builder.Services.AddScoped<GetOperatorPresenceHandler>();
