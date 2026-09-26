@@ -36,8 +36,18 @@ namespace Ago.Chat.Application.UseCases.RegisterOperatorDevice;
 /// jittered `MaxAttempts`: those retry an UPDATE that can lose its `xmin` compare-and-set again on the
 /// next attempt, so the bound is doing real work. Here the retry is an UPDATE of a row this context now
 /// tracks by its own primary key, with no `xmin` check configured on this entity at all - it cannot
-/// collide with `ux_operator_devices_operator_installation` a second time, so a second attempt could
-/// only ever be dead code.</para>
+/// collide with either identity index a second time, so a second attempt could only ever be dead
+/// code.</para>
+///
+/// <para><b>`26-122`: the primary lookup moved from installation to device.</b> `26-83` found repeated
+/// reinstalls/re-logins leaving one stale row per install, because `installationId` is regenerated on
+/// every install and can never dedup across one - `OperatorDevice`'s own remarks give the full
+/// reasoning. <see cref="FindExistingAsync"/> is the one seam that changed: it tries
+/// <see cref="IOperatorDeviceRepository.FindByDeviceAsync"/> (the real identity now) first, and falls
+/// back to the old <see cref="IOperatorDeviceRepository.FindAsync"/> lookup only to *adopt* a row
+/// written before this device id existed - backfilling it via <see cref="OperatorDevice.Refresh"/>
+/// rather than leaving the old row orphaned and inserting a second one, which is exactly the bug this
+/// item exists to remove.</para>
 /// </summary>
 public sealed class RegisterOperatorDeviceHandler(IOperatorDeviceRepository devices, IIdGenerator idGenerator, IClock clock)
 {
@@ -62,7 +72,7 @@ public sealed class RegisterOperatorDeviceHandler(IOperatorDeviceRepository devi
         // handler only decides which of the two to call, and turns a validation failure into the same
         // Result shape every other use case returns, the identical SendVisitorMessageHandler idiom for
         // MessageBody's own bounded-value construction.
-        var existing = await devices.FindAsync(command.OperatorId, command.InstallationId, cancellationToken);
+        var existing = await FindExistingAsync(command, cancellationToken);
         try
         {
             if (existing is null)
@@ -70,7 +80,7 @@ public sealed class RegisterOperatorDeviceHandler(IOperatorDeviceRepository devi
                 var id = new OperatorDeviceId(idGenerator.NewId(now));
                 var device = OperatorDevice.Register(
                     id, command.SiteId, command.OperatorId, command.InstallationId, command.Provider,
-                    command.Platform, command.Token, now);
+                    command.Platform, command.Token, now, command.DeviceId);
                 try
                 {
                     await devices.SaveAsync(device, cancellationToken);
@@ -87,8 +97,11 @@ public sealed class RegisterOperatorDeviceHandler(IOperatorDeviceRepository devi
             {
                 // Revives a previously revoked row too (OperatorDevice.Refresh's own remarks) - a
                 // sign-out followed by a later sign-in on the same install is a fresh registration of
-                // the same device, not a new one.
-                existing.Refresh(command.Provider, command.Platform, command.Token, now);
+                // the same device, not a new one. Also carries the current installationId/deviceId
+                // through (`26-122`) so a row adopted via the installation fallback gets its deviceId
+                // backfilled, and a row found by device gets its installationId kept current for a later
+                // sign-out DELETE from whichever install now holds it.
+                existing.Refresh(command.Provider, command.Platform, command.Token, now, command.InstallationId, command.DeviceId);
                 await devices.SaveAsync(existing, cancellationToken);
             }
         }
@@ -101,16 +114,41 @@ public sealed class RegisterOperatorDeviceHandler(IOperatorDeviceRepository devi
     }
 
     /// <summary>
+    /// `26-122`: device-first, installation-fallback - see this class's own remarks. Guarded on
+    /// <see cref="RegisterOperatorDevice.DeviceId"/> being non-null before ever querying by it: `NULL`
+    /// matches every not-yet-adopted legacy row in Postgres's own eyes (an ordinary, non-partial unique
+    /// index does not error on multiple `NULL`s, but an equality query for `NULL` would not use it as an
+    /// equality either - EF translates `== null` as `IS NULL`, which is not what this call means), so a
+    /// caller reporting no device id at all skips straight to the pre-`26-122` lookup instead.
+    /// </summary>
+    private async Task<OperatorDevice?> FindExistingAsync(RegisterOperatorDevice command, CancellationToken cancellationToken)
+    {
+        if (command.DeviceId is not null)
+        {
+            var byDevice = await devices.FindByDeviceAsync(command.OperatorId, command.DeviceId, cancellationToken);
+            if (byDevice is not null)
+            {
+                return byDevice;
+            }
+        }
+
+        return await devices.FindAsync(command.OperatorId, command.InstallationId, cancellationToken);
+    }
+
+    /// <summary>
     /// `26-82`: the losing INSERT's own write, reapplied to the row that won. Deliberately re-reads
     /// through the port rather than reusing the local <see cref="OperatorDevice"/> that just lost - that
     /// instance carries an <see cref="OperatorDeviceId"/> no row will ever have, and (in the EF adapter)
     /// was detached by the translation itself, so it is not a thing that could be saved even if this
-    /// wanted to.
+    /// wanted to. `26-122`: the re-read is <see cref="FindExistingAsync"/>, the identical device-first
+    /// lookup the caller already tried - the row that just won the insert is now visible under either
+    /// key, so this recovers correctly regardless of which of the two identity indexes Postgres actually
+    /// named (`Ago.Chat.Infrastructure.Postgres.OperatorDeviceRepository.SaveAsync`'s own remarks).
     /// </summary>
     private async Task RefreshWinnerAsync(
         RegisterOperatorDevice command, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var winner = await devices.FindAsync(command.OperatorId, command.InstallationId, cancellationToken);
+        var winner = await FindExistingAsync(command, cancellationToken);
         if (winner is null)
         {
             // Unreachable by construction: the unique index that produced the conflict only fires when
@@ -122,11 +160,12 @@ public sealed class RegisterOperatorDeviceHandler(IOperatorDeviceRepository devi
             // "no device" - the same "do not paper over a broken invariant" choice
             // StartConversationHandler's own two race catches make.
             throw new InvalidOperationException(
-                $"Device registration for operator {command.OperatorId.Value} and installation "
-                + $"'{command.InstallationId}' conflicted with a row that then could not be read back.");
+                $"Device registration for operator {command.OperatorId.Value}, installation "
+                + $"'{command.InstallationId}' and device '{command.DeviceId}' conflicted with a row "
+                + "that then could not be read back.");
         }
 
-        winner.Refresh(command.Provider, command.Platform, command.Token, now);
+        winner.Refresh(command.Provider, command.Platform, command.Token, now, command.InstallationId, command.DeviceId);
         await devices.SaveAsync(winner, cancellationToken);
     }
 }

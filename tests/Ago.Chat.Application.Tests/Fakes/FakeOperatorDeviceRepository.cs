@@ -10,6 +10,9 @@ public sealed class FakeOperatorDeviceRepository : IOperatorDeviceRepository
     public Task<OperatorDevice?> FindAsync(OperatorId operatorId, string installationId, CancellationToken cancellationToken) =>
         Task.FromResult(_byId.Values.FirstOrDefault(d => d.OperatorId == operatorId && d.InstallationId == installationId));
 
+    public Task<OperatorDevice?> FindByDeviceAsync(OperatorId operatorId, string deviceId, CancellationToken cancellationToken) =>
+        Task.FromResult(_byId.Values.FirstOrDefault(d => d.OperatorId == operatorId && d.DeviceId == deviceId));
+
     public Task<OperatorDevice?> FindActiveByTokenAsync(PushProvider provider, string token, CancellationToken cancellationToken) =>
         Task.FromResult(_byId.Values.FirstOrDefault(d => d.Provider == provider && d.Token == token && d.RevokedAt is null));
 

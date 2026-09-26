@@ -41,6 +41,45 @@ public class OperatorDeviceTests
             new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "  ", PushProvider.RuStore, "android", "token-1", Now));
     }
 
+    /// <summary>`26-122`: <see langword="null"/> is a valid device id (a caller that has not been
+    /// updated yet) - only a blank-but-non-null value is a mistake worth rejecting.</summary>
+    [Fact]
+    public void Register_WithNoDeviceId_Succeeds()
+    {
+        var device = OperatorDevice.Register(
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
+            "token-1", Now);
+
+        Assert.Null(device.DeviceId);
+    }
+
+    [Fact]
+    public void Register_WithADeviceId_StoresIt()
+    {
+        var device = OperatorDevice.Register(
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
+            "token-1", Now, "device-1");
+
+        Assert.Equal("device-1", device.DeviceId);
+    }
+
+    [Fact]
+    public void Register_BlankDeviceId_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => OperatorDevice.Register(
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
+            "token-1", Now, "  "));
+    }
+
+    [Fact]
+    public void Register_DeviceIdTooLong_Throws()
+    {
+        var tooLong = new string('a', OperatorDevice.MaxDeviceIdLength + 1);
+        Assert.Throws<ArgumentException>(() => OperatorDevice.Register(
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
+            "token-1", Now, tooLong));
+    }
+
     [Fact]
     public void Refresh_WritesNewTokenAndTouchesLastSeenAt()
     {
@@ -66,6 +105,50 @@ public class OperatorDeviceTests
         device.Refresh(PushProvider.RuStore, "android", "token-2", Now.AddHours(2));
 
         Assert.Null(device.RevokedAt);
+    }
+
+    /// <summary>`26-122`: the whole point of moving identity onto <see cref="OperatorDevice.DeviceId"/> -
+    /// a reinstall's fresh `installationId` must land on the row, or a later sign-out DELETE from the
+    /// *new* install would address an id this row no longer answers to (this type's own remarks).
+    /// </summary>
+    [Fact]
+    public void Refresh_WithANewInstallationId_UpdatesIt()
+    {
+        var device = Register();
+        var later = Now.AddDays(1);
+
+        device.Refresh(PushProvider.RuStore, "android", "token-2", later, installationId: "installation-2");
+
+        Assert.Equal("installation-2", device.InstallationId);
+    }
+
+    /// <summary>The default (no installationId/deviceId passed) leaves both untouched - the shape every
+    /// pre-`26-122` call site (and every ordinary token-rotation call) still uses.</summary>
+    [Fact]
+    public void Refresh_WithNoInstallationIdOrDeviceId_LeavesBothUnchanged()
+    {
+        var device = OperatorDevice.Register(
+            new OperatorDeviceId(Guid.NewGuid()), SiteId, OperatorId, "installation-1", PushProvider.RuStore, "android",
+            "token-1", Now, "device-1");
+
+        device.Refresh(PushProvider.RuStore, "android", "token-2", Now.AddDays(1));
+
+        Assert.Equal("installation-1", device.InstallationId);
+        Assert.Equal("device-1", device.DeviceId);
+    }
+
+    /// <summary>`26-122`: adopting a pre-migration row - `RegisterOperatorDeviceHandler` found it by
+    /// `installationId` alone (its own `DeviceId` was <see langword="null"/>) and backfills the device
+    /// id the first time an updated client sends one.</summary>
+    [Fact]
+    public void Refresh_BackfillsANullDeviceId()
+    {
+        var device = Register();
+        Assert.Null(device.DeviceId);
+
+        device.Refresh(PushProvider.RuStore, "android", "token-2", Now.AddDays(1), deviceId: "device-1");
+
+        Assert.Equal("device-1", device.DeviceId);
     }
 
     [Fact]
