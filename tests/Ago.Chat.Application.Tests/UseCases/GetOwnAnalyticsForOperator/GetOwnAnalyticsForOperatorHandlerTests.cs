@@ -202,7 +202,8 @@ public class GetOwnAnalyticsForOperatorHandlerTests
         ]);
 
         var freshness = new FakeAnalyticsFreshnessReadStore();
-        var tenantReportHandler = new GetOperatorAnalyticsForSiteHandler(analyticsStore, loadStore, freshness, permissions, clock);
+        var tenantReportHandler = new GetOperatorAnalyticsForSiteHandler(
+            analyticsStore, loadStore, freshness, new FakeAnalyticsLabelReadStore(), permissions, clock);
         var ownReportHandler = new GetOwnAnalyticsForOperatorHandler(
             analyticsStore, loadStore, new FakeConversionReportReadStore(), freshness, clock);
 
@@ -244,7 +245,8 @@ public class GetOwnAnalyticsForOperatorHandlerTests
             new ConversionBucket(3, 1, 1, 2, 4, 0.75),
             [new ConversionOperatorBucket(OperatorB, new ConversionBucket(3, 1, 1, 2, 4, 0.75), "Grace")]));
 
-        var tenantReportHandler = new GetConversionReportForSiteHandler(conversionStore, permissions, clock);
+        var tenantReportHandler = new GetConversionReportForSiteHandler(
+            conversionStore, new FakeAnalyticsLabelReadStore(), permissions, clock);
         var ownReportHandler = new GetOwnAnalyticsForOperatorHandler(
             new FakeOperatorAnalyticsReadStore(), new FakeOperatorLoadReportReadStore(), conversionStore,
             new FakeAnalyticsFreshnessReadStore(), clock);

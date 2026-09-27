@@ -17,7 +17,10 @@ namespace Ago.Chat.Application.UseCases.GetConversionReportForSite;
 /// the ordinary per-operator `conversation:read` grant should unlock.</para>
 /// </summary>
 public sealed class GetConversionReportForSiteHandler(
-    IConversionReportReadStore readStore, IPermissionChecker permissions, IClock clock)
+    IConversionReportReadStore readStore,
+    IAnalyticsLabelReadStore labelReadStore,
+    IPermissionChecker permissions,
+    IClock clock)
 {
     /// <summary>Restated rather than referenced against `GetOperatorAnalyticsForSiteHandler.DefaultWindowDays`
     /// - that handler's own remarks explain why (`Ago.Chat.Application` has no cross-use-case constant
@@ -53,6 +56,13 @@ public sealed class GetConversionReportForSiteHandler(
         var result = currentTask.Result;
         var previousResult = previousTask.Result;
 
+        // `26-237`/`adr/0186` §8.1: resolve any operator whose name the read store did not carry. The live
+        // ago_chat store already joins the name in, so nothing is unresolved and this touches no database;
+        // the rollup store returns id-keyed rows with a null name, so this is where those names come from -
+        // an application-layer merge across two read ports, never a cross-database SQL join. Only the current
+        // window's per-operator rows carry names (the preceding window contributes only the overall bucket).
+        var names = await ResolveOperatorNamesAsync(query.SiteId, result.ByOperator, cancellationToken);
+
         return new ConversionReportResponse(
             from,
             to,
@@ -60,8 +70,22 @@ public sealed class GetConversionReportForSiteHandler(
             previousFrom,
             previousTo,
             ToDto(previousResult.Overall),
-            result.ByOperator.Select(o => new ConversionOperatorBucketDto(o.Operator.Value, ToDto(o.Bucket), o.OperatorName)).ToList());
+            result.ByOperator
+                .Select(o => new ConversionOperatorBucketDto(
+                    o.Operator.Value, ToDto(o.Bucket), o.OperatorName ?? names.GetValueOrDefault(o.Operator)))
+                .ToList());
     }
+
+    private async Task<IReadOnlyDictionary<OperatorId, string>> ResolveOperatorNamesAsync(
+        SiteId siteId, IReadOnlyList<ConversionOperatorBucket> byOperator, CancellationToken cancellationToken)
+    {
+        var unresolved = byOperator.Where(o => o.OperatorName is null).Select(o => o.Operator).ToList();
+        return unresolved.Count == 0
+            ? EmptyNames
+            : await labelReadStore.GetOperatorDisplayNamesAsync(siteId, unresolved, cancellationToken);
+    }
+
+    private static readonly IReadOnlyDictionary<OperatorId, string> EmptyNames = new Dictionary<OperatorId, string>();
 
     private static ConversionBucketDto ToDto(ConversionBucket bucket) => new(
         bucket.ConvertedCount, bucket.NotConvertedCount, bucket.FollowUpNeededCount, bucket.UnsetCount,

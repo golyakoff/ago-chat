@@ -19,7 +19,10 @@ namespace Ago.Chat.Application.UseCases.GetTagBreakdownReportForSite;
 /// exists to draw, not something the ordinary per-operator `conversation:read` grant should unlock.</para>
 /// </summary>
 public sealed class GetTagBreakdownReportForSiteHandler(
-    ITagBreakdownReadStore readStore, IPermissionChecker permissions, IClock clock)
+    ITagBreakdownReadStore readStore,
+    IAnalyticsLabelReadStore labelReadStore,
+    IPermissionChecker permissions,
+    IClock clock)
 {
     /// <summary>Restated rather than referenced against the sibling reports' own constants - the same
     /// "`Ago.Chat.Application` has no cross-use-case constant for this" reasoning
@@ -53,6 +56,12 @@ public sealed class GetTagBreakdownReportForSiteHandler(
         var result = currentTask.Result;
         var previousResult = previousTask.Result;
 
+        // `26-237`/`adr/0186` §8.1: fill any tag whose name the read store did not carry. The live ago_chat
+        // store joins the name in (nothing unresolved, no query); the rollup store returns id-keyed rows with
+        // an empty placeholder name, resolved here through the application-layer label read - never a
+        // cross-database join. Only the current window's tag rows are shown, so only they need names.
+        var names = await ResolveTagNamesAsync(query.SiteId, result.ByTag, cancellationToken);
+
         return new TagBreakdownReportResponse(
             from,
             to,
@@ -64,12 +73,24 @@ public sealed class GetTagBreakdownReportForSiteHandler(
             previousResult.TotalConversationCount,
             previousResult.TaggedConversationCount,
             previousResult.PercentageTagged,
-            result.ByTag.Select(ToDto).ToList());
+            result.ByTag.Select(b => ToDto(b, names)).ToList());
     }
 
-    private static TagBreakdownBucketDto ToDto(TagBreakdownBucket bucket) => new(
+    private async Task<IReadOnlyDictionary<TagId, string>> ResolveTagNamesAsync(
+        SiteId siteId, IReadOnlyList<TagBreakdownBucket> byTag, CancellationToken cancellationToken)
+    {
+        var unresolved = byTag.Where(b => string.IsNullOrEmpty(b.TagName)).Select(b => b.TagId).ToList();
+        return unresolved.Count == 0
+            ? EmptyNames
+            : await labelReadStore.GetTagNamesAsync(siteId, unresolved, cancellationToken);
+    }
+
+    private static readonly IReadOnlyDictionary<TagId, string> EmptyNames = new Dictionary<TagId, string>();
+
+    private static TagBreakdownBucketDto ToDto(
+        TagBreakdownBucket bucket, IReadOnlyDictionary<TagId, string> resolvedNames) => new(
         bucket.TagId.Value,
-        bucket.TagName,
+        string.IsNullOrEmpty(bucket.TagName) ? resolvedNames.GetValueOrDefault(bucket.TagId, string.Empty) : bucket.TagName,
         bucket.ConversationCount,
         bucket.ConvertedCount,
         bucket.NotConvertedCount,

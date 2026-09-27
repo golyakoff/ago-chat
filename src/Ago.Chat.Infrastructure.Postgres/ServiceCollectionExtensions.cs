@@ -137,6 +137,12 @@ public static class ServiceCollectionExtensions
         // per conversation) unlike every dimension that store already computes (ITagBreakdownReadStore's
         // own remarks on why).
         services.AddScoped<ITagBreakdownReadStore, TagBreakdownReadStore>();
+        // `26-237`/`adr/0186` §8.1: the operational-side label resolver the analytics report handlers use to
+        // merge operator/tag display names onto the id-keyed rollup rows in memory (never a cross-database
+        // join from ago_analytics). Registered unconditionally - it reads the operational ago_chat store, so
+        // it is available on every host whether or not the rollup pipeline is configured; on the live read
+        // path the report stores already carry the names, so the handlers query it for nothing.
+        services.AddScoped<IAnalyticsLabelReadStore, AnalyticsLabelReadStore>();
         services.AddScoped<IPermissionChecker, PermissionChecker>();
         services.AddScoped<IOperatorCapacity, OperatorCapacityStore>();
         // `18-02`: the transfer handler's own transaction boundary - see IUnitOfWork's own remarks

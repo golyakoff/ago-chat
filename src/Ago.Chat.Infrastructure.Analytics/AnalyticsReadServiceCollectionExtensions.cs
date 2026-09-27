@@ -41,6 +41,14 @@ public static class AnalyticsReadServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Scoped<IOperatorAnalyticsReadStore, RollupOperatorAnalyticsReadStore>());
         services.Replace(ServiceDescriptor.Scoped<IAnalyticsFreshnessReadStore, AnalyticsFreshnessReadStore>());
 
+        // `26-237`: the conversion and tag-breakdown reads join site-analytics on the rollups - the same
+        // config-guarded Replace, so a host with the ago_analytics pipeline gets the fast O(days) rollup
+        // read and any host without it keeps the correct live ago_chat read behind the identical unchanged
+        // port. Both rollup stores resolve their id-keyed display names in the application layer through
+        // IAnalyticsLabelReadStore (design §8.1), never a cross-database join.
+        services.Replace(ServiceDescriptor.Scoped<IConversionReportReadStore, RollupConversionReportReadStore>());
+        services.Replace(ServiceDescriptor.Scoped<ITagBreakdownReadStore, RollupTagBreakdownReadStore>());
+
         return services;
     }
 }

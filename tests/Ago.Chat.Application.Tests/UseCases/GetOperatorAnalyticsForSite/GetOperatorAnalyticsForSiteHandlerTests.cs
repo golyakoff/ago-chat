@@ -29,7 +29,8 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         // HandleAsync_SurfacesComputedAsOf_FromTheFreshnessStore for the one that does.
         var freshness = new FakeAnalyticsFreshnessReadStore();
         return (
-            new GetOperatorAnalyticsForSiteHandler(store, loadStore, freshness, permissions, clock),
+            new GetOperatorAnalyticsForSiteHandler(
+                store, loadStore, freshness, new FakeAnalyticsLabelReadStore(), permissions, clock),
             store, loadStore);
     }
 
@@ -48,7 +49,8 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         var permissions = new FakePermissionChecker();
         permissions.Grant(AdminId, SiteId, Permission.SiteConfigure);
 
-        var handler = new GetOperatorAnalyticsForSiteHandler(store, loadStore, freshness, permissions, new FakeClock(Now));
+        var handler = new GetOperatorAnalyticsForSiteHandler(
+            store, loadStore, freshness, new FakeAnalyticsLabelReadStore(), permissions, new FakeClock(Now));
 
         var result = await handler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
