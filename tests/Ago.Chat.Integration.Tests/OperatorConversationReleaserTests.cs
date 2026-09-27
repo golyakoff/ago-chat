@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Postgres.Persistence;
 using Ago.Chat.Worker;
 using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
@@ -193,5 +194,135 @@ public sealed class OperatorConversationReleaserTests(PostgresFixture fixture)
         var released = await releaser.ReleaseAllAsync(operatorId, CancellationToken.None);
 
         Assert.Equal(0, released);
+    }
+
+    /// <summary>
+    /// `26-238`: the runaway that accrued ~1100 `conversation_assignments` intervals for 9 conversations
+    /// on the demo stand, reproduced against the real release path and the real assignment engine.
+    ///
+    /// <para>The loop needs no user action: an operator left `Online` in `operators.status` but with no
+    /// live connection (what an ungraceful `Ago.Chat.Api` shutdown leaves behind, since
+    /// `OperatorHub.OnDisconnectedAsync`'s `GoOffline` never ran) is a phantom the two subsystems
+    /// disagree about - the engine (`SkipLockedAssignmentClaimer`, filtering `Status == Online`) re-hands
+    /// the released conversation straight back, and the sweep/grace release it again a grace period later,
+    /// each cycle writing a fresh interval. This test performs one release and then runs the real engine:
+    /// before the fix the operator stayed `Online` and the engine re-grabbed the conversation, writing a
+    /// second interval; the fix takes them `Offline` in the release transaction, so the engine finds no
+    /// candidate and the churn stops at the one original, now-closed interval.</para>
+    /// </summary>
+    [Fact]
+    public async Task ReleaseAllAsync_TakesAPhantomOnlineOperatorOffline_SoTheEngineStopsReclaimingTheSameConversation()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = await SeedOnlineSeatedOperatorHoldingOneConversationAsync(siteId, operatorId);
+
+        var releaser = new OperatorConversationReleaser(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+        Assert.Equal(1, await releaser.ReleaseAllAsync(operatorId, CancellationToken.None));
+
+        // The fix: the released operator is now Offline in the same transaction, not left Online.
+        await using (var afterRelease = fixture.CreateDbContext())
+        {
+            var status = await afterRelease.Operators.AsNoTracking()
+                .Where(o => o.Id == operatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Offline, status);
+        }
+
+        // The real assignment engine, unchanged: with the operator now Offline it is not a candidate, so
+        // the conversation stays Waiting and - crucially - no second interval is written. Before the fix
+        // this claimed 1 and inserted a fresh interval, the exact per-cycle churn 26-238 describes.
+        var claimer = new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+        Assert.Equal(0, await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None));
+
+        await using var verify = fixture.CreateDbContext();
+        var conversation = await verify.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Waiting, conversation.State);
+        Assert.Null(conversation.OperatorId);
+
+        var intervalCount = await verify.ConversationAssignments.CountAsync(i => i.ConversationId == conversationId);
+        Assert.Equal(1, intervalCount);
+        var openIntervals = await verify.ConversationAssignments
+            .CountAsync(i => i.ConversationId == conversationId && i.EndedAt == null);
+        Assert.Equal(0, openIntervals);
+    }
+
+    /// <summary>
+    /// `26-238`: the other side of the fix - stopping the phantom-loop churn must not suppress a
+    /// legitimate re-hold. An operator who genuinely comes back (a real reconnect flips them `Online`
+    /// again via `Operator.NoteConnected`/`OperatorHub.OnConnectedAsync`, modelled here by the same
+    /// `GoOnline` domain transition that path performs) and is then assigned the still-Waiting
+    /// conversation by the real engine must record a real, fresh interval - the closed original plus a
+    /// new open one, exactly two.
+    /// </summary>
+    [Fact]
+    public async Task ReleaseAllAsync_DoesNotSuppressALaterGenuineReassignment_WhichStillWritesANewInterval()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var operatorId = new OperatorId(Guid.NewGuid());
+        var conversationId = await SeedOnlineSeatedOperatorHoldingOneConversationAsync(siteId, operatorId);
+
+        var releaser = new OperatorConversationReleaser(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+        Assert.Equal(1, await releaser.ReleaseAllAsync(operatorId, CancellationToken.None));
+
+        // A genuine return: the operator reconnects, which flips them back Online. This is the real
+        // release-then-later-reassign case 26-238 must preserve, not the phantom loop it must break.
+        await using (var reconnect = fixture.CreateDbContext())
+        {
+            var operatorEntity = await reconnect.Operators.SingleAsync(o => o.Id == operatorId);
+            operatorEntity.GoOnline();
+            await reconnect.SaveChangesAsync();
+        }
+
+        var claimer = new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator());
+        Assert.Equal(1, await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None));
+
+        await using var verify = fixture.CreateDbContext();
+        var conversation = await verify.Conversations.AsNoTracking().SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Assigned, conversation.State);
+        Assert.Equal(operatorId, conversation.OperatorId);
+
+        // A real hold resumed, so a real interval is recorded: the closed original plus a fresh open one.
+        var intervalCount = await verify.ConversationAssignments.CountAsync(i => i.ConversationId == conversationId);
+        Assert.Equal(2, intervalCount);
+        var open = await verify.ConversationAssignments
+            .SingleAsync(i => i.ConversationId == conversationId && i.EndedAt == null);
+        Assert.Equal(operatorId, open.OperatorId);
+    }
+
+    /// <summary>Seeds a site with one `Online`, seated (`25-170`: a real Operator-role seat, which the
+    /// engine now requires regardless of status) operator holding exactly one `Assigned` conversation
+    /// with an open interval, and `active_chats = 1` to match. Returns the conversation id.</summary>
+    private async Task<ConversationId> SeedOnlineSeatedOperatorHoldingOneConversationAsync(
+        SiteId siteId, OperatorId operatorId)
+    {
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+            var operatorRoleId = Guid.NewGuid();
+            db.Roles.Add(new RoleRecord { Id = operatorRoleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = operatorRoleId });
+            db.Visitors.Add(new Visitor(visitorId, siteId, Now));
+            var conversation = Conversation.Start(conversationId, siteId, visitorId, Now);
+            // `25-221`: graduate Pending -> Waiting with the visitor's own first message before AssignTo.
+            conversation.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), Now);
+            conversation.AssignTo(operatorId, Now, holdsCapacityClaim: true);
+            db.Conversations.Add(conversation);
+            db.ConversationAssignments.Add(ConversationAssignmentInterval.Open(
+                new ConversationAssignmentId(Guid.NewGuid()), siteId, conversationId, operatorId,
+                ConversationAssignmentSource.Assigned, Now));
+            await db.SaveChangesAsync();
+        }
+
+        // active_chats is a shadow property (4-01) - seed it directly to match the AssignTo above.
+        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand("UPDATE operators SET active_chats = 1 WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", operatorId.Value);
+        await command.ExecuteNonQueryAsync();
+
+        return conversationId;
     }
 }

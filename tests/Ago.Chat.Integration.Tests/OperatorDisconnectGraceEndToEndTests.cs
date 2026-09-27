@@ -9,6 +9,7 @@ using Ago.Platform.Hosting;
 using Ago.Platform.Kernel;
 using Ago.Platform.Messaging.RabbitMq;
 using Ago.Platform.Realtime;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -104,10 +105,14 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
     }
 
     [Fact]
-    public async Task AReleasedConversation_IsVisibleToTheAssignmentEngine_AndGetsReassigned()
+    public async Task AReleasedConversation_IsVisibleToTheAssignmentEngine_AndGetsReassignedToAnAvailableOperator()
     {
         await PurgeOperatorPresenceLostQueueAsync();
-        var (siteId, operatorId, conversationId) = await SeedAssignedConversationAsync();
+        var (siteId, goneOperatorId, conversationId) = await SeedAssignedConversationAsync();
+        // `26-238`: a second operator who is genuinely present - Online, seated, with room. This is who
+        // a released conversation should go to, and the whole reason releasing the gone operator's
+        // conversation matters: so a real operator can pick it up.
+        var availableOperatorId = await SeedOnlineSeatedOperatorAsync(siteId);
         var registry = BuildRegistry();
 
         var started = await StartConsumerAsync(registry);
@@ -119,7 +124,7 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
             var publisher = new OperatorPresencePublisher(
                 new RabbitMqEventPublisher(publisherConnection, NullLogger<RabbitMqEventPublisher>.Instance),
                 new SystemClock(), new UuidV7Generator(), new FakeRateLimiter(), new OperatorPresenceLostSuppressionOptions());
-            await publisher.PublishLostAsync(operatorId, siteId, CancellationToken.None);
+            await publisher.PublishLostAsync(goneOperatorId, siteId, CancellationToken.None);
 
             var released = await OutboxTestHelpers.WaitUntilAsync(
                 async () => await IsWaitingAsync(conversationId), TimeSpan.FromSeconds(15));
@@ -130,10 +135,20 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
             await StopConsumerAsync(started);
         }
 
-        // The same operator is still Status=Online in the database (4-04 does not itself flip
-        // status - see the backlog's own Out of scope) and now has room again, so the assignment
-        // engine picks the conversation right back up - proving "released" genuinely means
-        // "visible to 4-02 again," not just "no longer Assigned."
+        // `26-238`: the released operator is now Offline - the release reconciles their status in the
+        // same transaction, precisely so the assignment engine does not immediately re-hand them the
+        // conversation they just lost (the runaway loop this item fixes). See
+        // OperatorConversationReleaser's own remarks.
+        await using (var afterRelease = fixture.CreateDbContext())
+        {
+            var goneStatus = await afterRelease.Operators.AsNoTracking()
+                .Where(o => o.Id == goneOperatorId).Select(o => o.Status).SingleAsync();
+            Assert.Equal(OperatorStatus.Offline, goneStatus);
+        }
+
+        // The still-Waiting conversation is visible to the engine and gets reassigned - but to the
+        // available operator, not the gone one - proving "released" genuinely means "visible to 4-02
+        // again," not just "no longer Assigned."
         var claimer = new SkipLockedAssignmentClaimer(fixture.DataSource, new SystemClock(), new UuidV7Generator());
         var assignedCount = await claimer.AssignWaitingConversationsAsync(siteId, batchSize: 10, CancellationToken.None);
         Assert.Equal(1, assignedCount);
@@ -141,7 +156,19 @@ public sealed class OperatorDisconnectGraceEndToEndTests(ConnectionFanoutFixture
         await using var verify = fixture.CreateDbContext();
         var conversation = await verify.Conversations.FindAsync(conversationId);
         Assert.Equal(ConversationState.Assigned, conversation!.State);
-        Assert.Equal(operatorId, conversation.OperatorId);
+        Assert.Equal(availableOperatorId, conversation.OperatorId);
+    }
+
+    private async Task<OperatorId> SeedOnlineSeatedOperatorAsync(SiteId siteId)
+    {
+        var operatorId = new OperatorId(Guid.NewGuid());
+        await using var db = fixture.CreateDbContext();
+        db.Operators.Add(new Operator(operatorId, siteId, OperatorStatus.Online, capacity: 5));
+        var roleId = Guid.NewGuid();
+        db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [Permission.ConversationAssign.Value] });
+        db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = operatorId, RoleId = roleId });
+        await db.SaveChangesAsync();
+        return operatorId;
     }
 
     private async Task<(SiteId SiteId, OperatorId OperatorId, ConversationId ConversationId)> SeedAssignedConversationAsync()
