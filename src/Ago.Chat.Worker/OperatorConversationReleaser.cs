@@ -30,11 +30,14 @@ public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IC
 
         var conversations = new ConversationRepository(db);
         var capacity = new OperatorCapacityStore(db);
+        var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
         // `23-03`: uses the port (unlike the two claimers - see ConversationAssignmentIntervalSql's own
         // remarks on why they do not), the same "instantiate directly, sharing this batch's own db"
-        // shape this method already uses for OperatorCapacityStore right above.
-        IConversationAssignmentLog assignmentLog = new ConversationAssignmentLog(db);
-        var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
+        // shape this method already uses for OperatorCapacityStore right above. `26-237`: it now also
+        // stages the ConversationAssignmentClosed analytics event onto this same `db`/`outbox` at close,
+        // so it is constructed with the batch's own outbox and id generator plus the pooled `dataSource`
+        // for its read-only overlap/reply lookups - the event rides this transaction's own commit below.
+        IConversationAssignmentLog assignmentLog = new ConversationAssignmentLog(db, dataSource, outbox, idGenerator);
         var now = clock.UtcNow;
 
         var assigned = await conversations.GetAssignedToOperatorAsync(operatorId, cancellationToken);
