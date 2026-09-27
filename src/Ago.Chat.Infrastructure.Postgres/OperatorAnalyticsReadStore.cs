@@ -137,6 +137,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// </summary>
 public sealed class OperatorAnalyticsReadStore(NpgsqlDataSource dataSource) : IOperatorAnalyticsReadStore
 {
+    static OperatorAnalyticsReadStore()
+    {
+        // `26-230`: see DapperDateTimeOffsetTypeHandler.Register's own remarks - `From`/`To` below is a
+        // caller-supplied DateTimeOffset bound to a `timestamptz` parameter, and Npgsql 10 refuses one
+        // whose own Offset is non-zero. Runs before this store's first query, in a host and in a bare
+        // integration test alike.
+        DapperDateTimeOffsetTypeHandler.Register();
+    }
+
     private static readonly string VisitorAuthorKind = nameof(MessageAuthorKind.Visitor);
     private static readonly string OperatorAuthorKind = nameof(MessageAuthorKind.Operator);
     private static readonly string ClosedState = nameof(ConversationState.Closed);

@@ -17,6 +17,18 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddPostgresPersistence(this IServiceCollection services, string connectionString)
     {
+        // `26-230`: every host that serves a real request reaches this method, so this is where the
+        // fix is visible to a reader auditing "what does this host do to Dapper before it ever answers
+        // a request" - see DapperDateTimeOffsetTypeHandler's own remarks for the mechanism (a Dapper
+        // parameter carrying a non-UTC-offset DateTimeOffset makes Npgsql 10 throw) and for why the
+        // report/analytics/search read stores below *also* call the same Register() from their own
+        // static constructors rather than relying on this line alone - this project's integration tests
+        // construct several of them directly against a bare NpgsqlDataSource, the same "bypasses this
+        // method entirely" gap DapperDateOnlyTypeHandler's own remarks already document for a different
+        // type. Idempotent either way: a second Register() call replaces the same mapping, it does not
+        // duplicate or conflict with it.
+        DapperDateTimeOffsetTypeHandler.Register();
+
         // One NpgsqlDataSource for the process: EF's writes and Dapper's reads (ConversationReadStore)
         // share the same connection pool instead of each opening its own.
         var dataSource = new NpgsqlDataSourceBuilder(connectionString).Build();

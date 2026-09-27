@@ -36,6 +36,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// </summary>
 public sealed class ModuleFlowReadStore(NpgsqlDataSource dataSource) : IModuleFlowReadStore
 {
+    static ModuleFlowReadStore()
+    {
+        // `26-230`: see DapperDateTimeOffsetTypeHandler.Register's own remarks - `From`/`To` below is a
+        // caller-supplied DateTimeOffset bound to a `timestamptz` parameter, and Npgsql 10 refuses one
+        // whose own Offset is non-zero. Runs before this store's first query, in a host and in a bare
+        // integration test alike.
+        DapperDateTimeOffsetTypeHandler.Register();
+    }
+
     private static readonly string ClosedState = nameof(ModuleTaskState.Closed);
 
     // `24-10`: `c.blocked_at is null` - the identical exclusion every other analytics/reporting read in
