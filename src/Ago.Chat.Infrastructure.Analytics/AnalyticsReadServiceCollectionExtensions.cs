@@ -49,6 +49,15 @@ public static class AnalyticsReadServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Scoped<IConversionReportReadStore, RollupConversionReportReadStore>());
         services.Replace(ServiceDescriptor.Scoped<ITagBreakdownReadStore, RollupTagBreakdownReadStore>());
 
+        // `26-237` (operator-load rollup, decision B): the last analytics read still computed live over
+        // ago_chat - the O(N²) correlated-overlap scan of conversation_assignments that is the «По сайту»
+        // 499's root cause - moves onto the rollup here, the same config-guarded Replace. The overlap is
+        // resolved once at interval close (ConversationAssignmentLog emits ConversationAssignmentClosed);
+        // this read is a plain grouped sum and folds the exact concurrent-load rows into AnalyticsOptions'
+        // configured buckets in C#. Operator display names are resolved in the handler via
+        // IAnalyticsLabelReadStore, exactly like the site-analytics report's own operator rows.
+        services.Replace(ServiceDescriptor.Scoped<IOperatorLoadReportReadStore, RollupOperatorLoadReportReadStore>());
+
         return services;
     }
 }
