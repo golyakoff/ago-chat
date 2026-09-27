@@ -130,6 +130,34 @@ public sealed class ConversationSearchStoreTests(PostgresFixture fixture)
         Assert.DoesNotContain(page.Results, r => r.ConversationId == outsideId);
     }
 
+    /// <summary>`26-230`: the console can send `from`/`to` with a non-UTC offset the same way the
+    /// Android client's analytics requests do - Npgsql 10 refuses to write a non-zero-offset
+    /// <see cref="DateTimeOffset"/> to a `timestamptz` parameter at all. A `+03:00` range must not throw,
+    /// and must return the identical page a `Z`/UTC range for the same instants does - re-expressing an
+    /// instant's own offset never changes which messages are `[from, to)`.</summary>
+    [Fact]
+    public async Task SearchAsync_WithANonUtcOffsetRange_DoesNotThrowAndMatchesTheUtcEquivalent()
+    {
+        var (siteId, conversationId) = await SeedConversationWithMessage("please refund my last order", Now);
+        var store = new ConversationSearchStore(fixture.DataSource);
+
+        var utcPage = await store.SearchAsync(siteId, "refund", Now.AddDays(-1), Now.AddDays(1), null, 20, CancellationToken.None);
+        var offsetPage = await store.SearchAsync(
+            siteId,
+            "refund",
+            Now.AddDays(-1).ToOffset(TimeSpan.FromHours(3)),
+            Now.AddDays(1).ToOffset(TimeSpan.FromHours(3)),
+            null,
+            20,
+            CancellationToken.None);
+
+        var utcHit = Assert.Single(utcPage.Results);
+        var offsetHit = Assert.Single(offsetPage.Results);
+        Assert.Equal(conversationId, offsetHit.ConversationId);
+        Assert.Equal(utcHit.ConversationId, offsetHit.ConversationId);
+        Assert.Equal(utcHit.MessageId, offsetHit.MessageId);
+    }
+
     [Fact]
     public async Task SearchAsync_PagesBackwardsById_WithNoGapsOrDuplicates()
     {

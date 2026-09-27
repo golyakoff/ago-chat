@@ -35,6 +35,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 /// </summary>
 public sealed class ConversationSearchStore(NpgsqlDataSource dataSource) : IConversationSearchStore
 {
+    static ConversationSearchStore()
+    {
+        // `26-230`: see DapperDateTimeOffsetTypeHandler.Register's own remarks - `From`/`To` below is a
+        // caller-supplied DateTimeOffset bound to a `timestamptz` parameter, and Npgsql 10 refuses one
+        // whose own Offset is non-zero. Runs before this store's first query, in a host and in a bare
+        // integration test alike.
+        DapperDateTimeOffsetTypeHandler.Register();
+    }
+
     // Aliased to the record's parameter names, matching ConversationReadStore's own convention -
     // Dapper's constructor binding matches by name, not by a snake_case-to-PascalCase convention.
     // `plainto_tsquery` rather than `websearch_to_tsquery`: the operator types a phrase, not a search

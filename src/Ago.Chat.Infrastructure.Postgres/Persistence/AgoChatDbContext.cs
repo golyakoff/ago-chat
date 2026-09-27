@@ -146,4 +146,13 @@ public sealed class AgoChatDbContext(DbContextOptions<AgoChatDbContext> options)
         // schema - Ago.Platform.Persistence.Postgres owns the table shape, not this project.
         modelBuilder.ApplyOutboxInboxConfiguration();
     }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // `26-230`: see DateTimeOffsetUtcConverter's own remarks - defense-in-depth for EF's write path,
+        // model-wide rather than per property, so a DateTimeOffset column added later inherits the
+        // guard automatically. EF applies a converter registered this way to both DateTimeOffset and
+        // DateTimeOffset? without a second registration.
+        configurationBuilder.Properties<DateTimeOffset>().HaveConversion<DateTimeOffsetUtcConverter>();
+    }
 }

@@ -64,6 +64,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 public sealed class OperatorLoadReportReadStore(NpgsqlDataSource dataSource, AnalyticsOptions analyticsOptions)
     : IOperatorLoadReportReadStore
 {
+    static OperatorLoadReportReadStore()
+    {
+        // `26-230`: see DapperDateTimeOffsetTypeHandler.Register's own remarks - `From`/`To` below is a
+        // caller-supplied DateTimeOffset bound to a `timestamptz` parameter, and Npgsql 10 refuses one
+        // whose own Offset is non-zero. Runs before this store's first query, in a host and in a bare
+        // integration test alike.
+        DapperDateTimeOffsetTypeHandler.Register();
+    }
+
     private static readonly string OperatorAuthorKind = nameof(MessageAuthorKind.Operator);
 
     private const string LoadedCte = """

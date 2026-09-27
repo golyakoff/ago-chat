@@ -36,6 +36,15 @@ namespace Ago.Chat.Infrastructure.Postgres;
 public sealed class TagBreakdownReadStore(NpgsqlDataSource dataSource, AnalyticsOptions analyticsOptions)
     : ITagBreakdownReadStore
 {
+    static TagBreakdownReadStore()
+    {
+        // `26-230`: see DapperDateTimeOffsetTypeHandler.Register's own remarks - `From`/`To` below is a
+        // caller-supplied DateTimeOffset bound to a `timestamptz` parameter, and Npgsql 10 refuses one
+        // whose own Offset is non-zero. Runs before this store's first query, in a host and in a bare
+        // integration test alike.
+        DapperDateTimeOffsetTypeHandler.Register();
+    }
+
     // `18-10`'s own `nameof(...)` discipline, restated here rather than shared: a rename of
     // ConversationOutcome's members fails this class at compile time too, the same reason
     // ConversionReportReadStore keeps its own copies rather than reaching across files for one constant.

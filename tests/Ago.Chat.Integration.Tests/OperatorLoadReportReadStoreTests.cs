@@ -114,6 +114,32 @@ public class OperatorLoadReportReadStoreTests(PostgresFixture fixture)
         Assert.Empty(result);
     }
 
+    /// <summary>`26-230`: the Android client sends `from`/`to` with its own local offset (`+03:00`),
+    /// never UTC `Z` - and Npgsql 10 refuses to write a non-zero-offset <see cref="DateTimeOffset"/> to
+    /// a `timestamptz` parameter at all (`ArgumentException: Cannot write DateTimeOffset with
+    /// Offset=03:00:00 ...`). `From`/`To` here already carry `TimeSpan.Zero`, so re-expressing the exact
+    /// same instants through <see cref="DateTimeOffset.ToOffset"/> changes nothing about *which* instants
+    /// are in range - a report built from the `+03:00` request must return identically to the same
+    /// report built from the UTC-`Z` request, never a shifted window.</summary>
+    [Fact]
+    public async Task GetOperatorLoadReportAsync_WithANonUtcOffsetRange_DoesNotThrowAndMatchesTheUtcEquivalent()
+    {
+        var (siteId, operatorAId) = await SeedScenarioAsync();
+
+        var offsetFrom = From.ToOffset(TimeSpan.FromHours(3));
+        var offsetTo = To.ToOffset(TimeSpan.FromHours(3));
+
+        var utcResult = await Store.GetOperatorLoadReportAsync(siteId, From, To, CancellationToken.None);
+        var offsetResult = await Store.GetOperatorLoadReportAsync(siteId, offsetFrom, offsetTo, CancellationToken.None);
+
+        var utcA = utcResult.Single(s => s.Operator == operatorAId);
+        var offsetA = offsetResult.Single(s => s.Operator == operatorAId);
+        Assert.Equal(utcA.ConversationsHeld, offsetA.ConversationsHeld);
+        Assert.Equal(utcA.IntervalsHeld, offsetA.IntervalsHeld);
+        Assert.Equal(utcA.StandardIntervals, offsetA.StandardIntervals);
+        Assert.Equal(utcA.AdditionalIntervals, offsetA.AdditionalIntervals);
+    }
+
     private static void AssertClose(double expected, double? actual)
     {
         Assert.NotNull(actual);
