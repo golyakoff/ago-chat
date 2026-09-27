@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -53,6 +54,7 @@ public sealed class CreateOperatorInviteHandler(
     IOperatorInviteRepository invites,
     IRoleRepository roles,
     IPermissionChecker permissions,
+    OperatorRoleSeatCapacity roleSeatCapacity,
     IOperatorInviteCodeGenerator codeGenerator,
     IOperatorInviteEmailProvisioner emailProvisioner,
     INotificationMailSender mailSender,
@@ -64,6 +66,12 @@ public sealed class CreateOperatorInviteHandler(
     IClock clock,
     ILogger<CreateOperatorInviteHandler> logger)
 {
+    /// <summary>`26-241`: the same bare literal `OperatorInviteRedemptionRepository`/`RoleSeatLimits`
+    /// already declare their own copy of - no named-role catalogue exists yet for this codebase to reach
+    /// for instead (those types' own remarks). Used only to pick which capacity-refusal error a full role
+    /// maps to (Admin -> AdminLimitReached, everything else -> SeatLimitReached), the identical split
+    /// `OperatorInviteRedemptionRepository` makes at redeem time.</summary>
+    private const string AdminRoleName = "Admin";
     public async Task<Result<CreatedOperatorInvite>> HandleAsync(CreateOperatorInvite command, CancellationToken cancellationToken)
     {
         var allowed = await permissions.HasPermissionAsync(
@@ -88,11 +96,50 @@ public sealed class CreateOperatorInviteHandler(
             return ConversationErrors.OperatorInviteRateLimited(rateLimitOptions.PerSiteCapacity);
         }
 
-        var roleId = await roles.GetIdByNameAsync(command.SiteId, command.RoleName, cancellationToken);
-        if (roleId is null)
+        // `26-241`: resolve every requested role name to its id, refusing the whole invite if any name
+        // is unknown. De-duplicated first (StringComparer.Ordinal - role names are the fixed literals
+        // "Operator"/"Admin") so a caller repeating a role, or a single-role legacy caller, never sends
+        // two identical role lines; the order is preserved so the per-role seat message below names the
+        // role the caller listed first when more than one is full.
+        var requestedRoleNames = command.RoleNames?.Distinct(StringComparer.Ordinal).ToArray() ?? [];
+        if (requestedRoleNames.Length == 0)
         {
             return ConversationErrors.OperatorInviteInvalidRole(
-                $"Site {command.SiteId.Value} has no role named '{command.RoleName}'.");
+                $"Site {command.SiteId.Value} operator invite must name at least one role.");
+        }
+
+        var resolvedRoles = new List<(string Name, Guid Id)>(requestedRoleNames.Length);
+        foreach (var roleName in requestedRoleNames)
+        {
+            var roleId = await roles.GetIdByNameAsync(command.SiteId, roleName, cancellationToken);
+            if (roleId is null)
+            {
+                return ConversationErrors.OperatorInviteInvalidRole(
+                    $"Site {command.SiteId.Value} has no role named '{roleName}'.");
+            }
+
+            resolvedRoles.Add((roleName, roleId.Value));
+        }
+
+        // `26-241`: the create-time seat reservation - for EACH requested role, refuse the whole invite
+        // unless there is a free seat counting current holders PLUS already-outstanding unredeemed
+        // invites for that role (`OperatorRoleSeatCapacity.CheckForNewInviteAsync`). Runs after role
+        // resolution and before persisting anything, so a refused invite leaves no row behind, and it
+        // applies to single- and multi-role invites alike - a sent-but-unredeemed invite reserves its
+        // seat so an admin cannot over-invite past the limit. The row-locked redeem-time check
+        // (`OperatorInviteRedemptionRepository`) stays as defense-in-depth against a concurrent-send race
+        // (this class's own remarks on why the create check is deliberately unlocked). The refusal names
+        // which role has no slot through the same two 402 codes redemption already uses - "seat limit"
+        // for the Operator role, "administrator limit" for Admin.
+        foreach (var (roleName, roleId) in resolvedRoles)
+        {
+            var seatCheck = await roleSeatCapacity.CheckForNewInviteAsync(command.SiteId, roleName, roleId, cancellationToken);
+            if (seatCheck.IsAtCapacity)
+            {
+                return roleName == AdminRoleName
+                    ? ConversationErrors.OperatorInviteAdminLimitReached(seatCheck.Limit)
+                    : ConversationErrors.OperatorInviteSeatLimitReached(seatCheck.Limit);
+            }
         }
 
         var now = clock.UtcNow;
@@ -102,7 +149,7 @@ public sealed class CreateOperatorInviteHandler(
         var codeHash = SHA256.HashData(Encoding.UTF8.GetBytes(code));
 
         var invite = OperatorInvite.Generate(
-            id, command.SiteId, roleId.Value, codeHash, email, command.RequestedBy, now, options.ValidFor);
+            id, command.SiteId, [.. resolvedRoles.Select(role => role.Id)], codeHash, email, command.RequestedBy, now, options.ValidFor);
         await invites.SaveAsync(invite, cancellationToken);
 
         // `25-73`: the site's own configured Locale (`11-10`), not a separate language choice the admin

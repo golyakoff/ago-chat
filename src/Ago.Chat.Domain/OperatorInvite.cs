@@ -34,12 +34,23 @@ public sealed class OperatorInvite
     /// says who is actually claiming it, and both must agree").</summary>
     public string Email { get; } = string.Empty;
 
-    /// <summary>The site's own `roles` row the invitee will hold once redeemed - `"Operator"` or
-    /// `"Admin"`, resolved by name to this id at generation time (`CreateOperatorInviteHandler`). A
-    /// plain `Guid`, not a Domain id type, matching `OperatorRoleRecord.RoleId`'s own shape - roles
-    /// have no Domain/Application model of their own yet (`RoleRecord`'s own remarks: "nothing above
-    /// `PermissionChecker` manages roles yet, so there is nothing for a richer model to buy").</summary>
-    public Guid RoleId { get; }
+    private readonly List<OperatorInviteRole> _roles = [];
+
+    /// <summary>`26-241`: the set of `roles` rows the invitee will hold once redeemed - one or more of
+    /// the seeded `"Operator"`/`"Admin"` roles, resolved by name to ids at generation time
+    /// (`CreateOperatorInviteHandler`). Before this item this was a single `Guid RoleId`; an admin can now
+    /// invite to more than one role at once, so it became a one-to-many child collection
+    /// (<see cref="OperatorInviteRole"/>) owned by this aggregate, the same `operator_roles` shape the
+    /// redeemed side already uses. The invite's own EF navigation - <see cref="RoleIds"/> is the
+    /// friendlier read every caller outside persistence actually wants.</summary>
+    public IReadOnlyCollection<OperatorInviteRole> Roles => _roles;
+
+    /// <summary>The plain role ids this invite grants - a projection of <see cref="Roles"/>, always at
+    /// least one (<see cref="Generate"/> refuses an empty set). Plain `Guid`s, not a Domain id type,
+    /// matching `OperatorRoleRecord.RoleId`'s own shape - roles have no Domain/Application model of their
+    /// own yet (`RoleRecord`'s own remarks: "nothing above `PermissionChecker` manages roles yet, so
+    /// there is nothing for a richer model to buy").</summary>
+    public IReadOnlyList<Guid> RoleIds => [.. _roles.Select(role => role.RoleId)];
 
     /// <summary>SHA-256 of the plaintext code shown to the caller exactly once, at generation
     /// (`CreateOperatorInviteHandler`) - never stored or logged in plaintext form anywhere.</summary>
@@ -78,7 +89,6 @@ public sealed class OperatorInvite
     private OperatorInvite(
         OperatorInviteId id,
         SiteId siteId,
-        Guid roleId,
         byte[] codeHash,
         string email,
         OperatorId createdByOperatorId,
@@ -89,7 +99,6 @@ public sealed class OperatorInvite
     {
         Id = id;
         SiteId = siteId;
-        RoleId = roleId;
         CodeHash = codeHash;
         Email = email;
         CreatedByOperatorId = createdByOperatorId;
@@ -107,7 +116,7 @@ public sealed class OperatorInvite
     public static OperatorInvite Generate(
         OperatorInviteId id,
         SiteId siteId,
-        Guid roleId,
+        IReadOnlyCollection<Guid> roleIds,
         byte[] codeHash,
         string email,
         OperatorId createdByOperatorId,
@@ -125,7 +134,26 @@ public sealed class OperatorInvite
             throw new ArgumentException("Operator invite email cannot be empty.", nameof(email));
         }
 
-        return new(id, siteId, roleId, codeHash, email, createdByOperatorId, now, now + validFor, redeemedAt: null, redeemedByOperatorId: null);
+        // `26-241`: an invite grants at least one role - a caller-bug throw, not a business refusal, the
+        // same "validate at the Application boundary; this factory only applies it" split the empty-email
+        // guard above already draws. CreateOperatorInviteHandler resolves and de-duplicates the role
+        // names before ever reaching here; the distinct here is a last line of defence, not the primary
+        // check, so a repeated role never becomes two identical child rows that would break the composite
+        // primary key (`OperatorInviteRoleConfiguration`).
+        var distinctRoleIds = roleIds?.Distinct().ToArray() ?? [];
+        if (distinctRoleIds.Length == 0)
+        {
+            throw new ArgumentException("Operator invite must grant at least one role.", nameof(roleIds));
+        }
+
+        var invite = new OperatorInvite(
+            id, siteId, codeHash, email, createdByOperatorId, now, now + validFor, redeemedAt: null, redeemedByOperatorId: null);
+        foreach (var roleId in distinctRoleIds)
+        {
+            invite._roles.Add(new OperatorInviteRole(id, roleId));
+        }
+
+        return invite;
     }
 
     /// <summary>`25-73`: an admin's own decision to withdraw an unredeemed invite - `OperatorsTeamPage`'s

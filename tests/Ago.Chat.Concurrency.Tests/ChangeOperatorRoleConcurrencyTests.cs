@@ -91,7 +91,8 @@ public sealed class ChangeOperatorRoleConcurrencyTests(ConcurrencyTestFixture fi
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
         // `25-181`: a real OwnerSeatGrantStore with nothing seeded reads 0 - this test keeps
         // exercising the identical billing-only admin limit it always has.
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites, new OwnerSeatGrantStore(db), new SystemClock());
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(
+            operatorRoles, sites, new OwnerSeatGrantStore(db), new PendingOperatorInviteSeatReadStore(db), new SystemClock());
         var handler = new ChangeOperatorRoleHandler(
             operators, roles, operatorRoles, permissions, roleSeatCapacity, unitOfWork, roleChangeRecords, outbox,
             new UuidV7Generator(), new SystemClock());

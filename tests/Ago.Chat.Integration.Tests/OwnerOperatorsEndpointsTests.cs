@@ -346,6 +346,10 @@ public sealed class OwnerOperatorsEndpointsTests(OperatorOidcFixture fixture)
         // an owner grant, so a real, always-empty OwnerSeatGrantStore reads 0 and every existing test
         // keeps exercising the identical billing-only limit it always has.
         builder.Services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
+        // `26-241`: OperatorRoleSeatCapacity's other new dependency - the pending-invite seat count its
+        // create-time check reads. Never exercised by a seat restore (that path uses the row-locked
+        // holders-only CheckAsync), but required for DI to construct OperatorRoleSeatCapacity in this host.
+        builder.Services.AddScoped<IPendingOperatorInviteSeatReadStore, PendingOperatorInviteSeatReadStore>();
         builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         // A real repository, not a fake - this suite already runs against a real Postgres
         // (fixture.DataSource), and the whole point of the override tests above is proving a real row

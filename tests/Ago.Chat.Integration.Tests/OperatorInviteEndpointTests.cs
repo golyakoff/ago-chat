@@ -557,58 +557,53 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
     }
 
     /// <summary>
-    /// `13-01`'s own Done-when: "a capacity-rejected invite is confirmed still redeemable afterward
-    /// once a seat opens up... proving the invite was not silently consumed by the rejected attempt."
-    /// A freshly registered site's own `seat_limit` defaults to `1` and already carries its own
-    /// registering operator, so the very first redemption attempt is rejected on capacity with no setup
-    /// needed beyond registering the site.
+    /// `26-241`: the create-time seat reservation is now the primary gate, so a site already at its
+    /// `seat_limit` refuses the invite at CREATE time (a `402`), not only at redemption - and the whole
+    /// point of a reservation is that the admin learns immediately, rather than an invitee discovering it
+    /// on accept. The invite becomes creatable again the moment a seat opens up, proving the refusal was
+    /// about live capacity, not a permanent block. The founder already holds the site's one Operator
+    /// seat (`RegisterSiteHandler`), so lowering `seat_limit` to 1 puts the site at capacity with no
+    /// further setup. (The redeem-time capacity check remains as defense-in-depth, exercised against a
+    /// directly-seeded over-capacity invite by `Ago.Chat.Concurrency.Tests`.)
     /// </summary>
     [Fact]
-    public async Task Redeem_WhenTheSiteIsAtItsSeatLimit_IsRejected402AndTheInviteStaysRedeemableAfterASeatOpens()
+    public async Task Create_WhenTheSiteIsAtItsSeatLimit_IsRejected402AndBecomesCreatableAfterASeatOpens()
     {
         await using var host = await BuildTestHostAsync();
         using var client = host.GetTestClient();
 
         var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
-        // `13-08` raised the free tier's own default seat_limit from 1 to 2, so this test's own
-        // "at capacity already" starting condition can no longer come from the default alone - lowered
-        // explicitly to 1 instead, matching this test's actual subject (redemption at an arbitrary
-        // limit, then a seat opening), which the free-tier default value itself is not.
-        // `Invite_OnAFreshFreeTierSite_*` below are the tests that exercise the real default.
         await RaiseSeatLimitAsync(adminSite, seatLimit: 1);
 
-        // The identical identity presents the identical code both times - this test is about the
-        // invite's own redeemability surviving a rejection, not about who holds the code. `25-73`: the
-        // invite is addressed to this identity's own email so the seat-limit rejection (checked after
-        // the email-match check) is actually what this test's own first attempt hits.
         var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Operator", $"{redeemerUsername}@example.test");
+        var email = $"{redeemerUsername}@example.test";
 
-        using var firstAttemptClient = host.GetTestClient();
-        firstAttemptClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
-        var rejected = await firstAttemptClient.PostAsJsonAsync(
-            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+        using var atCapacityClient = host.GetTestClient();
+        atCapacityClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var rejected = await atCapacityClient.PostAsJsonAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites",
+            new OperatorInviteEndpoints.CreateOperatorInviteRequest("Operator", email));
         Assert.Equal(HttpStatusCode.PaymentRequired, rejected.StatusCode);
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("OperatorInvite.SeatLimitReached", problem.Title);
 
+        // No invite row was written by the refused create - the reservation refuses before persisting.
         await using (var db = fixture.CreateDbContext())
         {
-            var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
-            Assert.False(inviteRow.IsRedeemed);
+            var inviteCount = await db.OperatorInvites.AsNoTracking().CountAsync(i => i.SiteId == new SiteId(adminSite));
+            Assert.Equal(0, inviteCount);
         }
 
+        // A seat opens up - now the invite is creatable, and redeemable.
         await RaiseSeatLimitAsync(adminSite, seatLimit: 2);
+        var invite = await CreateInviteAsync(host.GetTestClient(), adminToken, adminSite, "Operator", email);
 
-        using var secondAttemptClient = host.GetTestClient();
-        secondAttemptClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
-        var succeeded = await secondAttemptClient.PostAsJsonAsync(
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var succeeded = await redeemClient.PostAsJsonAsync(
             "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
         Assert.Equal(HttpStatusCode.OK, succeeded.StatusCode);
-
-        await using (var db = fixture.CreateDbContext())
-        {
-            var inviteRow = await db.OperatorInvites.AsNoTracking().SingleAsync(i => i.Id == new OperatorInviteId(invite.OperatorInviteId));
-            Assert.True(inviteRow.IsRedeemed);
-        }
     }
 
     /// <summary>
@@ -647,9 +642,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
     /// `13-08`'s own Done-when, the other half: "a third is refused, with the refusal readable rather
     /// than a 500." Two operators already fill the free tier's own default `seat_limit` of `2` (the
     /// admin who registered the site plus the one redemption <see cref="Invite_OnAFreshFreeTierSite_ASecondOperatorIsAdmittedWithoutRaisingTheSeatLimitOrPaying"/>
-    /// proves above), so a third redemption must be rejected - and the rejection is asserted as an
-    /// actual RFC 7807 problem body (`api-design.md`), not just a bare status code, so this test cannot
-    /// pass against an unhandled exception's own generic 500 problem response either.
+    /// proves above), so `26-241`'s create-time reservation refuses a third invite outright - and the
+    /// rejection is asserted as an actual RFC 7807 problem body (`api-design.md`), not just a bare status
+    /// code, so this test cannot pass against an unhandled exception's own generic 500 problem response
+    /// either.
     /// </summary>
     [Fact]
     public async Task Invite_OnAFreshFreeTierSite_AThirdOperatorIsRefused_WithAReadableErrorNotA500()
@@ -667,18 +663,15 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
             "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(firstInvite.Code));
         Assert.Equal(HttpStatusCode.OK, firstRedeemed.StatusCode);
 
-        // Now at 2/2 - admin plus the one redeemed operator above. A second invite for a third identity.
-        // A fresh client, not the outer `client` - CreateInviteAsync's own `using var adminClient =
-        // client` disposes whatever it is handed, so the outer `client` is no longer usable after the
-        // first CreateInviteAsync call above.
-        var (secondRedeemerToken, secondRedeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        // Now at 2/2 - admin plus the one redeemed operator above. `26-241`: a second invite for a third
+        // identity is now refused at CREATE time (the send-time reservation), not at redemption - a fresh
+        // client, not the outer `client`, which CreateInviteAsync above already disposed.
+        var (_, secondRedeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
         using var secondInviteClient = host.GetTestClient();
-        var secondInvite = await CreateInviteAsync(
-            secondInviteClient, adminToken, adminSite, "Operator", $"{secondRedeemerUsername}@example.test");
-        using var secondRedeemer = host.GetTestClient();
-        secondRedeemer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secondRedeemerToken);
-        var rejected = await secondRedeemer.PostAsJsonAsync(
-            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(secondInvite.Code));
+        secondInviteClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var rejected = await secondInviteClient.PostAsJsonAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites",
+            new OperatorInviteEndpoints.CreateOperatorInviteRequest("Operator", $"{secondRedeemerUsername}@example.test"));
 
         Assert.Equal(HttpStatusCode.PaymentRequired, rejected.StatusCode);
 
@@ -688,11 +681,13 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal("OperatorInvite.SeatLimitReached", problem.Title);
         Assert.Contains("seat limit of 2", problem.Detail);
 
-        // The site's operator count never crossed its own limit - the third redemption genuinely never
-        // happened, not merely reported as refused.
+        // The site's operator count never crossed its own limit, and no third invite row was written -
+        // the reservation refuses before persisting anything.
         await using var db = fixture.CreateDbContext();
         var operatorCount = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == new SiteId(adminSite) && o.RemovedAt == null);
         Assert.Equal(2, operatorCount);
+        var inviteCount = await db.OperatorInvites.AsNoTracking().CountAsync(i => i.SiteId == new SiteId(adminSite));
+        Assert.Equal(1, inviteCount);
     }
 
     /// <summary>
@@ -764,13 +759,16 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
 
         var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
 
-        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
-        var invite = await CreateInviteAsync(client, adminToken, adminSite, "Admin", $"{redeemerUsername}@example.test");
+        var (_, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
 
-        using var redeemClient = host.GetTestClient();
-        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
-        var rejected = await redeemClient.PostAsJsonAsync(
-            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+        // `26-241`: the founder already holds the free tier's single administrator seat, so a second
+        // Admin invite is refused at CREATE time - the create-time reservation counts the Admin role's
+        // own holders against `AdminLimit`, the same all-or-nothing per-role gate the Operator seat uses.
+        using var createClient = host.GetTestClient();
+        createClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var rejected = await createClient.PostAsJsonAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites",
+            new OperatorInviteEndpoints.CreateOperatorInviteRequest("Admin", $"{redeemerUsername}@example.test"));
 
         Assert.Equal(HttpStatusCode.PaymentRequired, rejected.StatusCode);
 
@@ -779,12 +777,67 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.Equal("OperatorInvite.AdminLimitReached", problem.Title);
         Assert.Contains("administrator limit of 1", problem.Detail);
 
-        // Refused, not merely reported as refused - the second redemption never happened, and the
-        // invite itself is still redeemable once the plan is upgraded (the same "still redeemable"
-        // guarantee the seat-limit rejection above already proves for its own invite).
+        // Refused before persisting - no second operator, and no invite row left behind.
         await using var db = fixture.CreateDbContext();
         var operatorCount = await db.Operators.AsNoTracking().CountAsync(o => o.SiteId == new SiteId(adminSite) && o.RemovedAt == null);
         Assert.Equal(1, operatorCount);
+        var inviteCount = await db.OperatorInvites.AsNoTracking().CountAsync(i => i.SiteId == new SiteId(adminSite));
+        Assert.Equal(0, inviteCount);
+    }
+
+    /// <summary>
+    /// `26-241`'s headline: one invite to Operator AND Admin at once, redeemed into BOTH roles - a single
+    /// invite row carrying two role lines, and a single redemption that grants the new operator two
+    /// `operator_roles` rows. Proven end to end against real Postgres, both roles read back off the new
+    /// operator's own rows, not asserted from the handler's logic alone.
+    /// Fails-before: against `main` the create request DTO has no `roleNames` field and the invite carries
+    /// a single `role_id`, so a two-role invite cannot be expressed or redeemed.
+    /// </summary>
+    [Fact]
+    public async Task CreateAndRedeem_AnInviteToBothOperatorAndAdmin_GrantsBothRolesInOneRedemption()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        // Room for a second administrator (the founder holds the first) and, on the free tier, a second
+        // operator seat already exists - so both requested roles have a free slot at create time.
+        await RaiseAdminLimitAsync(adminSite, adminLimit: 2);
+
+        var (redeemerToken, redeemerUsername) = await fixture.CreateFreshUserAccessTokenAsync();
+        var email = $"{redeemerUsername}@example.test";
+
+        using var createClient = host.GetTestClient();
+        createClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var createResponse = await createClient.PostAsJsonAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites",
+            new OperatorInviteEndpoints.CreateOperatorInviteRequest(RoleName: null, Email: email, RoleNames: ["Operator", "Admin"]));
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var invite = await createResponse.Content.ReadFromJsonAsync<OperatorInviteEndpoints.CreateOperatorInviteResponse>();
+        Assert.NotNull(invite);
+
+        using var redeemClient = host.GetTestClient();
+        redeemClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", redeemerToken);
+        var redeemResponse = await redeemClient.PostAsJsonAsync(
+            "/api/v1/operator-invites/redeem", new OperatorInviteEndpoints.RedeemOperatorInviteRequest(invite.Code));
+        Assert.Equal(HttpStatusCode.OK, redeemResponse.StatusCode);
+        var redeemed = await redeemResponse.Content.ReadFromJsonAsync<OperatorInviteEndpoints.RedeemOperatorInviteResponse>();
+        Assert.NotNull(redeemed);
+
+        await using var db = fixture.CreateDbContext();
+        var siteId = new SiteId(adminSite);
+        var operatorRoleId = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId && r.Name == "Operator").Select(r => r.Id).SingleAsync();
+        var administratorRoleId = await db.Roles.AsNoTracking()
+            .Where(r => r.SiteId == siteId && r.Name == "Admin").Select(r => r.Id).SingleAsync();
+
+        var grantedRoleIds = await db.OperatorRoles.AsNoTracking()
+            .Where(or => or.OperatorId == new OperatorId(redeemed.OperatorId))
+            .Select(or => or.RoleId)
+            .ToListAsync();
+        Assert.Equal(2, grantedRoleIds.Count);
+        Assert.Contains(operatorRoleId, grantedRoleIds);
+        Assert.Contains(administratorRoleId, grantedRoleIds);
     }
 
     [Fact]
@@ -1025,6 +1078,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         // an owner grant, so a real, always-empty OwnerSeatGrantStore reads 0 and every existing test
         // keeps exercising the identical billing-only limit it always has.
         builder.Services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
+        // `26-241`: OperatorRoleSeatCapacity's new dependency - the pending-invite seat count its
+        // create-time check reads. CreateOperatorInviteHandler now composes OperatorRoleSeatCapacity for
+        // the send-time seat reservation, so this stripped-down host must resolve it too.
+        builder.Services.AddScoped<IPendingOperatorInviteSeatReadStore, PendingOperatorInviteSeatReadStore>();
         builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         builder.Services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
         builder.Services.AddSingleton<IOperatorInviteCodeGenerator, OperatorInviteCodeGenerator>();

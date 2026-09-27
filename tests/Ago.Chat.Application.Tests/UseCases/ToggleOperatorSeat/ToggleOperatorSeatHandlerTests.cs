@@ -35,7 +35,7 @@ public class ToggleOperatorSeatHandlerTests
         // every test in this file keeps exercising the identical billing-only limit it always has; the
         // clock value is irrelevant since nothing is seeded for it to check an expiry against.
         var roleSeatCapacity = new OperatorRoleSeatCapacity(
-            operatorRoles, sites, new FakeOwnerSeatGrantStore(), new FakeClock(DateTimeOffset.UtcNow));
+            operatorRoles, sites, new FakeOwnerSeatGrantStore(), new FakeOperatorInviteRepository(), new FakeClock(DateTimeOffset.UtcNow));
         var handler = new Application.UseCases.ToggleOperatorSeat.ToggleOperatorSeatHandler(
             operators, operatorRoles, permissions, new FakeUnitOfWork(), roleSeatCapacity);
         return new Fixture(handler, operators, operatorRoles, sites);

@@ -102,8 +102,16 @@ public static class OperatorInviteEndpoints
         CancellationToken cancellationToken)
     {
         var user = httpContext.User;
+        // `26-241`: the additive multi-role shape. A new caller sends `roleNames: ["Operator", "Admin"]`;
+        // a pre-`26-241` caller sends the single `roleName`, which maps to a one-element list here - so
+        // the wire contract stays backward-compatible while the handler always works in terms of a set.
+        // An empty request (neither field) reaches the handler as an empty list and is refused there with
+        // `OperatorInvite.InvalidRole`, the same place an unknown role name is refused.
+        IReadOnlyList<string> roleNames = request.RoleNames is { Count: > 0 } names
+            ? names
+            : request.RoleName is { Length: > 0 } singleRole ? [singleRole] : [];
         var result = await handler.HandleAsync(
-            new CreateOperatorInvite(user.GetOperatorId(), new SiteId(siteId), request.RoleName, request.Email),
+            new CreateOperatorInvite(user.GetOperatorId(), new SiteId(siteId), roleNames, request.Email),
             cancellationToken);
 
         if (result.IsFailure)
@@ -270,8 +278,17 @@ public static class OperatorInviteEndpoints
 
     /// <summary>`25-73`: <see cref="Email"/> is required - refused by <see cref="CreateOperatorInviteHandler"/>
     /// itself (`ConversationErrors.OperatorInviteInvalidEmail`) when absent or malformed, never only
-    /// hidden by the console's own form.</summary>
-    public sealed record CreateOperatorInviteRequest(string RoleName, string Email);
+    /// hidden by the console's own form.
+    ///
+    /// <para>`26-241`: <see cref="RoleNames"/> is the additive multi-role field - a console/android UI
+    /// that has adopted the multi-select sends <c>["Operator", "Admin"]</c> here to invite to both roles
+    /// at once. The legacy single <see cref="RoleName"/> stays for callers that have not adopted it yet;
+    /// <see cref="HandleCreateAsync"/> prefers <see cref="RoleNames"/> when it is non-empty and otherwise
+    /// falls back to a one-element list from <see cref="RoleName"/>, so both shapes keep working. Exactly
+    /// one of the two is expected on any given request; an empty request is refused with
+    /// `OperatorInvite.InvalidRole`. Both are nullable so a JSON body naming only one deserialises
+    /// cleanly.</para></summary>
+    public sealed record CreateOperatorInviteRequest(string? RoleName, string Email, IReadOnlyList<string>? RoleNames = null);
 
     /// <summary><see cref="Code"/> is the plaintext value, present in this response only - see
     /// `CreatedOperatorInvite`'s own remarks. `25-73`: <see cref="SendFailed"/> - see that record's own

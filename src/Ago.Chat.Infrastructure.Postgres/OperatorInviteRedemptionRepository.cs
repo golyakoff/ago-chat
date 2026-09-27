@@ -38,7 +38,12 @@ public sealed class OperatorInviteRedemptionRepository(
     public async Task<OperatorInviteRedemptionResult> RedeemAsync(
         RedeemOperatorInviteAttempt attempt, CancellationToken cancellationToken)
     {
-        var invite = await db.OperatorInvites.FirstOrDefaultAsync(i => i.CodeHash == attempt.CodeHash, cancellationToken);
+        // `26-241`: Include(i => i.Roles) - redemption now assigns every role the invite grants, so its
+        // role lines must be loaded with it (before this item there was a single `role_id` column on the
+        // row itself, needing no include).
+        var invite = await db.OperatorInvites
+            .Include(i => i.Roles)
+            .FirstOrDefaultAsync(i => i.CodeHash == attempt.CodeHash, cancellationToken);
         if (invite is null)
         {
             return new OperatorInviteRedemptionResult.NotFound();
@@ -97,6 +102,7 @@ public sealed class OperatorInviteRedemptionRepository(
         // full rows rather than an `exists()`, because this call needs to know not just *whether* one
         // exists but *which one*, and whether there is exactly one.
         var candidates = await db.OperatorInvites
+            .Include(i => i.Roles)
             .Where(i => i.Email == attempt.Email && i.RedeemedAt == null && i.RevokedAt == null && i.ExpiresAt > attempt.Now)
             .ToListAsync(cancellationToken);
 
@@ -140,28 +146,31 @@ public sealed class OperatorInviteRedemptionRepository(
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-        // `25-25`: which role this invite names, purely to choose the capacity check's own parameter -
-        // never both limits, and no longer "seat_limit, regardless of role" the way it was before that
-        // item. `25-170`: the two hand-written branches this block replaced (an Admin-role count against
-        // `AdminLimit`, a `HoldsSeat`-filtered count against `SeatLimit`) are now one call into
-        // `OperatorRoleSeatCapacity` - the identical row-locked primitive `ChangeOperatorRoleHandler`'s
-        // own Admin-promotion guard shares, unified rather than duplicated.
-        var roleName = await db.Roles.AsNoTracking()
-            .Where(r => r.Id == invite.RoleId)
-            .Select(r => r.Name)
-            .SingleAsync(cancellationToken);
+        // `26-241`: the invite can name more than one role now, so every role it grants is resolved to
+        // its name and permission set up front. `25-25`: the name chooses which capacity check parameter
+        // (and which refusal) each role maps to; `25-170`: the check itself is `OperatorRoleSeatCapacity`,
+        // the row-locked primitive `ChangeOperatorRoleHandler`'s own Admin-promotion guard shares.
+        var inviteRoleIds = invite.RoleIds;
+        var roleRows = await db.Roles.AsNoTracking()
+            .Where(r => inviteRoleIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.Name, r.Permissions })
+            .ToListAsync(cancellationToken);
 
-        var check = await roleSeatCapacity.CheckAsync(invite.SiteId, roleName, cancellationToken);
-        if (check.IsAtCapacity)
+        // `26-241`: refuse the whole redemption unless EVERY requested role has a free seat, the same
+        // all-or-nothing rule the create-time reservation applies - checked before a single row is
+        // staged, so a capacity-rejected invite stays exactly as it was (`13-01`'s own Done-when: "still
+        // redeemable afterward once a seat opens up"). This is the authoritative, row-locked cap
+        // (`OperatorRoleSeatCapacity.CheckAsync`); the create-time check is only a preventive gate.
+        foreach (var role in roleRows)
         {
-            // Rolled back, nothing committed - the invite stays exactly as it was. `13-01`'s own
-            // Done-when: "a capacity-rejected invite is confirmed still redeemable afterward once a
-            // seat opens up" - true here by construction, since this method never staged a single
-            // change against it on this path.
-            await transaction.RollbackAsync(cancellationToken);
-            return roleName == AdminRoleName
-                ? new OperatorInviteRedemptionResult.AdminLimitReached(check.Limit)
-                : new OperatorInviteRedemptionResult.SeatLimitReached(check.Limit);
+            var check = await roleSeatCapacity.CheckAsync(invite.SiteId, role.Name, cancellationToken);
+            if (check.IsAtCapacity)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return role.Name == AdminRoleName
+                    ? new OperatorInviteRedemptionResult.AdminLimitReached(check.Limit)
+                    : new OperatorInviteRedemptionResult.SeatLimitReached(check.Limit);
+            }
         }
 
         var newOperatorId = new OperatorId(idGenerator.NewId(now));
@@ -171,29 +180,33 @@ public sealed class OperatorInviteRedemptionRepository(
         db.Operators.Add(new Operator(
             newOperatorId, invite.SiteId, OperatorStatus.Offline, capacity: 5, externalSubjectId,
             displayName: name, email: email));
-        // `25-170`: HoldsSeat: true unconditionally - no longer `!isAdminInvite`. Under the pre-`25-170`
-        // account-level model, an Administrator invite set the account's own `HoldsSeat` to `false`
-        // because the flag meant "occupies an Operator-role seat," which an Administrator never does;
-        // now that the flag lives on this specific `(operator, role)` pairing, "holds a seat" means
-        // "counts toward this row's own role's own limit" - and every freshly granted role, Operator or
-        // Admin alike, starts out counting, the identical "the correct starting state for every row, not
-        // a special case" default this table's own migration backfill gives every pre-existing row too
-        // (`OperatorRoleRecord`'s own remarks).
-        db.OperatorRoles.Add(new OperatorRoleRecord
+        // `26-241`: one `operator_roles` row per role the invite grants - a founder invited to both
+        // Operator and Admin gets both rows, the same two-role shape `RegisterSiteHandler` gives the
+        // account's own founder. `25-170`: HoldsSeat: true for every row - "holds a seat" means "counts
+        // toward this row's own role's own limit," and every freshly granted role, Operator or Admin
+        // alike, starts out counting (`OperatorRoleRecord`'s own remarks).
+        foreach (var role in roleRows)
         {
-            OperatorId = newOperatorId,
-            RoleId = invite.RoleId,
-            HoldsSeat = true,
-            GrantedAt = now,
-        });
+            db.OperatorRoles.Add(new OperatorRoleRecord
+            {
+                OperatorId = newOperatorId,
+                RoleId = role.Id,
+                HoldsSeat = true,
+                GrantedAt = now,
+            });
+        }
+
         invite.Redeem(newOperatorId, now);
 
-        // `22-05`/`adr/0093`: the redeemed operator's projected fact - the one role this invite names.
-        // Read back from `roles` rather than carried on the invite itself: the invite only ever held a
-        // `RoleId` (`OperatorInvite`'s own shape), and the row it names was already committed at site
-        // registration, so this is an ordinary read of already-durable data, not a read of anything
-        // this method is itself in the middle of writing.
-        var rolePermissions = await db.Roles.Where(r => r.Id == invite.RoleId).Select(r => r.Permissions).SingleAsync(cancellationToken);
+        // `22-05`/`adr/0093`: the redeemed operator's projected permission set - the UNION of every role
+        // this invite grants, de-duplicated, in one `RoleAssignmentsChanged` (the projection is keyed by
+        // subject and carries the full permission set that subject may now exercise, not one event per
+        // role). Read back from `roles` (already-durable data committed at registration), never from
+        // anything this method is itself in the middle of writing.
+        var rolePermissions = roleRows
+            .SelectMany(role => role.Permissions)
+            .Distinct()
+            .ToList();
         outbox.Enqueue(RoleAssignmentsChangedMapper.ToEnvelope(
             externalSubjectId, invite.SiteId.Value, rolePermissions, now, idGenerator));
 

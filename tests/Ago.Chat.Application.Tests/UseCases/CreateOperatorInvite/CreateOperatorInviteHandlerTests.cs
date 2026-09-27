@@ -3,6 +3,7 @@ using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
+using Ago.Chat.Application.UseCases.OperatorRoleSeats;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -15,6 +16,9 @@ public class CreateOperatorInviteHandlerTests
     private static readonly OperatorId OperatorId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
     private static readonly Guid OperatorRoleId = Guid.NewGuid();
+    private static readonly Guid AdminRoleId = Guid.NewGuid();
+    private const string OperatorRoleName = "Operator";
+    private const string AdminRoleName = "Admin";
     private const string InviteeEmail = "colleague@shop.example";
 
     private sealed record Fixture(
@@ -22,15 +26,22 @@ public class CreateOperatorInviteHandlerTests
         FakeOperatorInviteRepository Invites,
         FakePermissionChecker Permissions,
         FakeRoleRepository Roles,
+        FakeOperatorRoleRepository OperatorRoles,
         FakeOperatorInviteEmailProvisioner EmailProvisioner,
         FakeNotificationMailSender MailSender);
 
+    /// <summary>`26-241`: <paramref name="site"/> defaults to the free tier (Operator seat limit `2`,
+    /// Administrator limit `1`) with no holders seeded, so every pre-`26-241` single-Operator-invite test
+    /// passes the new create-time seat check with room to spare. A test exercising a full seat passes its
+    /// own tighter <paramref name="site"/> and/or seeds holders/pending invites on the returned
+    /// fixture's fakes.</summary>
     private static Fixture CreateFixture(
         bool grantPermission = true,
         TimeSpan? validFor = null,
         Ago.Platform.Abstractions.IRateLimiter? rateLimiter = null,
         OperatorInviteProvisionOutcome? provisionOutcome = null,
-        Exception? fallbackMailThrows = null)
+        Exception? fallbackMailThrows = null,
+        Site? site = null)
     {
         var invites = new FakeOperatorInviteRepository();
         var permissions = new FakePermissionChecker();
@@ -40,23 +51,37 @@ public class CreateOperatorInviteHandlerTests
         }
 
         var roles = new FakeRoleRepository();
-        roles.Seed(SiteId, "Operator", OperatorRoleId);
+        roles.Seed(SiteId, OperatorRoleName, OperatorRoleId);
+        roles.Seed(SiteId, AdminRoleName, AdminRoleId);
+
+        var operatorRoles = new FakeOperatorRoleRepository();
+        var sites = new FakeSiteRepository();
+        sites.Seed(site ?? new Site(SiteId, $"site_{SiteId.Value:N}", []));
+
+        // `26-241`: the create-time per-role seat check the handler now runs - the same
+        // OperatorRoleSeatCapacity ChangeOperatorRoleHandler/redemption use, constructed here with the
+        // in-memory invite repository doubling as its pending-invite count store (FakeOperatorInviteRepository's
+        // own remarks), so a saved invite reserves its slot against the next create in these unit tests
+        // exactly as it does against real Postgres.
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(
+            operatorRoles, sites, new FakeOwnerSeatGrantStore(), invites, new FakeClock(Now));
 
         var emailProvisioner = new FakeOperatorInviteEmailProvisioner(provisionOutcome);
         var mailSender = new FakeNotificationMailSender(fallbackMailThrows);
 
         var handler = new Application.UseCases.CreateOperatorInvite.CreateOperatorInviteHandler(
-            invites, roles, permissions, new FakeOperatorInviteCodeGenerator("invite_abc123"),
-            emailProvisioner, mailSender, new FakeSiteRepository(), rateLimiter ?? new FakeRateLimiter(),
+            invites, roles, permissions, roleSeatCapacity, new FakeOperatorInviteCodeGenerator("invite_abc123"),
+            emailProvisioner, mailSender, sites, rateLimiter ?? new FakeRateLimiter(),
             new OperatorInviteOptions { ValidFor = validFor ?? TimeSpan.FromDays(7), ConsoleBaseUrl = "https://console.example.test" },
             new OperatorInviteCreationRateLimitOptions(), new FakeIdGenerator(), new FakeClock(Now),
             NullLogger<Application.UseCases.CreateOperatorInvite.CreateOperatorInviteHandler>.Instance);
 
-        return new Fixture(handler, invites, permissions, roles, emailProvisioner, mailSender);
+        return new Fixture(handler, invites, permissions, roles, operatorRoles, emailProvisioner, mailSender);
     }
 
-    private static Application.UseCases.CreateOperatorInvite.CreateOperatorInvite Command(string? roleName = null, string? email = null) =>
-        new(OperatorId, SiteId, roleName ?? "Operator", email ?? InviteeEmail);
+    private static Application.UseCases.CreateOperatorInvite.CreateOperatorInvite Command(
+        IReadOnlyList<string>? roleNames = null, string? email = null) =>
+        new(OperatorId, SiteId, roleNames ?? [OperatorRoleName], email ?? InviteeEmail);
 
     [Fact]
     public async Task HandleAsync_WhenPermitted_ReturnsTheGeneratedCode()
@@ -80,7 +105,7 @@ public class CreateOperatorInviteHandlerTests
 
         var saved = fixture.Invites.Get(new OperatorInviteId(result.Value.OperatorInviteId));
         Assert.NotNull(saved);
-        Assert.Equal(OperatorRoleId, saved.RoleId);
+        Assert.Equal([OperatorRoleId], saved.RoleIds);
         Assert.Equal(SiteId, saved.SiteId);
         Assert.Equal(OperatorId, saved.CreatedByOperatorId);
         Assert.Equal(InviteeEmail, saved.Email);
@@ -115,7 +140,7 @@ public class CreateOperatorInviteHandlerTests
     {
         var fixture = CreateFixture();
 
-        var result = await fixture.Handler.HandleAsync(Command(roleName: "SuperAdmin"), CancellationToken.None);
+        var result = await fixture.Handler.HandleAsync(Command(roleNames: ["SuperAdmin"]), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("OperatorInvite.InvalidRole", result.Error!.Value.Code);
@@ -314,5 +339,117 @@ public class CreateOperatorInviteHandlerTests
         Assert.True(result.IsSuccess);
         Assert.False(result.Value.SendFailed);
         Assert.Equal(1, fixture.Invites.Count);
+    }
+
+    // `26-241`: the multi-role invite and the create-time, pending-aware seat reservation.
+
+    /// <summary>`26-241`: an admin invites one person to Operator AND Admin at once - the invite is
+    /// created carrying both role ids, when both roles have a free seat. Fails-before: with the command
+    /// still single-role (`string RoleName`), there is no way to express "both" and this test could not
+    /// be written.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenInvitingToBothRolesAndBothHaveSeats_CreatesOneInviteCarryingBothRoles()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(roleNames: [OperatorRoleName, AdminRoleName]), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var saved = fixture.Invites.Get(new OperatorInviteId(result.Value.OperatorInviteId));
+        Assert.NotNull(saved);
+        Assert.Equal([OperatorRoleId, AdminRoleId], saved.RoleIds);
+        // One invite, one email - the multi-role invite is a single row, not one per role.
+        Assert.Equal(1, fixture.Invites.Count);
+        Assert.Equal(InviteeEmail, fixture.EmailProvisioner.LastRequest!.Email);
+    }
+
+    /// <summary>`26-241`: the whole invite is refused - naming the Operator seat - when the Operator role
+    /// has no free slot, even though the Admin role does. Nothing is persisted.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenInvitingToBothRolesButTheOperatorSeatIsFull_RefusesWithSeatLimitReached()
+    {
+        var fixture = CreateFixture(site: new Site(SiteId, $"site_{SiteId.Value:N}", [], seatLimit: 1));
+        // One held Operator seat already fills the site's own seat limit of 1.
+        fixture.OperatorRoles.SeedSeat(new OperatorId(Guid.NewGuid()), OperatorRoleName, holdsSeat: true);
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(roleNames: [OperatorRoleName, AdminRoleName]), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.SeatLimitReached", result.Error!.Value.Code);
+        Assert.Equal(0, fixture.Invites.Count);
+    }
+
+    /// <summary>`26-241`: the whole invite is refused - naming the administrator limit - when the Admin
+    /// role has no free slot, even though the Operator role does.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenInvitingToBothRolesButTheAdminSeatIsFull_RefusesWithAdminLimitReached()
+    {
+        // Free tier: Operator seat limit 2 (room), administrator limit 1 (filled below).
+        var fixture = CreateFixture();
+        fixture.OperatorRoles.SeedSeat(new OperatorId(Guid.NewGuid()), AdminRoleName, holdsSeat: true);
+
+        var result = await fixture.Handler.HandleAsync(
+            Command(roleNames: [OperatorRoleName, AdminRoleName]), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.AdminLimitReached", result.Error!.Value.Code);
+        Assert.Equal(0, fixture.Invites.Count);
+    }
+
+    /// <summary>`26-241`: a single-role invite is refused at CREATE time when its seat is already full -
+    /// the send-time check applies to single-role invites too, not only the new multi-role path.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSingleRequestedRoleSeatIsFull_RefusesAtCreateTime()
+    {
+        var fixture = CreateFixture(site: new Site(SiteId, $"site_{SiteId.Value:N}", [], seatLimit: 1));
+        fixture.OperatorRoles.SeedSeat(new OperatorId(Guid.NewGuid()), OperatorRoleName, holdsSeat: true);
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.SeatLimitReached", result.Error!.Value.Code);
+        Assert.Equal(0, fixture.Invites.Count);
+    }
+
+    /// <summary>`26-241`'s crux: a sent-but-unredeemed invite RESERVES its seat. On a site with one
+    /// Operator seat and no holders, the first invite is created (reserving the slot); a second create for
+    /// the same role is refused because the first pending invite already consumed it - proving the pending
+    /// count, not just current holders, feeds the check. Revoking the first frees the slot again.</summary>
+    [Fact]
+    public async Task HandleAsync_ASecondSingleRoleInviteIsRefused_BecauseTheFirstPendingInviteReservedTheOnlySeat()
+    {
+        var fixture = CreateFixture(site: new Site(SiteId, $"site_{SiteId.Value:N}", [], seatLimit: 1));
+
+        // First invite: 0 holders, 0 pending, limit 1 -> allowed, and now reserves the only slot.
+        var first = await fixture.Handler.HandleAsync(Command(email: "first@shop.example"), CancellationToken.None);
+        Assert.True(first.IsSuccess);
+
+        // Second invite: 0 holders, but 1 outstanding invite already reserves the seat -> refused.
+        var second = await fixture.Handler.HandleAsync(Command(email: "second@shop.example"), CancellationToken.None);
+        Assert.True(second.IsFailure);
+        Assert.Equal("OperatorInvite.SeatLimitReached", second.Error!.Value.Code);
+
+        // Revoking the first frees the reserved slot - the same invite's own Revoke, no separate release
+        // path (IPendingOperatorInviteSeatReadStore's own remarks) - so a third create succeeds again.
+        var firstInvite = fixture.Invites.Get(new OperatorInviteId(first.Value.OperatorInviteId));
+        firstInvite!.Revoke(Now);
+        var third = await fixture.Handler.HandleAsync(Command(email: "third@shop.example"), CancellationToken.None);
+        Assert.True(third.IsSuccess);
+    }
+
+    /// <summary>`26-241`: an invite naming no role at all is refused with the same `InvalidRole` code an
+    /// unknown role name gets - the handler always requires at least one resolvable role.</summary>
+    [Fact]
+    public async Task HandleAsync_WithNoRolesAtAll_ReturnsInvalidRole()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Handler.HandleAsync(Command(roleNames: []), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("OperatorInvite.InvalidRole", result.Error!.Value.Code);
+        Assert.Equal(0, fixture.Invites.Count);
     }
 }

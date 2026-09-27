@@ -58,7 +58,11 @@ public class ChangeOperatorRoleHandlerTests
         // `25-181`: FakeOwnerSeatGrantStore with nothing seeded - EffectiveExtraAsync reads 0, so
         // every pre-existing test in this file keeps exercising the identical billing-only limit it
         // always has.
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, sites, new FakeOwnerSeatGrantStore(), new FakeClock(Now));
+        // `26-241`: OperatorRoleSeatCapacity gained a pending-invite dependency for its create-time
+        // check - a role change never reads it (it uses the row-locked CheckAsync, holders only), so an
+        // empty fake is enough for every test in this file.
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(
+            operatorRoles, sites, new FakeOwnerSeatGrantStore(), new FakeOperatorInviteRepository(), new FakeClock(Now));
         var handler = new Application.UseCases.ChangeOperatorRole.ChangeOperatorRoleHandler(
             operators, roles, operatorRoles, permissions, roleSeatCapacity, unitOfWork, roleChangeRecords, outbox,
             new FakeIdGenerator(), new FakeClock(Now));

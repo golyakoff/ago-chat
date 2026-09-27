@@ -253,6 +253,9 @@ public sealed class OwnerSeatGrantsEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IPermissionChecker, PermissionChecker>();
         builder.Services.AddScoped<ISiteRepository, SiteRepository>();
         builder.Services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        // `26-241`: OperatorRoleSeatCapacity's new pending-invite dependency - required for DI to
+        // construct it in this host (the seat-summary path itself never reads it).
+        builder.Services.AddScoped<IPendingOperatorInviteSeatReadStore, PendingOperatorInviteSeatReadStore>();
         builder.Services.AddScoped<OperatorRoleSeatCapacity>();
         builder.Services.AddScoped<IOwnerSeatGrantStore, OwnerSeatGrantStore>();
         builder.Services.AddScoped<GetOwnerSeatSummaryHandler>();

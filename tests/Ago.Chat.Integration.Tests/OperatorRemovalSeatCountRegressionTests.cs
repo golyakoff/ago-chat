@@ -48,7 +48,8 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
         // exercising the identical billing-only seat limit it always has.
         var roleSeatCapacity = new OperatorRoleSeatCapacity(
             new OperatorRoleRepository(repositoryDb), new SiteRepository(repositoryDb),
-            new OwnerSeatGrantStore(repositoryDb), new Ago.Platform.Hosting.SystemClock());
+            new OwnerSeatGrantStore(repositoryDb), new PendingOperatorInviteSeatReadStore(repositoryDb),
+            new Ago.Platform.Hosting.SystemClock());
         var repository = new OperatorInviteRedemptionRepository(
             repositoryDb, new Ago.Platform.Kernel.UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(repositoryDb), roleSeatCapacity);
 
@@ -82,7 +83,7 @@ public sealed class OperatorRemovalSeatCountRegressionTests(PostgresFixture fixt
 
         await using var db = fixture.CreateDbContext();
         var invite = OperatorInvite.Generate(
-            inviteId, siteId, roleId, codeHash, email, new OperatorId(Guid.NewGuid()), Now, TimeSpan.FromDays(7));
+            inviteId, siteId, [roleId], codeHash, email, new OperatorId(Guid.NewGuid()), Now, TimeSpan.FromDays(7));
         db.OperatorInvites.Add(invite);
         await db.SaveChangesAsync();
 
