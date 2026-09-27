@@ -32,6 +32,45 @@ public class ConversationModuleTaskTests
         Assert.Equal(Actions.Count, task.LastStepActions.Count);
     }
 
+    [Fact]
+    public void StartModuleTask_RaisesModuleTaskStarted_ForTheFunnelRollup()
+    {
+        var conversation = StartConversation();
+        var taskId = new ModuleTaskId(Guid.NewGuid());
+
+        conversation.StartModuleTask(taskId, Calendar, "ext-task-1", Now, ChoiceListKind, null, Actions);
+
+        // `26-237`: the analytics "flow started" fact, drained at the handler's save point. OccurredAt is
+        // the open instant, the day the funnel report windows by.
+        var started = Assert.Single(conversation.DomainEvents.OfType<ModuleTaskStarted>());
+        Assert.Equal(conversation.Id, started.ConversationId);
+        Assert.Equal(SiteId, started.SiteId);
+        Assert.Equal(taskId, started.ModuleTaskId);
+        Assert.Equal(Calendar, started.ModuleKey);
+        Assert.Equal(Now, started.OccurredAt);
+    }
+
+    [Fact]
+    public void CloseModuleTask_RaisesModuleTaskClosed_CarryingTheOpenInstantForFunnelBucketing()
+    {
+        var conversation = StartConversation();
+        var taskId = new ModuleTaskId(Guid.NewGuid());
+        conversation.StartModuleTask(taskId, Calendar, "ext-task-1", Now, ChoiceListKind, null, Actions);
+        var closedAt = Now.AddHours(2);
+
+        conversation.CloseModuleTask(closedAt);
+
+        // `26-237`: the analytics "flow closed" fact. OccurredAt is the close instant, but OpenedAt carries
+        // the task's open instant so the mapper buckets the wire event into the open day (pairs with start).
+        var closed = Assert.Single(conversation.DomainEvents.OfType<ModuleTaskClosed>());
+        Assert.Equal(conversation.Id, closed.ConversationId);
+        Assert.Equal(SiteId, closed.SiteId);
+        Assert.Equal(taskId, closed.ModuleTaskId);
+        Assert.Equal(Calendar, closed.ModuleKey);
+        Assert.Equal(Now, closed.OpenedAt);
+        Assert.Equal(closedAt, closed.OccurredAt);
+    }
+
     /// <summary>The whole point of this item's own aggregate-level invariant - see
     /// <see cref="Conversation.StartModuleTask"/>'s own remarks on why this is enforced here rather
     /// than trusted to a caller that checked <see cref="Conversation.ActiveModuleTask"/> first.</summary>

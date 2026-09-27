@@ -934,8 +934,29 @@ public class RouteConversationToModuleHandlerTests
 
         await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
 
-        var envelope = Assert.Single(fixture.Outbox.Enqueued);
-        Assert.Equal(nameof(MessageAccepted), envelope.Type);
+        // The system message is always outboxed as MessageAccepted...
+        Assert.Contains(fixture.Outbox.Enqueued, e => e.Type == nameof(MessageAccepted));
+        // ...and `26-237`: starting a module task also stages the funnel rollup's "flow started" analytics
+        // event, drained from the aggregate at this same save point (rule 4).
+        Assert.Single(fixture.Outbox.Enqueued, e => e.Type == nameof(ModuleTaskOpened));
+        Assert.Empty(fixture.Conversation.DomainEvents);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenAModuleTaskCompletesOnStart_StagesBothModuleTaskOpenedAndEnded()
+    {
+        // `26-237`: a single-round-trip module (`Complete == true` on the first answer) starts the task and
+        // closes it in the one save - so both the funnel's "flow started" and "flow closed" analytics events
+        // are staged, and no domain event is left behind.
+        var fixture = CreateFixture();
+        fixture.Conversation.AddVisitorMessage(VisitorId, new MessageId(Guid.NewGuid()), new MessageBody("/booking"), Now);
+        fixture.Gateway.OnStartTask = _ =>
+            new StartModuleTaskResult("external-1", ChoiceStep("All set!", ("Done", "done")), true);
+
+        await fixture.Handler.HandleAsync(Trigger(fixture.Conversation), CancellationToken.None);
+
+        Assert.Single(fixture.Outbox.Enqueued, e => e.Type == nameof(ModuleTaskOpened));
+        Assert.Single(fixture.Outbox.Enqueued, e => e.Type == nameof(ModuleTaskEnded));
         Assert.Empty(fixture.Conversation.DomainEvents);
     }
 
