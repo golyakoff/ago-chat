@@ -58,6 +58,14 @@ public static class AnalyticsReadServiceCollectionExtensions
         // IAnalyticsLabelReadStore, exactly like the site-analytics report's own operator rows.
         services.Replace(ServiceDescriptor.Scoped<IOperatorLoadReportReadStore, RollupOperatorLoadReportReadStore>());
 
+        // `26-237` (module-flow funnel rollup): the module-flow report - the last analytics read still
+        // computed live over ago_chat (a join over module_tasks/conversations) - moves onto the rollup here,
+        // the same config-guarded Replace. The rollup counts tasks started/closed per module key per day
+        // (both the open and the close event bucket by the task's open day, so the fold pairs them); this
+        // read is a plain grouped sum over one configured module key. No label resolution - the funnel
+        // report surfaces no id-keyed display names.
+        services.Replace(ServiceDescriptor.Scoped<IModuleFlowReadStore, RollupModuleFlowReadStore>());
+
         return services;
     }
 }

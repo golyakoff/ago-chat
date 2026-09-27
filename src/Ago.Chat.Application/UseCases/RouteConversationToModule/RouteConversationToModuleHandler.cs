@@ -1291,7 +1291,24 @@ public sealed class RouteConversationToModuleHandler(
         // `GetSiteConfigByIdHandler`'s cache-aside one, matching this file's own existing convention
         // for reaching a `Site` rather than introducing a second lookup shape into it.
         var site = await sites.GetByIdAsync(conversation.SiteId, cancellationToken);
-        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, site?.TimeZone ?? "Europe/Moscow", idGenerator));
+        var tenantZone = site?.TimeZone ?? "Europe/Moscow";
+        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, tenantZone, idGenerator));
+
+        // `26-237`/`adr/0186` (module-flow funnel rollup): this handler is the one place a module task is
+        // opened or closed, and this is its single save point, so the funnel's "flow started"/"flow closed"
+        // analytics events are staged here, in the same unit of work as the write (rule 4). A save may carry
+        // zero, one or (a close-then-start on the same conversation) both. Ordinary system-message saves
+        // carry none - the OfType filters simply find nothing then.
+        foreach (var started in conversation.DomainEvents.OfType<ModuleTaskStarted>())
+        {
+            outbox.Enqueue(ModuleTaskOpenedMapper.ToEnvelope(started, tenantZone, idGenerator));
+        }
+
+        foreach (var closed in conversation.DomainEvents.OfType<ModuleTaskClosed>())
+        {
+            outbox.Enqueue(ModuleTaskEndedMapper.ToEnvelope(closed, tenantZone, idGenerator));
+        }
+
         // Cleared, so a later save of this same tracked aggregate cannot re-enqueue it - the same
         // "clear immediately after staging" discipline SendOfflineAutoReplyHandler's own remarks
         // describe. Found by a real test (HandleAsync_ASuccessfulOutcome_...LeavesNoDomainEventsBehind)

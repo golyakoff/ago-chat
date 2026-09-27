@@ -801,6 +801,9 @@ public sealed class Conversation
 
         var task = new ModuleTask(id, Id, moduleKey, externalTaskId, now, stepKind, stepPayload, stepActions);
         _moduleTasks.Add(task);
+        // `26-237`: the funnel rollup's "flow started" fact - the caller (RouteConversationToModuleHandler)
+        // drains it at its single save point and stages the analytics envelope to the outbox (rule 4).
+        _domainEvents.Add(new ModuleTaskStarted(Id, SiteId, id, moduleKey, now));
         return task;
     }
 
@@ -828,6 +831,12 @@ public sealed class Conversation
         var active = ActiveModuleTask ?? throw new InvalidConversationStateException(
             $"Conversation {Id.Value} has no active module task to close.");
         active.Close(now);
+        // `26-237`: the funnel rollup's "flow closed" fact. `active` came from ActiveModuleTask, which only
+        // ever returns an Open task, so reaching here is always a real Open->Closed transition (never a
+        // no-op re-close) - one event per task close, exactly what the funnel needs. Carries the task's
+        // OpenedAt so the mapper can bucket the wire event into the open day (this event's OccurredAt is
+        // the close instant; see ModuleTaskClosed's own remarks).
+        _domainEvents.Add(new ModuleTaskClosed(Id, SiteId, active.Id, active.ModuleKey, active.OpenedAt, now));
     }
 
     /// <summary>`14-04`: the <see cref="Message.AuthorId"/> every
