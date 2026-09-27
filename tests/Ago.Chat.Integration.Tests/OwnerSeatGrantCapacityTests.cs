@@ -128,7 +128,7 @@ public sealed class OwnerSeatGrantCapacityTests(PostgresFixture fixture)
         var codeHash = new byte[32];
         Random.Shared.NextBytes(codeHash);
         var invite = OperatorInvite.Generate(
-            new OperatorInviteId(Guid.NewGuid()), seed.SiteId, seed.AdminRoleId, codeHash, email, seed.CreatedByOperatorId, Now,
+            new OperatorInviteId(Guid.NewGuid()), seed.SiteId, [seed.AdminRoleId], codeHash, email, seed.CreatedByOperatorId, Now,
             TimeSpan.FromDays(7));
         db.OperatorInvites.Add(invite);
         await db.SaveChangesAsync(CancellationToken.None);
@@ -139,7 +139,9 @@ public sealed class OwnerSeatGrantCapacityTests(PostgresFixture fixture)
     {
         await using var db = fixture.CreateDbContext();
         var operatorRoles = new OperatorRoleRepository(db);
-        var roleSeatCapacity = new OperatorRoleSeatCapacity(operatorRoles, new SiteRepository(db), new OwnerSeatGrantStore(db), new SystemClock());
+        var roleSeatCapacity = new OperatorRoleSeatCapacity(
+            operatorRoles, new SiteRepository(db), new OwnerSeatGrantStore(db),
+            new PendingOperatorInviteSeatReadStore(db), new SystemClock());
         var repository = new OperatorInviteRedemptionRepository(
             db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db), roleSeatCapacity);
         return await repository.RedeemAsync(

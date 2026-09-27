@@ -155,7 +155,7 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
             Random.Shared.NextBytes(codeHash);
             var email = $"invitee{i}@example.com";
             var invite = OperatorInvite.Generate(
-                new OperatorInviteId(Guid.NewGuid()), seed.SiteId, seed.AdminRoleId, codeHash, email,
+                new OperatorInviteId(Guid.NewGuid()), seed.SiteId, [seed.AdminRoleId], codeHash, email,
                 seed.CreatedByOperatorId, Now, TimeSpan.FromDays(7));
             db.OperatorInvites.Add(invite);
             generated.Add(new GeneratedInvite(codeHash, email));
@@ -171,7 +171,8 @@ public sealed class OperatorInviteAdminLimitConcurrencyTests(ConcurrencyTestFixt
         // `25-181`: a real OwnerSeatGrantStore with nothing seeded reads 0 - this test keeps
         // exercising the identical billing-only admin limit it always has.
         var roleSeatCapacity = new OperatorRoleSeatCapacity(
-            new OperatorRoleRepository(db), new SiteRepository(db), new OwnerSeatGrantStore(db), new Ago.Platform.Hosting.SystemClock());
+            new OperatorRoleRepository(db), new SiteRepository(db), new OwnerSeatGrantStore(db),
+            new PendingOperatorInviteSeatReadStore(db), new Ago.Platform.Hosting.SystemClock());
         var repository = new OperatorInviteRedemptionRepository(
             db, new UuidV7Generator(), new EfOutboxWriter<AgoChatDbContext>(db), roleSeatCapacity);
         return await repository.RedeemAsync(

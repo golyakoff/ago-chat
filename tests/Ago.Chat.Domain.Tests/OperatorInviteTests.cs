@@ -9,7 +9,7 @@ public class OperatorInviteTests
 
     private static OperatorInvite Generate(TimeSpan? validFor = null, string email = "invitee@example.com") =>
         OperatorInvite.Generate(
-            new OperatorInviteId(Guid.NewGuid()), SiteId, RoleId, [1, 2, 3], email, CreatedBy, Now,
+            new OperatorInviteId(Guid.NewGuid()), SiteId, [RoleId], [1, 2, 3], email, CreatedBy, Now,
             validFor ?? TimeSpan.FromDays(7));
 
     [Fact]
@@ -153,5 +153,44 @@ public class OperatorInviteTests
         invite.MarkSendFailed("550");
 
         Assert.Equal("550", invite.SendFailureCode);
+    }
+
+    /// <summary>`26-241`: an invite can grant more than one role, carried on <see cref="OperatorInvite.RoleIds"/>
+    /// in the order requested.</summary>
+    [Fact]
+    public void Generate_WithMultipleRoles_CarriesThemAll()
+    {
+        var operatorRole = Guid.NewGuid();
+        var adminRole = Guid.NewGuid();
+
+        var invite = OperatorInvite.Generate(
+            new OperatorInviteId(Guid.NewGuid()), SiteId, [operatorRole, adminRole], [1, 2, 3],
+            "invitee@example.com", CreatedBy, Now, TimeSpan.FromDays(7));
+
+        Assert.Equal([operatorRole, adminRole], invite.RoleIds);
+    }
+
+    /// <summary>`26-241`: a repeated role id never becomes two identical child rows (which would break the
+    /// composite primary key) - the factory de-duplicates as a last line of defence.</summary>
+    [Fact]
+    public void Generate_WithADuplicateRole_KeepsItOnce()
+    {
+        var roleId = Guid.NewGuid();
+
+        var invite = OperatorInvite.Generate(
+            new OperatorInviteId(Guid.NewGuid()), SiteId, [roleId, roleId], [1, 2, 3],
+            "invitee@example.com", CreatedBy, Now, TimeSpan.FromDays(7));
+
+        Assert.Equal([roleId], invite.RoleIds);
+    }
+
+    /// <summary>`26-241`: an invite must grant at least one role - an empty set is a caller bug, thrown
+    /// the same way an empty email is (`Generate_WithNoEmail_Throws`).</summary>
+    [Fact]
+    public void Generate_WithNoRoles_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => OperatorInvite.Generate(
+            new OperatorInviteId(Guid.NewGuid()), SiteId, [], [1, 2, 3],
+            "invitee@example.com", CreatedBy, Now, TimeSpan.FromDays(7)));
     }
 }

@@ -12,10 +12,6 @@ internal sealed class OperatorInviteConfiguration : IEntityTypeConfiguration<Ope
         builder.HasKey(i => i.Id);
         builder.Property(i => i.Id).HasColumnName("id").HasConversion(IdConverters.OperatorInvite).ValueGeneratedNever();
         builder.Property(i => i.SiteId).HasColumnName("site_id").HasConversion(IdConverters.Site);
-        // A plain Guid, not a Domain id type - RoleRecord.Id/OperatorRoleRecord.RoleId are both bare
-        // Guids too (RoleRecord's own remarks: roles have no Domain model yet), so this FK matches the
-        // type the table it actually points at already uses.
-        builder.Property(i => i.RoleId).HasColumnName("role_id");
         builder.Property(i => i.CodeHash).HasColumnName("code_hash").IsRequired();
         // `25-73`: required since this item - see OperatorInvite.Email's own remarks. The migration
         // that adds this column also deletes every pre-existing row (this item's own point 8, "annulled
@@ -34,7 +30,18 @@ internal sealed class OperatorInviteConfiguration : IEntityTypeConfiguration<Ope
         builder.Property(i => i.SendFailureCode).HasColumnName("send_failure_code");
 
         builder.HasOne<Site>().WithMany().HasForeignKey(i => i.SiteId);
-        builder.HasOne<RoleRecord>().WithMany().HasForeignKey(i => i.RoleId);
+
+        // `26-241`: the invite's roles are a one-to-many child collection (`operator_invite_roles`), not
+        // the single `role_id` column this file mapped before this item. Configured from the invite side
+        // as an owned collection navigation backed by the aggregate's private `_roles` field - the same
+        // "the aggregate owns its child rows" shape `OperatorRoleRecord` gives the redeemed side of this
+        // join. Cascade delete: a role line has no meaning without the invite that owns it, so an invite
+        // deleted (only ever by `25-73`'s own migration annulment today) takes its role lines with it.
+        builder.HasMany(i => i.Roles)
+            .WithOne()
+            .HasForeignKey(role => role.OperatorInviteId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Navigation(i => i.Roles).UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // `code_hash` is how every redemption looks an invite up (OperatorInviteRedemptionRepository) -
         // unique because a hash collision between two genuinely different 256-bit CSPRNG-generated

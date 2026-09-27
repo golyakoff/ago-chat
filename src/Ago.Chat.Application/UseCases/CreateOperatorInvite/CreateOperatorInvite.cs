@@ -2,16 +2,22 @@
 
 namespace Ago.Chat.Application.UseCases.CreateOperatorInvite;
 
-/// <summary><paramref name="RoleName"/> is the site-local role name the invitee will hold once
-/// redeemed (`"Operator"` or `"Admin"`) - a name, not a `roles.id`, because the caller (an admin
-/// filling in a console form, or a curl call per this item's own "no UI" scope) has no reason to know
-/// the id `5-08`'s seed transaction happened to generate for either row on this particular site.
+/// <summary><paramref name="RoleNames"/> is the set of site-local role names the invitee will hold once
+/// redeemed (one or more of `"Operator"`/`"Admin"`) - names, not `roles.id`s, because the caller (an
+/// admin filling in a console form, or a curl call per this item's own "no UI" scope) has no reason to
+/// know the ids `5-08`'s seed transaction happened to generate for either row on this particular site.
+///
+/// <para>`26-241`: a <em>set</em>, not a single role - an admin can now invite a colleague to more than
+/// one role at once (Operator + Admin in one invite, redeemed into both). A one-element list is exactly
+/// the pre-`26-241` single-role behaviour, so the endpoint's own request DTO keeps accepting the legacy
+/// single `RoleName` and maps it to a one-element list here (`OperatorInviteEndpoints`' own remarks) -
+/// the wire contract stays backward-compatible while the command carries the additive shape.</para>
 ///
 /// <para>`25-73`: <paramref name="Email"/> is now required - refused by
 /// <see cref="CreateOperatorInviteHandler"/>, not merely hidden by the console's own form, since
 /// Keycloak's own admin-created-user + `execute-actions-email` primitive is what actually delivers
 /// this invite now, and that primitive needs an address to create a user for.</para></summary>
-public sealed record CreateOperatorInvite(OperatorId RequestedBy, SiteId SiteId, string RoleName, string Email);
+public sealed record CreateOperatorInvite(OperatorId RequestedBy, SiteId SiteId, IReadOnlyList<string> RoleNames, string Email);
 
 /// <summary><see cref="Code"/> is the plaintext value, present in this response only - the same
 /// "shown exactly once" shape `RegisterWebhookEndpointHandler`'s own `RegisteredWebhookEndpoint`

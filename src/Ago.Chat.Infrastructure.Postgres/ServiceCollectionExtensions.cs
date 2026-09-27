@@ -176,6 +176,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<IOperatorInviteRepository, OperatorInviteRepository>();
         services.AddScoped<IOperatorInviteRedemptionRepository, OperatorInviteRedemptionRepository>();
+        // `26-241`: the pending-invite seat count OperatorRoleSeatCapacity's own create-time check reads -
+        // its own read store over the write model (adr/0004), the identical shape the other two invite
+        // read stores below already take. Registered here (Infrastructure.Postgres, in every host) so
+        // OperatorRoleSeatCapacity's new dependency resolves wherever that class is used.
+        services.AddScoped<IPendingOperatorInviteSeatReadStore, PendingOperatorInviteSeatReadStore>();
         // `23-72`: ChangeOperatorRoleHandler's own writes - see each interface's own remarks.
         services.AddScoped<IOperatorRoleRepository, OperatorRoleRepository>();
         services.AddScoped<IRoleChangeRecordRepository, RoleChangeRecordRepository>();

@@ -110,7 +110,7 @@ public interface IRoleRepository
 }
 
 /// <summary>One role, resolved by name for <see cref="IRoleRepository.GetByNameAsync"/> - a plain
-/// projection of the `roles` row, not a Domain model (roles have none yet, `OperatorInvite.RoleId`'s own
+/// projection of the `roles` row, not a Domain model (roles have none yet, `OperatorInvite.RoleIds`' own
 /// remarks).</summary>
 public sealed record RoleLookup(Guid Id, IReadOnlyList<string> Permissions);
 
