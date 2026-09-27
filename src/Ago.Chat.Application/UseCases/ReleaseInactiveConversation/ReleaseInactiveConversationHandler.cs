@@ -35,7 +35,7 @@ namespace Ago.Chat.Application.UseCases.ReleaseInactiveConversation;
 /// comparison: `Conversation.ReleaseToQueue` only has one precondition (`State == Assigned`), so
 /// re-establishing that is re-establishing everything the domain method itself needs re-verified. A
 /// message that arrived *inside* the window is caught upstream, by
-/// <see cref="AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync"/>'s own
+/// <see cref="AutoCloseInactiveConversationsQuery.FindStaleAssignedWidgetBatchAsync"/>'s own
 /// no-recent-message `NOT EXISTS`, not down here - the same division of labour
 /// <see cref="AutoCloseConversation.AutoCloseConversationHandler"/> already accepts for its own
 /// candidate.</para>

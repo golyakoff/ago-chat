@@ -68,7 +68,8 @@ public sealed class AutoCloseInactiveConversationsJob(
     /// compose the way the design intends regardless of how far apart the two windows are configured.
     /// The channel-kind loop below is the per-channel-kind window this item exists to prove
     /// (`AutoCloseInactiveConversationsQuery`'s own remarks on why that is two SQL shapes rather than
-    /// one parameterised by a runtime `CASE`) - entirely unchanged by this item.</summary>
+    /// one parameterised by a runtime `CASE`) - unchanged by `25-118`, but widened by `26-232` to reach
+    /// `Waiting` rows too (<see cref="CloseStaleBatchAsync"/>'s own remarks).</summary>
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -93,8 +94,8 @@ public sealed class AutoCloseInactiveConversationsJob(
         IReadOnlyList<ConversationId> candidates;
         await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
-            candidates = await AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync(
-                connection, channelKind: null, cutoff, options.Value.BatchSize, cancellationToken);
+            candidates = await AutoCloseInactiveConversationsQuery.FindStaleAssignedWidgetBatchAsync(
+                connection, cutoff, options.Value.BatchSize, cancellationToken);
         }
 
         var releasedCount = 0;
@@ -150,14 +151,20 @@ public sealed class AutoCloseInactiveConversationsJob(
         }
     }
 
-    /// <summary>The channel-kind pass - `18-06`'s own original shape, untouched by `25-118`: still one
-    /// window, still `Assigned`-only, still <see cref="AutoCloseConversationHandler"/>.</summary>
+    /// <summary>The channel-kind pass - `18-06`'s own original shape, still one window
+    /// (<see cref="AutoCloseInactiveConversationsJobOptions.WindowFor"/>), still
+    /// <see cref="AutoCloseConversationHandler"/>. `26-232`: no longer `Assigned`-only - a channel
+    /// conversation released to `Waiting` (an operator-disconnect release, `4-04`, being the one
+    /// existing path there today) used to sit unreachable forever, since nothing before this item ever
+    /// closed a `Waiting` channel-kind row. <see cref="AutoCloseInactiveConversationsQuery.FindStaleChannelBatchIncludingWaitingAsync"/>
+    /// is the widened scan - same per-`ChannelKind` window as before, just also matching `Waiting`, the
+    /// identical shape `25-118` already gave the widget close pass just above.</summary>
     private async Task CloseStaleBatchAsync(ChannelKind channelKind, DateTimeOffset cutoff, CancellationToken cancellationToken)
     {
         IReadOnlyList<ConversationId> candidates;
         await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
         {
-            candidates = await AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync(
+            candidates = await AutoCloseInactiveConversationsQuery.FindStaleChannelBatchIncludingWaitingAsync(
                 connection, channelKind, cutoff, options.Value.BatchSize, cancellationToken);
         }
 
@@ -169,7 +176,7 @@ public sealed class AutoCloseInactiveConversationsJob(
             // ChatMetrics.RecordConversationAutoClosed above is the metric half of the same
             // requirement.
             logger.LogInformation(
-                "Auto-closed {Count} inactive {ChannelKind} conversation(s) past their {Cutoff:O} inactivity cutoff.",
+                "Auto-closed {Count} inactive {ChannelKind} conversation(s) (Assigned or Waiting) past their {Cutoff:O} inactivity cutoff.",
                 closedCount, channelTag, cutoff);
         }
     }

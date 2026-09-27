@@ -28,12 +28,13 @@ namespace Ago.Chat.Worker;
 /// without it, "no message at or after cutoff" would be trivially true for a conversation that simply
 /// has not had time to receive one.</para>
 ///
-/// <para><b>No dedicated index for `conversations.state = 'Assigned'`.</b>
-/// `OperatorDisconnectSweepJob`'s own candidate query (`4-04`) already scans on the same predicate with
-/// none, at the same "every replica, every tick" cadence - this query does not introduce a new gap, it
-/// shares an existing one. Worth an index if either job's cadence or this deployment's conversation
-/// volume ever makes it show up in `pg_stat_statements`; not worth a migration invented ahead of that
-/// evidence (CLAUDE.md's "measure, don't invent" rule cuts both ways).</para>
+/// <para><b>No dedicated index for `conversations.state IN ('Assigned', 'Waiting')`.</b>
+/// `OperatorDisconnectSweepJob`'s own candidate query (`4-04`) already scans on the same kind of
+/// predicate with none, at the same "every replica, every tick" cadence - this query does not introduce
+/// a new gap, it shares an existing one, `26-232`'s own widening of <see cref="ChannelSql"/> included.
+/// Worth an index if either job's cadence or this deployment's conversation volume ever makes it show up
+/// in `pg_stat_statements`; not worth a migration invented ahead of that evidence (CLAUDE.md's "measure,
+/// don't invent" rule cuts both ways).</para>
 ///
 /// <para><b>No index on `channel_identities.visitor_id` either</b>, and this one is a genuine, new gap:
 /// nothing before this item ever looked up a channel identity by visitor rather than by
@@ -71,8 +72,8 @@ public static class AutoCloseInactiveConversationsQuery
     /// to `IN ('Assigned', 'Waiting')`. This is the one line that makes the design decision real: a
     /// `Waiting` widget conversation was never a candidate for anything before this item (`WidgetSql`
     /// structurally cannot select one), so widening it here is what lets a genuinely abandoned
-    /// conversation that has already been released (see <see cref="FindStaleAssignedBatchAsync"/>'s own
-    /// caller in `AutoCloseInactiveConversationsJob`) eventually actually close, once
+    /// conversation that has already been released (see <see cref="FindStaleAssignedWidgetBatchAsync"/>'s
+    /// own caller in `AutoCloseInactiveConversationsJob`) eventually actually close, once
     /// `AutoCloseInactiveConversationsJobOptions.WidgetCloseWindow` has also elapsed. No new bind
     /// parameter for the two literal state values, matching `WidgetSql`/`ChannelSql`'s own choice not to
     /// parameterise `'Assigned'` either - both are fixed by the shape of this SQL text, not caller input.
@@ -91,10 +92,20 @@ public static class AutoCloseInactiveConversationsQuery
         LIMIT @batchSize
         """;
 
+    /// <summary>`26-232`: widened from `c.state = 'Assigned'` to `c.state IN ('Assigned', 'Waiting')` -
+    /// the one-line change that closes the gap this item exists to fix. Before this, a channel-kind
+    /// conversation released to `Waiting` (an operator-disconnect release, `4-04`, or any future path
+    /// that does the same) was never a candidate for anything again: this scan structurally could not
+    /// select it (`Assigned`-only), and nothing else ever closed a `Waiting` channel conversation either
+    /// - so it sat in `Waiting` ("Ожидают") forever, however old it got. Reusing
+    /// <see cref="AutoCloseInactiveConversationsJobOptions.WindowFor"/> for the cutoff (unchanged by
+    /// this item - still the per-`ChannelKind` override, else `DefaultChannelInactivityWindow`) is what
+    /// keeps the promise that the 24-hour default lives in exactly one place: this query does not get its
+    /// own window, it just gets to see two more states of the same window's candidates.</summary>
     private const string ChannelSql = """
         SELECT c.id
         FROM conversations c
-        WHERE c.state = 'Assigned'
+        WHERE c.state IN ('Assigned', 'Waiting')
           AND c.created_at < @cutoff
           AND EXISTS (
               SELECT 1 FROM channel_identities ci
@@ -108,28 +119,49 @@ public static class AutoCloseInactiveConversationsQuery
         LIMIT @batchSize
         """;
 
-    /// <param name="channelKind"><see langword="null"/> for widget conversations (no
-    /// `channel_identities` row for their visitor - `ChannelKind`'s own remarks on why the widget is
-    /// not a member of that enum); otherwise scans conversations linked to a visitor with a
-    /// `channel_identities` row of exactly this kind.</param>
+    /// <summary>The widget-only "release" pass's own candidate scan (`25-118`) - `Assigned`-only,
+    /// unchanged by `26-232`: <see cref="AutoCloseInactiveConversationsJob.ReleaseStaleAssignedWidgetBatchAsync"/>
+    /// is the only caller, and its whole point is to catch a conversation <em>before</em> it would ever
+    /// reach `Waiting` on its own. No `channelKind` parameter - this only ever scans widget conversations
+    /// (no `channel_identities` row for their visitor).</summary>
     /// <param name="cutoff">Conversations with no message (either direction) at or after this instant,
     /// created before it, are candidates.</param>
-    public static async Task<IReadOnlyList<ConversationId>> FindStaleAssignedBatchAsync(
-        NpgsqlConnection connection, ChannelKind? channelKind, DateTimeOffset cutoff, int batchSize,
-        CancellationToken cancellationToken)
+    public static async Task<IReadOnlyList<ConversationId>> FindStaleAssignedWidgetBatchAsync(
+        NpgsqlConnection connection, DateTimeOffset cutoff, int batchSize, CancellationToken cancellationToken)
     {
-        var sql = channelKind is null ? WidgetSql : ChannelSql;
-
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(WidgetSql, connection);
         command.Parameters.AddWithValue("cutoff", cutoff);
         command.Parameters.AddWithValue("batchSize", batchSize);
-        if (channelKind is { } kind)
+
+        var ids = new List<ConversationId>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
-            // Stored (and compared) as the CLR member name - ChannelIdentityConfiguration's own
-            // default HasConversion<string>() mapping, so `kind.ToString()` is exactly what is on the
-            // row.
-            command.Parameters.AddWithValue("kind", kind.ToString());
+            ids.Add(new ConversationId(reader.GetGuid(0)));
         }
+
+        return ids;
+    }
+
+    /// <summary>`26-232`: the channel-kind close pass's own candidate scan - <see cref="ChannelSql"/>'s
+    /// own remarks explain the one predicate this item changes and why. Named to match
+    /// <see cref="FindStaleWidgetBatchIncludingWaitingAsync"/>'s own "reaches Waiting too" naming, now
+    /// that both close passes share the same Assigned-or-Waiting shape; only the window and the extra
+    /// `channel_identities` scope differ between them.</summary>
+    /// <param name="channelKind">Scans conversations linked to a visitor with a `channel_identities`
+    /// row of exactly this kind.</param>
+    /// <param name="cutoff">Conversations with no message (either direction) at or after this instant,
+    /// created before it, are candidates.</param>
+    public static async Task<IReadOnlyList<ConversationId>> FindStaleChannelBatchIncludingWaitingAsync(
+        NpgsqlConnection connection, ChannelKind channelKind, DateTimeOffset cutoff, int batchSize,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(ChannelSql, connection);
+        command.Parameters.AddWithValue("cutoff", cutoff);
+        command.Parameters.AddWithValue("batchSize", batchSize);
+        // Stored (and compared) as the CLR member name - ChannelIdentityConfiguration's own default
+        // HasConversion<string>() mapping, so `kind.ToString()` is exactly what is on the row.
+        command.Parameters.AddWithValue("kind", channelKind.ToString());
 
         var ids = new List<ConversationId>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -142,12 +174,15 @@ public static class AutoCloseInactiveConversationsQuery
     }
 
     /// <summary>`25-118`: the widget-only "close" pass - see <see cref="WidgetCloseSql"/> for the one
-    /// predicate that differs from <see cref="FindStaleAssignedBatchAsync"/>'s widget branch, and why.
-    /// No `channelKind` parameter: this is never called for the channel-kind buckets, which keep their
-    /// existing single-window, `Assigned`-only behaviour through <see cref="FindStaleAssignedBatchAsync"/>
-    /// unchanged.</summary>
+    /// predicate that differs from <see cref="FindStaleAssignedWidgetBatchAsync"/>'s scan. No
+    /// `channelKind` parameter: this is never called for the channel-kind buckets, which get the
+    /// identical Assigned-or-Waiting widening through their own
+    /// <see cref="FindStaleChannelBatchIncludingWaitingAsync"/> instead (`26-232`) - two call sites
+    /// rather than one shared method, matching the pre-existing widget/channel SQL split
+    /// (<see cref="WidgetSql"/>/<see cref="ChannelSql"/>) instead of a nullable-`channelKind` branch that
+    /// would otherwise have to mean two different state sets depending on whether it is null.</summary>
     /// <param name="cutoff">Conversations with no message (either direction) at or after this instant,
-    /// created before it, are candidates - the same contract <see cref="FindStaleAssignedBatchAsync"/>
+    /// created before it, are candidates - the same contract <see cref="FindStaleAssignedWidgetBatchAsync"/>
     /// documents, just against `AutoCloseInactiveConversationsJobOptions.WidgetCloseWindow` rather than
     /// `WidgetInactivityWindow`.</param>
     public static async Task<IReadOnlyList<ConversationId>> FindStaleWidgetBatchIncludingWaitingAsync(

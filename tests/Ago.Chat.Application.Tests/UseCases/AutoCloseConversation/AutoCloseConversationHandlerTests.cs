@@ -137,10 +137,13 @@ public class AutoCloseConversationHandlerTests
     /// `25-118`: reverses `18-06`'s original scope note - see the handler's own remarks on why its
     /// guard narrowed from `!= Assigned` to `== Closed`. A `Waiting` conversation (never assigned - a
     /// conversation `AutoCloseInactiveConversationsQuery.FindStaleWidgetBatchIncludingWaitingAsync` can
-    /// now genuinely surface, unlike the channel-kind/`FindStaleAssignedBatchAsync` scan, which still
-    /// never selects one) is now closed successfully, with no capacity to release (the fails-before
-    /// table's own second row: this is what "the new query variant actually reaches Waiting rows"
-    /// means end to end, at the handler rather than the query).
+    /// surface) is closed successfully, with no capacity to release (the fails-before table's own
+    /// second row: this is what "the new query variant actually reaches Waiting rows" means end to end,
+    /// at the handler rather than the query). `26-232` gave the channel-kind scan
+    /// (`FindStaleChannelBatchIncludingWaitingAsync`) the identical widening, so this same guard now
+    /// also accepts a `Waiting` channel-kind candidate - proven separately at the job level in
+    /// `AutoCloseInactiveConversationsJobTests`, not duplicated here since this handler treats every
+    /// `Waiting` conversation identically regardless of which scan found it.
     /// </summary>
     [Fact]
     public async Task HandleAsync_WhenTheConversationIsWaiting_ClosesItSuccessfully_WithNoCapacityToRelease()

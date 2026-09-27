@@ -61,7 +61,19 @@ public sealed class AutoCloseInactiveConversationsJobOptions
     /// <see cref="ChannelInactivityWindows"/>. Twenty-four hours: a durable identity (a phone number, a
     /// MAX/Telegram account) can plausibly reply the next business day and still be continuing the same
     /// thread, which is the "real continuity value" the backlog item names as the reason channel
-    /// conversations get materially longer than widget ones.</summary>
+    /// conversations get materially longer than widget ones.
+    ///
+    /// <para><b>`26-232`: this is now also the close window for a channel-kind conversation sitting in
+    /// `Waiting`</b>, not only `Assigned` - before this item, a channel conversation released to
+    /// `Waiting` (an operator-disconnect release, `4-04`, being the one existing path there today) had no
+    /// window at all, because nothing ever closed a `Waiting` channel-kind row: it simply sat in the
+    /// operator's queue forever, however old it got. <see cref="WindowFor"/> and this default are
+    /// unchanged by that fix - the same one number now governs one more state, which is the whole point
+    /// of reusing it rather than adding a second "Waiting close" window the way the widget bucket has
+    /// (<see cref="WidgetCloseWindow"/>): a channel identity does not stop being durable just because the
+    /// conversation moved from `Assigned` back to `Waiting`, so there was never a case for two different
+    /// channel windows the way there was for widget's session-vs-token-lifetime distinction.</para>
+    /// </summary>
     public TimeSpan DefaultChannelInactivityWindow { get; set; } = TimeSpan.FromHours(24);
 
     /// <summary>Per-kind overrides, keyed by `ChannelKind`'s own member name (the config binder's
