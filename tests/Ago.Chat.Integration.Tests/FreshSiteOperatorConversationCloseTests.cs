@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.UseCases.CloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.RegisterSite;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -64,6 +65,7 @@ public sealed class FreshSiteOperatorConversationCloseTests(PostgresFixture fixt
             new EfOutboxWriter<AgoChatDbContext>(db),
             new UuidV7Generator(),
             new SystemClock(),
+            new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             NullLogger<CloseConversationHandler>.Instance);
 
         // The real application path, exactly as a console request would call it - no permission is

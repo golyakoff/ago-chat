@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Ago.Chat.Domain;
@@ -23,7 +24,7 @@ public class CloseConversationHandlerTests
         Conversation Conversation);
 
     private static Fixture CreateHandlerWithAssignedConversation(
-        bool grantPermission = true, bool holdsCapacityClaim = true)
+        bool grantPermission = true, bool holdsCapacityClaim = true, FakeSiteRepository? sites = null)
     {
         var conversations = new FakeConversationRepository();
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
@@ -50,6 +51,7 @@ public class CloseConversationHandlerTests
         var assignmentLog = new FakeConversationAssignmentLog();
         var handler = new CloseConversationHandler(
             conversations, assignmentLog, permissions, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now),
+            new GetSiteConfigByIdHandler(sites ?? new FakeSiteRepository(), new FakeCache()),
             NullLogger<CloseConversationHandler>.Instance);
         return new Fixture(handler, conversations, permissions, outbox, capacity, assignmentLog, conversation);
     }
@@ -73,6 +75,34 @@ public class CloseConversationHandlerTests
         Assert.Equal(nameof(ConversationEnded), envelope.Type);
         Assert.Equal(fixture.Conversation.Id.Value, envelope.MessageId);
         Assert.Equal(fixture.Conversation.Id.Value.ToString(), envelope.PartitionKey);
+
+        // `26-215`: SiteId/TenantZone now ride along too - no site was seeded for this test's SiteId,
+        // so TenantZone falls back to the platform default, the same "no site to read" edge case
+        // StartConversationHandlerTests' own widget-defaults test proves for ConversationOpened.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationEnded>(envelope.Payload);
+        Assert.Equal(SiteId.Value, contract!.SiteId);
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
+    }
+
+    /// <summary>`26-215`: the tenant's own <see cref="Site.TimeZone"/> is stamped onto the event, read
+    /// through the same cached <see cref="GetSiteConfigById.SiteConfigDto"/>
+    /// <see cref="Application.UseCases.StartConversation.StartConversationHandler"/> already reads for
+    /// `ConversationOpened`'s identical field.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteHasARealTimeZone_StampsItOntoTheClosedEvent()
+    {
+        var sites = new FakeSiteRepository();
+        var site = new Site(SiteId, $"pk_{Guid.NewGuid():N}", []);
+        sites.Seed(site);
+        var fixture = CreateHandlerWithAssignedConversation(sites: sites);
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.CloseConversation.CloseConversation(fixture.Conversation.Id, OperatorId, SiteId),
+            CancellationToken.None);
+
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationEnded>(envelope.Payload);
+        Assert.Equal(site.TimeZone, contract!.TenantZone);
     }
 
     /// <summary>
@@ -228,7 +258,9 @@ public class CloseConversationHandlerTests
         permissions.Grant(OperatorId, SiteId, Permission.ConversationClose);
         var handler = new CloseConversationHandler(
             conversations, new FakeConversationAssignmentLog(), permissions, new FakeOperatorCapacity(), new FakeOutboxWriter(),
-            new FakeIdGenerator(), new FakeClock(Now), NullLogger<CloseConversationHandler>.Instance);
+            new FakeIdGenerator(), new FakeClock(Now),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(new ConversationId(Guid.NewGuid()), OperatorId, SiteId),

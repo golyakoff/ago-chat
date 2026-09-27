@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.AutoCloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -12,6 +13,12 @@ public class AutoCloseConversationHandlerTests
     private static readonly VisitorId VisitorId = new(Guid.NewGuid());
     private static readonly OperatorId OperatorId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+    /// <summary>`26-215`: the cached read every one of this file's hand-rolled handlers now needs to
+    /// stamp `ConversationEnded.TenantZone` - no site is seeded by default, matching the "no site to
+    /// read" fallback `CloseConversationHandlerTests`' own identical helper documents.</summary>
+    private static GetSiteConfigByIdHandler CreateSiteConfig(FakeSiteRepository? sites = null) =>
+        new(sites ?? new FakeSiteRepository(), new FakeCache());
 
     private sealed record Fixture(
         AutoCloseConversationHandler Handler,
@@ -36,7 +43,7 @@ public class AutoCloseConversationHandlerTests
         var outbox = new FakeOutboxWriter();
         var capacity = new FakeOperatorCapacity();
         var handler = new AutoCloseConversationHandler(
-            conversations, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now),
+            conversations, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now), CreateSiteConfig(),
             NullLogger<AutoCloseConversationHandler>.Instance);
         return new Fixture(handler, conversations, outbox, capacity, conversation);
     }
@@ -60,6 +67,12 @@ public class AutoCloseConversationHandlerTests
         Assert.Equal(nameof(ConversationEnded), envelope.Type);
         Assert.Equal(fixture.Conversation.Id.Value, envelope.MessageId);
         Assert.Equal(fixture.Conversation.Id.Value.ToString(), envelope.PartitionKey);
+
+        // `26-215`: the same SiteId/TenantZone attribution CloseConversationHandlerTests' own identical
+        // test proves for an operator-initiated close.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationEnded>(envelope.Payload);
+        Assert.Equal(SiteId.Value, contract!.SiteId);
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
     }
 
     [Fact]
@@ -142,7 +155,7 @@ public class AutoCloseConversationHandlerTests
         var outbox = new FakeOutboxWriter();
         var capacity = new FakeOperatorCapacity();
         var handler = new AutoCloseConversationHandler(
-            conversations, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now),
+            conversations, capacity, outbox, new FakeIdGenerator(), new FakeClock(Now), CreateSiteConfig(),
             NullLogger<AutoCloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
@@ -171,7 +184,7 @@ public class AutoCloseConversationHandlerTests
 
         var handler = new AutoCloseConversationHandler(
             conversations, new FakeOperatorCapacity(), new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now),
-            NullLogger<AutoCloseConversationHandler>.Instance);
+            CreateSiteConfig(), NullLogger<AutoCloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Ago.Chat.Application.UseCases.AutoCloseConversation.AutoCloseConversation(conversation.Id),
@@ -187,7 +200,7 @@ public class AutoCloseConversationHandlerTests
         var conversations = new FakeConversationRepository();
         var handler = new AutoCloseConversationHandler(
             conversations, new FakeOperatorCapacity(), new FakeOutboxWriter(), new FakeIdGenerator(),
-            new FakeClock(Now), NullLogger<AutoCloseConversationHandler>.Instance);
+            new FakeClock(Now), CreateSiteConfig(), NullLogger<AutoCloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Ago.Chat.Application.UseCases.AutoCloseConversation.AutoCloseConversation(new ConversationId(Guid.NewGuid())),

@@ -524,7 +524,8 @@ public sealed class OperatorPushFanOutEndToEndTests
     {
         var contract = new MessageAccepted(
             MessageId: messageId, OccurredAt: Now, SiteId: siteId.Value, CorrelationId: Guid.NewGuid(),
-            ConversationId: conversationId.Value, AuthorKind: authorKind, Sequence: sequence);
+            ConversationId: conversationId.Value, AuthorKind: authorKind, Sequence: sequence,
+            TenantZone: "Europe/Moscow");
 
         return new EventEnvelope(
             MessageId: Guid.NewGuid(),

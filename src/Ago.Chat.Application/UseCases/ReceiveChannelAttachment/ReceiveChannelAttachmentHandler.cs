@@ -228,7 +228,8 @@ public sealed class ReceiveChannelAttachmentHandler(
         conversation.AddSystemMessage(messageId, new MessageBody(UploadNotGrantedVisitorMessage), now, retentionClass: retentionClass);
 
         var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: `site` above is already this method's own cached read - reused, not a second lookup.
+        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, site?.TimeZone ?? "Europe/Moscow", idGenerator));
         conversation.ClearDomainEvents();
 
         await conversations.SaveAsync(conversation, cancellationToken);

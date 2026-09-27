@@ -47,6 +47,12 @@ public sealed class TagRepositoryAnalyticsEventsTests(PostgresFixture fixture)
         Assert.Equal(siteId.Value, contract.SiteId);
         Assert.Equal(tagId.Value, contract.TagId);
         Assert.Null(outboxRow.PublishedAt);
+
+        // `26-215`: TenantZone, read by `TagRepository` itself against the site seeded above (which
+        // never set a non-default zone) - proves the value comes from a real `sites` read, not a
+        // hardcoded literal, the same "reads back the aggregate's own default" reasoning
+        // StartConversationHandlerTests' own identical test gives for `ConversationOpened`.
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
     }
 
     /// <summary>The fails-before this slice exists to fix: `AddToConversationAsync`'s own contract is
@@ -103,6 +109,8 @@ public sealed class TagRepositoryAnalyticsEventsTests(PostgresFixture fixture)
         Assert.Equal(conversationId.Value, contract.ConversationId);
         Assert.Equal(siteId.Value, contract.SiteId);
         Assert.Equal(tagId.Value, contract.TagId);
+        // `26-215`: the identical TenantZone proof `AddToConversationAsync`'s own test above gives.
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
     }
 
     /// <summary>The mirror no-op case - removing a tag that was never applied must not fabricate an

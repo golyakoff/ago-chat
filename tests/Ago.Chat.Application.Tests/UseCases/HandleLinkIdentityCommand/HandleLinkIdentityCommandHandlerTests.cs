@@ -1,6 +1,8 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Application.Tests.UseCases.HandleLinkIdentityCommand;
@@ -37,7 +39,8 @@ public class HandleLinkIdentityCommandHandlerTests
         var handler = new Application.UseCases.HandleLinkIdentityCommand.HandleLinkIdentityCommandHandler(
             conversations, pendingLinks, new FakePendingChannelLinkCodeGenerator("482913"),
             new PendingChannelLinkRequestOptions { ValidFor = TimeSpan.FromMinutes(15) }, outbox, inbox,
-            new FakeClock(Now), new FakeIdGenerator());
+            new FakeClock(Now), new FakeIdGenerator(),
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()));
 
         return new Fixture(handler, conversation, pendingLinks, outbox, inbox);
     }
@@ -66,7 +69,13 @@ public class HandleLinkIdentityCommandHandlerTests
         var reply = fixture.Conversation.Messages.Last();
         Assert.Equal(MessageAuthorKind.System, reply.AuthorKind);
         Assert.Contains("482913", reply.Body.Value);
-        Assert.Single(fixture.Outbox.Enqueued);
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+
+        // `26-215`: MessageAccepted now also carries TenantZone - no site seeded for this test's
+        // SiteId, so it falls back to the platform default, the same fallback
+        // StartConversationHandlerTests' own widget-defaults test proves for ConversationOpened.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<MessageAccepted>(envelope.Payload);
+        Assert.Equal("Europe/Moscow", contract!.TenantZone);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.TransferConversation;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -572,7 +573,8 @@ public sealed class TransferConversationConcurrencyTests(ConcurrencyTestFixture 
         var handler = new Application.UseCases.CloseConversation.CloseConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
             new OperatorCapacityStore(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(),
-            new SystemClock(), NullLogger<Application.UseCases.CloseConversation.CloseConversationHandler>.Instance);
+            new SystemClock(), new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+            NullLogger<Application.UseCases.CloseConversation.CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, seed.SiteId),
