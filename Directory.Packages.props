@@ -133,6 +133,11 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Dapper" Version="2.1.79" />
+    <!-- `26-223`/`adr/0186`: Ago.Chat.Infrastructure.Analytics needs Npgsql directly (a second, read-only
+         Postgres connection to the ago_analytics rollup database) without pulling EF - it is a Dapper-only
+         read adapter. Pinned to 10.0.3, the same Npgsql the EF provider above resolves transitively, so
+         both projects use one Npgsql version. -->
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- 3-06: PostgresHealthCheck (Ago.Chat.Infrastructure.Postgres). -->
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.11" />
     <!-- `5-08`: DeleteAttachmentHandler's own "log and continue" fallback for a storage-side delete

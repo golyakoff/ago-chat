@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    `26-223`/`adr/0186` (`docs/design/analytics-precompute.md` §8, §8.2): the analytics *read* adapter.
+    A separate Infrastructure project from `Ago.Chat.Infrastructure.Postgres` on purpose - it opens a
+    *second, distinct* Postgres connection (the `ago_analytics` rollup database, its own connection
+    string resolved independently of the operational one), so keeping it out of the operational store's
+    project is what lets "Ago.Chat.Infrastructure.Postgres == the operational ago_chat store" stay true.
+
+    Dapper + Npgsql only - read-only, no EF, no DbContext, no migration. ago-chat does NOT own the
+    `ago_analytics` schema (the standalone ago-analytics service owns and migrates it, adr/0186); this
+    project only reads `analytics_daily_rollups` / `analytics_rollup_runs`. The dependency rule (rule 1):
+    references Application (+ Domain transitively) and nothing above it.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
+  </ItemGroup>
+
+</Project>

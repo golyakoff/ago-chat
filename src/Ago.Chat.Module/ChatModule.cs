@@ -201,6 +201,7 @@ using Ago.Chat.Application.UseCases.GetPricingForOwner;
 using Ago.Chat.Application.UseCases.PublishPriceVersion;
 using Ago.Chat.Module.PhoneVerification;
 using Ago.Chat.Domain;
+using Ago.Chat.Infrastructure.Analytics;
 using Ago.Chat.Infrastructure.Avito;
 using Ago.Chat.Infrastructure.MaxBot;
 using Ago.Chat.Infrastructure.Modules;
@@ -250,6 +251,37 @@ public sealed class ChatModule : IProductModule
             ?? throw new InvalidOperationException(
                 "Set AGO_CHAT_CONNECTION_STRING - e.g. the docker-compose Postgres from local-dev.md.");
         services.AddPostgresPersistence(connectionString);
+
+        // `26-223`/`adr/0186` (`docs/design/analytics-precompute.md` §8): the analytics read switch, wired
+        // as a *config-guarded fallback*. AddPostgresPersistence above already registered the live
+        // `ago_chat` OperatorAnalyticsReadStore (the O(conversations) aggregation) as the default; when an
+        // ago_analytics connection string is configured, AddAnalyticsRollupReads replaces it with the
+        // precomputed-rollup reader and registers the real freshness store, so production (where the
+        // ago-analytics pipeline exists) gets the fast O(days) read while any host or environment without
+        // the pipeline (Worker/Webhooks that never serve analytics, local dev, tests) keeps the correct
+        // live read behind the identical unchanged port. The guard is a single, explicit branch, not a
+        // second code path in the handlers.
+        //
+        // Why a fallback rather than a hard removal: the reports must keep resolving and returning correct
+        // numbers everywhere the port is registered (it is registered for every host), and ago_analytics is
+        // provisioned only where the pipeline is deployed. Where it is absent, `computedAsOf` is honestly
+        // null (live data has no rollup as-of marker) - the NullAnalyticsFreshnessReadStore below.
+        //
+        // A raw env var, not IConfiguration, matching AGO_CHAT_CONNECTION_STRING above (its own remarks:
+        // the persistence extensions take a connection string, not an IConfiguration). Read-only value,
+        // never a literal in any repository (everything is public) - supplied at runtime from the
+        // ago-deploy manifests' analytics-db-credentials secret.
+        var analyticsConnectionString =
+            Environment.GetEnvironmentVariable("AGO_CHAT_ANALYTICS_CONNECTION_STRING");
+        if (!string.IsNullOrWhiteSpace(analyticsConnectionString))
+        {
+            services.AddAnalyticsRollupReads(analyticsConnectionString);
+        }
+        else
+        {
+            services.AddScoped<IAnalyticsFreshnessReadStore, NullAnalyticsFreshnessReadStore>();
+        }
+
         // `8-08`: bound here, with every other options group in this product - AddPostgresPersistence
         // takes a connection string rather than an IConfiguration. Registered for every host because
         // every serving host runs the guard (adr/0056); Ago.Chat.Migrator does not use ChatModule at

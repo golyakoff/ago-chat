@@ -28,6 +28,10 @@
   <ItemGroup>
     <ProjectReference Include="..\Ago.Chat.Application\Ago.Chat.Application.csproj" />
     <ProjectReference Include="..\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <!-- `26-223`/`adr/0186`: the precomputed-rollup analytics read adapter (a second, read-only Postgres
+         connection to the ago_analytics database). Referenced here so ChatModule can wire it conditionally
+         on the analytics connection string being configured - see ChatModule.ConfigureServices. -->
+    <ProjectReference Include="..\Ago.Chat.Infrastructure.Analytics\Ago.Chat.Infrastructure.Analytics.csproj" />
     <!-- `14-02`: MaxChannelAdapter/MaxApiClient are registered here, alongside every other host-agnostic
          port - the same reasoning ChannelResiliencePipelines above already states for why this project,
          not Ago.Chat.Api or Ago.Chat.Worker individually. -->

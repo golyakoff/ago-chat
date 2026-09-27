@@ -25,8 +25,11 @@ public class GetOwnAnalyticsForOperatorHandlerTests
         var loadStore = new FakeOperatorLoadReportReadStore();
         var conversionStore = new FakeConversionReportReadStore();
         var clock = new FakeClock(Now);
+        // `26-223`: freshness defaults to null for the tests that do not assert on it - see
+        // HandleAsync_SurfacesComputedAsOf_FromTheFreshnessStore for the one that does.
+        var freshness = new FakeAnalyticsFreshnessReadStore();
         return (
-            new GetOwnAnalyticsForOperatorHandler(analyticsStore, loadStore, conversionStore, clock),
+            new GetOwnAnalyticsForOperatorHandler(analyticsStore, loadStore, conversionStore, freshness, clock),
             analyticsStore, loadStore, conversionStore);
     }
 
@@ -198,9 +201,10 @@ public class GetOwnAnalyticsForOperatorHandlerTests
             new OperatorLoadSummary(OperatorB, "Grace", 4, 5, 3, 2, [new OperatorLoadBucketEntry("2-3", 5, 4, 25.0)]),
         ]);
 
-        var tenantReportHandler = new GetOperatorAnalyticsForSiteHandler(analyticsStore, loadStore, permissions, clock);
+        var freshness = new FakeAnalyticsFreshnessReadStore();
+        var tenantReportHandler = new GetOperatorAnalyticsForSiteHandler(analyticsStore, loadStore, freshness, permissions, clock);
         var ownReportHandler = new GetOwnAnalyticsForOperatorHandler(
-            analyticsStore, loadStore, new FakeConversionReportReadStore(), clock);
+            analyticsStore, loadStore, new FakeConversionReportReadStore(), freshness, clock);
 
         var tenantReport = await tenantReportHandler.HandleAsync(
             new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(OperatorA, SiteId, null, null),
@@ -242,7 +246,8 @@ public class GetOwnAnalyticsForOperatorHandlerTests
 
         var tenantReportHandler = new GetConversionReportForSiteHandler(conversionStore, permissions, clock);
         var ownReportHandler = new GetOwnAnalyticsForOperatorHandler(
-            new FakeOperatorAnalyticsReadStore(), new FakeOperatorLoadReportReadStore(), conversionStore, clock);
+            new FakeOperatorAnalyticsReadStore(), new FakeOperatorLoadReportReadStore(), conversionStore,
+            new FakeAnalyticsFreshnessReadStore(), clock);
 
         var tenantReport = await tenantReportHandler.HandleAsync(
             new Application.UseCases.GetConversionReportForSite.GetConversionReportForSite(OperatorA, SiteId, null, null),
@@ -310,5 +315,35 @@ public class GetOwnAnalyticsForOperatorHandlerTests
         Assert.Equal(4, result.Value.Load!.StandardIntervals);
         Assert.Equal(0, result.Value.Load.AdditionalIntervals);
         Assert.Equal(4, result.Value.Load.IntervalsHeld);
+    }
+
+    /// <summary>`26-223`/`adr/0186` §3.1: the operator's own screen carries the same additive freshness
+    /// marker the tenant report does - the handler surfaces whatever the freshness store reports as
+    /// <c>computedAsOf</c>, and honestly reports <see langword="null"/> when there is none.</summary>
+    [Fact]
+    public async Task HandleAsync_SurfacesComputedAsOf_FromTheFreshnessStore()
+    {
+        var freshness = new FakeAnalyticsFreshnessReadStore();
+        var asOf = new DateTimeOffset(2026, 6, 15, 11, 30, 0, TimeSpan.Zero);
+        freshness.Seed(asOf);
+        var handler = new GetOwnAnalyticsForOperatorHandler(
+            new FakeOperatorAnalyticsReadStore(), new FakeOperatorLoadReportReadStore(),
+            new FakeConversionReportReadStore(), freshness, new FakeClock(Now));
+
+        var withMarker = await handler.HandleAsync(
+            new Application.UseCases.GetOwnAnalyticsForOperator.GetOwnAnalyticsForOperator(OperatorA, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(withMarker.IsSuccess);
+        Assert.Equal(asOf, withMarker.Value.ComputedAsOf);
+
+        // The fallback (no pipeline configured) case: the default CreateFixture freshness reports null.
+        var (fallbackHandler, _, _, _) = CreateFixture();
+        var withoutMarker = await fallbackHandler.HandleAsync(
+            new Application.UseCases.GetOwnAnalyticsForOperator.GetOwnAnalyticsForOperator(OperatorA, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(withoutMarker.IsSuccess);
+        Assert.Null(withoutMarker.Value.ComputedAsOf);
     }
 }
