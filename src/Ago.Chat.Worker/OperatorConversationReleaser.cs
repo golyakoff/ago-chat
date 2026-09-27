@@ -17,6 +17,11 @@ namespace Ago.Chat.Worker;
 /// reasoning: `IOperatorCapacity.ReleaseAsync` and each `Conversation.SaveAsync` must commit
 /// together, or a crash between them either leaks a phantom-occupied slot forever or frees capacity
 /// with no record of which conversation it belonged to).
+///
+/// <para>`26-238`: the same transaction also takes the operator `Offline` when it released at least one
+/// conversation - see the flip below `ReleaseAllAsync`'s loop for why leaving `operators.status` at
+/// `Online` after deciding the operator is gone is what let the assignment engine and this release path
+/// fight in an unbounded loop, churning `conversation_assignments` intervals.</para>
 /// </summary>
 public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IClock clock, IIdGenerator idGenerator)
 {
@@ -30,6 +35,7 @@ public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IC
 
         var conversations = new ConversationRepository(db);
         var capacity = new OperatorCapacityStore(db);
+        var operators = new OperatorRepository(db);
         var outbox = new EfOutboxWriter<AgoChatDbContext>(db);
         // `23-03`: uses the port (unlike the two claimers - see ConversationAssignmentIntervalSql's own
         // remarks on why they do not), the same "instantiate directly, sharing this batch's own db"
@@ -76,6 +82,44 @@ public sealed class OperatorConversationReleaser(NpgsqlDataSource dataSource, IC
             if (consumedCapacityClaim)
             {
                 await capacity.ReleaseAsync(operatorId, cancellationToken);
+            }
+        }
+
+        // `26-238`: having decided this operator is gone (this method only ever runs once a caller has
+        // established that - the disconnect-grace consumer, after a full `GracePeriod` with zero live
+        // connections; the operator-removed consumer, permanently), take them `Offline` in this same
+        // transaction, so `operators.status` agrees with the release we just performed.
+        //
+        // Why this is a bug fix and not a cosmetic tidy-up. Assignment reads `operators.status`
+        // (`SkipLockedAssignmentClaimer`/`RedisLockAssignmentClaimer` filter `Status == Online`); release
+        // reads the connection registry (`OperatorDisconnectSweepJob`/`OperatorDisconnectGraceConsumer`).
+        // When those two disagree - an operator left `Online` in the row but with no live connection,
+        // which is exactly what an ungraceful `Ago.Chat.Api` shutdown leaves behind, since
+        // `OperatorHub.OnDisconnectedAsync`'s `Operator.GoOffline` never ran - the engine re-hands the
+        // just-released conversation straight back to the phantom operator, the sweep releases it again a
+        // grace period later, and the two subsystems fight forever, writing a fresh
+        // `conversation_assignments` interval on every ~`GracePeriod` cycle with no user action at all.
+        // That unattended metronome is what accrued ~1100 intervals for 9 conversations on the stand
+        // (`26-238`). Reconciling `Status` here is the seam that breaks it: an `Offline` operator is no
+        // longer an assignment candidate, so the conversation stays `Waiting` for a real operator instead
+        // of ping-ponging on a dead one. A genuine reconnect still flips them back `Online`
+        // (`Operator.NoteConnected`, `OperatorHub.OnConnectedAsync`) and a real reassignment then records
+        // a real new interval - the legitimate case is untouched.
+        //
+        // Gated on `assigned.Count > 0`: the loop we are breaking only exists for an operator holding
+        // assigned conversations (the sweep only ever targets those), so there is nothing to reconcile
+        // when the release found none - and skipping the extra load/write in that case also avoids
+        // touching the row of an operator whose disconnect fast path already set them `Offline`.
+        // `Operator.GoOffline` leaves a deliberate `Away` alone (its own remarks), so an operator who
+        // stepped away and then lost their connection stays `Away` - itself already excluded from
+        // assignment, so the loop cannot form for them either.
+        if (assigned.Count > 0)
+        {
+            var operatorEntity = await operators.GetByIdAsync(operatorId, cancellationToken);
+            if (operatorEntity is not null)
+            {
+                operatorEntity.GoOffline();
+                await operators.SaveAsync(operatorEntity, cancellationToken);
             }
         }
 
