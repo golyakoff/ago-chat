@@ -41,10 +41,13 @@ namespace Ago.Chat.Application.UseCases.AutoCloseConversation;
 /// the very rows this item exists to reach. The guard below is narrowed to match exactly what
 /// <see cref="Conversation.Close"/> itself refuses (`State == Closed`, nothing more), which is honest
 /// about what invariant this handler is actually enforcing: "never close an already-closed
-/// conversation," not "never touch anything but Assigned." The channel-kind bucket is unaffected - its
-/// own query (`AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync`, given a real
-/// `ChannelKind`) still only ever selects `Assigned` rows, so this handler never actually sees a
-/// `Waiting` channel-kind candidate to widen the guard for in practice.</para>
+/// conversation," not "never touch anything but Assigned." At the time this guard was narrowed, the
+/// channel-kind bucket was still unaffected in practice - its own query still only ever selected
+/// `Assigned` rows. `26-232` removed that gap too
+/// (`AutoCloseInactiveConversationsQuery.FindStaleChannelBatchIncludingWaitingAsync`): a `Waiting`
+/// channel-kind conversation past its own `ChannelInactivityWindows`/`DefaultChannelInactivityWindow`
+/// cutoff is now a real candidate here as well, accepted by this exact `State == Closed` guard with no
+/// further change needed - it was already wide enough.</para>
 ///
 /// <para><b>Why <see cref="HandleAndSaveAsync"/> does not also catch
 /// <see cref="InvalidConversationStateException"/> around the <see cref="Conversation.Close"/> call

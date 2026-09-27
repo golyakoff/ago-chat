@@ -125,7 +125,7 @@ public class ReleaseInactiveConversationHandlerTests
         Assert.Equal([OperatorId], fixture.Capacity.Releases);
     }
 
-    /// <summary>The candidate scan (`AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync`)
+    /// <summary>The candidate scan (`AutoCloseInactiveConversationsQuery.FindStaleAssignedWidgetBatchAsync`)
     /// only ever selects `Assigned` rows for the widget bucket - but by the time this handler actually
     /// runs, the same defensive re-check `AutoCloseConversationHandler` makes for its own candidate
     /// applies here too: a message arrived, an operator closed it, or (once this ships) an earlier

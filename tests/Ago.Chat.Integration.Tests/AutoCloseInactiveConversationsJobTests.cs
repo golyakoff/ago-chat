@@ -34,8 +34,17 @@ namespace Ago.Chat.Integration.Tests;
 /// windows - see <see cref="RunOnceAsync_ReleasesAnAssignedWidgetConversationPastWidgetInactivityWindow_BackToWaiting_AndFreesCapacity"/>
 /// and <see cref="RunOnceAsync_ClosesAWaitingWidgetConversationPastWidgetCloseWindow"/> for the two
 /// load-bearing new behaviours, proven against real Postgres exactly as the pre-existing tests below
-/// prove the original single-pass shape. The channel-kind tests further down are untouched by this
-/// item and still pass unmodified - proof that the channel-kind path is unaffected.</para>
+/// prove the original single-pass shape. At the time, the channel-kind tests further down were
+/// untouched and still passed unmodified - proof that the channel-kind path was unaffected by that
+/// item specifically.</para>
+///
+/// <para>`26-232` ends that channel-kind exemption: a `Waiting` channel-kind conversation is now closed
+/// past its own per-`ChannelKind` window, the same way `25-118` already did for the widget bucket - see
+/// <see cref="RunOnceAsync_ClosesAWaitingChannelKindConversationPastItsWindow"/> (the fails-before proof)
+/// and <see cref="RunOnceAsync_LeavesAWaitingChannelKindConversationAlone_WhenNotYetPastItsWindow"/> (its
+/// negative pairing). Unlike the widget bucket, this is one window widened to two states, not two
+/// windows: <see cref="AutoCloseInactiveConversationsJobOptions.WindowFor"/> is unchanged, so the 24-hour
+/// default still lives in exactly one place.</para>
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixture)
@@ -341,23 +350,27 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
         Assert.NotEqual(ConversationState.Closed, newConversation.State);
     }
 
-    /// <summary>`18-06`'s own scope note, at the job level, <b>restated for the channel-kind bucket
-    /// only</b> - `25-118` deliberately reverses this for the widget bucket (see
-    /// <see cref="RunOnceAsync_ClosesAWaitingWidgetConversationPastWidgetCloseWindow"/> above), so this
-    /// test now seeds a real `ChannelIdentity` to keep proving the claim that is actually still true:
-    /// a `Waiting` <em>channel-kind</em> conversation is a queue-depth problem, never an inactivity one,
-    /// and `AutoCloseInactiveConversationsQuery.FindStaleAssignedBatchAsync` (given a real
-    /// `ChannelKind`) filters `state = 'Assigned'` specifically, unchanged by this item, so it is never
-    /// even a candidate - proven here rather than only inferred from reading the query. This is also
-    /// this item's own "channel-kind path is provably unaffected" evidence at the job level, alongside
-    /// the two pre-existing channel-kind tests below.</summary>
+    /// <summary>`26-232`'s own fails-before table, row 1 - and the direct reversal of what this test
+    /// used to prove (see git history: before this item, a `Waiting` channel-kind conversation was
+    /// asserted to stay `Waiting` "regardless of age", because
+    /// `AutoCloseInactiveConversationsQuery`'s channel scan structurally selected `state = 'Assigned'`
+    /// only). That was the actual bug this item exists to fix: an operator-disconnect release (`4-04`)
+    /// or any other path back to `Waiting` left a channel conversation stuck there forever, piling up in
+    /// "Ожидают" with no way out. Reverting <see cref="AutoCloseInactiveConversationsQuery.FindStaleChannelBatchIncludingWaitingAsync"/>
+    /// back to Assigned-only (or skipping it) reproduces that and this test fails. Proves: a channel-kind
+    /// conversation sitting in `Waiting`, past its own per-`ChannelKind` window
+    /// (<see cref="AutoCloseInactiveConversationsJobOptions.WindowFor"/> - <see cref="AutoCloseInactiveConversationsJobOptions.DefaultChannelInactivityWindow"/>
+    /// here, since no per-kind override is configured), is actually closed - the same single window the
+    /// channel-kind bucket has always used, now also reachable from `Waiting`, not just `Assigned`.
+    /// </summary>
     [Fact]
-    public async Task RunOnceAsync_LeavesAWaitingChannelKindConversationAlone_RegardlessOfAge()
+    public async Task RunOnceAsync_ClosesAWaitingChannelKindConversationPastItsWindow()
     {
+        var channelWindow = TimeSpan.FromHours(1);
         var siteId = new SiteId(Guid.NewGuid());
         var visitorId = new VisitorId(Guid.NewGuid());
         var conversationId = new ConversationId(Guid.NewGuid());
-        var createdAt = Now - TimeSpan.FromDays(365);
+        var createdAt = Now - channelWindow - TimeSpan.FromMinutes(1);
 
         await using (var db = fixture.CreateDbContext())
         {
@@ -365,11 +378,10 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
             db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
             db.ChannelIdentities.Add(ChannelIdentity.Link(
                 new ChannelIdentityId(Guid.NewGuid()), siteId, ChannelKind.Max,
-                new ExternalChannelAddress("max-user-waiting"), visitorId, createdAt));
+                new ExternalChannelAddress("max-user-waiting-past-window"), visitorId, createdAt));
             // `25-221`: a brand-new conversation starts Pending, not Waiting - graduate it with the
-            // visitor's own real first message before persisting it, so this test proves a genuinely
-            // Waiting channel-kind conversation is left alone, not merely that an invisible Pending
-            // one is.
+            // visitor's own real first message before persisting it, so it is genuinely Waiting for
+            // this test's own close pass (which now also reaches Waiting rows for channel kinds) to find.
             var seeded = Conversation.Start(conversationId, siteId, visitorId, createdAt);
             seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
             db.Conversations.Add(seeded);
@@ -378,12 +390,56 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
 
         await CreateJob(new AutoCloseInactiveConversationsJobOptions
         {
-            WidgetInactivityWindow = TimeSpan.FromMinutes(1),
-            WidgetCloseWindow = TimeSpan.FromMinutes(1),
-            DefaultChannelInactivityWindow = TimeSpan.FromMinutes(1),
-            // `25-118`: see RunOnceAsync_TheWindowDiffersByChannelKind_OnlyTheConversationPastItsOwnWindowCloses's
-            // own remarks - defensive, this test's own assertion is the negative (untouched), but kept
-            // consistent with its siblings in this file.
+            // Kept far out of the way - this conversation is a channel conversation, never widget, so
+            // neither widget window has anything to do with it either way.
+            WidgetInactivityWindow = TimeSpan.FromDays(365),
+            WidgetCloseWindow = TimeSpan.FromDays(365),
+            DefaultChannelInactivityWindow = channelWindow,
+            BatchSize = 100_000,
+        }).RunOnceAsync(CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        var conversation = await verify.Conversations.SingleAsync(c => c.Id == conversationId);
+        Assert.Equal(ConversationState.Closed, conversation.State);
+
+        var outboxRow = await verify.Set<OutboxMessage>().SingleAsync(o => o.Id == conversationId.Value);
+        Assert.Equal(nameof(ConversationEnded), outboxRow.Type);
+    }
+
+    /// <summary>The negative pairing for the fails-before test right above, mirroring
+    /// <see cref="RunOnceAsync_LeavesAWaitingWidgetConversationAlone_WhenNotYetPastWidgetCloseWindow"/>
+    /// for the channel-kind bucket: a channel-kind conversation sitting in `Waiting`, but not yet past
+    /// its own window, is left alone - `26-232` gives channel-kind conversations a real close window,
+    /// not an immediate close the instant they are found in `Waiting`.</summary>
+    [Fact]
+    public async Task RunOnceAsync_LeavesAWaitingChannelKindConversationAlone_WhenNotYetPastItsWindow()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var visitorId = new VisitorId(Guid.NewGuid());
+        var conversationId = new ConversationId(Guid.NewGuid());
+        var createdAt = Now - TimeSpan.FromMinutes(1);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Visitors.Add(new Visitor(visitorId, siteId, createdAt));
+            db.ChannelIdentities.Add(ChannelIdentity.Link(
+                new ChannelIdentityId(Guid.NewGuid()), siteId, ChannelKind.Max,
+                new ExternalChannelAddress("max-user-waiting-within-window"), visitorId, createdAt));
+            // `25-221`: graduate Pending -> Waiting with a real first message, same as this file's other
+            // directly-seeded-Waiting tests, so this proves a genuinely Waiting conversation is left
+            // alone, not merely that an invisible Pending one is.
+            var seeded = Conversation.Start(conversationId, siteId, visitorId, createdAt);
+            seeded.AddVisitorMessage(visitorId, new MessageId(Guid.NewGuid()), new MessageBody("hi"), createdAt);
+            db.Conversations.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        await CreateJob(new AutoCloseInactiveConversationsJobOptions
+        {
+            WidgetInactivityWindow = TimeSpan.FromDays(365),
+            WidgetCloseWindow = TimeSpan.FromDays(365),
+            DefaultChannelInactivityWindow = TimeSpan.FromHours(24),
             BatchSize = 100_000,
         }).RunOnceAsync(CancellationToken.None);
 
