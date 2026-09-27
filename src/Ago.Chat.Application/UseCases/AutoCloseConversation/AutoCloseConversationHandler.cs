@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -57,6 +58,10 @@ namespace Ago.Chat.Application.UseCases.AutoCloseConversation;
 /// unreachable catch here would read as protection this handler does not actually have, and the next
 /// person to touch this file has no way to tell "defensive" from "dead" without re-deriving this same
 /// argument - so it is removed rather than left in for symmetry with its sibling.</para>
+///
+/// <para><b>`26-215`: <see cref="siteConfig"/> joins this handler's dependencies</b>, the identical
+/// reason and shape <see cref="Application.UseCases.CloseConversation.CloseConversationHandler"/>'s own
+/// remarks give for its sibling field on the same `ConversationEnded` event.</para>
 /// </summary>
 public sealed class AutoCloseConversationHandler(
     IConversationRepository conversations,
@@ -64,6 +69,7 @@ public sealed class AutoCloseConversationHandler(
     IOutboxWriter outbox,
     IIdGenerator idGenerator,
     IClock clock,
+    GetSiteConfigByIdHandler siteConfig,
     ILogger<AutoCloseConversationHandler> logger)
 {
     public async Task<Result> HandleAsync(AutoCloseConversation command, CancellationToken cancellationToken)
@@ -120,7 +126,10 @@ public sealed class AutoCloseConversationHandler(
         var consumedCapacityClaim = conversation.Close(clock.UtcNow);
 
         var domainEvent = conversation.DomainEvents.OfType<ConversationClosed>().Single();
-        outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: the identical resolution `CloseConversationHandler`'s own remarks describe.
+        var config = await siteConfig.HandleAsync(new GetSiteConfigById.GetSiteConfigById(conversation.SiteId), cancellationToken);
+        var tenantZone = config?.TimeZone ?? "Europe/Moscow";
+        outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, conversation.SiteId.Value, tenantZone, idGenerator));
         conversation.ClearDomainEvents();
 
         // May throw ConversationConcurrencyConflictException (IConversationRepository's own contract,

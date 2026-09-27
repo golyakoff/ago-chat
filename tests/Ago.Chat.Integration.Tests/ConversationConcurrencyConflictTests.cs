@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -40,6 +41,7 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var handler = new CloseConversationHandler(
             racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(new CloseConversation(conversationId, operatorId, siteId), CancellationToken.None);
@@ -79,6 +81,7 @@ public class ConversationConcurrencyConflictTests(PostgresFixture fixture)
         var handler = new CloseConversationHandler(
             racingRepository, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(new CloseConversation(conversationId, operatorId, siteId), CancellationToken.None);

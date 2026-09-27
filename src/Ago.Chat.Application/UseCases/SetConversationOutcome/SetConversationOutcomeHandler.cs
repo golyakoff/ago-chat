@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -36,10 +37,15 @@ namespace Ago.Chat.Application.UseCases.SetConversationOutcome;
 /// <see cref="ConversationOutcomeSet"/> domain event, and this handler - the outbox's own owner for this
 /// write, matching <c>CloseConversationHandler</c>'s own shape - maps and stages it in the same
 /// transaction as <see cref="conversations"/>' own <c>SaveAsync</c> (rule 4).</para>
+///
+/// <para><b>`26-215`: <see cref="siteConfig"/> joins this handler's dependencies</b> to stamp
+/// <c>TenantZone</c> onto that same event - the identical cached <c>GetSiteConfigByIdHandler</c> read
+/// <c>StartConversationHandler</c>'s own remarks describe for <c>ConversationOpened</c>'s identical
+/// field.</para>
 /// </summary>
 public sealed class SetConversationOutcomeHandler(
     IConversationRepository conversations, IPermissionChecker permissions, IOutboxWriter outbox,
-    IIdGenerator idGenerator, IClock clock)
+    IIdGenerator idGenerator, IClock clock, GetSiteConfigByIdHandler siteConfig)
 {
     public async Task<Result> HandleAsync(SetConversationOutcome command, CancellationToken cancellationToken)
     {
@@ -96,7 +102,9 @@ public sealed class SetConversationOutcomeHandler(
     {
         conversation.SetOutcome(outcome, clock.UtcNow);
         var domainEvent = conversation.DomainEvents.OfType<ConversationOutcomeSet>().Single();
-        outbox.Enqueue(ConversationOutcomeRecordedMapper.ToEnvelope(domainEvent, idGenerator));
+        var config = await siteConfig.HandleAsync(new GetSiteConfigById.GetSiteConfigById(conversation.SiteId), cancellationToken);
+        var tenantZone = config?.TimeZone ?? "Europe/Moscow";
+        outbox.Enqueue(ConversationOutcomeRecordedMapper.ToEnvelope(domainEvent, tenantZone, idGenerator));
         conversation.ClearDomainEvents();
         await conversations.SaveAsync(conversation, cancellationToken);
         return Result.Success();

@@ -485,6 +485,7 @@ public sealed class AutoCloseInactiveConversationsJobTests(PostgresFixture fixtu
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
                 clock,
+                new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                 NullLogger<AutoCloseConversationHandler>.Instance);
             var release = new ReleaseInactiveConversationHandler(
                 new ConversationRepository(db),

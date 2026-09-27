@@ -17,6 +17,12 @@
 /// idempotent - tagging an already-tagged conversation changes nothing - so the adapter only enqueues
 /// this event when the insert actually affected a row; a repeat call must not fabricate a second
 /// "tagged" fact analytics would double-count.</para>
+///
+/// <para><b>`26-215`: <see cref="TenantZone"/> joins this contract</b> - the same fact
+/// <see cref="ConversationOpened"/> already carries, resolved by <c>TagRepository</c> itself (the one
+/// publisher, already holding the open <c>AgoChatDbContext</c>) with one extra <c>sites</c> read on the
+/// affected-row path only, falling back to <c>"Europe/Moscow"</c>. Additive within `Version` 1.</para>
 /// </summary>
 public sealed record ConversationTagged(
-    Guid ConversationId, Guid SiteId, Guid TagId, DateTimeOffset OccurredAt, Guid CorrelationId);
+    Guid ConversationId, Guid SiteId, Guid TagId, DateTimeOffset OccurredAt, Guid CorrelationId,
+    string TenantZone);

@@ -104,7 +104,7 @@ public sealed class UnreadCounterShutdownTests
                     {
                         var domainEvent = new MessageAdded(
                             new MessageId(messageId), conversationId, siteId, sequence, MessageAuthorKind.Visitor, Now);
-                        await publisher.PublishAsync(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator), CancellationToken.None);
+                        await publisher.PublishAsync(MessageAcceptedMapper.ToEnvelope(domainEvent, "Europe/Moscow", idGenerator), CancellationToken.None);
                     }
                 }
 

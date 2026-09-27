@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Application.UseCases.SetConversationOutcome;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
@@ -17,7 +18,8 @@ public class SetConversationOutcomeHandlerTests
         SetConversationOutcomeHandler Handler, FakeConversationRepository Conversations, FakeOutboxWriter Outbox,
         ConversationId ConversationId);
 
-    private static Fixture CreateFixture(bool grantPermission = true, bool alsoGrantOnOtherSite = false)
+    private static Fixture CreateFixture(
+        bool grantPermission = true, bool alsoGrantOnOtherSite = false, FakeSiteRepository? sites = null)
     {
         var conversation = Conversation.Start(new ConversationId(Guid.NewGuid()), SiteId, VisitorId, Now);
         var conversations = new FakeConversationRepository();
@@ -35,8 +37,11 @@ public class SetConversationOutcomeHandlerTests
         }
 
         var outbox = new FakeOutboxWriter();
+        // `26-215`: the same cached `GetSiteConfigByIdHandler` read `StartConversationHandler`'s own
+        // remarks describe for `ConversationOpened`'s identical `TenantZone` field.
+        var siteConfig = new GetSiteConfigByIdHandler(sites ?? new FakeSiteRepository(), new FakeCache());
         var handler = new SetConversationOutcomeHandler(
-            conversations, permissions, outbox, new FakeIdGenerator(), new FakeClock(Now));
+            conversations, permissions, outbox, new FakeIdGenerator(), new FakeClock(Now), siteConfig);
         return new Fixture(handler, conversations, outbox, conversation.Id);
     }
 
@@ -64,6 +69,32 @@ public class SetConversationOutcomeHandlerTests
         var envelope = Assert.Single(fixture.Outbox.Enqueued);
         Assert.Equal(nameof(ConversationOutcomeRecorded), envelope.Type);
         Assert.Equal(fixture.ConversationId.Value.ToString(), envelope.PartitionKey);
+
+        // `26-215`: TenantZone falls back to the platform default here - no site seeded for this
+        // test's SiteId, the same fallback StartConversationHandlerTests' own widget-defaults test
+        // proves for ConversationOpened.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationOutcomeRecorded>(envelope.Payload);
+        Assert.Equal("Europe/Moscow", contract!.TenantZone);
+    }
+
+    /// <summary>`26-215`: the tenant's own <see cref="Site.TimeZone"/> is stamped onto the event, read
+    /// through the same cached read <see cref="Application.UseCases.StartConversation.StartConversationHandler"/>
+    /// already uses for `ConversationOpened`'s identical field.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheSiteHasARealTimeZone_StampsItOntoTheOutcomeEvent()
+    {
+        var sites = new FakeSiteRepository();
+        var site = new Site(SiteId, $"pk_{Guid.NewGuid():N}", []);
+        sites.Seed(site);
+        var fixture = CreateFixture(sites: sites);
+
+        await fixture.Handler.HandleAsync(
+            new Application.UseCases.SetConversationOutcome.SetConversationOutcome(fixture.ConversationId, SiteId, OperatorId, "Converted"),
+            CancellationToken.None);
+
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationOutcomeRecorded>(envelope.Payload);
+        Assert.Equal(site.TimeZone, contract!.TenantZone);
     }
 
     [Fact]

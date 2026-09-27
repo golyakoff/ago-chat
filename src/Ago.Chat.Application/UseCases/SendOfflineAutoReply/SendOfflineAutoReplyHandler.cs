@@ -145,7 +145,9 @@ public sealed class SendOfflineAutoReplyHandler(
         conversation.AddSystemMessage(messageId, new MessageBody(reply), now, retentionClass: RetentionClass.FromTier(site.Tier));
 
         var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: `site.TimeZone` - the same cached read this handler already holds for
+        // `RetentionClass` above, at no extra cost.
+        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, site.TimeZone, idGenerator));
         conversation.ClearDomainEvents();
 
         var isFirstDelivery = await inbox.TryRecordAndSaveAsync(

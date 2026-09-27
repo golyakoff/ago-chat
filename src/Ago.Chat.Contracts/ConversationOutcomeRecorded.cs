@@ -13,6 +13,12 @@
 /// differently on purpose, the same domain-event/contract split <c>ConversationClosed</c>/
 /// <c>ConversationEnded</c> already established, so <c>ConversationOutcomeRecordedMapper</c> can bring
 /// both types into scope with no alias needed.</para>
+///
+/// <para><b>`26-215`: <see cref="TenantZone"/> joins this contract</b> - the same fact
+/// <see cref="ConversationOpened"/> already carries, resolved the same way
+/// (<c>SetConversationOutcomeHandler</c>'s own newly-added cached <c>GetSiteConfigByIdHandler</c> read,
+/// falling back to <c>"Europe/Moscow"</c>). Additive within `Version` 1.</para>
 /// </summary>
 public sealed record ConversationOutcomeRecorded(
-    Guid ConversationId, Guid SiteId, string Outcome, DateTimeOffset OccurredAt, Guid CorrelationId);
+    Guid ConversationId, Guid SiteId, string Outcome, DateTimeOffset OccurredAt, Guid CorrelationId,
+    string TenantZone);

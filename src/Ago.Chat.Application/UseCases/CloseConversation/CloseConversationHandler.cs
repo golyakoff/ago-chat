@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -49,6 +50,12 @@ namespace Ago.Chat.Application.UseCases.CloseConversation;
 /// it; if it still cannot land, the close stays successful and the leak above is the outcome - see
 /// <see cref="Application.Abstractions.OperatorCapacityContentionException"/> and the catch below.
 /// What must never happen is an operator seeing `40P01` for pressing "close".</para>
+///
+/// <para><b>`26-215`: <see cref="siteConfig"/> joins this handler's dependencies</b> to stamp the
+/// analytics <c>ConversationEnded</c> event with <c>SiteId</c>/<c>TenantZone</c> - the same cached
+/// <c>GetSiteConfigByIdHandler</c> read <c>StartConversationHandler</c> already composes for
+/// <c>ConversationOpened</c>'s identical field, so a second, uncached site lookup is never needed just
+/// to attribute a close.</para>
 /// </summary>
 public sealed class CloseConversationHandler(
     IConversationRepository conversations,
@@ -58,6 +65,7 @@ public sealed class CloseConversationHandler(
     IOutboxWriter outbox,
     IIdGenerator idGenerator,
     IClock clock,
+    GetSiteConfigByIdHandler siteConfig,
     ILogger<CloseConversationHandler> logger)
 {
     public async Task<Result> HandleAsync(CloseConversation command, CancellationToken cancellationToken)
@@ -130,7 +138,13 @@ public sealed class CloseConversationHandler(
         }
 
         var domainEvent = conversation.DomainEvents.OfType<ConversationClosed>().Single();
-        outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: resolved through the same cached `GetSiteConfigByIdHandler` read
+        // `StartConversationHandler`'s own remarks describe for `ConversationOpened`'s identical
+        // `TenantZone` field - Application's job, not Domain's (rule 1), since `Conversation.Close`
+        // itself has no business knowing a site's own time zone.
+        var config = await siteConfig.HandleAsync(new GetSiteConfigById.GetSiteConfigById(conversation.SiteId), cancellationToken);
+        var tenantZone = config?.TimeZone ?? "Europe/Moscow";
+        outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, conversation.SiteId.Value, tenantZone, idGenerator));
         conversation.ClearDomainEvents();
 
         // `23-03`: closes without opening, one of the six writers `conversation_assignments` needs a

@@ -1,4 +1,5 @@
 ﻿using Ago.Chat.Application.UseCases.CloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
@@ -68,6 +69,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
                 new SystemClock(),
+                new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                 NullLogger<CloseConversationHandler>.Instance);
 
             var result = await handler.HandleAsync(
@@ -90,6 +92,13 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
         Assert.Equal(nameof(ConversationEnded), outboxRow.Type);
         Assert.Equal(conversationId.Value.ToString(), outboxRow.PartitionKey);
         Assert.Null(outboxRow.PublishedAt);
+
+        // `26-215`: SiteId/TenantZone now ride along on the real payload too, proved end to end here
+        // (through the real Postgres-backed GetSiteConfigByIdHandler/SiteRepository), not only through
+        // CloseConversationHandlerTests' own fake-repository proof.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationEnded>(outboxRow.Payload);
+        Assert.Equal(siteId.Value, contract!.SiteId);
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
     }
 
     [Fact]
@@ -139,6 +148,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
                 new EfOutboxWriter<AgoChatDbContext>(db),
                 new UuidV7Generator(),
                 new SystemClock(),
+                new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
                 NullLogger<CloseConversationHandler>.Instance);
 
             var result = await handler.HandleAsync(
@@ -203,6 +213,7 @@ public class CloseConversationOutboxTests(PostgresFixture fixture)
             new EfOutboxWriter<AgoChatDbContext>(db),
             new UuidV7Generator(),
             new SystemClock(),
+            new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(

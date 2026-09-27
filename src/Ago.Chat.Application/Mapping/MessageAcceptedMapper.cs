@@ -11,10 +11,16 @@ namespace Ago.Chat.Application.Mapping;
 /// <c>Ago.Chat.Domain.MessageAdded</c> and <c>Ago.Chat.Contracts.MessageAccepted</c> meet
 /// (`clean-architecture.md`: mapping happens in Application when writing to the outbox, never a
 /// shared type between Domain and Contracts).
+///
+/// <para><b>`26-215`: <paramref name="tenantZone"/> joins this mapper</b> - <c>MessageAdded</c> itself
+/// carries no site time zone (Domain is not allowed to know one, rule 1), so every one of this event's
+/// several callers resolves it the same way <see cref="ConversationOpenedMapper"/>'s own caller already
+/// does (a cached <c>GetSiteConfigByIdHandler</c>/<c>SiteConfigDto</c> read, several of them already
+/// held for another reason at the call site) and hands it in here.</para>
 /// </summary>
 public static class MessageAcceptedMapper
 {
-    public static EventEnvelope ToEnvelope(MessageAdded domainEvent, IIdGenerator idGenerator)
+    public static EventEnvelope ToEnvelope(MessageAdded domainEvent, string tenantZone, IIdGenerator idGenerator)
     {
         var contract = new MessageAccepted(
             MessageId: domainEvent.MessageId.Value,
@@ -26,7 +32,8 @@ public static class MessageAcceptedMapper
             CorrelationId: idGenerator.NewId(domainEvent.OccurredAt),
             ConversationId: domainEvent.ConversationId.Value,
             AuthorKind: domainEvent.AuthorKind.ToString(),
-            Sequence: domainEvent.Sequence);
+            Sequence: domainEvent.Sequence,
+            TenantZone: tenantZone);
 
         return new EventEnvelope(
             MessageId: contract.MessageId,

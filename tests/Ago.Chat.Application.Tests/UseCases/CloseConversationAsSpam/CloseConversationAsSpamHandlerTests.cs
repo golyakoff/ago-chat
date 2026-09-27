@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CloseConversationAsSpam;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
+using Ago.Chat.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Ago.Chat.Domain;
 
@@ -47,6 +49,7 @@ public class CloseConversationAsSpamHandlerTests
         var handler = new CloseConversationAsSpamHandler(
             conversations, new FakeConversationAssignmentLog(), restrictions, permissions, new FakeOperatorCapacity(), outbox,
             new FakeIdGenerator(), new FakeClock(Now), new ConversationSpamMuteOptions { DefaultDuration = MuteDuration },
+            new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
             NullLogger<CloseConversationAsSpamHandler>.Instance);
         return new Fixture(handler, conversations, permissions, restrictions, outbox, conversation);
     }
@@ -63,7 +66,13 @@ public class CloseConversationAsSpamHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(Now.Add(MuteDuration), result.Value.MutedUntil);
         Assert.Equal(ConversationState.Closed, fixture.Conversation.State);
-        Assert.Single(fixture.Outbox.Enqueued);
+        var envelope = Assert.Single(fixture.Outbox.Enqueued);
+
+        // `26-215`: the same SiteId/TenantZone attribution CloseConversationHandlerTests' own identical
+        // test proves for an ordinary operator close.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<ConversationEnded>(envelope.Payload);
+        Assert.Equal(SiteId.Value, contract!.SiteId);
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
 
         Assert.True(await fixture.Restrictions.IsActiveAsync(SiteId, VisitorId, Now.AddMinutes(1), CancellationToken.None));
         var restriction = Assert.Single(fixture.Restrictions.Restrictions);
@@ -125,7 +134,8 @@ public class CloseConversationAsSpamHandlerTests
         var handler = new CloseConversationAsSpamHandler(
             conversations, new FakeConversationAssignmentLog(), new FakeVisitorRestrictionRepository(), permissions,
             new FakeOperatorCapacity(), new FakeOutboxWriter(), new FakeIdGenerator(), new FakeClock(Now),
-            new ConversationSpamMuteOptions(), NullLogger<CloseConversationAsSpamHandler>.Instance);
+            new ConversationSpamMuteOptions(), new GetSiteConfigByIdHandler(new FakeSiteRepository(), new FakeCache()),
+            NullLogger<CloseConversationAsSpamHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversationAsSpam.CloseConversationAsSpam(new ConversationId(Guid.NewGuid()), OperatorId, SiteId),

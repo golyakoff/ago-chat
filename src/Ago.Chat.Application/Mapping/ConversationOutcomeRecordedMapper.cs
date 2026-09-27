@@ -19,17 +19,24 @@ namespace Ago.Chat.Application.Mapping;
 /// <see cref="Conversation.SetOutcome"/> may run more than once for the same conversation (an operator
 /// changing their mind), so the conversation id is not a safe redelivery-idempotency key for this
 /// event - each recording is its own outbox row.
+///
+/// <para><b>`26-215`: <paramref name="tenantZone"/> joins this mapper</b> - <c>ConversationOutcomeSet</c>
+/// itself carries no site time zone (Domain is not allowed to know one, rule 1), so
+/// <c>SetConversationOutcomeHandler</c> resolves it the same way <see cref="ConversationOpenedMapper"/>'s
+/// own caller does and hands it in here.</para>
 /// </summary>
 public static class ConversationOutcomeRecordedMapper
 {
-    public static EventEnvelope ToEnvelope(ConversationOutcomeSet domainEvent, IIdGenerator idGenerator)
+    public static EventEnvelope ToEnvelope(
+        ConversationOutcomeSet domainEvent, string tenantZone, IIdGenerator idGenerator)
     {
         var contract = new ConversationOutcomeRecorded(
             ConversationId: domainEvent.ConversationId.Value,
             SiteId: domainEvent.SiteId.Value,
             Outcome: domainEvent.Outcome.ToString(),
             OccurredAt: domainEvent.OccurredAt,
-            CorrelationId: idGenerator.NewId(domainEvent.OccurredAt));
+            CorrelationId: idGenerator.NewId(domainEvent.OccurredAt),
+            TenantZone: tenantZone);
 
         return new EventEnvelope(
             MessageId: idGenerator.NewId(domainEvent.OccurredAt),

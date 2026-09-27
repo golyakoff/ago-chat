@@ -292,6 +292,10 @@ public sealed class MessageBatchWriter(
             var retentionClass = conversation is null
                 ? (RetentionClass?)null
                 : RetentionClass.FromTier(siteConfig?.Tier ?? RetentionClass.Free.Value);
+            // `26-215`: the identical `adr/0031` "a stamp, not a gate" cache-aside read as
+            // `retentionClass` immediately above - reused, not a second lookup, for `MessageAccepted`'s
+            // own `TenantZone` field.
+            var tenantZone = siteConfig?.TimeZone ?? "Europe/Moscow";
 
             foreach (var item in group)
             {
@@ -365,7 +369,7 @@ public sealed class MessageBatchWriter(
                             // a consequence of the one that follows. Its outbox row still carries the
                             // same `TraceParent` as the real message beside it, so both land in the one
                             // trace a reviewer would look at to understand this send.
-                            outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(greetingEvent, idGenerator), item.Message.TraceParent);
+                            outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(greetingEvent, tenantZone, idGenerator), item.Message.TraceParent);
                         }
                     }
 
@@ -423,7 +427,7 @@ public sealed class MessageBatchWriter(
                     // batch's own span) - IOutboxWriter.Enqueue's own remarks explain why: a batch
                     // covering several senders must not tag every row with whichever trace happened
                     // to parent the shared DB-write span.
-                    outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator), item.Message.TraceParent);
+                    outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, tenantZone, idGenerator), item.Message.TraceParent);
 
                     // `26-86`: only ever present among the events *this* call just appended (see the
                     // capture above) - an operator message never raises one (AddOperatorMessage requires

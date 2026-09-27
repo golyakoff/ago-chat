@@ -80,7 +80,14 @@ public sealed class TagRepository(AgoChatDbContext db, IOutboxWriter outbox, IId
     /// the honest signal for "did this call actually change anything" - re-tagging an already-tagged
     /// conversation is the documented no-op case, and publishing <see cref="ConversationTagged"/> for it
     /// would fabricate a second "tagged" fact the analytics rollup would double-count
-    /// (<see cref="ConversationTagged"/>'s own remarks).</para></summary>
+    /// (<see cref="ConversationTagged"/>'s own remarks).</para>
+    ///
+    /// <para><b>`26-215`: <see cref="ResolveTenantZoneAsync"/> joins this method's own work</b>, on the
+    /// affected-row path only - a plain read against this adapter's own already-open
+    /// <see cref="AgoChatDbContext"/>/transaction, never the cached <c>GetSiteConfigByIdHandler</c> this
+    /// codebase's Application-layer callers use (Infrastructure has no business composing an
+    /// Application-layer handler just to read one column it can query directly, and doing so here would
+    /// add a second cache-invalidation path for a value already inside this open transaction).</para></summary>
     public async Task AddToConversationAsync(
         ConversationId conversationId, SiteId siteId, TagId tagId, TagSource source, DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -97,8 +104,9 @@ public sealed class TagRepository(AgoChatDbContext db, IOutboxWriter outbox, IId
 
         if (rowsAffected > 0)
         {
+            var tenantZone = await ResolveTenantZoneAsync(siteId, cancellationToken);
             outbox.Enqueue(ConversationTaggedMapper.ToEnvelope(
-                conversationId.Value, siteId.Value, tagId.Value, now, idGenerator));
+                conversationId.Value, siteId.Value, tagId.Value, now, tenantZone, idGenerator));
             await db.SaveChangesAsync(cancellationToken);
         }
 
@@ -119,12 +127,26 @@ public sealed class TagRepository(AgoChatDbContext db, IOutboxWriter outbox, IId
 
         if (rowsAffected > 0)
         {
+            var tenantZone = await ResolveTenantZoneAsync(siteId, cancellationToken);
             outbox.Enqueue(ConversationUntaggedMapper.ToEnvelope(
-                conversationId.Value, siteId.Value, tagId.Value, now, idGenerator));
+                conversationId.Value, siteId.Value, tagId.Value, now, tenantZone, idGenerator));
             await db.SaveChangesAsync(cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>`26-215`: a plain scalar read, not a decision this write depends on (rule 8's own
+    /// carve-out for a stamp rather than a gate, `adr/0031`) - falls back to the platform default for the
+    /// same "site vanished in the one impossible instant between the caller's own read and this insert"
+    /// edge case <c>MessageBatchWriter</c>'s own remarks already accept for <c>RetentionClass</c>.</summary>
+    private async Task<string> ResolveTenantZoneAsync(SiteId siteId, CancellationToken cancellationToken)
+    {
+        var timeZone = await db.Sites
+            .Where(s => s.Id == siteId)
+            .Select(s => s.TimeZone)
+            .FirstOrDefaultAsync(cancellationToken);
+        return timeZone ?? "Europe/Moscow";
     }
 
     public async Task<IReadOnlyList<ConversationTagEntry>> GetForConversationAsync(

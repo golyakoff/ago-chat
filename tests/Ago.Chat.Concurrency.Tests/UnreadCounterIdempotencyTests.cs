@@ -39,7 +39,7 @@ public sealed class UnreadCounterIdempotencyTests(ConcurrencyTestFixture fixture
         // but the exact effect one would have: two independent deliveries of one logical event.
         var domainEvent = new MessageAdded(
             new MessageId(messageId), conversationId, siteId, Sequence: 1, MessageAuthorKind.Visitor, Now);
-        var envelope = MessageAcceptedMapper.ToEnvelope(domainEvent, new UuidV7Generator());
+        var envelope = MessageAcceptedMapper.ToEnvelope(domainEvent, "Europe/Moscow", new UuidV7Generator());
 
         var rabbitOptions = Options.Create(fixture.BuildRabbitMqOptions());
 

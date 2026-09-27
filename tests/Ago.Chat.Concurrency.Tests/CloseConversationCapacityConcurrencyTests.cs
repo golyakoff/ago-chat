@@ -2,6 +2,7 @@
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.AssignConversation;
 using Ago.Chat.Application.UseCases.CloseConversation;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
@@ -185,6 +186,7 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         var handler = new CloseConversationHandler(
             racing, new ConversationAssignmentLog(db), new PermissionChecker(db), new OperatorCapacityStore(db),
             new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(), new SystemClock(),
+            new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
             NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
@@ -517,7 +519,8 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
             var handler = new CloseConversationHandler(
                 new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
                 new OperatorCapacityStore(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(),
-                new SystemClock(), NullLogger<CloseConversationHandler>.Instance);
+                new SystemClock(), new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+                NullLogger<CloseConversationHandler>.Instance);
 
             var result = await handler.HandleAsync(
                 new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, siteId),
@@ -644,7 +647,8 @@ public sealed class CloseConversationCapacityConcurrencyTests(ConcurrencyTestFix
         var handler = new CloseConversationHandler(
             new ConversationRepository(db), new ConversationAssignmentLog(db), new PermissionChecker(db),
             new OperatorCapacityStore(db), new EfOutboxWriter<AgoChatDbContext>(db), new UuidV7Generator(),
-            new SystemClock(), NullLogger<CloseConversationHandler>.Instance);
+            new SystemClock(), new GetSiteConfigByIdHandler(new SiteRepository(db), new NoOpCache()),
+            NullLogger<CloseConversationHandler>.Instance);
 
         var result = await handler.HandleAsync(
             new Application.UseCases.CloseConversation.CloseConversation(conversationId, operatorId, seed.SiteId),

@@ -1286,7 +1286,12 @@ public sealed class RouteConversationToModuleHandler(
         }
 
         var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: `sites` is already this handler's own dependency (`ResolveConsentGateAsync`'s
+        // identical `sites.GetByIdAsync` read above) - a plain, uncached read here rather than
+        // `GetSiteConfigByIdHandler`'s cache-aside one, matching this file's own existing convention
+        // for reaching a `Site` rather than introducing a second lookup shape into it.
+        var site = await sites.GetByIdAsync(conversation.SiteId, cancellationToken);
+        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, site?.TimeZone ?? "Europe/Moscow", idGenerator));
         // Cleared, so a later save of this same tracked aggregate cannot re-enqueue it - the same
         // "clear immediately after staging" discipline SendOfflineAutoReplyHandler's own remarks
         // describe. Found by a real test (HandleAsync_ASuccessfulOutcome_...LeavesNoDomainEventsBehind)

@@ -2,6 +2,7 @@
 using System.Text;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -43,6 +44,10 @@ namespace Ago.Chat.Application.UseCases.HandleLinkIdentityCommand;
 /// calling the committing overload here would let a redelivered trigger mint a second pending request
 /// with a second code before the dedup row ever landed, the exact same mistake
 /// <c>SendOfflineAutoReplyHandler</c>'s own remarks warn against for a second <c>IConversationRepository.SaveAsync</c>.</para>
+///
+/// <para><b>`26-215`: <see cref="siteConfig"/> joins this handler's dependencies</b> to stamp the reply's
+/// own `MessageAccepted` event with `TenantZone` - the same cached `GetSiteConfigByIdHandler` read
+/// `StartConversationHandler`'s own remarks describe for `ConversationOpened`'s identical field.</para>
 /// </summary>
 public sealed class HandleLinkIdentityCommandHandler(
     IConversationRepository conversations,
@@ -52,7 +57,8 @@ public sealed class HandleLinkIdentityCommandHandler(
     IOutboxWriter outbox,
     IInboxChecker inbox,
     IClock clock,
-    IIdGenerator idGenerator)
+    IIdGenerator idGenerator,
+    GetSiteConfigByIdHandler siteConfig)
 {
     public const string ConsumerName = "link-identity-command";
 
@@ -118,7 +124,10 @@ public sealed class HandleLinkIdentityCommandHandler(
         conversation.AddSystemMessage(messageId, replyBody, now);
 
         var domainEvent = conversation.DomainEvents.OfType<MessageAdded>().Last();
-        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: the same cached `GetSiteConfigByIdHandler` read `StartConversationHandler`'s own
+        // remarks describe for `ConversationOpened`'s identical field.
+        var config = await siteConfig.HandleAsync(new GetSiteConfigById.GetSiteConfigById(command.SiteId), cancellationToken);
+        outbox.Enqueue(MessageAcceptedMapper.ToEnvelope(domainEvent, config?.TimeZone ?? "Europe/Moscow", idGenerator));
         conversation.ClearDomainEvents();
 
         var isFirstDelivery = await inbox.TryRecordAndSaveAsync(command.TriggerMessageId, ConsumerName, cancellationToken);

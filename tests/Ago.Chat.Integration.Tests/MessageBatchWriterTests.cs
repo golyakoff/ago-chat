@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Contracts;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Pipeline;
@@ -266,6 +267,13 @@ public sealed class MessageBatchWriterTests(PostgresFixture fixture)
         var outboxRow = await verify.Set<Ago.Platform.Persistence.Postgres.OutboxMessage>().SingleAsync(o => o.Id == message.Id.Value);
         Assert.Equal("MessageAccepted", outboxRow.Type);
         Assert.Null(outboxRow.PublishedAt);
+
+        // `26-215`: TenantZone, read through the same cache-aside `GetSiteConfigByIdHandler` this
+        // writer already resolves per conversation group for `RetentionClass` - proved here against a
+        // real Postgres-backed `SiteRepository`, not just the fake-repository proof
+        // StartConversationHandlerTests' own identical assertion gives for `ConversationOpened`.
+        var contract = System.Text.Json.JsonSerializer.Deserialize<MessageAccepted>(outboxRow.Payload)!;
+        Assert.Equal("Europe/Moscow", contract.TenantZone);
     }
 
     /// <summary>

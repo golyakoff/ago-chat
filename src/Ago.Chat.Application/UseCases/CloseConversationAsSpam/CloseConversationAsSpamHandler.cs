@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.Mapping;
+using Ago.Chat.Application.UseCases.GetSiteConfigById;
 using Ago.Chat.Domain;
 using Ago.Platform.Abstractions;
 using Ago.Platform.Kernel;
@@ -44,6 +45,10 @@ namespace Ago.Chat.Application.UseCases.CloseConversationAsSpam;
 /// fault, not an expected, named contention outcome the way `OperatorCapacityContentionException` is,
 /// so it is left to propagate as an ordinary `500` rather than being swallowed into a false "success."
 /// </para>
+///
+/// <para><b>`26-215`: <see cref="siteConfig"/> joins this handler's dependencies</b>, the identical
+/// reason and shape <see cref="Application.UseCases.CloseConversation.CloseConversationHandler"/>'s own
+/// remarks give for its sibling field on the same `ConversationEnded` event.</para>
 /// </summary>
 public sealed class CloseConversationAsSpamHandler(
     IConversationRepository conversations,
@@ -55,6 +60,7 @@ public sealed class CloseConversationAsSpamHandler(
     IIdGenerator idGenerator,
     IClock clock,
     ConversationSpamMuteOptions muteOptions,
+    GetSiteConfigByIdHandler siteConfig,
     ILogger<CloseConversationAsSpamHandler> logger)
 {
     public async Task<Result<CloseConversationAsSpamResult>> HandleAsync(
@@ -119,7 +125,10 @@ public sealed class CloseConversationAsSpamHandler(
         }
 
         var domainEvent = conversation.DomainEvents.OfType<ConversationClosed>().Single();
-        outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, idGenerator));
+        // `26-215`: the identical resolution `CloseConversationHandler`'s own remarks describe.
+        var config = await siteConfig.HandleAsync(new GetSiteConfigById.GetSiteConfigById(conversation.SiteId), cancellationToken);
+        var tenantZone = config?.TimeZone ?? "Europe/Moscow";
+        outbox.Enqueue(ConversationClosedMapper.ToEnvelope(domainEvent, conversation.SiteId.Value, tenantZone, idGenerator));
         conversation.ClearDomainEvents();
 
         await assignmentLog.CloseOpenAsync(conversation.Id, now, cancellationToken);
