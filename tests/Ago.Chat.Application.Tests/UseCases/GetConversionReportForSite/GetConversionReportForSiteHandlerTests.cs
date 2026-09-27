@@ -23,7 +23,7 @@ public class GetConversionReportForSiteHandlerTests
         }
 
         var clock = new FakeClock(Now);
-        return (new GetConversionReportForSiteHandler(store, permissions, clock), store);
+        return (new GetConversionReportForSiteHandler(store, new FakeAnalyticsLabelReadStore(), permissions, clock), store);
     }
 
     [Fact]
@@ -209,6 +209,39 @@ public class GetConversionReportForSiteHandlerTests
         var b = result.Value.ByOperator.Single(o => o.OperatorId == operatorB.Value);
         Assert.Equal(1, b.Bucket.NotConvertedCount);
         Assert.Equal(0.5, b.Bucket.ConversionRate);
+    }
+
+    /// <summary>`26-237`/`adr/0186` §8.1: when the read store returns id-keyed operator rows with no name
+    /// (the rollup path), the handler fills the names from <see cref="IAnalyticsLabelReadStore"/> - the
+    /// application-layer merge that replaces the cross-database join the design forbids. A name the store
+    /// already carried (the live path) is kept as-is and never re-queried.</summary>
+    [Fact]
+    public async Task HandleAsync_ResolvesOperatorNamesForRollupRows_ButKeepsNamesTheStoreAlreadyCarried()
+    {
+        var store = new FakeConversionReportReadStore();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(AdminId, SiteId, Permission.SiteConfigure);
+        var fromRollup = new OperatorId(Guid.NewGuid());
+        var alreadyNamed = new OperatorId(Guid.NewGuid());
+        var labels = new FakeAnalyticsLabelReadStore().SeedOperator(fromRollup, "Alice");
+        var handler = new GetConversionReportForSiteHandler(store, labels, permissions, new FakeClock(Now));
+        store.Seed(new ConversionReportResult(
+            new ConversionBucket(3, 1, 0, 2, 4, 0.75),
+            [
+                new ConversionOperatorBucket(fromRollup, new ConversionBucket(2, 0, 0, 1, 2, 1.0)),
+                new ConversionOperatorBucket(alreadyNamed, new ConversionBucket(1, 1, 0, 1, 2, 0.5), "Bob"),
+            ]));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetConversionReportForSite.GetConversionReportForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Alice", result.Value.ByOperator.Single(o => o.OperatorId == fromRollup.Value).OperatorName);
+        Assert.Equal("Bob", result.Value.ByOperator.Single(o => o.OperatorId == alreadyNamed.Value).OperatorName);
+        // Only the unnamed (rollup) operator is looked up; the already-named one is never re-queried.
+        Assert.Single(labels.OperatorLookups);
+        Assert.Equal([fromRollup], labels.OperatorLookups[0]);
     }
 
     [Fact]

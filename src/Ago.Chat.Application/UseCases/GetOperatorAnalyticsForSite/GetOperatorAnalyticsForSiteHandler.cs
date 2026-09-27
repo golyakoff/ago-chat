@@ -34,6 +34,7 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
     IOperatorAnalyticsReadStore readStore,
     IOperatorLoadReportReadStore loadReportReadStore,
     IAnalyticsFreshnessReadStore freshnessReadStore,
+    IAnalyticsLabelReadStore labelReadStore,
     IPermissionChecker permissions,
     IClock clock)
 {
@@ -90,6 +91,14 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
         // report's row for the same operator provably the same computation.
         var byOperator = OperatorAnalyticsMerge.ComposeByOperator(result, loadTask.Result);
 
+        // `26-237`/`adr/0186` §8.1: fill any operator whose name the merge could not supply. Today the still-
+        // live operator-load report carries operator names, so every row is already named and this touches no
+        // database. Once the operator-load read also moves to the id-keyed rollups (a later slice), the merge
+        // will produce null names and this application-layer resolve becomes the sole source - so wiring it
+        // now is what keeps operator names from vanishing the moment that swap lands, without a cross-database
+        // join from ago_analytics.
+        byOperator = await ResolveMissingOperatorNamesAsync(query.SiteId, byOperator, cancellationToken);
+
         return new OperatorAnalyticsResponse(
             from,
             to,
@@ -102,6 +111,26 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
             result.ByReferrer.Select(r => new OperatorAnalyticsReferrerBucketDto(r.ReferrerHost, ToDto(r.Bucket))).ToList(),
             result.ByCampaign.Select(c => new OperatorAnalyticsCampaignBucketDto(c.UtmCampaign, ToDto(c.Bucket))).ToList(),
             freshnessTask.Result);
+    }
+
+    private async Task<IReadOnlyList<OperatorAnalyticsOperatorBucketDto>> ResolveMissingOperatorNamesAsync(
+        SiteId siteId, IReadOnlyList<OperatorAnalyticsOperatorBucketDto> byOperator, CancellationToken cancellationToken)
+    {
+        var unresolved = byOperator
+            .Where(o => o.OperatorName is null)
+            .Select(o => new OperatorId(o.OperatorId))
+            .ToList();
+        if (unresolved.Count == 0)
+        {
+            return byOperator;
+        }
+
+        var names = await labelReadStore.GetOperatorDisplayNamesAsync(siteId, unresolved, cancellationToken);
+        return byOperator
+            .Select(o => o.OperatorName is null && names.TryGetValue(new OperatorId(o.OperatorId), out var name)
+                ? o with { OperatorName = name }
+                : o)
+            .ToList();
     }
 
     private static OperatorAnalyticsBucketDto ToDto(OperatorAnalyticsBucket bucket) => new(

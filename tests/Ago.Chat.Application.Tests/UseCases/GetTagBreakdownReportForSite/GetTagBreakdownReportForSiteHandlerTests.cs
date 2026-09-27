@@ -23,7 +23,40 @@ public class GetTagBreakdownReportForSiteHandlerTests
         }
 
         var clock = new FakeClock(Now);
-        return (new GetTagBreakdownReportForSiteHandler(store, permissions, clock), store);
+        return (new GetTagBreakdownReportForSiteHandler(store, new FakeAnalyticsLabelReadStore(), permissions, clock), store);
+    }
+
+    /// <summary>`26-237`/`adr/0186` §8.1: when the read store returns id-keyed tag rows with an empty name
+    /// (the rollup path), the handler fills the names from <see cref="IAnalyticsLabelReadStore"/> - the
+    /// application-layer merge. A tag whose name the store already carried (the live path) is kept and not
+    /// re-queried.</summary>
+    [Fact]
+    public async Task HandleAsync_ResolvesTagNamesForRollupRows_ButKeepsNamesTheStoreAlreadyCarried()
+    {
+        var store = new FakeTagBreakdownReadStore();
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(AdminId, SiteId, Permission.SiteConfigure);
+        var fromRollup = new TagId(Guid.NewGuid());
+        var alreadyNamed = new TagId(Guid.NewGuid());
+        var labels = new FakeAnalyticsLabelReadStore().SeedTag(fromRollup, "Billing");
+        var handler = new GetTagBreakdownReportForSiteHandler(store, labels, permissions, new FakeClock(Now));
+        store.Seed(new TagBreakdownResult(
+            10, 6, 0.6,
+            [
+                new TagBreakdownBucket(fromRollup, string.Empty, 4, 3, 1, 4, 0.75),
+                new TagBreakdownBucket(alreadyNamed, "Refund", 2, 1, 1, 2, 0.5),
+            ]));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetTagBreakdownReportForSite.GetTagBreakdownReportForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Billing", result.Value.ByTag.Single(t => t.TagId == fromRollup.Value).TagName);
+        Assert.Equal("Refund", result.Value.ByTag.Single(t => t.TagId == alreadyNamed.Value).TagName);
+        // Only the unnamed (rollup) tag is looked up; the already-named one is never re-queried.
+        Assert.Single(labels.TagLookups);
+        Assert.Equal([fromRollup], labels.TagLookups[0]);
     }
 
     [Fact]
