@@ -38,6 +38,7 @@ public sealed class GetOwnAnalyticsForOperatorHandler(
     IOperatorAnalyticsReadStore readStore,
     IOperatorLoadReportReadStore loadReportReadStore,
     IConversionReportReadStore conversionReadStore,
+    IAnalyticsFreshnessReadStore freshnessReadStore,
     IClock clock)
 {
     /// <summary>Restated rather than referenced against
@@ -64,7 +65,10 @@ public sealed class GetOwnAnalyticsForOperatorHandler(
         var analyticsTask = readStore.GetSiteAnalyticsAsync(query.SiteId, from, to, cancellationToken);
         var loadTask = loadReportReadStore.GetOperatorLoadReportAsync(query.SiteId, from, to, cancellationToken);
         var conversionTask = conversionReadStore.GetConversionReportAsync(query.SiteId, from, to, cancellationToken);
-        await Task.WhenAll(analyticsTask, loadTask, conversionTask);
+        // `26-223`/`adr/0186` §8: the same freshness marker the tenant report carries, on the operator's
+        // own screen - one more concurrent read joining the existing `Task.WhenAll`.
+        var freshnessTask = freshnessReadStore.GetLastRollupCompletedAtAsync(cancellationToken);
+        await Task.WhenAll(analyticsTask, loadTask, conversionTask, freshnessTask);
 
         var byOperator = OperatorAnalyticsMerge.ComposeByOperator(analyticsTask.Result, loadTask.Result);
         var ownRow = byOperator.SingleOrDefault(o => o.OperatorId == query.RequestedBy.Value);
@@ -75,7 +79,8 @@ public sealed class GetOwnAnalyticsForOperatorHandler(
             to,
             ownRow?.Bucket ?? OperatorAnalyticsMerge.ZeroBucketDto,
             ownRow?.Load,
-            ownConversionRow is null ? null : ToConversionDto(ownConversionRow.Bucket));
+            ownConversionRow is null ? null : ToConversionDto(ownConversionRow.Bucket),
+            freshnessTask.Result);
     }
 
     private static ConversionBucketDto ToConversionDto(ConversionBucket bucket) => new(

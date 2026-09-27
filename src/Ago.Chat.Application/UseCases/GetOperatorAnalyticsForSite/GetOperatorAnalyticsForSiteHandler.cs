@@ -33,6 +33,7 @@ namespace Ago.Chat.Application.UseCases.GetOperatorAnalyticsForSite;
 public sealed class GetOperatorAnalyticsForSiteHandler(
     IOperatorAnalyticsReadStore readStore,
     IOperatorLoadReportReadStore loadReportReadStore,
+    IAnalyticsFreshnessReadStore freshnessReadStore,
     IPermissionChecker permissions,
     IClock clock)
 {
@@ -73,7 +74,13 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
         var currentTask = readStore.GetSiteAnalyticsAsync(query.SiteId, from, to, cancellationToken);
         var previousTask = readStore.GetSiteAnalyticsAsync(query.SiteId, previousFrom, previousTo, cancellationToken);
         var loadTask = loadReportReadStore.GetOperatorLoadReportAsync(query.SiteId, from, to, cancellationToken);
-        await Task.WhenAll(currentTask, previousTask, loadTask);
+        // `26-223`/`adr/0186` §8: the one freshness read every analytics response now carries, issued
+        // alongside the aggregate reads rather than threaded through each store's signature - a fourth
+        // concurrent call on one site's report at human frequency, the same `Task.WhenAll` shape the reads
+        // above already use. It reads `ago_analytics` (or the null-object store when the pipeline is not
+        // configured), never a write decision (rule 8).
+        var freshnessTask = freshnessReadStore.GetLastRollupCompletedAtAsync(cancellationToken);
+        await Task.WhenAll(currentTask, previousTask, loadTask, freshnessTask);
         var result = currentTask.Result;
         var previousResult = previousTask.Result;
 
@@ -93,7 +100,8 @@ public sealed class GetOperatorAnalyticsForSiteHandler(
             result.ByChannel.Select(c => new OperatorAnalyticsChannelBucketDto(c.Channel, ToDto(c.Bucket))).ToList(),
             byOperator,
             result.ByReferrer.Select(r => new OperatorAnalyticsReferrerBucketDto(r.ReferrerHost, ToDto(r.Bucket))).ToList(),
-            result.ByCampaign.Select(c => new OperatorAnalyticsCampaignBucketDto(c.UtmCampaign, ToDto(c.Bucket))).ToList());
+            result.ByCampaign.Select(c => new OperatorAnalyticsCampaignBucketDto(c.UtmCampaign, ToDto(c.Bucket))).ToList(),
+            freshnessTask.Result);
     }
 
     private static OperatorAnalyticsBucketDto ToDto(OperatorAnalyticsBucket bucket) => new(

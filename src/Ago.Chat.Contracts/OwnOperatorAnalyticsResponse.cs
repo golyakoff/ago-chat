@@ -27,9 +27,15 @@
 /// recorded outcome in the window - the identical "no manufactured row" rule
 /// <c>Ago.Chat.Application.Abstractions.ConversionReportResult</c>'s own <c>ByOperator</c> already
 /// holds, applied to one row instead of a list.</param>
+/// <param name="ComputedAsOf">`26-223`/`adr/0186` §3.1: the same additive freshness marker
+/// <see cref="OperatorAnalyticsResponse.ComputedAsOf"/> carries, on the operator's own screen - the last
+/// successful rollup run's completion instant, or <see langword="null"/> when the analytics pipeline is not
+/// configured (the row was served by live aggregation) or no run has completed. Additive and optional, so
+/// the Android screen adds a "data as of …" line without breaking older clients.</param>
 public sealed record OwnOperatorAnalyticsResponse(
     DateTimeOffset From,
     DateTimeOffset To,
     OperatorAnalyticsBucketDto Bucket,
     OperatorLoadSummaryDto? Load,
-    ConversionBucketDto? Conversion);
+    ConversionBucketDto? Conversion,
+    DateTimeOffset? ComputedAsOf = null);

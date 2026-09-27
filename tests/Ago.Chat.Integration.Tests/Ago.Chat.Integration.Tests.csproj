@@ -71,6 +71,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Postgres\Ago.Chat.Infrastructure.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Analytics\Ago.Chat.Infrastructure.Analytics.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Infrastructure.Modules\Ago.Chat.Infrastructure.Modules.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Worker\Ago.Chat.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ago.Chat.Api\Ago.Chat.Api.csproj" />

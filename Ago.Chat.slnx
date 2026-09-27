@@ -5,6 +5,7 @@
     <Project Path="src/Ago.Chat.Contracts/Ago.Chat.Contracts.csproj" />
     <Project Path="src/Ago.Chat.Domain/Ago.Chat.Domain.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Postgres/Ago.Chat.Infrastructure.Postgres.csproj" />
+    <Project Path="src/Ago.Chat.Infrastructure.Analytics/Ago.Chat.Infrastructure.Analytics.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Keycloak/Ago.Chat.Infrastructure.Keycloak.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.MaxBot/Ago.Chat.Infrastructure.MaxBot.csproj" />
     <Project Path="src/Ago.Chat.Infrastructure.Modules/Ago.Chat.Infrastructure.Modules.csproj" />

@@ -24,7 +24,55 @@ public class GetOperatorAnalyticsForSiteHandlerTests
         }
 
         var clock = new FakeClock(Now);
-        return (new GetOperatorAnalyticsForSiteHandler(store, loadStore, permissions, clock), store, loadStore);
+        // `26-223`: the freshness store defaults to null (pipeline-not-configured / no run yet), which is
+        // the correct default for every test here that does not assert on computedAsOf - see
+        // HandleAsync_SurfacesComputedAsOf_FromTheFreshnessStore for the one that does.
+        var freshness = new FakeAnalyticsFreshnessReadStore();
+        return (
+            new GetOperatorAnalyticsForSiteHandler(store, loadStore, freshness, permissions, clock),
+            store, loadStore);
+    }
+
+    /// <summary>`26-223`/`adr/0186` §3.1: the additive freshness marker the read switch adds - the handler
+    /// surfaces whatever the freshness store reports as <c>computedAsOf</c>, unchanged, so the console can
+    /// state the data currency. The store's own query (max completion instant over the rollup runs) is the
+    /// integration test's job; this proves the handler wires it onto the response.</summary>
+    [Fact]
+    public async Task HandleAsync_SurfacesComputedAsOf_FromTheFreshnessStore()
+    {
+        var store = new FakeOperatorAnalyticsReadStore();
+        var loadStore = new FakeOperatorLoadReportReadStore();
+        var freshness = new FakeAnalyticsFreshnessReadStore();
+        var asOf = new DateTimeOffset(2026, 6, 15, 11, 0, 0, TimeSpan.Zero);
+        freshness.Seed(asOf);
+        var permissions = new FakePermissionChecker();
+        permissions.Grant(AdminId, SiteId, Permission.SiteConfigure);
+
+        var handler = new GetOperatorAnalyticsForSiteHandler(store, loadStore, freshness, permissions, new FakeClock(Now));
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(asOf, result.Value.ComputedAsOf);
+        Assert.Equal(1, freshness.CallCount);
+    }
+
+    /// <summary>`26-223`: the fallback case - a host with no analytics pipeline configured resolves the
+    /// null-object freshness store, so <c>computedAsOf</c> is honestly <see langword="null"/> (the report
+    /// was served by live aggregation, which has no rollup as-of marker), never a fabricated timestamp.</summary>
+    [Fact]
+    public async Task HandleAsync_ComputedAsOfIsNull_WhenTheFreshnessStoreReportsNone()
+    {
+        var (handler, _, _) = CreateFixture();
+
+        var result = await handler.HandleAsync(
+            new Application.UseCases.GetOperatorAnalyticsForSite.GetOperatorAnalyticsForSite(AdminId, SiteId, null, null),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.ComputedAsOf);
     }
 
     [Fact]

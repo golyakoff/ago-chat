@@ -18,6 +18,13 @@
 /// <param name="PreviousOverall">`23-16`: <see cref="Overall"/>'s identical shape, computed over the
 /// preceding window - never a per-channel/per-operator/per-referrer/per-campaign breakdown of it (the
 /// item's own scope: the headline figure gets a comparison, not every row of every table).</param>
+/// <param name="ComputedAsOf">`26-223`/`adr/0186` §3.1: the freshness marker for the precomputed-rollup
+/// read - the completion instant of the last successful rollup run, so the UI can state the data currency
+/// ("computed on data as of …"). An <b>additive</b>, optional field (`api-design.md` versioning: a new
+/// optional field is backward compatible, so existing console/Android callers keep working). <see
+/// langword="null"/> when the analytics pipeline is not configured for this host - the report was then
+/// served by live <c>ago_chat</c> aggregation, which has no rollup as-of marker - or when no rollup run has
+/// ever completed. Rendered in the caller's zone by the client (`date-and-time.md`).</param>
 public sealed record OperatorAnalyticsResponse(
     DateTimeOffset From,
     DateTimeOffset To,
@@ -28,7 +35,8 @@ public sealed record OperatorAnalyticsResponse(
     IReadOnlyList<OperatorAnalyticsChannelBucketDto> ByChannel,
     IReadOnlyList<OperatorAnalyticsOperatorBucketDto> ByOperator,
     IReadOnlyList<OperatorAnalyticsReferrerBucketDto> ByReferrer,
-    IReadOnlyList<OperatorAnalyticsCampaignBucketDto> ByCampaign);
+    IReadOnlyList<OperatorAnalyticsCampaignBucketDto> ByCampaign,
+    DateTimeOffset? ComputedAsOf = null);
 
 /// <param name="AverageFirstResponseSeconds"><see langword="null"/> when nothing in this bucket ever
 /// received an operator reply - see <c>IOperatorAnalyticsReadStore</c>'s own remarks for the exact
