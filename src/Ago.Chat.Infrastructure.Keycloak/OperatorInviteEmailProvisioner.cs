@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Platform.Kernel;
@@ -18,13 +19,16 @@ namespace Ago.Chat.Infrastructure.Keycloak;
 /// same seam <c>ServiceCollectionExtensions.AddKeycloakDemoIdentities</c> already establishes for its
 /// sibling.
 ///
-/// <para><b>Three Admin API calls per invite, not one.</b> (1) `POST .../users` - create; on `201`, done
-/// with this step. (2) On `409` only, find the existing identity - `GET .../users?email=...&amp;exact=true`
-/// first and, `26-260`, `GET .../users?username=...&amp;exact=true` as a fallback when the email search
-/// finds nothing (the 409 is a *username* collision, and a pre-existing user can hold the username with no
-/// `email` attribute) - and, since it was not just created with the right locale attribute,
-/// `PUT .../users/{id}` to set it. (3) `PUT .../users/{id}/execute-actions-email` either way - the actual
-/// send.</para>
+/// <para><b>Up to five Admin API calls per invite, not one.</b> (1) `POST .../users` - create; on `201`,
+/// done with this step and only the send below follows. (2) On `409` only, find the existing identity -
+/// `GET .../users?email=...&amp;exact=true` first and, `26-260`, `GET .../users?username=...&amp;exact=true`
+/// as a fallback when the email search finds nothing (the 409 is a *username* collision, and a pre-existing
+/// user can hold the username with no `email` attribute). (3) On that same `409` path, sync the existing
+/// user - `GET .../users/{id}` to read its current representation, then `PUT .../users/{id}` with that whole
+/// representation round-tripped: `email` set and the `locale` attribute merged in. `26-262`: this is a
+/// full-representation PUT on purpose, because Keycloak's user PUT *replaces* the representation - a partial
+/// `{ attributes: { locale } }` body silently wiped the `email` and broke the send below. (4)
+/// `PUT .../users/{id}/execute-actions-email` either way - the actual send.</para>
 ///
 /// <para><b>What was not verified against a live realm, stated plainly rather than assumed.</b>
 /// (a) Whether this realm's <see cref="KeycloakAdminOptions.Realm"/> has email internationalization
@@ -139,8 +143,11 @@ public sealed class OperatorInviteEmailProvisioner(
 
         // This user already existed under whatever locale (or none) it was last given - synced here so
         // the email this invite is about to send still renders in the inviting site's own language,
-        // not whatever this person's account happened to carry from before.
-        await UpdateLocaleAsync(userId, locale, token, cancellationToken);
+        // not whatever this person's account happened to carry from before. `26-262`: the same sync
+        // also (re)asserts the `email`, both preserving an existing one and backfilling the `26-260`
+        // username-only user that had none - without which the execute-actions-email below has no
+        // address to send to.
+        await SyncEmailAndLocaleAsync(userId, email, locale, token, cancellationToken);
         return userId;
     }
 
@@ -166,17 +173,46 @@ public sealed class OperatorInviteEmailProvisioner(
             ?? throw new InvalidOperationException("Keycloak returned an existing user with no id.");
     }
 
-    private async Task UpdateLocaleAsync(string userId, Locale locale, string token, CancellationToken cancellationToken)
+    private async Task SyncEmailAndLocaleAsync(
+        string userId, string email, Locale locale, string token, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(
+        // `26-262`: Keycloak's `PUT .../users/{id}` replaces the *whole* user representation, so any field
+        // omitted from the body is cleared. The earlier version of this method sent only
+        // `{ "attributes": { "locale": [...] } }`, which wiped the user's `email`; the subsequent
+        // execute-actions-email then failed with "User email missing" and the invite came back
+        // `sendFailed`. So the current representation is fetched and round-tripped: `email` is set (which
+        // both preserves an existing address and backfills the `26-260` username-only user that had none)
+        // and the `locale` attribute is merged into whatever attributes the user already carries, with
+        // every other field the GET returned - username, emailVerified, firstName, enabled,
+        // requiredActions - left exactly as it was.
+        using var getRequest = new HttpRequestMessage(
+            HttpMethod.Get, $"{BaseUrl}/admin/realms/{options.Realm}/users/{Uri.EscapeDataString(userId)}");
+        getRequest.Headers.Authorization = new("Bearer", token);
+
+        using var getResponse = await http.SendAsync(getRequest, cancellationToken);
+        getResponse.EnsureSuccessStatusCode();
+
+        var representation = JsonNode.Parse(await getResponse.Content.ReadAsStringAsync(cancellationToken)) as JsonObject
+            ?? throw new InvalidOperationException("Keycloak returned an existing user representation that was not a JSON object.");
+
+        representation["email"] = email;
+        if (representation["attributes"] is not JsonObject attributes)
+        {
+            attributes = [];
+            representation["attributes"] = attributes;
+        }
+
+        attributes["locale"] = new JsonArray(KeycloakLocaleCode(locale));
+
+        using var putRequest = new HttpRequestMessage(
             HttpMethod.Put, $"{BaseUrl}/admin/realms/{options.Realm}/users/{Uri.EscapeDataString(userId)}")
         {
-            Content = JsonContent.Create(new { attributes = new Dictionary<string, string[]> { ["locale"] = [KeycloakLocaleCode(locale)] } }),
+            Content = JsonContent.Create(representation),
         };
-        request.Headers.Authorization = new("Bearer", token);
+        putRequest.Headers.Authorization = new("Bearer", token);
 
-        using var response = await http.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var putResponse = await http.SendAsync(putRequest, cancellationToken);
+        putResponse.EnsureSuccessStatusCode();
     }
 
     private async Task<OperatorInviteProvisionOutcome> SendActionsEmailAsync(
