@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Text;
+using System.Text.Json;
 using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Keycloak;
@@ -9,14 +10,16 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Ago.Chat.Integration.Tests;
 
 /// <summary>
-/// `26-260`: the create-or-find branch of <see cref="OperatorInviteEmailProvisioner"/>, driven through a
-/// stub <see cref="HttpMessageHandler"/> so the real Admin-API call shapes (token, create, the two
-/// lookups, locale sync, execute-actions-email) are exercised without a live Keycloak. The bug this item
-/// fixes was observed on the stand: a `POST .../users` returns `409` because the *username* is already
-/// taken (this class creates every user with `username = email`), but the pre-existing identity carries no
-/// `email` attribute, so the by-email lookup returns `[]` and the provisioner threw - unhandled, a 500 for
-/// the whole invite. The fix falls back to a by-username lookup before treating "not found" as a real
-/// inconsistency.
+/// `26-260`/`26-262`: the create-or-find branch of <see cref="OperatorInviteEmailProvisioner"/>, driven
+/// through a stub <see cref="HttpMessageHandler"/> so the real Admin-API call shapes (token, create, the
+/// two lookups, the GET+PUT locale/email sync, execute-actions-email) are exercised without a live
+/// Keycloak. `26-260`'s bug: a `POST .../users` returns `409` because the *username* is already taken (this
+/// class creates every user with `username = email`), but the pre-existing identity carries no `email`
+/// attribute, so the by-email lookup returns `[]` and the provisioner threw. `26-262`'s bug, on the same
+/// existing-user path: the sync step did a *partial* `PUT .../users/{id}` with only `{ attributes: { locale
+/// } }`, and Keycloak's user PUT replaces the whole representation, so the omitted `email` was wiped and the
+/// following execute-actions-email failed with "User email missing". The fix GETs the current
+/// representation, sets `email` and merges the `locale` attribute, and PUTs that whole object back.
 /// </summary>
 public sealed class OperatorInviteEmailProvisionerTests
 {
@@ -84,6 +87,63 @@ public sealed class OperatorInviteEmailProvisionerTests
         Assert.Equal(ExistingUserId, handler.ActionsEmailUserId);
     }
 
+    /// <summary>`26-262`, the core regression: the existing user found via the `409` path carries *no*
+    /// `email` attribute (the `26-260` username-only user). The sync step must GET the representation and
+    /// PUT it back with `email` set to the invite address and the `locale` attribute merged in - so the
+    /// following execute-actions-email has an address to send to. Fails-before: the pre-`26-262` code PUT a
+    /// partial `{ attributes: { locale } }` body with no `email` at all, so this assertion is red.</summary>
+    [Fact]
+    public async Task ProvisionAndSendAsync_WhenExistingUserHasNoEmail_SyncPutSetsEmailAndLocale()
+    {
+        var handler = new StubKeycloakHandler(
+            emailLookupFindsUser: false,
+            usernameLookupFindsUser: true,
+            // The 409'd identity holds the username but has never had an email attribute set.
+            existingUserRepresentation: $"{{\"id\":\"{ExistingUserId}\",\"username\":\"{Email}\",\"enabled\":true}}");
+        using var provisioner = CreateProvisioner(handler);
+
+        var outcome = await provisioner.ProvisionAndSendAsync(Request(), CancellationToken.None);
+
+        Assert.IsType<OperatorInviteProvisionOutcome.Sent>(outcome);
+        Assert.True(handler.FetchedExistingUser, "expected a GET of the current representation before the sync PUT");
+        Assert.NotNull(handler.LocaleSyncPutBody);
+
+        using var body = JsonDocument.Parse(handler.LocaleSyncPutBody!);
+        Assert.Equal(Email, body.RootElement.GetProperty("email").GetString());
+        Assert.Equal("en", body.RootElement.GetProperty("attributes").GetProperty("locale")[0].GetString());
+        Assert.Equal(ExistingUserId, handler.ActionsEmailUserId);
+    }
+
+    /// <summary>`26-262`: an existing user that *does* carry an email plus other representation fields
+    /// (firstName, its own attributes). The round-trip PUT must preserve all of them - none of the fields
+    /// omitted from the old partial body may be clobbered - while still merging the `locale` attribute.
+    /// Fails-before: the partial PUT dropped email, firstName and the pre-existing attribute alike.</summary>
+    [Fact]
+    public async Task ProvisionAndSendAsync_WhenExistingUserHasEmailAndFields_SyncPutPreservesThemAndMergesLocale()
+    {
+        var handler = new StubKeycloakHandler(
+            emailLookupFindsUser: true,
+            usernameLookupFindsUser: true,
+            existingUserRepresentation:
+                $"{{\"id\":\"{ExistingUserId}\",\"username\":\"{Email}\",\"email\":\"{Email}\",\"firstName\":\"Alena\","
+                + "\"emailVerified\":true,\"attributes\":{\"phone\":[\"+70000000000\"]}}");
+        using var provisioner = CreateProvisioner(handler);
+
+        var outcome = await provisioner.ProvisionAndSendAsync(Request(), CancellationToken.None);
+
+        Assert.IsType<OperatorInviteProvisionOutcome.Sent>(outcome);
+        Assert.NotNull(handler.LocaleSyncPutBody);
+
+        using var body = JsonDocument.Parse(handler.LocaleSyncPutBody!);
+        var root = body.RootElement;
+        Assert.Equal(Email, root.GetProperty("email").GetString());
+        Assert.Equal("Alena", root.GetProperty("firstName").GetString());
+        Assert.True(root.GetProperty("emailVerified").GetBoolean());
+        var attributes = root.GetProperty("attributes");
+        Assert.Equal("+70000000000", attributes.GetProperty("phone")[0].GetString());
+        Assert.Equal("en", attributes.GetProperty("locale")[0].GetString());
+    }
+
     private static OperatorInviteEmailProvisioner CreateProvisioner(StubKeycloakHandler handler) =>
         new(new HttpClient(handler), Options, new FixedClock(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)),
             NullLogger<OperatorInviteEmailProvisioner>.Instance);
@@ -95,17 +155,28 @@ public sealed class OperatorInviteEmailProvisionerTests
 
     /// <summary>Answers just the Admin-API calls this provisioner makes, in order: the client-credentials
     /// token, the `POST .../users` create (always `409` here - the case under test), the by-email and
-    /// by-username lookups (each returning a one-element array or `[]` per its flags), the locale-sync
-    /// `PUT .../users/{id}`, and the `PUT .../users/{id}/execute-actions-email` send.</summary>
-    private sealed class StubKeycloakHandler(bool emailLookupFindsUser, bool usernameLookupFindsUser) : HttpMessageHandler
+    /// by-username lookups (each returning a one-element array or `[]` per its flags), the
+    /// `GET .../users/{id}` representation fetch, the sync `PUT .../users/{id}`, and the
+    /// `PUT .../users/{id}/execute-actions-email` send.</summary>
+    private sealed class StubKeycloakHandler(
+        bool emailLookupFindsUser,
+        bool usernameLookupFindsUser,
+        string? existingUserRepresentation = null) : HttpMessageHandler
     {
+        private readonly string _existingUserRepresentation =
+            existingUserRepresentation ?? $"{{\"id\":\"{ExistingUserId}\",\"email\":\"{Email}\"}}";
+
         public bool QueriedByUsername { get; private set; }
+
+        public bool FetchedExistingUser { get; private set; }
 
         public string? LocaleSyncedUserId { get; private set; }
 
+        public string? LocaleSyncPutBody { get; private set; }
+
         public string? ActionsEmailUserId { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
             var path = uri.AbsolutePath;
@@ -114,13 +185,13 @@ public sealed class OperatorInviteEmailProvisionerTests
             // Token endpoint.
             if (request.Method == HttpMethod.Post && path.EndsWith("/protocol/openid-connect/token", StringComparison.Ordinal))
             {
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"access_token\":\"stub-token\",\"expires_in\":300}"));
+                return Json(HttpStatusCode.OK, "{\"access_token\":\"stub-token\",\"expires_in\":300}");
             }
 
             // Create - always a username collision in these tests.
             if (request.Method == HttpMethod.Post && path.EndsWith("/users", StringComparison.Ordinal))
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
+                return new HttpResponseMessage(HttpStatusCode.Conflict);
             }
 
             // The two lookups: GET .../users?email=... and GET .../users?username=...
@@ -129,27 +200,37 @@ public sealed class OperatorInviteEmailProvisionerTests
                 if (query.Contains("username=", StringComparison.Ordinal))
                 {
                     QueriedByUsername = true;
-                    return Task.FromResult(Json(HttpStatusCode.OK, usernameLookupFindsUser ? UserArray : "[]"));
+                    return Json(HttpStatusCode.OK, usernameLookupFindsUser ? UserArray : "[]");
                 }
 
-                return Task.FromResult(Json(HttpStatusCode.OK, emailLookupFindsUser ? UserArray : "[]"));
+                return Json(HttpStatusCode.OK, emailLookupFindsUser ? UserArray : "[]");
             }
 
-            // Locale sync PUT .../users/{id}
+            // GET .../users/{id} - the current representation the sync step round-trips.
+            if (request.Method == HttpMethod.Get && path.EndsWith($"/users/{ExistingUserId}", StringComparison.Ordinal))
+            {
+                FetchedExistingUser = true;
+                return Json(HttpStatusCode.OK, _existingUserRepresentation);
+            }
+
+            // Sync PUT .../users/{id}
             if (request.Method == HttpMethod.Put && path.EndsWith($"/users/{ExistingUserId}", StringComparison.Ordinal))
             {
                 LocaleSyncedUserId = ExistingUserId;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+                LocaleSyncPutBody = request.Content is null
+                    ? null
+                    : await request.Content.ReadAsStringAsync(cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
 
             // Send PUT .../users/{id}/execute-actions-email
             if (request.Method == HttpMethod.Put && path.EndsWith("/execute-actions-email", StringComparison.Ordinal))
             {
                 ActionsEmailUserId = ExistingUserId;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
         private const string UserArray = "[{\"id\":\"" + ExistingUserId + "\"}]";
