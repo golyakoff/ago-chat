@@ -154,7 +154,7 @@ public static class OperatorInviteEndpoints
         return Results.Ok(new ListOperatorInvitesResponse(
             [.. result.Value.Select(entry => new OperatorInviteListEntryResponse(
                 entry.OperatorInviteId, entry.Email, entry.CreatedAt, entry.ExpiresAt,
-                entry.Status.ToString(), entry.SmtpErrorCode))]));
+                entry.Status.ToString(), entry.SmtpErrorCode, entry.Roles))]));
     }
 
     /// <summary>`25-73`: revoking before acceptance means a later redemption attempt is refused with
@@ -301,8 +301,15 @@ public static class OperatorInviteEndpoints
     /// convention `OperatorInvitePreviewResponse.Status` already follows below.</summary>
     public sealed record ListOperatorInvitesResponse(IReadOnlyList<OperatorInviteListEntryResponse> Invites);
 
+    /// <summary>`26-258`: <see cref="Roles"/> is the role SET this invite grants, as the role names
+    /// (`["Operator", "Admin"]`) - the read-side mirror of the multi-role write `26-241` added to
+    /// creation, so the console's own pending-invite row can show which role(s) a still-unredeemed invite
+    /// will confer. A single-role invite is simply a one-element list; the field is always present and
+    /// never null (an invite with no roles reads as `[]`), alphabetically ordered in the read store's own
+    /// SQL so the row is stable across reads.</summary>
     public sealed record OperatorInviteListEntryResponse(
-        Guid OperatorInviteId, string Email, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status, string? SmtpErrorCode);
+        Guid OperatorInviteId, string Email, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status, string? SmtpErrorCode,
+        IReadOnlyList<string> Roles);
 
     /// <summary>`25-73`: `OnboardingPage`'s own registration-collision steer.</summary>
     public sealed record HasPendingOperatorInviteResponse(bool HasPendingInvite);
