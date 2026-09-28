@@ -411,6 +411,52 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         return ids.Select(id => new ConversationId(id)).ToList();
     }
 
+    // `26-269`: the client-detail hub's "which dialog do I open" read - ordered so the row to open is
+    // always first. `c.state <> 'Closed'` is the identical predicate
+    // `IConversationRepository.GetActiveForVisitorAsync` already uses in production code, restated here
+    // rather than shared because one is EF (write-side, against the aggregate) and this is Dapper
+    // (read-side, hand-written SQL, adr/0004) - the two cannot share a LINQ expression, only the same
+    // meaning. By that predicate's own construction a person has at most one non-Closed conversation
+    // (`StartConversationHandler`'s own `GetActiveForVisitorAsync` check), so at most one row ever sorts
+    // ahead of every `Closed` one; the `Closed` ones then fall back to newest-first, the same `id desc`
+    // shape `VisitorHistorySql` above already uses (conversation ids are UUID v7, so id order is
+    // creation order). No `@BeforeId`/`limit` - unpaginated, `ListAllForVisitorAsync`'s own remarks on
+    // why one person's history needs no paging apply identically here.
+    // `coalesce(lm.created_at, c.created_at)` - a conversation with no messages yet (freshly started,
+    // nobody has written into it) still needs a total order against every other row, so it sorts by its
+    // own start time rather than by a null that would need a third tiebreaker.
+    // `blocked_at is null` - the same "unreachable, not merely hidden" rule VisitorHistorySql/
+    // AllConversationIdsForVisitorSql above already apply for this visitor's other conversations.
+    private const string PersonConversationsSql = """
+        select c.id as "Id", c.state as "State", c.created_at as "StartedAt", c.closed_at as "ClosedAt",
+               coalesce(lm.created_at, c.created_at) as "LastActivityAt"
+        from conversations c
+        left join lateral (
+            select created_at
+            from messages m
+            where m.conversation_id = c.id
+              and m.site_id = c.site_id
+            order by m.sequence desc
+            limit 1
+        ) lm on true
+        where c.visitor_id = @PersonId
+          and c.blocked_at is null
+        order by (c.state <> 'Closed') desc, c.id desc
+        """;
+
+    public async Task<IReadOnlyList<PersonConversationItem>> GetConversationsForPersonAsync(
+        VisitorId personId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+
+        var rows = await connection.QueryAsync<PersonConversationRow>(new CommandDefinition(
+            PersonConversationsSql,
+            new { PersonId = personId.Value },
+            cancellationToken: cancellationToken));
+
+        return rows.Select(ToPersonConversationItem).ToList();
+    }
+
     public async Task<ConversationListPage> GetAllForSiteAsync(
         SiteId siteId, Guid? beforeId, int pageSize, TagId? tagId,
         IReadOnlyCollection<ConversationState>? states, CancellationToken cancellationToken)
@@ -548,6 +594,13 @@ public sealed class ConversationReadStore(NpgsqlDataSource dataSource) : IConver
         r.PreviewCreatedAt is { } previewCreatedAt
             ? new DateTimeOffset(DateTime.SpecifyKind(previewCreatedAt, DateTimeKind.Utc))
             : null);
+
+    private static PersonConversationItem ToPersonConversationItem(PersonConversationRow r) => new(
+        new ConversationId(r.Id),
+        r.State,
+        new DateTimeOffset(DateTime.SpecifyKind(r.StartedAt, DateTimeKind.Utc)),
+        r.ClosedAt is { } closedAt ? new DateTimeOffset(DateTime.SpecifyKind(closedAt, DateTimeKind.Utc)) : null,
+        new DateTimeOffset(DateTime.SpecifyKind(r.LastActivityAt, DateTimeKind.Utc)));
 
     private static MessageHistoryItem ToHistoryItem(MessageRow r) => new(
         new MessageId(r.Id),

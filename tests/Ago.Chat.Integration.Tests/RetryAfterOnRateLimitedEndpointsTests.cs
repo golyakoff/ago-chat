@@ -640,6 +640,9 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(VisitorId visitorId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
 
+        public Task<IReadOnlyList<PersonConversationItem>> GetConversationsForPersonAsync(VisitorId personId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Not part of the rate-limited path under test.");
+
         public Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
             SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");

@@ -193,6 +193,27 @@ public sealed class FakeConversationReadStore : IConversationReadStore
         return Task.FromResult(mostRecent);
     }
 
+    /// <summary>`26-269`: mirrors the real store's own ordering exactly - active (non-`Closed`) first,
+    /// the rest newest-first, blocked excluded, `LastActivityAt` falling back to the conversation's own
+    /// `CreatedAt` when it has no messages yet - good enough to test a handler's own access-check and
+    /// mapping logic without a real Postgres.</summary>
+    public Task<IReadOnlyList<PersonConversationItem>> GetConversationsForPersonAsync(
+        VisitorId personId, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<PersonConversationItem> items = _bySource.Values
+            .Where(c => c.VisitorId == personId && !c.IsBlocked)
+            .OrderByDescending(c => c.State != ConversationState.Closed)
+            .ThenByDescending(c => c.Id.Value)
+            .Select(c =>
+            {
+                var lastActivityAt = c.Messages.OrderByDescending(m => m.Sequence).FirstOrDefault()?.CreatedAt ?? c.CreatedAt;
+                return new PersonConversationItem(c.Id, c.State.ToString(), c.CreatedAt, c.ClosedAt, lastActivityAt);
+            })
+            .ToList();
+
+        return Task.FromResult(items);
+    }
+
     /// <summary>`24-11`: every conversation for this visitor, oldest first, unpaginated - mirrors the
     /// real store's own shape.</summary>
     public Task<IReadOnlyList<ConversationId>> ListAllForVisitorAsync(

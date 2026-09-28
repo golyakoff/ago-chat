@@ -1,6 +1,7 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.AddPersonNote;
+using Ago.Chat.Application.UseCases.GetPersonConversations;
 using Ago.Chat.Application.UseCases.GetPersonNotes;
 using Ago.Chat.Application.UseCases.GetPersons;
 using Ago.Chat.Domain;
@@ -10,10 +11,13 @@ namespace Ago.Chat.Api.Persons;
 /// <summary>
 /// `adr/0184`: the account's person registry, read for display - `GET /api/v1/persons?ids=a,b,c`,
 /// `GET /api/v1/persons/{personId}`, and the operator's notes about a person under
-/// `GET`/`POST /api/v1/persons/{personId}/notes` (author decision O3). The only HTTP surface that reaches
-/// <c>GetPersonsHandler</c>/<c>IPersonNoteRepository</c>, operator-only: <c>ago-console</c> and
-/// <c>ago-android</c> call it with the person ids a calendar screen carries and merge the answer onto that
-/// screen client-side (decision 4). No other product calls it; the calendar never does.
+/// `GET`/`POST /api/v1/persons/{personId}/notes` (author decision O3), and, from `26-269`,
+/// `GET /api/v1/persons/{personId}/conversations` - the client-detail hub's "which dialog do I open for
+/// this person" navigation (design doc `docs/backlog/26-269-clients-redesign.md` §5/§8#2). The only HTTP
+/// surface that reaches <c>GetPersonsHandler</c>/<c>IPersonNoteRepository</c>/
+/// <c>GetPersonConversationsHandler</c>, operator-only: <c>ago-console</c> and <c>ago-android</c> call it
+/// with the person ids a calendar screen carries and merge the answer onto that screen client-side
+/// (decision 4). No other product calls it; the calendar never does.
 ///
 /// <para>The route is <c>/persons</c>, not <c>/visitors</c>, on purpose: this is the elevated concept
 /// (`adr/0184` decision 1), and the wire is the one place the rename costs nothing. The type underneath
@@ -30,6 +34,7 @@ public static class PersonEndpoints
         group.MapGet("/{personId:guid}", HandleGetAsync);
         group.MapGet("/{personId:guid}/notes", HandleGetNotesAsync);
         group.MapPost("/{personId:guid}/notes", HandleAddNoteAsync);
+        group.MapGet("/{personId:guid}/conversations", HandleGetConversationsAsync);
     }
 
     /// <summary><c>?ids=</c> is comma-separated - the batch a screen needs, in one request. Ids that do
@@ -100,9 +105,27 @@ public static class PersonEndpoints
             : Results.Ok(new PersonNoteDto(result.Value.Id, result.Value.AuthorId, result.Value.Body, result.Value.CreatedAt));
     }
 
+    /// <summary>`26-269`: the client-detail hub's own read - given a person id, every conversation they
+    /// have, ordered so the one to open (active, else most recent) is always first. Empty, never an
+    /// error, for a person with no conversations yet (a `26-268` manual client, for one) - the caller
+    /// hides its "Open dialog" action on an empty list rather than treating it as a failure.</summary>
+    private static async Task<IResult> HandleGetConversationsAsync(
+        Guid personId, GetPersonConversationsHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new GetPersonConversations(new VisitorId(personId), user.GetSiteId(), user.GetOperatorId()), cancellationToken);
+
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new PersonConversationsResponse(result.Value));
+    }
+
     public sealed record AddPersonNoteRequest(string? Body);
 
     public sealed record PersonsResponse(IReadOnlyList<PersonProfileDto> Persons);
 
     public sealed record PersonNotesResponse(IReadOnlyList<PersonNoteDto> Notes);
+
+    public sealed record PersonConversationsResponse(IReadOnlyList<PersonConversationDto> Conversations);
 }

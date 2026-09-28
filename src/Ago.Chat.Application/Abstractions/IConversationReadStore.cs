@@ -199,4 +199,27 @@ public interface IConversationReadStore
     /// </summary>
     Task<IReadOnlyDictionary<ConversationId, LatestMessageSummary>> GetLatestMessagesAsync(
         SiteId siteId, IReadOnlyCollection<ConversationId> conversationIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// `26-269`: every one of this person's conversations, ordered so the one to open is always first -
+    /// the active one (<see cref="IConversationRepository.GetActiveForVisitorAsync"/>'s own definition,
+    /// restated in <see cref="PersonConversationItem"/>'s own remarks) if there is one, else the most
+    /// recently active. This is the read the client-detail hub's "open the dialog" navigation needs,
+    /// keyed by a bare <see cref="VisitorId"/> rather than the <see cref="ConversationId"/> every other
+    /// read in this file starts from - `GetVisitorHistoryAsync` and `GetVisitorSummaryAsync` both begin
+    /// from a conversation the caller already holds and excludes or counts it; this one begins from
+    /// nothing but the person, because that is all a client-list row carries.
+    ///
+    /// <para>Unpaginated, like <see cref="ListAllForVisitorAsync"/> - the identical "one person's own
+    /// history is small and bounded" reasoning that method already gives for itself. Excludes a blocked
+    /// conversation, the same "unreachable, not merely hidden" rule every other visitor-scoped read in
+    /// this file already applies.</para>
+    ///
+    /// <para>No separate <c>siteId</c> parameter - the same reasoning <see cref="GetVisitorHistoryAsync"/>
+    /// already states for itself: a <see cref="Domain.Visitor"/>, and therefore every conversation
+    /// hanging off one, belongs to exactly one site, and the caller already proved this
+    /// <paramref name="personId"/> belongs to its own site before reaching this method.</para>
+    /// </summary>
+    Task<IReadOnlyList<PersonConversationItem>> GetConversationsForPersonAsync(
+        VisitorId personId, CancellationToken cancellationToken);
 }
