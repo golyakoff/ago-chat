@@ -20,8 +20,11 @@ public sealed record OperatorRoleSeatDto(string RoleName, bool HoldsSeat);
 /// for what each field means and why <see cref="DisplayName"/>/<see cref="Email"/> can be
 /// <see langword="null"/>. `23-72`/`25-170`: <see cref="Roles"/> is what lets the console show who
 /// already administers before offering to change anyone's role, and render a per-role seat toggle for
-/// whichever roles an operator actually holds.</summary>
+/// whichever roles an operator actually holds. `26-263`: <see cref="JoinedAt"/> is when the operator
+/// joined (the invite they redeemed), for the active-user card's «Принято <c>date</c>» line - null for
+/// the founder, who was never invited, so the client shows just the roles.</summary>
 public sealed record OperatorTeamMemberDto(
-    Guid OperatorId, string? DisplayName, string? Email, IReadOnlyList<OperatorRoleSeatDto> Roles);
+    Guid OperatorId, string? DisplayName, string? Email, IReadOnlyList<OperatorRoleSeatDto> Roles,
+    DateTimeOffset? JoinedAt = null);
 
 public sealed record OperatorTeamResponse(IReadOnlyList<OperatorTeamMemberDto> Operators);

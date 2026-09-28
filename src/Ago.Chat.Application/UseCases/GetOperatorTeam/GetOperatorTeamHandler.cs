@@ -26,7 +26,8 @@ public sealed class GetOperatorTeamHandler(IOperatorTeamReadStore team, IPermiss
         return new OperatorTeamResponse(rows
             .Select(r => new OperatorTeamMemberDto(
                 r.OperatorId.Value, r.DisplayName, r.Email,
-                r.Roles.Select(role => new OperatorRoleSeatDto(role.RoleName, role.HoldsSeat)).ToList()))
+                r.Roles.Select(role => new OperatorRoleSeatDto(role.RoleName, role.HoldsSeat)).ToList(),
+                r.JoinedAt))
             .ToList());
     }
 }

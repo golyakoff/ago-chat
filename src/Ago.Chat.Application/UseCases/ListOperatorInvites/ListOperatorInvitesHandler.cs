@@ -30,7 +30,8 @@ public sealed class ListOperatorInvitesHandler(
 
         var entries = new List<OperatorInviteListEntry>(rows.Count);
         entries.AddRange(rows.Select(row => new OperatorInviteListEntry(
-            row.Id.Value, row.Email, row.CreatedAt, row.ExpiresAt, StatusOf(row, now), row.SendFailureCode, row.RoleNames)));
+            row.Id.Value, row.Email, row.CreatedAt, row.ExpiresAt, StatusOf(row, now), row.SendFailureCode, row.RoleNames,
+            EffectiveStatusOf(row, now), row.RedeemedAt, RemovedAtOf(row))));
 
         return entries;
     }
@@ -44,4 +45,35 @@ public sealed class ListOperatorInvitesHandler(
         : row.SendFailureCode is not null ? OperatorInviteListStatus.SendFailed
         : now >= row.ExpiresAt ? OperatorInviteListStatus.Expired
         : OperatorInviteListStatus.Sent;
+
+    // `26-263`: the effective team-membership status - see OperatorInviteEffectiveStatus's own remarks for
+    // the priority reasoning. Revoked is terminal and outranks a clock-based Expired; Expired applies only
+    // to an invite never redeemed and now past its expiry; a redeemed invite is InTeam while its operator
+    // is still present and active (`removed_at IS NULL`) and Removed once that operator has been
+    // soft-removed - a redeemed invite whose operator row is somehow gone (RedeemedByOperatorId null)
+    // reads as Removed rather than pretending the person is still in the team.
+    private static OperatorInviteEffectiveStatus EffectiveStatusOf(OperatorInviteListItem row, DateTimeOffset now)
+    {
+        if (row.RevokedAt is not null)
+        {
+            return OperatorInviteEffectiveStatus.Revoked;
+        }
+
+        if (row.RedeemedAt is not null)
+        {
+            return row.RedeemedByOperatorId is not null && row.RedeemedOperatorRemovedAt is null
+                ? OperatorInviteEffectiveStatus.InTeam
+                : OperatorInviteEffectiveStatus.Removed;
+        }
+
+        return now >= row.ExpiresAt
+            ? OperatorInviteEffectiveStatus.Expired
+            : OperatorInviteEffectiveStatus.Pending;
+    }
+
+    // The redeemed operator's own removal instant - surfaced only when the effective status is actually
+    // Removed, so a still-active or never-redeemed invite carries a null «Удалено» line rather than a
+    // stray date.
+    private static DateTimeOffset? RemovedAtOf(OperatorInviteListItem row) =>
+        row.RedeemedAt is not null && row.RevokedAt is null ? row.RedeemedOperatorRemovedAt : null;
 }

@@ -154,7 +154,8 @@ public static class OperatorInviteEndpoints
         return Results.Ok(new ListOperatorInvitesResponse(
             [.. result.Value.Select(entry => new OperatorInviteListEntryResponse(
                 entry.OperatorInviteId, entry.Email, entry.CreatedAt, entry.ExpiresAt,
-                entry.Status.ToString(), entry.SmtpErrorCode, entry.Roles))]));
+                entry.Status.ToString(), entry.SmtpErrorCode, entry.Roles,
+                entry.EffectiveStatus.ToString(), entry.RedeemedAt, entry.RemovedAt))]));
     }
 
     /// <summary>`25-73`: revoking before acceptance means a later redemption attempt is refused with
@@ -306,10 +307,21 @@ public static class OperatorInviteEndpoints
     /// creation, so the console's own pending-invite row can show which role(s) a still-unredeemed invite
     /// will confer. A single-role invite is simply a one-element list; the field is always present and
     /// never null (an invite with no roles reads as `[]`), alphabetically ordered in the read store's own
-    /// SQL so the row is stable across reads.</summary>
+    /// SQL so the row is stable across reads.
+    ///
+    /// <para>`26-263`: three additive fields for the «Команда → Люди» page. <see cref="EffectiveStatus"/> is
+    /// the effective team-membership status - one of `Pending`/`InTeam`/`Removed`/`Revoked`/`Expired`
+    /// (`OperatorInviteEffectiveStatus`'s own five cases), sent as its enum member name, the identical
+    /// `api-design.md` "clients branch on the code, never on the message" convention <see cref="Status"/>
+    /// above already follows. It is a <b>second, distinct</b> status from <see cref="Status"/> (the invite's
+    /// delivery lifecycle: `Sent`/`SendFailed`/`Revoked`/`Redeemed`/`Expired`), not a replacement -
+    /// <see cref="Status"/> is unchanged so the console's existing invite-list screen keeps working.
+    /// <see cref="RedeemedAt"/> is when the invite was redeemed (the «Принято <c>date</c>» line), null while
+    /// still pending. <see cref="RemovedAt"/> is the redeemed operator's own removal instant (the «Удалено
+    /// <c>date</c>» line), non-null only when <see cref="EffectiveStatus"/> is `Removed`.</para></summary>
     public sealed record OperatorInviteListEntryResponse(
         Guid OperatorInviteId, string Email, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status, string? SmtpErrorCode,
-        IReadOnlyList<string> Roles);
+        IReadOnlyList<string> Roles, string EffectiveStatus, DateTimeOffset? RedeemedAt, DateTimeOffset? RemovedAt);
 
     /// <summary>`25-73`: `OnboardingPage`'s own registration-collision steer.</summary>
     public sealed record HasPendingOperatorInviteResponse(bool HasPendingInvite);
