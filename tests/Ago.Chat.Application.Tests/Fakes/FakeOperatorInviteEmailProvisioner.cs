@@ -9,7 +9,8 @@ namespace Ago.Chat.Application.Tests.Fakes;
 /// (validate, rate-limit, generate, then call this port and record a send failure if told to), the same
 /// split <c>FakeOperatorInviteRedemptionRepository</c>'s own remarks describe for
 /// <c>OperatorInviteRedemptionRepository</c>.</summary>
-public sealed class FakeOperatorInviteEmailProvisioner(OperatorInviteProvisionOutcome? outcome = null) : IOperatorInviteEmailProvisioner
+public sealed class FakeOperatorInviteEmailProvisioner(
+    OperatorInviteProvisionOutcome? outcome = null, Exception? throws = null) : IOperatorInviteEmailProvisioner
 {
     public OperatorInviteProvisionRequest? LastRequest { get; private set; }
 
@@ -17,6 +18,15 @@ public sealed class FakeOperatorInviteEmailProvisioner(OperatorInviteProvisionOu
         OperatorInviteProvisionRequest request, CancellationToken cancellationToken)
     {
         LastRequest = request;
+
+        // `26-260`: a thrown exception here stands in for a genuine Keycloak/transport fault (unreachable,
+        // an unexpected 5xx, or a realm-state inconsistency the create-or-find round trip cannot resolve) -
+        // the case the handler must catch and fold into `sendFailed` rather than let 500 the whole request.
+        if (throws is not null)
+        {
+            return Task.FromException<OperatorInviteProvisionOutcome>(throws);
+        }
+
         return Task.FromResult(outcome ?? new OperatorInviteProvisionOutcome.Sent());
     }
 }

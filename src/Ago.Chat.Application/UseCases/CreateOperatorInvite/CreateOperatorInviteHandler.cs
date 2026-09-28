@@ -166,8 +166,31 @@ public sealed class CreateOperatorInviteHandler(
         var locale = site?.Locale ?? Locale.En;
 
         var redirectUri = $"{options.ConsoleBaseUrl.TrimEnd('/')}/callback?inviteCode={Uri.EscapeDataString(code)}";
-        var outcome = await emailProvisioner.ProvisionAndSendAsync(
-            new OperatorInviteProvisionRequest(email, code, options.ValidFor, redirectUri, locale), cancellationToken);
+
+        // `26-260`: the invite code is the deliverable - the Keycloak action email is a convenience that
+        // must never fail the request that produced the invite. The port's own contract already returns
+        // `SendFailed` for a resolved-user-but-SMTP-refused outcome (handled just below), but a *thrown*
+        // exception - Keycloak unreachable, an unexpected 5xx, or the create-or-find round trip hitting a
+        // realm-state inconsistency it cannot resolve - would otherwise propagate and 500 the whole create
+        // call, discarding an invite this handler has already persisted. Caught here and folded into the
+        // same `sendFailed` path, so the invite is still created and returned flagged for the console's own
+        // invite-list screen to surface (and `25-90`'s independent fallback email below still fires). The
+        // catch mirrors `SendInviteCodeFallbackEmailAsync`'s own boundary a few lines down - everything
+        // except a genuine cancellation.
+        OperatorInviteProvisionOutcome outcome;
+        try
+        {
+            outcome = await emailProvisioner.ProvisionAndSendAsync(
+                new OperatorInviteProvisionRequest(email, code, options.ValidFor, redirectUri, locale), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                ex,
+                "Keycloak identity provisioning threw for an operator invite; the invite is still created and " +
+                "flagged as send-failed, and the independent fallback invite-code email still fires.");
+            outcome = new OperatorInviteProvisionOutcome.SendFailed("provisioning-error");
+        }
 
         var sendFailed = outcome is OperatorInviteProvisionOutcome.SendFailed;
         if (outcome is OperatorInviteProvisionOutcome.SendFailed failed)
