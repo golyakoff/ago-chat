@@ -19,9 +19,12 @@ namespace Ago.Chat.Infrastructure.Keycloak;
 /// sibling.
 ///
 /// <para><b>Three Admin API calls per invite, not one.</b> (1) `POST .../users` - create; on `201`, done
-/// with this step. (2) On `409` only, `GET .../users?email=...&amp;exact=true` - find the existing
-/// identity and, since it was not just created with the right locale attribute, `PUT .../users/{id}` to
-/// set it. (3) `PUT .../users/{id}/execute-actions-email` either way - the actual send.</para>
+/// with this step. (2) On `409` only, find the existing identity - `GET .../users?email=...&amp;exact=true`
+/// first and, `26-260`, `GET .../users?username=...&amp;exact=true` as a fallback when the email search
+/// finds nothing (the 409 is a *username* collision, and a pre-existing user can hold the username with no
+/// `email` attribute) - and, since it was not just created with the right locale attribute,
+/// `PUT .../users/{id}` to set it. (3) `PUT .../users/{id}/execute-actions-email` either way - the actual
+/// send.</para>
 ///
 /// <para><b>What was not verified against a live realm, stated plainly rather than assumed.</b>
 /// (a) Whether this realm's <see cref="KeycloakAdminOptions.Realm"/> has email internationalization
@@ -113,8 +116,40 @@ public sealed class OperatorInviteEmailProvisioner(
     private async Task<string> FindExistingUserIdAndSyncLocaleAsync(
         string email, Locale locale, string token, CancellationToken cancellationToken)
     {
+        // `26-260`: the 409 the POST above returned is a *username* collision (this class creates every
+        // user with `username = email`), which is not the same fact as "a user carries this email
+        // attribute". A pre-existing identity created some other way - self-registration under an older
+        // profile, an import, a demo mint - can hold the username without ever having had an `email`
+        // attribute set, in which case the exact-email search below returns `[]` even though the user
+        // genuinely exists. So this looks the user up two ways and only treats "not found by either" as
+        // the real inconsistency: first by email (the common case - a user this same flow created earlier
+        // does carry it), then, if that finds nothing, by the username the 409 was actually about.
+        var userId = await FindUserIdByQueryAsync("email", email, token, cancellationToken)
+            ?? await FindUserIdByQueryAsync("username", email, token, cancellationToken);
+        if (userId is null)
+        {
+            // Both a by-email and a by-username lookup found nothing after Keycloak just reported the
+            // username taken - a genuine inconsistency, not a case this port's own callers have any legal
+            // recourse for, so it is thrown, the same "should be unreachable" shape
+            // OperatorInviteRedemptionRepository's own site-not-found guard uses for its identical kind
+            // of contradiction.
+            throw new InvalidOperationException(
+                $"Keycloak reported a 409 creating a user for '{email}' but a lookup by neither its email nor its username found one.");
+        }
+
+        // This user already existed under whatever locale (or none) it was last given - synced here so
+        // the email this invite is about to send still renders in the inviting site's own language,
+        // not whatever this person's account happened to carry from before.
+        await UpdateLocaleAsync(userId, locale, token, cancellationToken);
+        return userId;
+    }
+
+    private async Task<string?> FindUserIdByQueryAsync(
+        string field, string value, string token, CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"{BaseUrl}/admin/realms/{options.Realm}/users?email={Uri.EscapeDataString(email)}&exact=true");
+            HttpMethod.Get,
+            $"{BaseUrl}/admin/realms/{options.Realm}/users?{field}={Uri.EscapeDataString(value)}&exact=true");
         request.Headers.Authorization = new("Bearer", token);
 
         using var response = await http.SendAsync(request, cancellationToken);
@@ -124,23 +159,11 @@ public sealed class OperatorInviteEmailProvisioner(
         var root = payload.RootElement;
         if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() == 0)
         {
-            // Keycloak just told this same call chain the email exists; a lookup by that exact email
-            // finding nothing is a genuine inconsistency, not a case this port's own callers have any
-            // legal recourse for - thrown, the same "should be unreachable" shape
-            // OperatorInviteRedemptionRepository's own site-not-found guard uses for its identical kind
-            // of contradiction.
-            throw new InvalidOperationException(
-                $"Keycloak reported a 409 creating a user for '{email}' but a lookup by that exact email found none.");
+            return null;
         }
 
-        var userId = root[0].GetProperty("id").GetString()
+        return root[0].GetProperty("id").GetString()
             ?? throw new InvalidOperationException("Keycloak returned an existing user with no id.");
-
-        // This user already existed under whatever locale (or none) it was last given - synced here so
-        // the email this invite is about to send still renders in the inviting site's own language,
-        // not whatever this person's account happened to carry from before.
-        await UpdateLocaleAsync(userId, locale, token, cancellationToken);
-        return userId;
     }
 
     private async Task UpdateLocaleAsync(string userId, Locale locale, string token, CancellationToken cancellationToken)

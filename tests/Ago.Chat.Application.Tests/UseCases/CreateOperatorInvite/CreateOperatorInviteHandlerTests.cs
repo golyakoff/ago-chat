@@ -40,6 +40,7 @@ public class CreateOperatorInviteHandlerTests
         TimeSpan? validFor = null,
         Ago.Platform.Abstractions.IRateLimiter? rateLimiter = null,
         OperatorInviteProvisionOutcome? provisionOutcome = null,
+        Exception? provisionThrows = null,
         Exception? fallbackMailThrows = null,
         Site? site = null)
     {
@@ -66,7 +67,7 @@ public class CreateOperatorInviteHandlerTests
         var roleSeatCapacity = new OperatorRoleSeatCapacity(
             operatorRoles, sites, new FakeOwnerSeatGrantStore(), invites, new FakeClock(Now));
 
-        var emailProvisioner = new FakeOperatorInviteEmailProvisioner(provisionOutcome);
+        var emailProvisioner = new FakeOperatorInviteEmailProvisioner(provisionOutcome, provisionThrows);
         var mailSender = new FakeNotificationMailSender(fallbackMailThrows);
 
         var handler = new Application.UseCases.CreateOperatorInvite.CreateOperatorInviteHandler(
@@ -245,6 +246,46 @@ public class CreateOperatorInviteHandlerTests
         var saved = fixture.Invites.Get(new OperatorInviteId(result.Value.OperatorInviteId));
         Assert.NotNull(saved);
         Assert.Equal("550", saved.SendFailureCode);
+    }
+
+    /// <summary>`26-260`: a Keycloak/transport fault surfaces as a *thrown* exception from the provisioner
+    /// (unreachable, an unexpected 5xx, or the create-or-find round trip hitting a realm-state
+    /// inconsistency it cannot resolve - the live bug this item fixes: a 409 username collision whose user
+    /// carries no email attribute, which threw). The invite code is the deliverable and the Keycloak
+    /// action email is only a convenience, so the throw must not fail invite creation: the invite is still
+    /// persisted and returned flagged `sendFailed`, no exception propagates. Fails-before: with the
+    /// handler's own try/catch around `ProvisionAndSendAsync` reverted, the exception propagates out of
+    /// `HandleAsync` and this test fails - exactly the 500 the live stand returned.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheEmailProvisionerThrows_StillCreatesTheInviteFlaggedSendFailed()
+    {
+        var fixture = CreateFixture(
+            provisionThrows: new InvalidOperationException("Keycloak reported a 409 but no user was found."));
+
+        var result = await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.SendFailed);
+
+        var saved = fixture.Invites.Get(new OperatorInviteId(result.Value.OperatorInviteId));
+        Assert.NotNull(saved);
+        Assert.NotNull(saved.SendFailureCode);
+    }
+
+    /// <summary>`26-260`: the second, independent fallback invite-code email (`25-90`) still fires even
+    /// when Keycloak provisioning threw - the throw is folded into the same best-effort `sendFailed` path a
+    /// reported SMTP failure takes, so nothing short-circuits the redundant channel that exists precisely
+    /// to reach the invitee when the Keycloak send did not.</summary>
+    [Fact]
+    public async Task HandleAsync_WhenTheEmailProvisionerThrows_StillSendsTheFallbackInviteCodeEmail()
+    {
+        var fixture = CreateFixture(
+            provisionThrows: new InvalidOperationException("Keycloak reported a 409 but no user was found."));
+
+        await fixture.Handler.HandleAsync(Command(), CancellationToken.None);
+
+        var sent = Assert.Single(fixture.MailSender.Sent);
+        Assert.Equal(InviteeEmail, sent.To);
     }
 
     [Fact]
