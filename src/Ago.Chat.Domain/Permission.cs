@@ -171,6 +171,17 @@ public readonly record struct Permission(string Value)
     // day-to-day placement the other booking:* actions already have. Per adr/0093 this string must
     // match Ago.Calendar.Domain.Permission.BookingReschedule byte-for-byte.
     public static readonly Permission BookingReschedule = new("booking:reschedule");
+
+    // `26-268`: an operator-entered booking taken by phone, blocking a slot the same way a visitor's
+    // own booking would - the calendar's manual-entry write path (`EnterManualBookingHandler`) gates on
+    // this alone (not paired with CustomerEdit): the client it creates is the booking's own trusted
+    // side-effect, the same way a widget booking mints a person with no permission check at all, so
+    // requiring CustomerEdit would gate a sub-operation that never actually runs on this path. Operator-
+    // role by default (OperatorRolePermissions below), the same day-to-day placement the other
+    // booking:* actions already have. Per adr/0093 this string must match
+    // Ago.Calendar.Domain.Permission.BookingCreate byte-for-byte.
+    public static readonly Permission BookingCreate = new("booking:create");
+
     public static readonly Permission CustomerRead = new("customer:read");
     public static readonly Permission CustomerEdit = new("customer:edit");
     public static readonly Permission CalendarConfigure = new("calendar:configure");

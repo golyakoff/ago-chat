@@ -68,6 +68,8 @@ public class RegisterSiteHandlerTests
                 Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
                 // `26-208`/`adr/0187`: BookingReschedule joins the Operator set, unchanged.
                 Permission.BookingReschedule.Value,
+                // `26-268`: BookingCreate joins the Operator set, unchanged.
+                Permission.BookingCreate.Value,
                 // `23-69`: ConversationMarkSpam, joined here unchanged.
                 Permission.ConversationMarkSpam.Value,
                 // `25-69`: ConversationClose, joined here unchanged - found granted by no seeded
@@ -90,6 +92,8 @@ public class RegisterSiteHandlerTests
                 // `23-36`: channel:manage, found missing (RegisterSiteHandler.AdminRolePermissions' own
                 // remarks) - joined here unchanged.
                 Permission.ChannelManage.Value,
+                // `26-268`: BookingCreate joins the Admin set too, unchanged.
+                Permission.BookingCreate.Value,
             ],
             registration.AdminRole.Permissions);
     }
