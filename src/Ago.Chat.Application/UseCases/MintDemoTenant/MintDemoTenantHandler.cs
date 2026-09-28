@@ -75,6 +75,13 @@ public sealed class MintDemoTenantHandler(
             // ordinary operator work, calendar:configure joins Admin below instead.
             Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
             Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
+            // `26-268`: BookingCreate joins the Operator set here too, the same restatement this class's
+            // own remarks already accept - a demo tenant that cannot demonstrate «Добавить вручную» is
+            // exactly the "half a console is a worse demonstration than none" case this class's own
+            // remarks already state above. Note: `BookingReschedule` (`26-208`) was never added to this
+            // array at all - a pre-existing gap, left as found, not fixed by this change (out of scope
+            // for 26-268).
+            Permission.BookingCreate.Value,
             // `23-69`: ConversationMarkSpam joins the Operator set here too, the same restatement this
             // class's own remarks already accept - see RegisterSiteHandler's own array for why this
             // permission is Operator- rather than Admin-scoped.
@@ -107,6 +114,9 @@ public sealed class MintDemoTenantHandler(
             // that cannot demonstrate connecting a channel is exactly the "half a console is a worse
             // demonstration than none" case this class's own remarks already state above.
             Permission.ChannelManage.Value,
+            // `26-268`: BookingCreate joins the Admin set too - the same restatement this class's own
+            // remarks already accept (RegisterSiteHandler.AdminRolePermissions' own identical addition).
+            Permission.BookingCreate.Value,
         ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(

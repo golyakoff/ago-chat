@@ -96,6 +96,12 @@ public sealed class RegisterSiteHandler(
             // is what an existing site's roles get brought up to when the calendar module is granted;
             // adding the string there is a separate ago-deploy change, not reached by this handler.
             Permission.BookingReschedule.Value,
+            // `26-268`: BookingCreate joins the Operator set - the manual-entry «Добавить вручную»
+            // action is ordinary day-to-day work a phone operator does, the same category the other
+            // booking:* actions already occupy here (adr/0093 mirror; matches
+            // Ago.Calendar.Domain.Permission.BookingCreate). Gated alone, not paired with CustomerEdit
+            // (already granted to this role above) - see Permission.BookingCreate's own remarks for why.
+            Permission.BookingCreate.Value,
             // `23-69`: ConversationMarkSpam joins the Operator set - see Permission's own remarks on
             // why this, unlike ConversationBlock, is Operator- rather than Admin-scoped.
             Permission.ConversationMarkSpam.Value,
@@ -138,6 +144,12 @@ public sealed class RegisterSiteHandler(
             // a channel is a site-configuration action, the same category SiteConfigure/CalendarConfigure
             // already occupy here, not day-to-day operator work.
             Permission.ChannelManage.Value,
+            // `26-268`: BookingCreate joins the Admin set too - the design (26-268-manual-booking-entry.md
+            // §2) grants manual entry to both seeded roles, not Operator alone: an Admin already holds
+            // every Operator-shaped calendar action indirectly through owning the account, and a tenant
+            // with a single admin-operator (the common small-business shape this item targets) must not
+            // be locked out of «Добавить вручную» for lacking a second, Operator-only role assignment.
+            Permission.BookingCreate.Value,
         ];
 
     public async Task<Result<RegisteredSite>> HandleAsync(RegisterSite command, CancellationToken cancellationToken)
