@@ -114,11 +114,15 @@ public class ListOperatorInvitesHandlerTests
     public async Task HandleAsync_ARevokedInvite_IsEffectiveStatusRevoked()
     {
         var fixture = CreateFixture();
-        fixture.Invites.Seed(SiteId, Row(revokedAt: Now.AddHours(-1)));
+        var revokedAt = Now.AddHours(-1);
+        fixture.Invites.Seed(SiteId, Row(revokedAt: revokedAt));
 
         var entry = await SingleEntryAsync(fixture);
 
         Assert.Equal(OperatorInviteEffectiveStatus.Revoked, entry.EffectiveStatus);
+        // `26-263`: the «Отозвано <date>» line the approved mockup shows - RevokedAt is carried through,
+        // non-null exactly when the effective status is Revoked, and RemovedAt stays null (nobody joined).
+        Assert.Equal(revokedAt, entry.RevokedAt);
         Assert.Null(entry.RemovedAt);
     }
 

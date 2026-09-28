@@ -155,7 +155,7 @@ public static class OperatorInviteEndpoints
             [.. result.Value.Select(entry => new OperatorInviteListEntryResponse(
                 entry.OperatorInviteId, entry.Email, entry.CreatedAt, entry.ExpiresAt,
                 entry.Status.ToString(), entry.SmtpErrorCode, entry.Roles,
-                entry.EffectiveStatus.ToString(), entry.RedeemedAt, entry.RemovedAt))]));
+                entry.EffectiveStatus.ToString(), entry.RedeemedAt, entry.RevokedAt, entry.RemovedAt))]));
     }
 
     /// <summary>`25-73`: revoking before acceptance means a later redemption attempt is refused with
@@ -317,11 +317,13 @@ public static class OperatorInviteEndpoints
     /// delivery lifecycle: `Sent`/`SendFailed`/`Revoked`/`Redeemed`/`Expired`), not a replacement -
     /// <see cref="Status"/> is unchanged so the console's existing invite-list screen keeps working.
     /// <see cref="RedeemedAt"/> is when the invite was redeemed (the «Принято <c>date</c>» line), null while
-    /// still pending. <see cref="RemovedAt"/> is the redeemed operator's own removal instant (the «Удалено
-    /// <c>date</c>» line), non-null only when <see cref="EffectiveStatus"/> is `Removed`.</para></summary>
+    /// still pending. <see cref="RevokedAt"/> is when the invite was revoked (the «Отозвано <c>date</c>» line),
+    /// non-null only when <see cref="EffectiveStatus"/> is `Revoked`. <see cref="RemovedAt"/> is the redeemed
+    /// operator's own removal instant (the «Удалено <c>date</c>» line), non-null only when
+    /// <see cref="EffectiveStatus"/> is `Removed`.</para></summary>
     public sealed record OperatorInviteListEntryResponse(
         Guid OperatorInviteId, string Email, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status, string? SmtpErrorCode,
-        IReadOnlyList<string> Roles, string EffectiveStatus, DateTimeOffset? RedeemedAt, DateTimeOffset? RemovedAt);
+        IReadOnlyList<string> Roles, string EffectiveStatus, DateTimeOffset? RedeemedAt, DateTimeOffset? RevokedAt, DateTimeOffset? RemovedAt);
 
     /// <summary>`25-73`: `OnboardingPage`'s own registration-collision steer.</summary>
     public sealed record HasPendingOperatorInviteResponse(bool HasPendingInvite);

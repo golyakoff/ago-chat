@@ -469,6 +469,7 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         // `Status` above - a sent-but-unredeemed invite is `Pending`, and carries no accepted date yet.
         Assert.Equal("Pending", row.EffectiveStatus);
         Assert.Null(row.RedeemedAt);
+        Assert.Null(row.RevokedAt);
         Assert.Null(row.RemovedAt);
         // `26-258`: a single-role invite lists as a one-element role set - the read join carries the role
         // name back, not just a count, so the console shows "Operator" rather than nothing.
@@ -490,6 +491,10 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         // `26-263`: revoked reads the same on both status axes - the delivery status and the effective
         // team-membership status agree that a withdrawn invite is `Revoked`.
         Assert.Equal("Revoked", revokedRow.EffectiveStatus);
+        // `26-263`: the wire carries the revocation instant (the «Отозвано <date>» archive line), non-null
+        // exactly because this invite was just revoked; RemovedAt stays null - nobody ever joined.
+        Assert.NotNull(revokedRow.RevokedAt);
+        Assert.Null(revokedRow.RemovedAt);
     }
 
     /// <summary>`26-258`: an invite created for two roles at once (`26-241`'s own multi-role write) lists

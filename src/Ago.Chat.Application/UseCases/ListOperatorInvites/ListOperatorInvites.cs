@@ -48,12 +48,15 @@ public enum OperatorInviteEffectiveStatus
     Expired,
 }
 
-/// <summary>`26-263`: <see cref="EffectiveStatus"/>, <see cref="RedeemedAt"/> and <see cref="RemovedAt"/>
-/// are additive - they carry the «Команда → Люди» page's own status badge and its «Принято <c>date</c>» /
-/// «Удалено <c>date</c>» lines. The pre-existing <see cref="Status"/> (delivery lifecycle) and
-/// <see cref="Roles"/> (`26-258`) are unchanged. <see cref="RemovedAt"/> is the redeemed operator's own
-/// <c>removed_at</c>, non-null only when <see cref="EffectiveStatus"/> is
-/// <see cref="OperatorInviteEffectiveStatus.Removed"/>.</summary>
+/// <summary>`26-263`: <see cref="EffectiveStatus"/>, <see cref="RedeemedAt"/>, <see cref="RevokedAt"/> and
+/// <see cref="RemovedAt"/> are additive - they carry the «Команда → Люди» page's own status badge and its
+/// «Принято <c>date</c>» / «Отозвано <c>date</c>» / «Удалено <c>date</c>» lines. The pre-existing
+/// <see cref="Status"/> (delivery lifecycle) and <see cref="Roles"/> (`26-258`) are unchanged.
+/// <see cref="RemovedAt"/> is the redeemed operator's own <c>removed_at</c>, non-null only when
+/// <see cref="EffectiveStatus"/> is <see cref="OperatorInviteEffectiveStatus.Removed"/>;
+/// <see cref="RevokedAt"/> is the invite's own <c>revoked_at</c>, non-null only when it is
+/// <see cref="OperatorInviteEffectiveStatus.Revoked"/> - the approved mockup shows a date on the
+/// «Отозвано» archive card exactly as it does on «Удалено».</summary>
 public sealed record OperatorInviteListEntry(
     Guid OperatorInviteId,
     string Email,
@@ -64,4 +67,5 @@ public sealed record OperatorInviteListEntry(
     IReadOnlyList<string> Roles,
     OperatorInviteEffectiveStatus EffectiveStatus,
     DateTimeOffset? RedeemedAt,
+    DateTimeOffset? RevokedAt,
     DateTimeOffset? RemovedAt);
