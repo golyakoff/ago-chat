@@ -465,6 +465,9 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         var row = Assert.Single(beforeRevoke.Invites, i => i.OperatorInviteId == invite.OperatorInviteId);
         Assert.Equal("list-me@example.test", row.Email);
         Assert.Equal("Sent", row.Status);
+        // `26-258`: a single-role invite lists as a one-element role set - the read join carries the role
+        // name back, not just a count, so the console shows "Operator" rather than nothing.
+        Assert.Equal(["Operator"], row.Roles);
 
         using var revokeClient = host.GetTestClient();
         revokeClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
@@ -479,6 +482,43 @@ public sealed class OperatorInviteEndpointTests(OperatorOidcFixture fixture)
         Assert.NotNull(afterRevoke);
         var revokedRow = Assert.Single(afterRevoke.Invites, i => i.OperatorInviteId == invite.OperatorInviteId);
         Assert.Equal("Revoked", revokedRow.Status);
+    }
+
+    /// <summary>`26-258`: an invite created for two roles at once (`26-241`'s own multi-role write) lists
+    /// with BOTH role names, not zero and not one - the list read joins `operator_invite_roles` back to
+    /// the `roles` catalogue, so the console can show the full set on a still-pending invite. The names
+    /// come back alphabetically ordered (`Admin` before `Operator`), proving the read store's own
+    /// deterministic ordering rather than whatever insert order the join happened to yield.
+    /// Fails-before: against `main` the list response DTO carries no `roles` field at all, so a
+    /// two-role invite lists with no role information whatever - exactly the bug this item closes.</summary>
+    [Fact]
+    public async Task ListInvites_ForAMultiRoleInvite_ReturnsBothRoleNamesAlphabeticallyOrdered()
+    {
+        await using var host = await BuildTestHostAsync();
+        using var client = host.GetTestClient();
+
+        var (adminSite, _, adminToken, _) = await RegisterFreshSiteAsync(client);
+        // Room for a second administrator so the `Admin` role has a free seat at create time - the same
+        // setup `26-241`'s own create-and-redeem test uses for a two-role invite.
+        await RaiseAdminLimitAsync(adminSite, adminLimit: 2);
+
+        using var createClient = host.GetTestClient();
+        createClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var createResponse = await createClient.PostAsJsonAsync(
+            $"/api/v1/sites/{adminSite}/operator-invites",
+            new OperatorInviteEndpoints.CreateOperatorInviteRequest(RoleName: null, Email: "multi@example.test", RoleNames: ["Operator", "Admin"]));
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var invite = await createResponse.Content.ReadFromJsonAsync<OperatorInviteEndpoints.CreateOperatorInviteResponse>();
+        Assert.NotNull(invite);
+
+        using var listClient = host.GetTestClient();
+        listClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var listed = await listClient.GetFromJsonAsync<OperatorInviteEndpoints.ListOperatorInvitesResponse>(
+            $"/api/v1/sites/{adminSite}/operator-invites");
+        Assert.NotNull(listed);
+
+        var row = Assert.Single(listed.Invites, i => i.OperatorInviteId == invite.OperatorInviteId);
+        Assert.Equal(["Admin", "Operator"], row.Roles);
     }
 
     [Fact]

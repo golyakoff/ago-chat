@@ -30,7 +30,7 @@ public sealed class ListOperatorInvitesHandler(
 
         var entries = new List<OperatorInviteListEntry>(rows.Count);
         entries.AddRange(rows.Select(row => new OperatorInviteListEntry(
-            row.Id.Value, row.Email, row.CreatedAt, row.ExpiresAt, StatusOf(row, now), row.SendFailureCode)));
+            row.Id.Value, row.Email, row.CreatedAt, row.ExpiresAt, StatusOf(row, now), row.SendFailureCode, row.RoleNames)));
 
         return entries;
     }

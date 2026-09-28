@@ -31,4 +31,5 @@ public sealed record OperatorInviteListEntry(
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt,
     OperatorInviteListStatus Status,
-    string? SmtpErrorCode);
+    string? SmtpErrorCode,
+    IReadOnlyList<string> Roles);
