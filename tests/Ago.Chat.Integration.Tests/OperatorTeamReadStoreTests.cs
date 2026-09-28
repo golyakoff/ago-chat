@@ -1,4 +1,6 @@
-﻿using Ago.Chat.Domain;
+﻿using System.Security.Cryptography;
+using System.Text;
+using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.Postgres;
 using Ago.Chat.Infrastructure.Postgres.Persistence;
 
@@ -101,5 +103,49 @@ public class OperatorTeamReadStoreTests(PostgresFixture fixture)
 
         Assert.Single(rows);
         Assert.DoesNotContain(rows, r => r.DisplayName == "Someone Else's Operator");
+    }
+
+    /// <summary>`26-263`: an operator who joined by redeeming an invite carries that invite's `redeemed_at`
+    /// as `JoinedAt` (the active-user card's «Принято» line), while the founder - minted at registration
+    /// and never invited - carries null, so the client shows just the roles. Fails-before: against `main`
+    /// the read store selects no join date at all, so an invited operator is indistinguishable from the
+    /// founder.</summary>
+    [Fact]
+    public async Task GetForSiteAsync_CarriesTheRedeemedInstantAsJoinedAt_AndNullForAnUninvitedFounder()
+    {
+        var siteId = new SiteId(Guid.NewGuid());
+        var roleId = Guid.NewGuid();
+        var founder = new OperatorId(Guid.NewGuid());
+        var invited = new OperatorId(Guid.NewGuid());
+        var redeemedAt = new DateTimeOffset(2026, 9, 20, 8, 30, 0, TimeSpan.Zero);
+
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(siteId, $"site_{siteId.Value:N}", []));
+            db.Roles.Add(new RoleRecord { Id = roleId, SiteId = siteId, Name = "Operator", Permissions = [] });
+
+            db.Operators.Add(new Operator(founder, siteId, OperatorStatus.Offline, capacity: 5, displayName: "Aa Founder"));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = founder, RoleId = roleId });
+
+            db.Operators.Add(new Operator(invited, siteId, OperatorStatus.Offline, capacity: 5, displayName: "Bb Invited"));
+            db.OperatorRoles.Add(new OperatorRoleRecord { OperatorId = invited, RoleId = roleId });
+
+            var invite = OperatorInvite.Generate(
+                new OperatorInviteId(Guid.NewGuid()), siteId, [roleId],
+                SHA256.HashData(Encoding.UTF8.GetBytes($"code-{Guid.NewGuid():N}")),
+                "invited@example.invalid", founder, redeemedAt.AddDays(-1), TimeSpan.FromDays(7));
+            invite.Redeem(invited, redeemedAt);
+            db.OperatorInvites.Add(invite);
+
+            await db.SaveChangesAsync();
+        }
+
+        var rows = await Store.GetForSiteAsync(siteId, CancellationToken.None);
+
+        var invitedRow = Assert.Single(rows, r => r.OperatorId == invited);
+        Assert.Equal(redeemedAt, invitedRow.JoinedAt);
+
+        var founderRow = Assert.Single(rows, r => r.OperatorId == founder);
+        Assert.Null(founderRow.JoinedAt);
     }
 }

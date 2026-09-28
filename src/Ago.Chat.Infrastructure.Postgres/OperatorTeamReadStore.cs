@@ -28,9 +28,17 @@ public sealed class OperatorTeamReadStore(NpgsqlDataSource dataSource) : IOperat
     // (this class's own remarks on why: array_agg over two correlated columns (name, holds_seat) needs
     // either two parallel arrays or a composite type, and Dapper's own multi-mapping is simpler to read
     // than either for a handful of rows per site).
+    // `26-263`: `JoinedAt` is the redeemed instant of the invite this operator came in through, for the
+    // active-user card's «Принято» line. A correlated scalar subquery, deliberately not a fourth `left join`
+    // - joining `operator_invites` into the row set would multiply each (operator, role) row by the operator's
+    // invite count and risk duplicating a role in the code-side aggregation below; a subquery yields exactly
+    // one value per operator, repeated harmlessly across that operator's role rows. `min(redeemed_at)` picks
+    // the earliest redemption (an operator is created by redeeming exactly one invite, so in practice there is
+    // only ever one); null for the founder, who was minted at registration and never redeemed an invite.
     private const string Sql = """
         select o.id as "OperatorId", o.display_name as "DisplayName", o.email as "Email",
-               r.name as "RoleName", orl.holds_seat as "HoldsSeat"
+               r.name as "RoleName", orl.holds_seat as "HoldsSeat",
+               (select min(inv.redeemed_at) from operator_invites inv where inv.redeemed_by_operator_id = o.id) as "JoinedAt"
         from operators o
         left join operator_roles orl on orl.operator_id = o.id
         left join roles r on r.id = orl.role_id
@@ -55,9 +63,17 @@ public sealed class OperatorTeamReadStore(NpgsqlDataSource dataSource) : IOperat
                 new OperatorId(g.Key.OperatorId), g.Key.DisplayName, g.Key.Email,
                 g.Where(r => r.RoleName is not null)
                     .Select(r => new OperatorRoleSeatAssignment(r.RoleName!, r.HoldsSeat))
-                    .ToList()))
+                    .ToList(),
+                // The subquery yields the same value on every one of this operator's role rows; Max ignores
+                // nulls and picks it, returning null only for the founder whose rows all carry no join date.
+                g.Max(r => r.JoinedAt) is { } joinedAt ? AsUtc(joinedAt) : null))
             .ToList();
     }
+
+    // `26-263`: `DateTime?`, not `DateTimeOffset?` - Dapper materialization needs the exact type Npgsql
+    // hands back for `timestamptz`, the identical conversion `OperatorInviteListReadStore` documents; the
+    // one hop to `DateTimeOffset` happens in `AsUtc` before the item is handed to the caller.
+    private static DateTimeOffset AsUtc(DateTime value) => new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
 
     private sealed class OperatorTeamRow
     {
@@ -66,5 +82,6 @@ public sealed class OperatorTeamReadStore(NpgsqlDataSource dataSource) : IOperat
         public string? Email { get; init; }
         public string? RoleName { get; init; }
         public bool HoldsSeat { get; init; }
+        public DateTime? JoinedAt { get; init; }
     }
 }

@@ -52,9 +52,20 @@ public sealed record OperatorRoleSeatAssignment(string RoleName, bool HoldsSeat)
 /// (<c>SiteRegistrationRepository</c>'s own remarks), not a single "the" role. The team screen needs
 /// this to show who already administers before offering to change anyone's role, and (`25-170`) to
 /// render a per-role seat toggle for whichever roles an operator actually holds.</para>
+///
+/// <para>`26-263`: <paramref name="JoinedAt"/> is when this operator joined the team - the redeemed
+/// instant of the invite they came in through (<c>operator_invites.redeemed_at</c> where
+/// <c>redeemed_by_operator_id</c> is this operator), for the «Принято <c>date</c>» line on the active-user
+/// card. <see langword="null"/> for an operator who was never invited at all - the account's own founder,
+/// minted at registration rather than through an invite - so the client simply shows the roles with no
+/// «Принято» line. Preferred over the operator's own seat <c>granted_at</c> (`25-170`) because "accepted"
+/// is what the design labels this date, and the redeemed instant is the moment the person actually joined;
+/// trailing default so every existing call site that seeds a team row for an unrelated question keeps
+/// compiling with no join date, an honest absence rather than a guess.</para>
 /// </summary>
 public sealed record OperatorTeamMemberItem(
-    OperatorId OperatorId, string? DisplayName, string? Email, IReadOnlyList<OperatorRoleSeatAssignment> Roles)
+    OperatorId OperatorId, string? DisplayName, string? Email, IReadOnlyList<OperatorRoleSeatAssignment> Roles,
+    DateTimeOffset? JoinedAt = null)
 {
     /// <summary>Trailing default, matching this codebase's own precedent for a column/field added to a
     /// type with many existing call sites (<see cref="Domain.Site.Name"/>'s own remarks) - every test

@@ -23,15 +23,24 @@ public sealed class OperatorInviteListReadStore(NpgsqlDataSource dataSource) : I
     // a match-less left join produces into an empty `text[]` (Npgsql maps that straight to `string[]`),
     // never a null the caller would have to guard. One `group by` per invite keeps this the same single
     // indexed per-site scan it was before, now with the aggregate folded in.
+    // `26-263`: correlate the redeemed invite back to its operator (`redeemed_by_operator_id → operators`)
+    // so the handler can split a redeemed invite into "still in the team" versus "removed since" and carry
+    // the removal instant - a Dapper read join (`adr/0004`), never an EF migration: both columns already
+    // exist. `redeemer.id`/`redeemer.removed_at` come from the joined `operators` row, not `operator_invites`,
+    // so they must join the `group by` (they are 1:1 with `i.id` through the FK, so this does not change the
+    // one-row-per-invite cardinality). A `left join`, so an unredeemed invite still returns its row with both
+    // redeemer columns null.
     private const string Sql = """
         select i.id as "Id", i.email as "Email", i.created_at as "CreatedAt", i.expires_at as "ExpiresAt",
                i.redeemed_at as "RedeemedAt", i.revoked_at as "RevokedAt", i.send_failure_code as "SendFailureCode",
-               array_remove(array_agg(r.name order by r.name), null) as "RoleNames"
+               array_remove(array_agg(r.name order by r.name), null) as "RoleNames",
+               redeemer.id as "RedeemedByOperatorId", redeemer.removed_at as "RedeemedOperatorRemovedAt"
         from operator_invites i
         left join operator_invite_roles ir on ir.operator_invite_id = i.id
         left join roles r on r.id = ir.role_id
+        left join operators redeemer on redeemer.id = i.redeemed_by_operator_id
         where i.site_id = @SiteId
-        group by i.id
+        group by i.id, redeemer.id, redeemer.removed_at
         order by i.created_at desc
         """;
 
@@ -55,7 +64,9 @@ public sealed class OperatorInviteListReadStore(NpgsqlDataSource dataSource) : I
             row.RedeemedAt is { } redeemedAt ? AsUtc(redeemedAt) : null,
             row.RevokedAt is { } revokedAt ? AsUtc(revokedAt) : null,
             row.SendFailureCode,
-            row.RoleNames))];
+            row.RoleNames,
+            row.RedeemedByOperatorId,
+            row.RedeemedOperatorRemovedAt is { } removedAt ? AsUtc(removedAt) : null))];
     }
 
     private static DateTimeOffset AsUtc(DateTime value) => new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
@@ -77,5 +88,12 @@ public sealed class OperatorInviteListReadStore(NpgsqlDataSource dataSource) : I
         public DateTime? RevokedAt { get; init; }
         public string? SendFailureCode { get; init; }
         public string[] RoleNames { get; init; } = [];
+
+        // `26-263`: the redeemed invite's operator, joined via `redeemed_by_operator_id`. Both null for an
+        // unredeemed invite (the left join matched nothing); `RedeemedOperatorRemovedAt` non-null only once
+        // that operator has been soft-removed. `DateTime`, not `DateTimeOffset`, for the same Npgsql exact
+        // materialization-type reason the other timestamps on this row already are.
+        public Guid? RedeemedByOperatorId { get; init; }
+        public DateTime? RedeemedOperatorRemovedAt { get; init; }
     }
 }
