@@ -119,6 +119,7 @@ using Ago.Chat.Application.UseCases.RevealVisitorContactDetail;
 using Ago.Chat.Application.UseCases.GetContactRevealsForSite;
 using Ago.Chat.Application.UseCases.GetVisitorHistory;
 using Ago.Chat.Application.UseCases.GetVisitorPresence;
+using Ago.Chat.Application.UseCases.GetPersonConversations;
 using Ago.Chat.Application.UseCases.GetPersonNotes;
 using Ago.Chat.Application.UseCases.GetPersons;
 using Ago.Chat.Application.UseCases.GetVisitorSummary;
@@ -1457,6 +1458,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<AddPersonNoteHandler>();
         services.AddScoped<GetPersonNotesHandler>();
         services.AddScoped<RegisterExternalPersonHandler>();
+        // `26-269`: the client-detail hub's "which dialog do I open for this person" read - registered
+        // alongside the rest of the person registry's handlers above for the identical reason.
+        services.AddScoped<GetPersonConversationsHandler>();
         // `24-01`: the acceptance record's own two handlers - no host in this item maps a route to
         // either yet (Scope: showing anything to anybody is `24-03`/`24-04`/`24-05`'s job), registered
         // here anyway so any of those items, and this item's own Application-level tests, can resolve
