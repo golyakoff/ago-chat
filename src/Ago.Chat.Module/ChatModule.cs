@@ -24,6 +24,7 @@ using Ago.Chat.Application.UseCases.CategorizeConversation;
 using Ago.Chat.Application.UseCases.ChangeOperatorRole;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
+using Ago.Chat.Application.UseCases.PurchaseChannelAddOn;
 using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
@@ -967,6 +968,10 @@ public sealed class ChatModule : IProductModule
         // see IAdministratorSlotChangeApplier's own remarks.
         services.AddScoped<IAdministratorSlotChangeApplier, AdministratorSlotChangeApplier>();
         services.AddScoped<PurchaseAdministratorSlotHandler>();
+        // `26-278`: the identical prorated-purchase shape, restated for a connected-channel add-on -
+        // see IChannelAddOnPurchaseApplier's own remarks.
+        services.AddScoped<IChannelAddOnPurchaseApplier, ChannelAddOnPurchaseApplier>();
+        services.AddScoped<PurchaseChannelAddOnHandler>();
         // `13-04`: the console billing screen's own bootstrap read - GetBillingStatus's own remarks.
         services.AddScoped<GetBillingStatusHandler>();
 

@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.Tests.Fakes;
+﻿using Ago.Chat.Application.Abstractions;
+using Ago.Chat.Application.Tests.Fakes;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Domain;
@@ -7,25 +8,25 @@ namespace Ago.Chat.Application.Tests.UseCases.ProcessSubscriptionRenewal;
 
 /// <summary>`23-86`: this handler's own recurring-charge amount computation is base-seat-priced only
 /// (`SubscriptionTierBands.ComputeSeatPriceRub` against `RequestedSeats`) - meaningless, and silently
-/// wrong, for an option subscription, since an option is priced flat and this item's own Scope forbids
-/// inventing that price ("no price, anywhere"). The handler guards this with an explicit
-/// `IsOption` check that throws before the amount is ever computed, so the specific wrong number the
-/// formula would produce for `RequestedSeats == 0` (`25-29`'s own base-plus-marginal formula no longer
-/// gives Rub 0 the way `0008`'s superseded flat rate did - it gives the base seat price instead) never
-/// actually matters; what this test proves is that the guard fires first, not what the formula would
-/// have returned. The one case this handler's own remarks name but nothing before this item exercised,
-/// since no production code path could hand it an option row until this item added
-/// <see cref="BillingSubscription.OptionKey"/>.</summary>
+/// wrong, for an option subscription, since an option is priced flat. The handler guards this with an
+/// explicit `IsOption` check that diverts to <see cref="ChannelAddOnPricing.PriceKeyFor"/> before the
+/// seat formula is ever reached, so the specific wrong number that formula would produce for
+/// `RequestedSeats == 0` never actually matters. `26-278` taught this branch to actually charge a
+/// `channel-*` option instead of always throwing (see the tests further down this file) - the one case
+/// still thrown on, proven here, is an option key this codebase does not know how to price at all (an
+/// AI option), the identical "no price, anywhere" refusal `23-86` originally built for every option.</summary>
 public class ProcessSubscriptionRenewalHandlerTests
 {
     private static readonly SiteId SiteId = new(Guid.NewGuid());
     private static readonly DateTimeOffset Now = new(2026, 9, 8, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task HandleAsync_WhenTheDueSubscriptionIsAnOption_ThrowsRatherThanChargingAWrongOrZeroAmount()
+    public async Task HandleAsync_WhenTheDueSubscriptionIsAnOptionWithNoKnownPriceKey_ThrowsRatherThanChargingAWrongOrZeroAmount()
     {
         var optionId = new BillingSubscriptionId(Guid.NewGuid());
-        var option = BillingSubscription.CreateOption(optionId, SiteId, "pmt_option", new BillingOptionKey("channel-telegram"), Now - BillingSubscription.PeriodLength);
+        // `ai-processing` - ChannelAddOnPricing.PriceKeyFor returns null for it (0012's own "для ИИ -
+        // нет, и поэтому цены не публикуются"), unlike a `channel-*` key which `26-278` now prices.
+        var option = BillingSubscription.CreateOption(optionId, SiteId, "pmt_option", new BillingOptionKey("ai-processing"), Now - BillingSubscription.PeriodLength);
         option.MarkSucceeded("card_on_file", Now - BillingSubscription.PeriodLength, alignedPeriodEnd: Now);
 
         var subscriptions = new FakeBillingSubscriptionRepository();
@@ -53,6 +54,88 @@ public class ProcessSubscriptionRenewalHandlerTests
         Assert.Empty(applier.RenewedSuccessfully);
         Assert.Empty(applier.RenewalFailures);
         Assert.Empty(applier.Lapsed);
+    }
+
+    // ----------------------------------------------------------------------------------------------
+    // `26-278`: a channel option's own recurring charge - ChannelAddOnPricing.PriceKeyFor resolves a
+    // `channel-*` option key to the flat `channel-addon` price, and this handler now charges it instead
+    // of throwing (the throw above is reserved for an option key with no known price at all).
+    // ----------------------------------------------------------------------------------------------
+
+    private static (ProcessSubscriptionRenewalHandler Handler, FakeYooKassaPaymentsClient YooKassa, FakeSubscriptionRenewalApplier Applier, BillingSubscriptionId OptionId)
+        CreateDueChannelOptionFixture(bool seedPrice = true)
+    {
+        var optionId = new BillingSubscriptionId(Guid.NewGuid());
+        var option = BillingSubscription.CreateOption(
+            optionId, SiteId, "pmt_option", new BillingOptionKey("channel-telegram"), Now - BillingSubscription.PeriodLength);
+        option.MarkSucceeded("card_on_file", Now - BillingSubscription.PeriodLength, alignedPeriodEnd: Now);
+
+        var subscriptions = new FakeBillingSubscriptionRepository();
+        subscriptions.Seed(option);
+        var yooKassa = new FakeYooKassaPaymentsClient();
+        var prices = new FakePriceCatalogRepository();
+        if (seedPrice)
+        {
+            prices.SeedVersion(ChannelAddOnPricing.ChannelAddOnKey, 100m, Now - BillingSubscription.PeriodLength);
+        }
+
+        var applier = new FakeSubscriptionRenewalApplier();
+        var sites = new FakeSiteRepository();
+        var thresholds = new FakeDownloadThresholdReadStore();
+        var overageReads = new FakeDownloadOverageReadStore();
+        var handler = new ProcessSubscriptionRenewalHandler(subscriptions, sites, yooKassa, prices, thresholds, overageReads, applier, new FakeClock(Now));
+
+        return (handler, yooKassa, applier, optionId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenADueChannelOptionsPriceIsPublished_ChargesTheFlatChannelAddOnPrice_AndAppliesRenewalSuccess()
+    {
+        var (handler, yooKassa, applier, optionId) = CreateDueChannelOptionFixture();
+
+        var outcome = await handler.HandleAsync(
+            new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(optionId), CancellationToken.None);
+
+        Assert.IsType<SubscriptionRenewalOutcome.Renewed>(outcome);
+        Assert.NotNull(yooKassa.LastChargeRequest);
+        Assert.Equal(100m, yooKassa.LastChargeRequest!.AmountRub);
+        Assert.Single(applier.RenewedSuccessfully);
+        Assert.Equal(optionId, applier.RenewedSuccessfully[0]);
+        // `25-43`: meaningless for an option row - passed as 0/0, the identical convention
+        // BillingSubscription.CreateOption's own remarks already establish for RequestedSeats/Tier.
+        Assert.Equal((0, 0), applier.RenewedWithPriceVersions[0]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenADueChannelOptionsPriceIsNotPublished_Throws()
+    {
+        var (handler, yooKassa, applier, optionId) = CreateDueChannelOptionFixture(seedPrice: false);
+
+        // `26-278`'s own author decision (2026-09-29): a missing channel-addon price at renewal throws,
+        // matching the seat prices - a channel option reached Succeeded at least once already, so it
+        // was priced at purchase; a deployment that has since un-published the key is a regression, not
+        // an ordinary "not for sale" state.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => handler.HandleAsync(new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(optionId), CancellationToken.None));
+
+        Assert.Null(yooKassa.LastChargeRequest);
+        Assert.Empty(applier.RenewedSuccessfully);
+        Assert.Empty(applier.RenewalFailures);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheChannelOptionsChargeIsRefused_AppliesRenewalFailure()
+    {
+        var (handler, yooKassa, applier, optionId) = CreateDueChannelOptionFixture();
+        yooKassa.ChargeResult = new ChargeStoredPaymentMethodResult.Refused("card_declined");
+
+        var outcome = await handler.HandleAsync(
+            new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(optionId), CancellationToken.None);
+
+        Assert.IsType<SubscriptionRenewalOutcome.ChargeRefused>(outcome);
+        Assert.Single(applier.RenewalFailures);
+        Assert.Equal(optionId, applier.RenewalFailures[0]);
+        Assert.Empty(applier.RenewedSuccessfully);
     }
 
     // ----------------------------------------------------------------------------------------------
