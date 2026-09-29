@@ -49,7 +49,7 @@ public class CreateCheckoutSessionHandlerTests
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
         Assert.Equal("https://yookassa.example/confirm", result.Value.ConfirmationUrl);
@@ -64,7 +64,7 @@ public class CreateCheckoutSessionHandlerTests
         var fixture = CreateFixture(baseSeatPriceRub: 500m, pricePerExtraSeatRub: 50m);
 
         await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.Equal(600m, fixture.YooKassa.LastRequest!.AmountRub);
     }
@@ -83,7 +83,7 @@ public class CreateCheckoutSessionHandlerTests
         var fixture = CreateFixture(baseSeatPriceRub: 490m, pricePerExtraSeatRub: 200m);
 
         await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, requestedSeats), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, requestedSeats, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.Equal(expectedAmountRub, fixture.YooKassa.LastRequest!.AmountRub);
     }
@@ -94,7 +94,7 @@ public class CreateCheckoutSessionHandlerTests
         var fixture = CreateFixture();
 
         await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         var saved = Assert.Single(fixture.Subscriptions.Saved);
         Assert.Equal(SiteId, saved.SiteId);
@@ -110,7 +110,7 @@ public class CreateCheckoutSessionHandlerTests
         var fixture = CreateFixture(grantPermission: false);
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
@@ -129,7 +129,7 @@ public class CreateCheckoutSessionHandlerTests
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, requestedSeats), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, requestedSeats, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.InvalidSeatCount", result.Error!.Value.Code);
@@ -170,7 +170,7 @@ public class CreateCheckoutSessionHandlerTests
             new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.PriceNotConfigured", result.Error!.Value.Code);
@@ -188,7 +188,7 @@ public class CreateCheckoutSessionHandlerTests
         fixture.YooKassa.Result = new CreatePaymentResult.Refused("insufficient funds");
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, SiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.PaymentProviderRefused", result.Error!.Value.Code);
@@ -214,7 +214,7 @@ public class CreateCheckoutSessionHandlerTests
             new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
-            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, missingSiteId, 5), CancellationToken.None);
+            new Application.UseCases.CreateCheckoutSession.CreateCheckoutSession(OperatorId, missingSiteId, 5, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Site.NotFound", result.Error!.Value.Code);

@@ -162,6 +162,49 @@ public class ChangeSubscriptionSeatsHandlerTests
         Assert.Empty(fixture.Applier.Applied);
     }
 
+    // `26-299`: the floor-rule fails-before this item's own report names - upgrading seconds into day
+    // one of the period must charge the full monthly delta, never a few cents short.
+    [Fact]
+    public async Task HandleAsync_WhenUpgradedSecondsIntoTheFirstDayOfThePeriod_ChargesTheFullDelta()
+    {
+        var fixture = CreateFixture();
+        var id = new BillingSubscriptionId(Guid.NewGuid());
+        var secondsIntoTheFirstDay = Now - TimeSpan.FromSeconds(3);
+        await SeedSucceededAsync(fixture, id, seats: 3, tier: SubscriptionTierBands.Starter, succeededAt: secondsIntoTheFirstDay);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeats(OperatorId, SiteId, id, 5), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
+        var upgraded = Assert.IsType<ChangeSubscriptionSeatsResult.Upgraded>(result.Value);
+        // old = 500, new = 700; before this item's floor rule the near-full-period fraction (a few
+        // seconds short of 30/30) would have shaved a few cents off the honest full 200.00 delta.
+        Assert.Equal(200.00m, upgraded.ProratedAmountRub);
+    }
+
+    // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice.
+    [Fact]
+    public async Task HandleAsync_WhenNoPaymentMethodIsStored_ReturnsNoStoredPaymentMethod()
+    {
+        var fixture = CreateFixture();
+        var id = new BillingSubscriptionId(Guid.NewGuid());
+        var baseVersion = await fixture.Prices.FindCurrentAsync(SubscriptionTierBands.BaseSeatPriceKey, CancellationToken.None);
+        var extraVersion = await fixture.Prices.FindCurrentAsync(SubscriptionTierBands.ExtraSeatPriceKey, CancellationToken.None);
+        var when = Now - BillingSubscription.PeriodLength;
+        var subscription = BillingSubscription.Create(
+            id, SiteId, "pmt_123", 3, SubscriptionTierBands.Starter, baseVersion!.Sequence, extraVersion!.Sequence, when);
+        subscription.MarkSucceeded(paymentMethodId: null, when);
+        fixture.Subscriptions.Seed(subscription);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.ChangeSubscriptionSeats.ChangeSubscriptionSeats(OperatorId, SiteId, id, 5), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Billing.NoStoredPaymentMethod", result.Error!.Value.Code);
+        Assert.Null(fixture.YooKassa.LastChargeRequest);
+        Assert.Empty(fixture.Applier.Applied);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenADowngrade_SchedulesItWithNoChargeAndNoImmediateApply()
     {

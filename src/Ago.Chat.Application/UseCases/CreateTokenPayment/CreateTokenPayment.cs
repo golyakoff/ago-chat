@@ -9,7 +9,14 @@ namespace Ago.Chat.Application.UseCases.CreateTokenPayment;
 /// <see cref="Domain.Permission.SiteConfigure"/> gate, same seat-count shape - this is the identical use
 /// case (create a pending payment, save the subscription) reaching the same port a second way, not a
 /// different one.</summary>
-public sealed record CreateTokenPayment(OperatorId RequestedBy, SiteId SiteId, int RequestedSeats, string PaymentToken);
+/// <param name="SavePaymentMethod">`26-299`: the identical operator-own-choice boolean
+/// <see cref="Application.UseCases.CreateCheckoutSession.CreateCheckoutSession"/> carries - see that
+/// command's own remarks. Threaded through to <see cref="Abstractions.IYooKassaPaymentsClient.CreatePaymentWithTokenAsync"/>'s
+/// own request, whose wire shape now carries `save_payment_method` too - ЮKassa's Payments API documents
+/// it as an ordinary top-level `POST /payments` field, independent of whether `confirmation` or
+/// `payment_token` supplies the buyer's own payment details - not confirmed against a live credential, the
+/// same caveat `YooKassaDtos`'s own remarks already state for every shape in that file.</param>
+public sealed record CreateTokenPayment(OperatorId RequestedBy, SiteId SiteId, int RequestedSeats, string PaymentToken, bool SavePaymentMethod);
 
 /// <summary>`26-291`: <paramref name="Status"/> is ЮKassa's own payment status, carried through
 /// unmapped so the app can decide whether to run its own `createConfirmationIntent` (when

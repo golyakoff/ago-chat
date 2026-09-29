@@ -391,6 +391,101 @@ public class GetBillingStatusHandlerTests
         Assert.Null(result.Value.NextChargeRub);
     }
 
+    // `26-299`.
+    [Fact]
+    public async Task HandleAsync_WhenSiteHasNeverCheckedOut_ReportsNoStoredPaymentMethod()
+    {
+        var fixture = CreateFixture(tier: "free", seatLimit: 1);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.HasStoredPaymentMethod);
+        Assert.Empty(result.Value.ConnectedChannels);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheOperatorDeclinedToSaveACard_ReportsHasStoredPaymentMethodFalse()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_base", 5, SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, Now - BillingSubscription.PeriodLength);
+        subscription.MarkSucceeded(paymentMethodId: null, Now - BillingSubscription.PeriodLength);
+        fixture.Subscriptions.Seed(subscription);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.HasStoredPaymentMethod);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenACardIsStored_ReportsHasStoredPaymentMethodTrue()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        SeedSucceededBase(fixture, requestedSeats: 5);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value.HasStoredPaymentMethod);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ReportsTheActualConnectedChannelKinds_NotMerelyACount()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var baseSubscription = SeedSucceededBase(fixture, requestedSeats: 5);
+        var telegram = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_telegram", new BillingOptionKey("channel-telegram"), Now);
+        telegram.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+        fixture.Subscriptions.Seed(telegram);
+        var max = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_max", new BillingOptionKey("channel-max"), Now);
+        max.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+        max.RequestCancellation(Now);
+        fixture.Subscriptions.Seed(max);
+        fixture.Prices.SeedVersion(ChannelAddOnPricing.ChannelAddOnKey, 100m, Now);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.ChannelCount);
+        Assert.Equal(2, result.Value.ConnectedChannels.Count);
+        var telegramDto = Assert.Single(result.Value.ConnectedChannels, c => c.Kind == ChannelKind.Telegram);
+        Assert.Equal(telegram.Id.Value, telegramDto.SubscriptionId);
+        Assert.False(telegramDto.CancelRequested);
+        var maxDto = Assert.Single(result.Value.ConnectedChannels, c => c.Kind == ChannelKind.Max);
+        Assert.True(maxDto.CancelRequested);
+
+        // A channel already flagged to not renew must not count toward the recurring total: 890 (5
+        // seats) + 100 (one renewing channel) - never the cancelled second channel's own 100 too.
+        Assert.Equal(890m + 100m, result.Value.NextChargeRub);
+    }
+
+    // `26-299`: NextChargeRub must reflect a scheduled next-period composition, not the currently-billing
+    // one, once SetNextPeriodComposition has recorded one.
+    [Fact]
+    public async Task HandleAsync_WhenANextPeriodCompositionIsScheduled_ComputesNextChargeFromThePendingValues_NotTheCurrentOnes()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var baseSubscription = SeedSucceededBase(fixture, requestedSeats: 5);
+        baseSubscription.ApplyAdministratorPurchase(2, adminExtraPriceVersion: 1);
+        fixture.Prices.SeedVersion(SubscriptionTierBands.AdminExtraPriceKey, 500m, Now);
+        baseSubscription.ScheduleNextPeriodComposition(3, SubscriptionTierBands.Starter, extraAdministratorCount: 0);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        // Currently billing: 890 (5 seats) + 1000 (2 admins) = 1890 - but a decrease is already
+        // scheduled, so the honest "next charge" is the pending composition's own total: 490 (3 seats,
+        // at the base) + 0 (admins dropped to zero) = 490.
+        Assert.Equal(490m, result.Value.NextChargeRub);
+        Assert.Equal(3, result.Value.LatestSubscription!.PendingSeatCount);
+        Assert.Equal(0, result.Value.LatestSubscription!.PendingAdminCount);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenTheBaseSubscriptionIsPastDue_StillComputesNextCharge_NotJustSucceeded()
     {

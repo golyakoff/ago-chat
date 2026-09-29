@@ -79,7 +79,8 @@ public sealed class GetBillingStatusHandler(
                 latest.CancelRequested,
                 latest.CurrentPeriodEnd,
                 latest.PendingSeatCount,
-                latest.PendingTier);
+                latest.PendingTier,
+                latest.PendingAdminCount);
 
         // `25-23`/`25-170`: GetHeldSeatHolderIdsAsync, not LockAndGetHeldSeatHolderIdsAsync - see
         // BillingStatusDto's own remarks on AdminsUsed for why the locked sibling method is the wrong
@@ -127,9 +128,39 @@ public sealed class GetBillingStatusHandler(
         // ChannelCount and the channelAmount component of NextChargeRub below, so the two can never
         // report a different count of the same thing.
         var options = await subscriptions.ListOptionsForSiteAsync(query.SiteId, cancellationToken);
-        var connectedChannelCount = options.Count(o =>
-            o.Status == BillingSubscriptionStatus.Succeeded && ChannelAddOnPricing.PriceKeyFor(o.OptionKey!.Value) is not null);
+        var connectedChannelOptions = options
+            .Where(o => o.Status == BillingSubscriptionStatus.Succeeded && ChannelAddOnPricing.PriceKeyFor(o.OptionKey!.Value) is not null)
+            .ToList();
+        var connectedChannelCount = connectedChannelOptions.Count;
+        // `26-299`: the actual channel kinds, not merely the count - GetBillingStatus's own
+        // ConnectedChannels remarks state why the console needs this for its per-kind renew toggles.
+        // TryResolveChannelKind, not the throwing form - an option key this codebase's own tests (and,
+        // in principle, a historical/retired ChannelKind) seed without a real matching kind is simply
+        // left out of this per-kind list rather than failing the whole read; ChannelCount/NextChargeRub
+        // below are computed from connectedChannelOptions directly so they never depend on whether every
+        // row happens to resolve.
+        var connectedChannels = connectedChannelOptions
+            .Select(o => (Option: o, Kind: TryResolveChannelKind(o.OptionKey!.Value)))
+            .Where(x => x.Kind is not null)
+            .Select(x => new BillingConnectedChannelDto(x.Kind!.Value, x.Option.Id.Value, x.Option.CancelRequested, x.Option.CurrentPeriodEnd))
+            .ToList();
         var channelAddOnPrice = await prices.FindCurrentAsync(ChannelAddOnPricing.ChannelAddOnKey, cancellationToken);
+
+        // `26-299`: what will actually renew next period, for NextChargeRub below - a channel option
+        // already flagged CancelRequested will not renew, so it drops out of the recurring total (see
+        // BillingStatusDto's own NextChargeRub remarks). ChannelCount/ConnectedChannels above stay
+        // "currently connected" regardless of CancelRequested - a different, still-true fact. Computed
+        // from connectedChannelOptions, not the (possibly narrower) connectedChannels DTO list above -
+        // the recurring total must count every connected channel that will renew, whether or not this
+        // read could also resolve its own ChannelKind for display.
+        var renewingChannelCount = connectedChannelOptions.Count(o => !o.CancelRequested);
+
+        // `26-299`: the composition this subscription will actually be charged for next - its own
+        // scheduled pending values when set (SetNextPeriodComposition's own write), else whatever is
+        // billing today. See BillingStatusDto's own NextChargeRub remarks for why this must not be the
+        // currently-billing composition once a change is already scheduled.
+        var effectiveSeats = latest?.PendingSeatCount ?? latest?.RequestedSeats ?? 0;
+        var effectiveExtraAdministrators = latest?.PendingAdminCount ?? latest?.ExtraAdministratorsPurchased ?? 0;
 
         // `26-295`: see BillingStatusDto's own remarks on NextChargeRub for the full reasoning - null
         // whenever there is no base subscription currently expected to renew, or a component this total
@@ -137,13 +168,13 @@ public sealed class GetBillingStatusHandler(
         decimal? nextChargeRub = null;
         if (latest is not null && latest.Status is BillingSubscriptionStatus.Succeeded or BillingSubscriptionStatus.PastDue)
         {
-            var adminUnpriced = latest.ExtraAdministratorsPurchased > 0 && adminExtraPrice is null;
-            var channelsUnpriced = connectedChannelCount > 0 && channelAddOnPrice is null;
+            var adminUnpriced = effectiveExtraAdministrators > 0 && adminExtraPrice is null;
+            var channelsUnpriced = renewingChannelCount > 0 && channelAddOnPrice is null;
             if (!adminUnpriced && !channelsUnpriced)
             {
-                var seatAmount = SubscriptionTierBands.ComputeSeatPriceRub(latest.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
-                var adminAmount = latest.ExtraAdministratorsPurchased * (adminExtraPrice?.AmountRub ?? 0m);
-                var channelAmount = connectedChannelCount * (channelAddOnPrice?.AmountRub ?? 0m);
+                var seatAmount = SubscriptionTierBands.ComputeSeatPriceRub(effectiveSeats, basePrice.AmountRub, extraPrice.AmountRub);
+                var adminAmount = effectiveExtraAdministrators * (adminExtraPrice?.AmountRub ?? 0m);
+                var channelAmount = renewingChannelCount * (channelAddOnPrice?.AmountRub ?? 0m);
                 nextChargeRub = seatAmount + adminAmount + channelAmount;
             }
         }
@@ -161,6 +192,32 @@ public sealed class GetBillingStatusHandler(
             adminExtraPrice?.AmountRub,
             connectedChannelCount,
             channelAddOnPrice?.AmountRub,
-            nextChargeRub);
+            nextChargeRub,
+            latest?.PaymentMethodId is { Length: > 0 },
+            connectedChannels);
+    }
+
+    /// <summary>`26-299`: <see cref="Ago.Chat.Domain.ChannelEntitlementOptionKeys.For"/>'s own reverse
+    /// direction - that method only ever maps <see cref="ChannelKind"/> -&gt; <see cref="BillingOptionKey"/>,
+    /// so a display read that already has the option key (from a stored row) needs this small inverse to
+    /// recover which kind it names. A linear scan over <see cref="ChannelKind"/>'s own handful of members,
+    /// not a stored reverse map - this runs once per connected channel on one site's own billing-status
+    /// read, not a hot path. <see langword="null"/>, not a throw, when nothing matches - every real
+    /// `channel-*` key this codebase ever writes originates from <see cref="ChannelEntitlementOptionKeys.For"/>
+    /// itself (<c>PurchaseChannelAddOnHandler</c>'s own call) and always resolves, but a synthetic key
+    /// (a test double, or a future retired <see cref="ChannelKind"/>) must not fail this whole read over
+    /// one row it cannot name a kind for - see this method's own caller for why <c>ChannelCount</c>/
+    /// <c>NextChargeRub</c> are computed independently of whether every row resolves here.</summary>
+    private static ChannelKind? TryResolveChannelKind(BillingOptionKey optionKey)
+    {
+        foreach (var kind in Enum.GetValues<ChannelKind>())
+        {
+            if (ChannelEntitlementOptionKeys.For(kind) == optionKey)
+            {
+                return kind;
+            }
+        }
+
+        return null;
     }
 }

@@ -549,6 +549,40 @@ public static class ConversationErrors
             "Billing.AdministratorCountNotAnIncrease",
             "The requested extra-Administrator count must exceed the subscription's current one - this endpoint only ever increases it.");
 
+    /// <summary>`26-299`: an instant, charge-now write (an upgrade, an Administrator/channel purchase, a
+    /// pay-early renewal) was attempted against a <see cref="Domain.BillingSubscriptionStatus.Succeeded"/>
+    /// subscription that has no stored `payment_method_id` - a real, reachable state once
+    /// <c>savePaymentMethod</c> is the operator's own choice rather than always `true`
+    /// (`CreateCheckoutSessionHandler`/`CreateTokenPaymentHandler`'s own remarks), not the "unreachable,
+    /// thrown" case it used to be. `402 Payment Required`: the remedy is "start a fresh checkout that
+    /// saves a card", never "fix the request" or "retry now".</summary>
+    public static Error BillingNoStoredPaymentMethod(Guid subscriptionId) =>
+        new(
+            "Billing.NoStoredPaymentMethod",
+            $"Billing subscription {subscriptionId} has no stored payment method - the operator chose not to save one at checkout, "
+            + "so an instant, charge-now purchase is not possible. Start a fresh checkout that saves a card, or pay through ЮKassa's "
+            + "own hosted page instead.");
+
+    /// <summary>`26-299`: `SetNextPeriodCompositionHandler`'s own guard - the identical "cannot owe less
+    /// than nothing" invariant <see cref="Domain.BillingSubscription.ScheduleNextPeriodComposition"/>'s own
+    /// argument check enforces, translated at the Application boundary rather than left to throw past
+    /// it.</summary>
+    public static Error BillingInvalidAdministratorCount(string reason) =>
+        new("Billing.InvalidAdministratorCount", reason);
+
+    /// <summary>`26-299`: `PreviewBillingPurchaseHandler`'s own guard for the channel-kind branch - the
+    /// channel named is already a <see cref="Domain.BillingSubscriptionStatus.Succeeded"/> option for this
+    /// site, so there is nothing left to preview a first purchase of (the identical "connected" test
+    /// <c>GetBillingStatusHandler</c>'s own <c>ChannelCount</c> already applies).</summary>
+    public static Error BillingChannelAlreadyConnected(string channelKind) =>
+        new("Billing.ChannelAlreadyConnected", $"Channel '{channelKind}' is already connected for this site.");
+
+    /// <summary>`26-299`: `PreviewBillingPurchaseHandler`'s own request-shape guard - the caller's
+    /// <c>Kind</c> did not carry the field that kind actually needs (a seat count, an Administrator count,
+    /// or a channel kind), the caller's own mistake to fix.</summary>
+    public static Error BillingPreviewRequestInvalid(string reason) =>
+        new("Billing.PreviewRequestInvalid", reason);
+
     /// <summary>`13-03`: a site's `Permission.SiteManageOperators` holder tried to assign a seat beyond
     /// the site's own current `seat_limit` - `402 Payment Required`, the identical reasoning
     /// <see cref="OperatorInviteSeatLimitReached"/> already gives for the same underlying constraint on

@@ -146,6 +146,45 @@ public class PurchaseChannelAddOnHandlerTests
         Assert.Empty(fixture.Applier.Applied);
     }
 
+    // `26-299`: the floor-rule fails-before this item's own report names.
+    [Fact]
+    public async Task HandleAsync_WhenPurchasedSecondsIntoTheFirstDayOfThePeriod_ChargesTheFullFlatRate()
+    {
+        var fixture = CreateFixture();
+        var baseId = new BillingSubscriptionId(Guid.NewGuid());
+        var secondsIntoTheFirstDay = Now - TimeSpan.FromSeconds(3);
+        SeedSucceededBaseAsync(fixture, baseId, succeededAt: secondsIntoTheFirstDay);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.PurchaseChannelAddOn.PurchaseChannelAddOn(OperatorId, SiteId, baseId, ChannelKind.Telegram),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
+        Assert.Equal(100.00m, result.Value.ProratedAmountRub);
+    }
+
+    // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice.
+    [Fact]
+    public async Task HandleAsync_WhenTheBaseHasNoStoredPaymentMethod_ReturnsNoStoredPaymentMethod()
+    {
+        var fixture = CreateFixture();
+        var baseId = new BillingSubscriptionId(Guid.NewGuid());
+        var when = Now - BillingSubscription.PeriodLength;
+        var baseSubscription = BillingSubscription.Create(
+            baseId, SiteId, "pmt_base", requestedSeats: 5, SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, when);
+        baseSubscription.MarkSucceeded(paymentMethodId: null, when);
+        fixture.Subscriptions.Seed(baseSubscription);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.PurchaseChannelAddOn.PurchaseChannelAddOn(OperatorId, SiteId, baseId, ChannelKind.Telegram),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Billing.NoStoredPaymentMethod", result.Error!.Value.Code);
+        Assert.Null(fixture.YooKassa.LastChargeRequest);
+        Assert.Empty(fixture.Applier.Applied);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenCallerLacksSiteConfigurePermission_ReturnsForbidden()
     {

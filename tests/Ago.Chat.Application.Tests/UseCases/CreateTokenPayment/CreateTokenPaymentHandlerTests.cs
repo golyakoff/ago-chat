@@ -46,7 +46,7 @@ public class CreateTokenPaymentHandlerTests
         fixture.YooKassa.TokenResult = new CreatePaymentWithTokenResult.Success("pmt_token_1", "pending", "https://yookassa.example/confirm-sdk");
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_abc123"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_abc123", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
         Assert.Equal("pending", result.Value.Status);
@@ -71,7 +71,7 @@ public class CreateTokenPaymentHandlerTests
         fixture.YooKassa.TokenResult = new CreatePaymentWithTokenResult.Success("pmt_token_2", "succeeded", ConfirmationUrl: null);
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 3, "tok_def456"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 3, "tok_def456", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
         Assert.Equal("succeeded", result.Value.Status);
@@ -86,7 +86,7 @@ public class CreateTokenPaymentHandlerTests
         var fixture = CreateFixture(baseSeatPriceRub: 490m, pricePerExtraSeatRub: 200m);
 
         await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 4, "tok_the_one"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 4, "tok_the_one", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.NotNull(fixture.YooKassa.LastTokenRequest);
         Assert.Equal("tok_the_one", fixture.YooKassa.LastTokenRequest!.PaymentToken);
@@ -105,7 +105,7 @@ public class CreateTokenPaymentHandlerTests
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, blankToken!), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, blankToken!, SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.InvalidPaymentToken", result.Error!.Value.Code);
@@ -119,7 +119,7 @@ public class CreateTokenPaymentHandlerTests
         var fixture = CreateFixture(grantPermission: false);
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_abc"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_abc", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Conversation.Forbidden", result.Error!.Value.Code);
@@ -133,7 +133,7 @@ public class CreateTokenPaymentHandlerTests
         var fixture = CreateFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 1, "tok_abc"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 1, "tok_abc", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.InvalidSeatCount", result.Error!.Value.Code);
@@ -147,7 +147,7 @@ public class CreateTokenPaymentHandlerTests
         fixture.YooKassa.TokenResult = new CreatePaymentWithTokenResult.Refused("expired token");
 
         var result = await fixture.Handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_expired"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_expired", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.PaymentProviderRefused", result.Error!.Value.Code);
@@ -167,7 +167,7 @@ public class CreateTokenPaymentHandlerTests
         var handler = new CreateTokenPaymentHandler(sites, permissions, subscriptions, yooKassa, prices, new FakeIdGenerator(), new FakeClock(Now));
 
         var result = await handler.HandleAsync(
-            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_abc"), CancellationToken.None);
+            new Application.UseCases.CreateTokenPayment.CreateTokenPayment(OperatorId, SiteId, 5, "tok_abc", SavePaymentMethod: true), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("Billing.PriceNotConfigured", result.Error!.Value.Code);

@@ -140,6 +140,8 @@ using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.RenewNow;
+using Ago.Chat.Application.UseCases.SetNextPeriodComposition;
+using Ago.Chat.Application.UseCases.PreviewBillingPurchase;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.RecordUnread;
@@ -984,6 +986,11 @@ public sealed class ChatModule : IProductModule
         // `26-296`: pay-early - reuses ISubscriptionRenewalApplier (registered above) rather than a
         // second applier, see RenewNowHandler's own remarks.
         services.AddScoped<RenewNowHandler>();
+        // `26-299`: the console billing-v2 screen's own remaining two handlers - a plain single-aggregate
+        // write (no new applier) and a read with no port beyond what is already registered above, see
+        // each type's own remarks.
+        services.AddScoped<SetNextPeriodCompositionHandler>();
+        services.AddScoped<PreviewBillingPurchaseHandler>();
 
         // `19-01`: bound here, not a host's own Program.cs - GenerateReplyDraftHandler is registered
         // for every host below, the same "plain value, not IOptions<T>" shape MessageSendRateLimitOptions/

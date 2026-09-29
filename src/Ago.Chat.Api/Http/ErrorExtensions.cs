@@ -319,6 +319,15 @@ public static class ErrorExtensions
                 // (ConversationErrors.BillingInvalidSeatCount's own remarks) - the caller's own mistake
                 // to fix, not a conflict with anything concurrent.
                 or "Billing.InvalidSeatCount"
+                // `26-299`: `SetNextPeriodCompositionHandler`'s own new route - a negative requested
+                // extra-Administrator count, the caller's own mistake to fix, the identical
+                // "brand-new code this item's own new route can actually produce" shape every other 400
+                // in this group already states for itself.
+                or "Billing.InvalidAdministratorCount"
+                // `26-299`: `PreviewBillingPurchaseHandler`'s own new route - the caller's `Kind` did not
+                // carry the field that kind actually needs, the identical "brand-new code this item's
+                // own new route can actually produce" shape every other 400 in this group already states.
+                or "Billing.PreviewRequestInvalid"
                 // `26-291`: the SDK token-payment endpoint's own caller-mistake check - an empty or
                 // whitespace payment token, the identical "brand-new code this item's own new route can
                 // actually produce" shape every other 400 in this group already states for itself.
@@ -493,7 +502,11 @@ public static class ErrorExtensions
                 // `Visitor.NotRestricted` - ConversationErrors.VisitorNotRestricted's own remarks name it
                 // "the same `409`-shaped ... group `ConversationNotBlocked` already establishes, restated
                 // for a visitor" in as many words.
-                or "Visitor.NotRestricted" => StatusCodes.Status409Conflict,
+                or "Visitor.NotRestricted"
+                // `26-299`: `PreviewBillingPurchaseHandler`'s own guard - the channel named already has a
+                // Succeeded option row for this site, so there is nothing left for a first-purchase
+                // preview to answer; the caller's own state, not the request body, is what conflicts.
+                or "Billing.ChannelAlreadyConnected" => StatusCodes.Status409Conflict,
             // `13-01`'s own reasoned choice: a real invite that has timed out is "Gone", not "Not
             // Found" - a caller should ask for a fresh one, not retry the same lookup more carefully.
             // `14-15`: the identical shape for an expired verification code - ConversationErrors.
@@ -542,7 +555,12 @@ public static class ErrorExtensions
                 // named and deliberately left as found at the time (see this file's own `Operator.NotFound`
                 // remarks above); closed now that this item's own audit needs a real reason for every
                 // absence rather than an inherited one.
-                or "Operator.SeatLimitReached" => StatusCodes.Status402PaymentRequired,
+                or "Operator.SeatLimitReached"
+                // `26-299`: `Billing.NoStoredPaymentMethod` - "the remedy is 'start a fresh checkout that
+                // saves a card', never 'fix the request' or 'retry now'" (ConversationErrors.
+                // BillingNoStoredPaymentMethod's own remarks) - the identical "this is a payment problem"
+                // reasoning `Billing.PaymentProviderRefused` right above already gives.
+                or "Billing.NoStoredPaymentMethod" => StatusCodes.Status402PaymentRequired,
             // `ago-root#352`: a deployment that has not turned demo tenants on genuinely lacks this
             // capability - not "there is nothing at this path" (`404`, explicitly rejected by
             // MintDemoTenantHandler's own remarks: "not a 404 dressed as a feature flag") and not "an

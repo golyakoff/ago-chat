@@ -21,15 +21,17 @@ public sealed record YooKassaCreatePaymentRequest(
     [property: JsonPropertyName("save_payment_method")] bool SavePaymentMethod,
     [property: JsonPropertyName("description")] string Description);
 
-/// <summary>`26-291`: the SDK tokenization shape - `payment_token` in place of `confirmation`/
-/// `save_payment_method`, ЮKassa's own documented request shape for redeeming a mobile-SDK token.
-/// Deliberately no `save_payment_method` here: the SDK flow does not (yet) offer to store the method for
-/// a future recurring charge the way the redirect flow's `CreatePaymentAsync` does - `26-291`'s own Scope
-/// is the first token payment only, not recurring billing on a token-originated card.</summary>
+/// <summary>`26-291`: the SDK tokenization shape - `payment_token` in place of `confirmation`,
+/// ЮKassa's own documented request shape for redeeming a mobile-SDK token. `26-299`: `save_payment_method`
+/// now joins it - see <see cref="Application.Abstractions.CreatePaymentWithTokenRequest"/>'s own remarks
+/// for why the "SDK flow does not offer to store the method" note this summary used to carry was a
+/// product-scope decision, not a real API limitation, and is superseded now that the operator's own
+/// checkout-time choice threads through both flows identically.</summary>
 public sealed record YooKassaCreatePaymentWithTokenRequest(
     [property: JsonPropertyName("amount")] YooKassaAmount Amount,
     [property: JsonPropertyName("capture")] bool Capture,
     [property: JsonPropertyName("payment_token")] string PaymentToken,
+    [property: JsonPropertyName("save_payment_method")] bool SavePaymentMethod,
     [property: JsonPropertyName("description")] string Description);
 
 /// <summary>`13-03`: the charge-on-file shape - no `confirmation` object (nobody's browser is involved)

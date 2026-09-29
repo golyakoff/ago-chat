@@ -102,7 +102,7 @@ public sealed class CreateTokenPaymentHandlerIntegrationTests(PostgresFixture fi
             new PriceCatalogRepository(db), new UuidV7Generator(), new FixedClock(Now));
 
         return await handler.HandleAsync(
-            new CreateTokenPayment(operatorId, siteId, requestedSeats, paymentToken), CancellationToken.None);
+            new CreateTokenPayment(operatorId, siteId, requestedSeats, paymentToken, SavePaymentMethod: true), CancellationToken.None);
     }
 
     private async Task<SiteId> SeedSiteAsync()

@@ -2,8 +2,10 @@
 
 /// <summary>
 /// `13-02`: the outbound half of this item's ЮKassa integration - creates a checkout-session payment
-/// (`confirmation.type = redirect`, `save_payment_method = true`) and hands back the redirect URL a
-/// caller sends the operator's browser to. Deliberately provider-neutral in every member name and
+/// (`confirmation.type = redirect`) and hands back the redirect URL a caller sends the operator's
+/// browser to. `26-299`: `save_payment_method` is the caller's own choice
+/// (<see cref="CreatePaymentRequest.SavePaymentMethod"/>), no longer always `true`. Deliberately
+/// provider-neutral in every member name and
 /// type, the same discipline `ChannelPortTests.NoProviderVocabulary_AppearsAboveInfrastructure`
 /// enforces for `IInboundChannelAdapter` - <c>Ago.Chat.Infrastructure.YooKassa</c> is the only project
 /// that may know this is ЮKassa specifically, what its request/response JSON shapes are, or how its
@@ -51,15 +53,30 @@ public interface IYooKassaPaymentsClient
 /// <summary><paramref name="IdempotenceKey"/> is this call's own retry-safety, not the webhook ledger's
 /// (<c>BillingWebhookEvent</c>) - ЮKassa's own Payments API requires an `Idempotence-Key` header on
 /// every payment-creation call so a client's own network retry of this exact request cannot create two
-/// payments for one checkout attempt.</summary>
-public sealed record CreatePaymentRequest(decimal AmountRub, string Description, string ReturnUrl, string IdempotenceKey);
+/// payments for one checkout attempt.
+///
+/// <para><b>`26-299`: <see cref="SavePaymentMethod"/> - the operator's own checkout-time choice, no
+/// longer hardcoded <see langword="true"/>.</b> See <c>CreateCheckoutSession</c>'s own remarks for why
+/// this must be a real choice rather than one this codebase keeps making on the operator's behalf.</para>
+/// </summary>
+public sealed record CreatePaymentRequest(decimal AmountRub, string Description, string ReturnUrl, bool SavePaymentMethod, string IdempotenceKey);
 
 /// <summary>`26-291`: <see cref="CreatePaymentRequest"/>'s own token-payment sibling - carries a
 /// <paramref name="PaymentToken"/> (the SDK's one-time, single-use tokenization result, opaque here by
 /// design: this port never inspects or validates its shape, only forwards it) in place of a return URL,
 /// since a token payment's own confirmation step - when ЮKassa's reply says one is needed - happens
-/// inside the app's own SDK confirmation intent, never a browser redirect.</summary>
-public sealed record CreatePaymentWithTokenRequest(decimal AmountRub, string Description, string PaymentToken, string IdempotenceKey);
+/// inside the app's own SDK confirmation intent, never a browser redirect.
+///
+/// <para><b>`26-299`: <see cref="SavePaymentMethod"/> joins this shape too.</b> Before this item, the
+/// SDK tokenization flow deliberately carried no such field ("the SDK flow does not (yet) offer to store
+/// the method for a future recurring charge" - this type's own prior remarks, `26-291`'s stated scope).
+/// That was a product-scope decision, not an API limitation: ЮKassa's Payments API documents
+/// `save_payment_method` as an ordinary top-level `POST /payments` field regardless of whether
+/// `confirmation` or `payment_token` supplies the buyer's own payment details, the identical field
+/// <see cref="CreatePaymentRequest"/> already threads. Widened here so the operator's own choice applies
+/// to both checkout flows, not only the redirect one - not confirmed against a live credential, the same
+/// caveat every shape in `YooKassaDtos` already carries.</para></summary>
+public sealed record CreatePaymentWithTokenRequest(decimal AmountRub, string Description, string PaymentToken, bool SavePaymentMethod, string IdempotenceKey);
 
 /// <summary>`26-291`: the identical terminal/transient split <see cref="CreatePaymentResult"/> already
 /// establishes, reshaped for the token flow's own two differences: <see cref="Success.Status"/> is

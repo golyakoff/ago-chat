@@ -180,6 +180,15 @@ public sealed class BillingSubscription
     /// identical reason <see cref="Tier"/> is carried alongside <see cref="RequestedSeats"/>.</summary>
     public string? PendingTier { get; private set; }
 
+    /// <summary>`26-299`: the identical "recorded now, applied only once a renewal is known to have
+    /// genuinely happened" shape <see cref="PendingSeatCount"/> already establishes, restated for
+    /// <see cref="ExtraAdministratorsPurchased"/> - `null` when no next-period Administrator-count change
+    /// is scheduled. Unlike <see cref="PendingSeatCount"/> (reachable only through a decrease, via
+    /// <see cref="ScheduleSeatDecrease"/>), this can move in either direction - see
+    /// <see cref="ScheduleNextPeriodComposition"/>'s own remarks for why the two entry points differ.
+    /// Applied, and cleared, by the next successful <see cref="RecordRenewalSuccess"/>.</summary>
+    public int? PendingAdminCount { get; private set; }
+
     private BillingSubscription(
         BillingSubscriptionId id,
         SiteId siteId,
@@ -428,6 +437,16 @@ public sealed class BillingSubscription
             PendingSeatCount = null;
             PendingTier = null;
         }
+
+        // `26-299`: the identical "applied and cleared here, in the one place a renewal is known to have
+        // genuinely happened" shape just above, restated for a scheduled Administrator-count change -
+        // see PendingAdminCount's own remarks for why this dimension can move either direction, unlike
+        // the seat pair above.
+        if (PendingAdminCount is { } pendingAdminCount)
+        {
+            ExtraAdministratorsPurchased = pendingAdminCount;
+            PendingAdminCount = null;
+        }
     }
 
     /// <summary>`13-03`: the 7-day retry window closed with nothing recovered, or a cancelled
@@ -543,5 +562,43 @@ public sealed class BillingSubscription
 
         PendingSeatCount = newSeatCount;
         PendingTier = newTier;
+    }
+
+    /// <summary>`26-299`: the general "what I want to be true starting next period" write the console's
+    /// billing-v2 screen needs - unlike <see cref="ScheduleSeatDecrease"/> (one dimension, decrease-only,
+    /// reachable only through <c>ChangeSubscriptionSeatsHandler</c>'s own existing downgrade branch), this
+    /// sets the seat count/tier pair <em>and</em> <see cref="PendingAdminCount"/> together, in either
+    /// direction - a caller planning ahead ("next period I want 4 seats and 3 extra Administrators") states
+    /// the whole next-period shape at once rather than composing several single-dimension calls. Both
+    /// pairs are still applied, and cleared, only by the next successful <see cref="RecordRenewalSuccess"/>
+    /// - the identical "recorded now, never itself an immediate write" discipline `decisions/0006`
+    /// established for a downgrade, extended here to every dimension this call touches, never only the
+    /// ones that happen to decrease.
+    ///
+    /// <para><b>Why a second entry point rather than widening <see cref="ScheduleSeatDecrease"/> itself.</b>
+    /// That method's own "must decrease" guard is a real invariant callers of the original mid-cycle
+    /// seat-change endpoint still rely on (an increase there is deliberately the immediate,
+    /// charged-today branch, never a deferred one) - loosening it in place would silently change what an
+    /// existing caller's own increase attempt does. A distinct method, reachable only from the new
+    /// `SetNextPeriodCompositionHandler`, keeps that older contract intact while giving the newer, wider
+    /// one its own honest name.</para>
+    /// </summary>
+    public void ScheduleNextPeriodComposition(int seatCount, string tier, int extraAdministratorCount)
+    {
+        if (Status is not (BillingSubscriptionStatus.Succeeded or BillingSubscriptionStatus.PastDue))
+        {
+            throw new InvalidOperationException(
+                $"Billing subscription {Id.Value} is {Status} and cannot schedule a next-period composition.");
+        }
+
+        if (extraAdministratorCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(extraAdministratorCount), extraAdministratorCount, "A scheduled extra-Administrator count cannot be negative.");
+        }
+
+        PendingSeatCount = seatCount;
+        PendingTier = tier;
+        PendingAdminCount = extraAdministratorCount;
     }
 }

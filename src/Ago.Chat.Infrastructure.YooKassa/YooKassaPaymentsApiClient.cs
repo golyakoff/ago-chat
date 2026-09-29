@@ -36,7 +36,7 @@ public sealed class YooKassaPaymentsApiClient(HttpClient httpClient) : IYooKassa
                 Amount: new YooKassaAmount(request.AmountRub.ToString("F2", CultureInfo.InvariantCulture), "RUB"),
                 Capture: true,
                 Confirmation: new YooKassaConfirmationRequest("redirect", request.ReturnUrl),
-                SavePaymentMethod: true,
+                SavePaymentMethod: request.SavePaymentMethod,
                 Description: request.Description)),
         };
         httpRequest.Headers.Add("Idempotence-Key", request.IdempotenceKey);
@@ -85,6 +85,7 @@ public sealed class YooKassaPaymentsApiClient(HttpClient httpClient) : IYooKassa
                 Amount: new YooKassaAmount(request.AmountRub.ToString("F2", CultureInfo.InvariantCulture), "RUB"),
                 Capture: true,
                 PaymentToken: request.PaymentToken,
+                SavePaymentMethod: request.SavePaymentMethod,
                 Description: request.Description)),
         };
         httpRequest.Headers.Add("Idempotence-Key", request.IdempotenceKey);

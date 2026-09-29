@@ -60,12 +60,22 @@ public sealed class PurchaseAdministratorSlotHandler(
             return ConversationErrors.BillingAdministratorCountNotAnIncrease();
         }
 
-        if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId || subscription.CurrentPeriodEnd is not { } periodEnd)
+        if (subscription.CurrentPeriodEnd is not { } periodEnd)
         {
-            // Unreachable - a Succeeded row always has both (MarkSucceeded sets them together), the
-            // identical guard ChangeSubscriptionSeatsHandler.ApplyUpgradeAsync's own remarks describe.
+            // Unreachable - a Succeeded row always has one (MarkSucceeded sets it unconditionally,
+            // regardless of whether a payment method was ever saved), the identical guard
+            // ChangeSubscriptionSeatsHandler.ApplyUpgradeAsync's own remarks describe.
             throw new InvalidOperationException(
-                $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no payment method or period end.");
+                $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no period end.");
+        }
+
+        // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice
+        // (CreateCheckoutSessionHandler/CreateTokenPaymentHandler's own remarks) rather than always
+        // `true` - a Succeeded subscription with no stored card is an honest, mappable failure, not the
+        // "unreachable, thrown" case this guard used to be.
+        if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId)
+        {
+            return ConversationErrors.BillingNoStoredPaymentMethod(command.SubscriptionId.Value);
         }
 
         // `25-43`: the price this subscription was actually last charged for this key, or nothing at
@@ -99,15 +109,16 @@ public sealed class PurchaseAdministratorSlotHandler(
         }
 
         var now = clock.UtcNow;
-        var periodLengthDays = (decimal)BillingSubscription.PeriodLength.TotalDays;
-        var remainingDays = Math.Clamp((decimal)(periodEnd - now).TotalDays, 0m, periodLengthDays);
+        var periodStart = periodEnd - BillingSubscription.PeriodLength;
 
         // Flat, never banded - `SubscriptionTierBands.ComputeSeatPriceRub` does not apply here
         // (this handler's own remarks, and `25-41`'s own corrected Scope bullet).
         var oldMonthlyCost = subscription.ExtraAdministratorsPurchased * oldPriceRub;
         var newMonthlyCost = command.RequestedExtraAdministrators * newPrice.AmountRub;
-        var proratedAmount = Math.Round(
-            (newMonthlyCost - oldMonthlyCost) * remainingDays / periodLengthDays, 2, MidpointRounding.AwayFromZero);
+        // `26-299`: BillingProration.Prorate, not a hand-rolled remaining-days fraction - see that type's
+        // own remarks for the floor rule this now applies (a day-one purchase charges the full delta,
+        // never a few cents short from the seconds already elapsed that day).
+        var proratedAmount = BillingProration.Prorate(newMonthlyCost - oldMonthlyCost, now, periodStart, BillingSubscription.PeriodLength);
 
         var idempotenceKey = idGenerator.NewId(now).ToString();
         var description = $"AGO Chat - {command.RequestedExtraAdministrators} extra Administrator(s) (prorated)";

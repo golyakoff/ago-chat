@@ -7,8 +7,10 @@ using Ago.Chat.Application.UseCases.PurchaseChannelAddOn;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.CreateTokenPayment;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
+using Ago.Chat.Application.UseCases.PreviewBillingPurchase;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.RenewNow;
+using Ago.Chat.Application.UseCases.SetNextPeriodComposition;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.YooKassa;
 
@@ -43,7 +45,29 @@ public static class BillingEndpoints
         app.MapPurchaseChannelAddOnEndpoint();
         app.MapGetBillingStatusEndpoint();
         app.MapRenewNowEndpoint();
+        app.MapSetNextPeriodCompositionEndpoint();
+        app.MapPreviewBillingPurchaseEndpoint();
     }
+
+    /// <summary>`26-299`: the console billing-v2 "Card B" write - see
+    /// <see cref="Application.UseCases.SetNextPeriodComposition.SetNextPeriodComposition"/>'s own remarks.
+    /// Same `RequireOperatorIdentity` + `Permission.SiteConfigure` gate every other billing write in this
+    /// file already uses.</summary>
+    public static void MapSetNextPeriodCompositionEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/next-period", HandleSetNextPeriodCompositionAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+    /// <summary>`26-299`: a read, not a write - still gated identically to every other billing route in
+    /// this file (`Permission.SiteConfigure`, via the handler), since the numbers it answers are exactly
+    /// what a billing-decision screen needs and nothing this codebase shows to anyone without that
+    /// permission. See <see cref="Application.UseCases.PreviewBillingPurchase.PreviewBillingPurchase"/>'s
+    /// own remarks for why a `POST`, not a `GET`, despite being read-only: the query shape (a discriminated
+    /// kind plus whichever one field it needs) is naturally a request body, not a clean query string.</summary>
+    public static void MapPreviewBillingPurchaseEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/purchase-preview", HandlePreviewBillingPurchaseAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
 
     /// <summary>`26-291`: the YooKassa Android SDK's own token-payment counterpart to
     /// <see cref="MapCreateCheckoutSessionEndpoint"/> right below - same route family, same
@@ -127,7 +151,8 @@ public static class BillingEndpoints
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new CreateCheckoutSession(user.GetOperatorId(), new SiteId(siteId), request.RequestedSeats), cancellationToken);
+            new CreateCheckoutSession(user.GetOperatorId(), new SiteId(siteId), request.RequestedSeats, request.SavePaymentMethod),
+            cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
@@ -141,7 +166,7 @@ public static class BillingEndpoints
     {
         var user = httpContext.User;
         var result = await handler.HandleAsync(
-            new CreateTokenPayment(user.GetOperatorId(), new SiteId(siteId), request.RequestedSeats, request.PaymentToken),
+            new CreateTokenPayment(user.GetOperatorId(), new SiteId(siteId), request.RequestedSeats, request.PaymentToken, request.SavePaymentMethod),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
@@ -273,6 +298,42 @@ public static class BillingEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
+    private static async Task<IResult> HandleSetNextPeriodCompositionAsync(
+        Guid siteId,
+        Guid subscriptionId,
+        SetNextPeriodCompositionRequest request,
+        SetNextPeriodCompositionHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new SetNextPeriodComposition(
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId),
+                request.RequestedSeats, request.RequestedExtraAdministrators),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandlePreviewBillingPurchaseAsync(
+        Guid siteId,
+        Guid subscriptionId,
+        PreviewBillingPurchaseRequest request,
+        PreviewBillingPurchaseHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new PreviewBillingPurchase(
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId), request.Kind,
+                request.RequestedSeats, request.RequestedExtraAdministrators, request.ChannelKind),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
     private static async Task<IResult> HandleGetBillingStatusAsync(
         Guid siteId, GetBillingStatusHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
@@ -282,13 +343,21 @@ public static class BillingEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
-    public sealed record CreateCheckoutSessionRequest(int RequestedSeats);
+    public sealed record CreateCheckoutSessionRequest(int RequestedSeats, bool SavePaymentMethod);
 
-    public sealed record CreateTokenPaymentRequest(int RequestedSeats, string PaymentToken);
+    public sealed record CreateTokenPaymentRequest(int RequestedSeats, string PaymentToken, bool SavePaymentMethod);
 
     public sealed record ChangeSubscriptionSeatsRequest(int RequestedSeats);
 
     public sealed record PurchaseAdministratorSlotRequest(int RequestedExtraAdministrators);
 
     public sealed record PurchaseChannelAddOnRequest(ChannelKind ChannelKind);
+
+    public sealed record SetNextPeriodCompositionRequest(int RequestedSeats, int RequestedExtraAdministrators);
+
+    /// <summary>`26-299`: the flattened, discriminated preview request - <see cref="Kind"/> decides which
+    /// of <see cref="RequestedSeats"/>/<see cref="RequestedExtraAdministrators"/>/<see cref="ChannelKind"/>
+    /// the handler reads (`PreviewBillingPurchase`'s own remarks).</summary>
+    public sealed record PreviewBillingPurchaseRequest(
+        BillingPurchaseKind Kind, int? RequestedSeats, int? RequestedExtraAdministrators, ChannelKind? ChannelKind);
 }

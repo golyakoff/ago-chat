@@ -75,13 +75,20 @@ public sealed class PurchaseChannelAddOnHandler(
                 + "and cannot purchase a channel add-on.");
         }
 
-        if (baseSubscription.PaymentMethodId is not { Length: > 0 } paymentMethodId
-            || baseSubscription.CurrentPeriodEnd is not { } periodEnd)
+        if (baseSubscription.CurrentPeriodEnd is not { } periodEnd)
         {
-            // Unreachable - a Succeeded row always has both (MarkSucceeded sets them together), the
-            // identical guard PurchaseAdministratorSlotHandler.HandleAsync's own remarks describe.
+            // Unreachable - a Succeeded row always has one (MarkSucceeded sets it unconditionally,
+            // regardless of whether a payment method was ever saved), the identical guard
+            // PurchaseAdministratorSlotHandler.HandleAsync's own remarks describe.
             throw new InvalidOperationException(
-                $"Billing subscription {command.BaseSubscriptionId.Value} is Succeeded but has no payment method or period end.");
+                $"Billing subscription {command.BaseSubscriptionId.Value} is Succeeded but has no period end.");
+        }
+
+        // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice -
+        // see PurchaseAdministratorSlotHandler's own identical guard for the full reasoning.
+        if (baseSubscription.PaymentMethodId is not { Length: > 0 } paymentMethodId)
+        {
+            return ConversationErrors.BillingNoStoredPaymentMethod(command.BaseSubscriptionId.Value);
         }
 
         var optionKey = ChannelEntitlementOptionKeys.For(command.ChannelKind);
@@ -95,12 +102,13 @@ public sealed class PurchaseChannelAddOnHandler(
         }
 
         var now = clock.UtcNow;
-        var periodLengthDays = (decimal)BillingSubscription.PeriodLength.TotalDays;
-        var remainingDays = Math.Clamp((decimal)(periodEnd - now).TotalDays, 0m, periodLengthDays);
+        var periodStart = periodEnd - BillingSubscription.PeriodLength;
 
         // No "old price" side to net against - see this handler's own remarks for why a channel add-on
-        // is always a brand-new option row, never a running count on an existing one.
-        var proratedAmount = Math.Round(price.AmountRub * remainingDays / periodLengthDays, 2, MidpointRounding.AwayFromZero);
+        // is always a brand-new option row, never a running count on an existing one. `26-299`:
+        // BillingProration.Prorate, not a hand-rolled remaining-days fraction - see that type's own
+        // remarks for the floor rule this now applies.
+        var proratedAmount = BillingProration.Prorate(price.AmountRub, now, periodStart, BillingSubscription.PeriodLength);
 
         var newOptionId = new BillingSubscriptionId(idGenerator.NewId(now));
         var idempotenceKey = idGenerator.NewId(now).ToString();
