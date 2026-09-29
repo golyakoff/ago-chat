@@ -79,12 +79,21 @@ public sealed class RenewNowHandler(
                 $"Billing subscription {command.SubscriptionId.Value} is {subscription.Status}, not Succeeded, and cannot be paid early.");
         }
 
-        if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId || subscription.CurrentPeriodEnd is not { } currentPeriodEnd)
+        if (subscription.CurrentPeriodEnd is not { } currentPeriodEnd)
         {
-            // Unreachable - MarkSucceeded always sets both together, the identical guard
-            // ProcessSubscriptionRenewalHandler's/PurchaseChannelAddOnHandler's own remarks describe.
+            // Unreachable - MarkSucceeded always sets one (regardless of whether a payment method was
+            // ever saved), the identical guard ProcessSubscriptionRenewalHandler's/
+            // PurchaseChannelAddOnHandler's own remarks describe.
             throw new InvalidOperationException(
-                $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no stored payment method or period end.");
+                $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no period end.");
+        }
+
+        // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice -
+        // pay-early against nothing on file cannot possibly work, so this is an honest, mappable failure,
+        // never the "unreachable, thrown" case this guard used to be.
+        if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId)
+        {
+            return ConversationErrors.BillingNoStoredPaymentMethod(command.SubscriptionId.Value);
         }
 
         var now = clock.UtcNow;

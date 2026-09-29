@@ -48,7 +48,7 @@ public sealed class YooKassaPaymentsApiClientTests
         var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
 
         var result = await client.CreatePaymentAsync(
-            new CreatePaymentRequest(2500m, "AGO Chat - starter tier, 5 seats", "https://console.example/billing/return", "idem-key-1"),
+            new CreatePaymentRequest(2500m, "AGO Chat - starter tier, 5 seats", "https://console.example/billing/return", SavePaymentMethod: true, "idem-key-1"),
             CancellationToken.None);
 
         Assert.IsType<CreatePaymentResult.Success>(result);
@@ -59,6 +59,33 @@ public sealed class YooKassaPaymentsApiClientTests
         Assert.Contains("\"type\":\"redirect\"", capturedBody);
         Assert.Contains("\"return_url\":\"https://console.example/billing/return\"", capturedBody);
         Assert.Contains("\"save_payment_method\":true", capturedBody);
+    }
+
+    // `26-299`: `save_payment_method` is the operator's own checkout-time choice now, no longer always
+    // `true` - this proves the `false` side actually reaches the wire, not only that the `true` default
+    // this class shipped with before this item still works.
+    [Fact]
+    public async Task CreatePaymentAsync_WhenTheOperatorDeclinesToSaveTheCard_SendsSavePaymentMethodFalse()
+    {
+        string? capturedBody = null;
+
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapPost("payments", async (HttpContext context) =>
+            {
+                using var reader = new StreamReader(context.Request.Body);
+                capturedBody = await reader.ReadToEndAsync();
+                return Results.Json(
+                    new { id = "pmt_abc", status = "pending", confirmation = new { type = "redirect", confirmation_url = "https://yookassa.example/confirm/abc" } },
+                    statusCode: StatusCodes.Status200OK);
+            }));
+
+        var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
+
+        await client.CreatePaymentAsync(
+            new CreatePaymentRequest(2500m, "AGO Chat - starter tier, 5 seats", "https://console.example/billing/return", SavePaymentMethod: false, "idem-key-1b"),
+            CancellationToken.None);
+
+        Assert.Contains("\"save_payment_method\":false", capturedBody);
     }
 
     [Fact]
@@ -75,7 +102,7 @@ public sealed class YooKassaPaymentsApiClientTests
         var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
 
         var result = await client.CreatePaymentAsync(
-            new CreatePaymentRequest(500m, "test", "https://console.example/return", "idem-key-2"), CancellationToken.None);
+            new CreatePaymentRequest(500m, "test", "https://console.example/return", SavePaymentMethod: true, "idem-key-2"), CancellationToken.None);
 
         var success = Assert.IsType<CreatePaymentResult.Success>(result);
         Assert.Equal("pmt_xyz", success.PaymentId);
@@ -97,7 +124,7 @@ public sealed class YooKassaPaymentsApiClientTests
         var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
 
         var result = await client.CreatePaymentAsync(
-            new CreatePaymentRequest(500m, "test", "https://console.example/return", "idem-key-3"), CancellationToken.None);
+            new CreatePaymentRequest(500m, "test", "https://console.example/return", SavePaymentMethod: true, "idem-key-3"), CancellationToken.None);
 
         var refused = Assert.IsType<CreatePaymentResult.Refused>(result);
         Assert.Contains(statusCode.ToString(), refused.Reason);
@@ -115,7 +142,7 @@ public sealed class YooKassaPaymentsApiClientTests
         var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.CreatePaymentAsync(
-            new CreatePaymentRequest(500m, "test", "https://console.example/return", "idem-key-4"), CancellationToken.None));
+            new CreatePaymentRequest(500m, "test", "https://console.example/return", SavePaymentMethod: true, "idem-key-4"), CancellationToken.None));
     }
 
     [Fact]
@@ -127,7 +154,7 @@ public sealed class YooKassaPaymentsApiClientTests
         var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.CreatePaymentAsync(
-            new CreatePaymentRequest(500m, "test", "https://console.example/return", "idem-key-5"), CancellationToken.None));
+            new CreatePaymentRequest(500m, "test", "https://console.example/return", SavePaymentMethod: true, "idem-key-5"), CancellationToken.None));
     }
 
     [Fact]
@@ -139,7 +166,36 @@ public sealed class YooKassaPaymentsApiClientTests
         await host.App.StopAsync();
 
         await Assert.ThrowsAsync<HttpRequestException>(() => client.CreatePaymentAsync(
-            new CreatePaymentRequest(500m, "test", "https://console.example/return", "idem-key-6"), CancellationToken.None));
+            new CreatePaymentRequest(500m, "test", "https://console.example/return", SavePaymentMethod: true, "idem-key-6"), CancellationToken.None));
+    }
+
+    // `26-299`: CreatePaymentWithTokenRequest gained `SavePaymentMethod` - see YooKassaDtos's own remarks
+    // for why the SDK token flow's own "does not offer to store the method" note this field's absence used
+    // to encode was a product-scope decision, not a real API limitation. This proves the field actually
+    // reaches the wire, for both the true and false side, mirroring CreatePaymentAsync's own two tests
+    // above.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreatePaymentWithTokenAsync_SendsSavePaymentMethodAsTheCallerChose(bool savePaymentMethod)
+    {
+        string? capturedBody = null;
+
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapPost("payments", async (HttpContext context) =>
+            {
+                using var reader = new StreamReader(context.Request.Body);
+                capturedBody = await reader.ReadToEndAsync();
+                return Results.Json(new { id = "pmt_tok_1", status = "succeeded" });
+            }));
+
+        var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
+
+        await client.CreatePaymentWithTokenAsync(
+            new CreatePaymentWithTokenRequest(2500m, "AGO Chat - starter tier, 5 seats", "tok_abc", savePaymentMethod, "idem-key-tok-1"),
+            CancellationToken.None);
+
+        Assert.Contains($"\"save_payment_method\":{(savePaymentMethod ? "true" : "false")}", capturedBody);
     }
 
     [Fact]

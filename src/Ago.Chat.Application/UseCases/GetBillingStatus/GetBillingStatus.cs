@@ -99,6 +99,15 @@ public sealed record GetBillingStatus(OperatorId RequestedBy, SiteId SiteId);
 /// price <see cref="SeatPricing"/>/<see cref="AdminExtraPriceRub"/> already carry - never a second,
 /// independently-read figure that could silently drift from them.
 ///
+/// <para><b>`26-299`: recomputed from the subscription's own pending next-period composition when one is
+/// scheduled, never from the currently-billing composition in that case.</b> A tenant who has already
+/// scheduled a seat decrease, an Administrator-count change, or cancelled a channel's own renewal is
+/// shown what will actually be charged next, not what is being charged now - the identical "the console
+/// shows the honest future number" reasoning <c>SetNextPeriodComposition</c>'s own remarks state for the
+/// write side of this exact screen. A cancelled channel option (<see cref="Domain.BillingSubscription.CancelRequested"/>)
+/// is excluded from the channel component for the same reason: it will not renew, so it does not belong
+/// in "what renews next."</para>
+///
 /// <para><b>Deliberately excludes download overage.</b> `ProcessSubscriptionRenewalHandler`'s own
 /// recurring charge also sweeps whatever metered attachment-download overage a tenant owes
 /// (`25-84`), but that figure is variable and only knowable at the moment of an actual renewal (which
@@ -122,6 +131,17 @@ public sealed record GetBillingStatus(OperatorId RequestedBy, SiteId SiteId);
 /// total needs (a purchased extra Administrator, or a connected channel) has no currently-published price
 /// to read - never a total silently missing a piece it could not honestly price.</para>
 /// </param>
+/// <param name="HasStoredPaymentMethod">`26-299`: <see langword="true"/> exactly when the base
+/// subscription's own <see cref="Domain.BillingSubscription.PaymentMethodId"/> is set - `false` for a
+/// site with no base subscription at all (the free tier) and for a paid one whose operator chose not to
+/// save a card at checkout (<c>CreateCheckoutSession</c>'s own <c>SavePaymentMethod</c> remarks). Every
+/// instant, charge-now purchase and pay-early on this screen needs this to be <see langword="true"/> - the
+/// console reads it once here rather than inferring it from whether a purchase attempt happened to fail
+/// with <see cref="ConversationErrors.BillingNoStoredPaymentMethod"/>.</param>
+/// <param name="ConnectedChannels">`26-299`: the actual channel kinds this site has bought, replacing a
+/// bare count for the console's own per-kind renew toggles - <see cref="ChannelCount"/> stays, unchanged
+/// and additive (`api-design.md`'s own "add, never remove" rule), since an existing reader may still only
+/// want the number.</param>
 public sealed record BillingStatusDto(
     string Tier,
     int SeatLimit,
@@ -135,7 +155,17 @@ public sealed record BillingStatusDto(
     decimal? AdminExtraPriceRub,
     int ChannelCount,
     decimal? ChannelAddOnPriceRub,
-    decimal? NextChargeRub);
+    decimal? NextChargeRub,
+    bool HasStoredPaymentMethod,
+    IReadOnlyList<BillingConnectedChannelDto> ConnectedChannels);
+
+/// <summary>`26-299`: one connected channel option, as the console's per-kind renew toggle needs it -
+/// <paramref name="SubscriptionId"/> is what a "stop renewing this channel" toggle calls the existing
+/// <c>CancelSubscriptionHandler</c> endpoint with (that handler already accepts any
+/// <see cref="Domain.BillingSubscription"/> id, base or option - no new cancel mechanism was needed for
+/// this direction, see <c>SetNextPeriodComposition</c>'s own remarks).</summary>
+public sealed record BillingConnectedChannelDto(
+    ChannelKind Kind, Guid SubscriptionId, bool CancelRequested, DateTimeOffset? CurrentPeriodEnd);
 
 /// <summary>
 /// `25-23`: the Operator seat-purchase formula's own currently-effective numbers, read the identical
@@ -179,6 +209,10 @@ public sealed record BillingSeatPricingDto(
 /// hosted checkout, and only a transition away from <c>"Pending"</c> - to <c>"Succeeded"</c> or
 /// <c>"Failed"</c> - is ever shown as a settled outcome, never the redirect return alone.
 /// </summary>
+/// <param name="PendingAdminCount">`26-299`: the identical shape <paramref name="PendingSeatCount"/>
+/// already establishes, for a scheduled next-period Administrator-count change
+/// (<see cref="Domain.BillingSubscription.PendingAdminCount"/>) - <see langword="null"/> when none is
+/// scheduled.</param>
 public sealed record BillingSubscriptionSummaryDto(
     Guid SubscriptionId,
     string Status,
@@ -187,4 +221,5 @@ public sealed record BillingSubscriptionSummaryDto(
     bool CancelRequested,
     DateTimeOffset? CurrentPeriodEnd,
     int? PendingSeatCount,
-    string? PendingTier);
+    string? PendingTier,
+    int? PendingAdminCount);

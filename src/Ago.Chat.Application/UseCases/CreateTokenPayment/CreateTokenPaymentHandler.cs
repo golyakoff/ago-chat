@@ -82,7 +82,11 @@ public sealed class CreateTokenPaymentHandler(
         }
 
         var now = clock.UtcNow;
-        var amount = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
+        var fullAmount = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
+        // `26-299`: BillingProration.Prorate, the identical helper every mid-cycle charge in this
+        // codebase now shares - see CreateCheckoutSessionHandler's own remarks for why this is a no-op
+        // in substance for a brand-new base subscription, kept for one-formula-one-place consistency.
+        var amount = BillingProration.Prorate(fullAmount, now, now, BillingSubscription.PeriodLength);
         var idempotenceKey = idGenerator.NewId(now).ToString();
 
         var paymentResult = await yooKassa.CreatePaymentWithTokenAsync(
@@ -90,6 +94,7 @@ public sealed class CreateTokenPaymentHandler(
                 amount,
                 $"AGO Chat - {tier} tier, {command.RequestedSeats} seats",
                 command.PaymentToken,
+                command.SavePaymentMethod,
                 idempotenceKey),
             cancellationToken);
 

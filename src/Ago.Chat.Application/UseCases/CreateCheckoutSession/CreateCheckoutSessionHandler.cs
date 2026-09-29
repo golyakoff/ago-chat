@@ -77,7 +77,14 @@ public sealed class CreateCheckoutSessionHandler(
         }
 
         var now = clock.UtcNow;
-        var amount = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
+        var fullAmount = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
+        // `26-299`: BillingProration.Prorate, the identical helper every mid-cycle charge in this
+        // codebase now shares - a no-op in substance here (a brand-new base subscription has no prior
+        // period to prorate against, so `periodStart == now` and the billable fraction is always `1`),
+        // kept for the single reason CLAUDE.md rule 8 already gives for reading prices fresh everywhere:
+        // one formula, one place, rather than a second hand-typed "the full amount" that could drift from
+        // it the moment this handler's own rounding needs ever changed.
+        var amount = BillingProration.Prorate(fullAmount, now, now, BillingSubscription.PeriodLength);
         var idempotenceKey = idGenerator.NewId(now).ToString();
 
         var paymentResult = await yooKassa.CreatePaymentAsync(
@@ -85,6 +92,7 @@ public sealed class CreateCheckoutSessionHandler(
                 amount,
                 $"AGO Chat - {tier} tier, {command.RequestedSeats} seats",
                 billingOptions.CheckoutReturnUrl,
+                command.SavePaymentMethod,
                 idempotenceKey),
             cancellationToken);
 

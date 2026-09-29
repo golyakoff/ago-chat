@@ -194,6 +194,42 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         Assert.Equal(5, site.SeatLimit);
     }
 
+    // `26-299`: the identical end-to-end shape immediately above, for a scheduled next-period
+    // Administrator-count change instead of a seat decrease - proves the migration's own
+    // `pending_admin_count` column round-trips through a real Postgres, and that
+    // SubscriptionRenewalApplier applies it (updating Site.AdminLimit) even when no seat/tier change
+    // also happens to be pending.
+    [Fact]
+    public async Task RunOnceAsync_WhenARenewalSucceedsWithAPendingAdminCountChange_AppliesItAndUpdatesTheSiteAdminLimit()
+    {
+        var (siteId, subscriptionId) = await SeedSucceededSubscriptionAsync(seats: 5, tier: SubscriptionTierBands.Starter, periodEnd: Now);
+        await ApplyAdministratorPurchaseAsync(subscriptionId, extraAdministratorCount: 3);
+        await ScheduleNextPeriodCompositionAsync(subscriptionId, seatCount: 5, tier: SubscriptionTierBands.Starter, extraAdministratorCount: 0);
+
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapPost("payments", () => Results.Json(new { id = "pmt_renew_admin_ok", status = "succeeded" })));
+
+        await CreateJob(host.BaseUrl, new FixedClock(Now)).RunOnceAsync(CancellationToken.None);
+
+        await using var verify = fixture.CreateDbContext();
+        var subscription = await verify.BillingSubscriptions.SingleAsync(s => s.Id == subscriptionId);
+        Assert.Equal(0, subscription.ExtraAdministratorsPurchased);
+        Assert.Null(subscription.PendingAdminCount);
+        // Seats/tier untouched - only the Administrator dimension was scheduled to change.
+        Assert.Equal(5, subscription.RequestedSeats);
+
+        var site = await verify.Sites.SingleAsync(s => s.Id == siteId);
+        Assert.Equal(SubscriptionTierBands.BusinessAdminsIncluded, site.AdminLimit);
+    }
+
+    private async Task ApplyAdministratorPurchaseAsync(BillingSubscriptionId subscriptionId, int extraAdministratorCount)
+    {
+        await using var db = fixture.CreateDbContext();
+        var subscription = await db.BillingSubscriptions.SingleAsync(s => s.Id == subscriptionId);
+        subscription.ApplyAdministratorPurchase(extraAdministratorCount, adminExtraPriceVersion: 1);
+        await db.SaveChangesAsync();
+    }
+
     // `23-86`/`adr/0159`: an option's own renewal grants its entitlement, its own lapse revokes it -
     // proven directly against SubscriptionRenewalApplier rather than through the whole job/handler
     // pipeline, since ProcessSubscriptionRenewalHandler deliberately refuses to compute a recurring
@@ -633,6 +669,18 @@ public sealed class SubscriptionRenewalJobTests(PostgresFixture fixture)
         await using var db = fixture.CreateDbContext();
         var subscription = await db.BillingSubscriptions.SingleAsync(s => s.Id == subscriptionId);
         subscription.ScheduleSeatDecrease(newSeatCount, newTier);
+        await db.SaveChangesAsync();
+    }
+
+    // `26-299`: the identical shape immediately above, for the new `pending_admin_count` column -
+    // proves the migration (`Stage26AddBillingPendingAdminCount`) round-trips through a real Postgres,
+    // not merely through the in-memory fakes Application.Tests already exercises this same behaviour
+    // against.
+    private async Task ScheduleNextPeriodCompositionAsync(BillingSubscriptionId subscriptionId, int seatCount, string tier, int extraAdministratorCount)
+    {
+        await using var db = fixture.CreateDbContext();
+        var subscription = await db.BillingSubscriptions.SingleAsync(s => s.Id == subscriptionId);
+        subscription.ScheduleNextPeriodComposition(seatCount, tier, extraAdministratorCount);
         await db.SaveChangesAsync();
     }
 

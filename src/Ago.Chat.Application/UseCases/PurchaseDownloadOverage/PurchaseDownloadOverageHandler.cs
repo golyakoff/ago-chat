@@ -97,8 +97,13 @@ public sealed class PurchaseDownloadOverageHandler(
         var description =
             $"AGO Chat - attachment download overage, {outstandingBytes} bytes over ({periodMonth:yyyy-MM})";
 
+        // `26-299`: `CreatePaymentRequest.SavePaymentMethod` is the operator's own checkout-time choice
+        // for a *subscription* checkout (`CreateCheckoutSession`'s own remarks) - this is a one-time
+        // overage settlement, not a subscription, and never itself needs a reusable card on file, so
+        // `true` here simply preserves this call's own pre-existing behaviour rather than exposing a
+        // choice nothing downstream of it would ever read.
         var paymentResult = await yooKassa.CreatePaymentAsync(
-            new CreatePaymentRequest(amount, description, billingOptions.CheckoutReturnUrl, idempotenceKey),
+            new CreatePaymentRequest(amount, description, billingOptions.CheckoutReturnUrl, SavePaymentMethod: true, idempotenceKey),
             cancellationToken);
 
         if (paymentResult is CreatePaymentResult.Refused refused)

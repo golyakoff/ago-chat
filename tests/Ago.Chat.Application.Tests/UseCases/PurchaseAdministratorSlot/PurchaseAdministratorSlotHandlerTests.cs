@@ -147,6 +147,50 @@ public class PurchaseAdministratorSlotHandlerTests
         Assert.Empty(fixture.Applier.Applied);
     }
 
+    // `26-299`: the floor-rule fails-before this item's own report names - a purchase made seconds into
+    // day one of the period must charge the full monthly delta, never a few cents short from the seconds
+    // already elapsed that day.
+    [Fact]
+    public async Task HandleAsync_WhenPurchasedSecondsIntoTheFirstDayOfThePeriod_ChargesTheFullDelta()
+    {
+        var fixture = CreateFixture();
+        var id = new BillingSubscriptionId(Guid.NewGuid());
+        var secondsIntoTheFirstDay = Now - TimeSpan.FromSeconds(3);
+        await SeedSucceededAsync(fixture, id, extraAdministratorsAlreadyPurchased: 0, succeededAt: secondsIntoTheFirstDay);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.PurchaseAdministratorSlot.PurchaseAdministratorSlot(OperatorId, SiteId, id, RequestedExtraAdministrators: 1),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.IsFailure ? result.Error!.Value.Message : null);
+        // Before this item's floor rule: (500 - 0) * (30 - 3/86400) / 30 ~= 499.98, a few cents short of
+        // the honest full month a purchase this early in the period should charge.
+        Assert.Equal(500.00m, result.Value.ProratedAmountRub);
+    }
+
+    // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice - a
+    // Succeeded subscription with no stored card is an honest, mappable failure, never a crash.
+    [Fact]
+    public async Task HandleAsync_WhenNoPaymentMethodIsStored_ReturnsNoStoredPaymentMethod()
+    {
+        var fixture = CreateFixture();
+        var id = new BillingSubscriptionId(Guid.NewGuid());
+        var subscription = BillingSubscription.Create(
+            id, SiteId, "pmt_123", requestedSeats: 5, SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1,
+            Now - BillingSubscription.PeriodLength);
+        subscription.MarkSucceeded(paymentMethodId: null, Now - BillingSubscription.PeriodLength);
+        fixture.Subscriptions.Seed(subscription);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.PurchaseAdministratorSlot.PurchaseAdministratorSlot(OperatorId, SiteId, id, RequestedExtraAdministrators: 1),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Billing.NoStoredPaymentMethod", result.Error!.Value.Code);
+        Assert.Null(fixture.YooKassa.LastChargeRequest);
+        Assert.Empty(fixture.Applier.Applied);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenCallerLacksSiteConfigurePermission_ReturnsForbidden()
     {

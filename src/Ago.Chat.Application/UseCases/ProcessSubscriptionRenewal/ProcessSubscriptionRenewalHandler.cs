@@ -92,12 +92,14 @@ public sealed class ProcessSubscriptionRenewalHandler(
 
         if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId)
         {
-            // Unreachable in practice - MarkSucceeded always sets this before CurrentPeriodEnd exists
-            // for the first time, so a due-for-renewal or PastDue row always has one. Thrown, not
-            // translated into an outcome case, the same "unreachable, thrown rather than translated"
-            // shape BillingWebhookApplier's own missing-site guard describes.
-            throw new InvalidOperationException(
-                $"Billing subscription {command.SubscriptionId.Value} is due for renewal but has no stored payment method id.");
+            // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time
+            // choice - a subscription that reached Succeeded with no card on file can never auto-renew,
+            // by construction, not by a bug. Lapsed exactly like `decisions/0006`'s own cancellation
+            // path: no charge attempt, successful or otherwise, and the site downgrades once its own
+            // already-paid-for period actually ends - the console's own billing-v2 screen states this
+            // plainly ahead of time ("pay manually before the period ends, or the tier reverts to Solo").
+            await applier.ApplyLapseAsync(command.SubscriptionId, now, cancellationToken);
+            return new SubscriptionRenewalOutcome.Lapsed();
         }
 
         if (subscription.IsOption)

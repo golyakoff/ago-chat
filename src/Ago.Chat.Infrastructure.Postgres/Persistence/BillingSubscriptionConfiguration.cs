@@ -41,6 +41,9 @@ internal sealed class BillingSubscriptionConfiguration : IEntityTypeConfiguratio
         builder.Property(s => s.CancelRequested).HasColumnName("cancel_requested").HasDefaultValue(false);
         builder.Property(s => s.PendingSeatCount).HasColumnName("pending_seat_count");
         builder.Property(s => s.PendingTier).HasColumnName("pending_tier");
+        // `26-299`: the identical shape as the pair above, for a scheduled Administrator-count change -
+        // see BillingSubscription.PendingAdminCount's own remarks.
+        builder.Property(s => s.PendingAdminCount).HasColumnName("pending_admin_count");
 
         // `23-86`/`adr/0159`: null for the account's own base row, a real value naming the purchased
         // option for every other row - see BillingSubscription.OptionKey's own remarks.

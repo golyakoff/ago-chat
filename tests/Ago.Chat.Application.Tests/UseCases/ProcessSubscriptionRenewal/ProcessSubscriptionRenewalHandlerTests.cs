@@ -215,6 +215,42 @@ public class ProcessSubscriptionRenewalHandlerTests
         Assert.Empty(Assert.Single(fixture.Applier.RenewedWithOverageLines));
     }
 
+    // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice - a
+    // due-for-renewal base with no card on file can never auto-renew, by construction. Lapses exactly
+    // like `decisions/0006`'s own cancellation path (no charge attempt), rather than the "unreachable,
+    // thrown" case this guard used to be - this is the exact case the console's own billing-v2 screen
+    // states plainly ahead of time.
+    [Fact]
+    public async Task HandleAsync_WhenTheDueSubscriptionHasNoStoredPaymentMethod_LapsesRatherThanThrowing()
+    {
+        var subscriptionId = new BillingSubscriptionId(Guid.NewGuid());
+        var createdAt = Now - BillingSubscription.PeriodLength;
+        var subscription = BillingSubscription.Create(
+            subscriptionId, SiteId, "pmt_base", requestedSeats: 3, tier: SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt);
+        subscription.MarkSucceeded(paymentMethodId: null, createdAt);
+
+        var subscriptions = new FakeBillingSubscriptionRepository();
+        subscriptions.Seed(subscription);
+        var sites = new FakeSiteRepository();
+        sites.Seed(new Site(SiteId, "pk-" + SiteId.Value, allowedOrigins: [], tier: SubscriptionTierBands.Starter));
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 490m, createdAt);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 200m, createdAt);
+        var yooKassa = new FakeYooKassaPaymentsClient();
+        var applier = new FakeSubscriptionRenewalApplier();
+        var handler = new ProcessSubscriptionRenewalHandler(
+            subscriptions, sites, yooKassa, prices, new FakeDownloadThresholdReadStore(), new FakeDownloadOverageReadStore(),
+            applier, new FakeClock(Now));
+
+        var outcome = await handler.HandleAsync(
+            new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(subscriptionId), CancellationToken.None);
+
+        Assert.IsType<SubscriptionRenewalOutcome.Lapsed>(outcome);
+        Assert.Contains(subscriptionId, applier.Lapsed);
+        Assert.Null(yooKassa.LastChargeRequest);
+    }
+
     /// <summary>`docs/backlog/25-84-*.md`'s own Done-when: "auto-bill accrues onto the next invoice with
     /// no tenant action." 3 GiB over at 100 RUB/GiB is 300 RUB, added to the 490 RUB seat charge - and
     /// named in the description the tenant's own payment carries.</summary>

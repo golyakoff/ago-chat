@@ -141,13 +141,18 @@ public sealed class SubscriptionRenewalApplier(
 
         var seatsBefore = subscription.RequestedSeats;
         var tierBefore = subscription.Tier;
+        // `26-299`: the identical before/after compare, extended to the pending Administrator-count
+        // dimension `BillingSubscription.PendingAdminCount` now also lets a renewal apply.
+        var extraAdministratorsBefore = subscription.ExtraAdministratorsPurchased;
 
         subscription.RecordRenewalSuccess(now, paymentMethodId: null, baseSeatPriceVersion, extraSeatPriceVersion);
 
-        // A pending deferred downgrade only ever changes RequestedSeats/Tier inside RecordRenewalSuccess
-        // itself - comparing before/after is this applier's own way of learning "did that happen" without
+        // A pending deferred downgrade or Administrator-count change only ever changes
+        // RequestedSeats/Tier/ExtraAdministratorsPurchased inside RecordRenewalSuccess itself - comparing
+        // before/after is this applier's own way of learning "did that happen" without
         // RecordRenewalSuccess needing to hand back a second return value nothing else would use.
-        if (subscription.RequestedSeats != seatsBefore || subscription.Tier != tierBefore)
+        if (subscription.RequestedSeats != seatsBefore || subscription.Tier != tierBefore
+            || subscription.ExtraAdministratorsPurchased != extraAdministratorsBefore)
         {
             var site = await LoadSiteOrThrowAsync(subscription.SiteId, cancellationToken);
             var adminLimitBefore = site.AdminLimit;

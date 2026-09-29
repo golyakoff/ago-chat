@@ -291,6 +291,77 @@ public class BillingSubscriptionTests
         Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ScheduleSeatDecrease(10, SubscriptionTierBands.Growth));
     }
 
+    // `26-299`: ScheduleNextPeriodComposition - the general, either-direction sibling of
+    // ScheduleSeatDecrease (which stays decrease-only, unchanged by this item - see that method's own
+    // remarks for why a second entry point rather than widening it in place).
+    [Fact]
+    public void ScheduleNextPeriodComposition_RecordsThePendingSeatAndAdminPairWithoutTouchingCurrentValues()
+    {
+        var subscription = CreateSucceeded(seats: 3, tier: SubscriptionTierBands.Starter);
+        subscription.ApplyAdministratorPurchase(1, adminExtraPriceVersion: 3);
+
+        subscription.ScheduleNextPeriodComposition(5, SubscriptionTierBands.Starter, extraAdministratorCount: 4);
+
+        Assert.Equal(3, subscription.RequestedSeats);
+        Assert.Equal(1, subscription.ExtraAdministratorsPurchased);
+        Assert.Equal(5, subscription.PendingSeatCount);
+        Assert.Equal(SubscriptionTierBands.Starter, subscription.PendingTier);
+        Assert.Equal(4, subscription.PendingAdminCount);
+    }
+
+    [Fact]
+    public void ScheduleNextPeriodComposition_CanAlsoScheduleAnIncrease_UnlikeScheduleSeatDecrease()
+    {
+        var subscription = CreateSucceeded(seats: 2, tier: SubscriptionTierBands.Starter);
+
+        subscription.ScheduleNextPeriodComposition(5, SubscriptionTierBands.Starter, extraAdministratorCount: 0);
+
+        Assert.Equal(5, subscription.PendingSeatCount);
+    }
+
+    [Fact]
+    public void ScheduleNextPeriodComposition_WithANegativeAdminCount_Throws()
+    {
+        var subscription = CreateSucceeded();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => subscription.ScheduleNextPeriodComposition(5, SubscriptionTierBands.Starter, -1));
+    }
+
+    [Fact]
+    public void ScheduleNextPeriodComposition_WhenNotSucceededOrPastDue_Throws()
+    {
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), new SiteId(Guid.NewGuid()), "pmt_123", 5, SubscriptionTierBands.Starter, 1, 1, Now);
+
+        Assert.Throws<InvalidOperationException>(() => subscription.ScheduleNextPeriodComposition(5, SubscriptionTierBands.Starter, 0));
+    }
+
+    [Fact]
+    public void RecordRenewalSuccess_WithAPendingAdminCount_AppliesAndClearsIt()
+    {
+        var subscription = CreateSucceeded(seats: 5, tier: SubscriptionTierBands.Starter);
+        subscription.ApplyAdministratorPurchase(1, adminExtraPriceVersion: 3);
+        subscription.ScheduleNextPeriodComposition(5, SubscriptionTierBands.Starter, extraAdministratorCount: 4);
+
+        var renewalAt = subscription.CurrentPeriodEnd!.Value;
+        subscription.RecordRenewalSuccess(renewalAt, paymentMethodId: null, 1, 1);
+
+        Assert.Equal(4, subscription.ExtraAdministratorsPurchased);
+        Assert.Null(subscription.PendingAdminCount);
+    }
+
+    [Fact]
+    public void RecordRenewalSuccess_WithNoPendingAdminCount_LeavesExtraAdministratorsPurchasedUntouched()
+    {
+        var subscription = CreateSucceeded(seats: 5, tier: SubscriptionTierBands.Starter);
+        subscription.ApplyAdministratorPurchase(2, adminExtraPriceVersion: 3);
+
+        var renewalAt = subscription.CurrentPeriodEnd!.Value;
+        subscription.RecordRenewalSuccess(renewalAt, paymentMethodId: null, 1, 1);
+
+        Assert.Equal(2, subscription.ExtraAdministratorsPurchased);
+    }
+
     [Fact]
     public void IsDueForRenewal_BeforePeriodEnd_IsFalse_AtOrAfter_IsTrue()
     {

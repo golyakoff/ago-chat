@@ -12,13 +12,13 @@ namespace Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 /// redirect). A downgrade makes no charge and no immediate write at all - it is only ever recorded,
 /// applied later by the recurring-charge job.
 ///
-/// <para><b>The proration formula, stated because the backlog left the rounding rule as this item's own
-/// call.</b> <c>(new_price - old_price) * remaining_days / period_length_days</c>, <c>remaining_days</c>
-/// clamped to <c>[0, PeriodLength]</c> against the subscription's own real
-/// <see cref="BillingSubscription.CurrentPeriodEnd"/>, and the result rounded to two decimal places,
-/// away from zero - ЮKassa's own amount field is a fixed-point decimal string with exactly two fraction
-/// digits (<c>YooKassaAmount</c>'s own `"F2"` formatting), so a rounding rule has to exist somewhere,
-/// and "round the customer's own favour on a tie" is the deliberate direction chosen.
+/// <para><b>`26-299`: the proration formula itself now lives in <see cref="Domain.BillingProration"/>,
+/// shared with every other mid-cycle charge in this codebase, not restated here.</b> This handler
+/// resolves <c>periodStart</c> (<see cref="BillingSubscription.CurrentPeriodEnd"/> minus
+/// <see cref="BillingSubscription.PeriodLength"/>) and hands the seat-band delta to
+/// <see cref="Domain.BillingProration.Prorate"/> - see that type's own remarks for the floor rule and the
+/// rounding-to-two-decimal-places-away-from-zero it applies (ЮKassa's own amount field is a fixed-point
+/// decimal string with exactly two fraction digits, `YooKassaAmount`'s own `"F2"` formatting).
 ///
 /// <para><b>`25-43`: <c>oldPrice</c> is read from the subscription's own stored price version, never
 /// from the catalog's currently-effective one.</b> This is the correctness reason
@@ -87,11 +87,19 @@ public sealed class ChangeSubscriptionSeatsHandler(
     private async Task<Result<ChangeSubscriptionSeatsResult>> ApplyUpgradeAsync(
         ChangeSubscriptionSeats command, BillingSubscription subscription, string newTier, CancellationToken cancellationToken)
     {
-        if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId || subscription.CurrentPeriodEnd is not { } periodEnd)
+        if (subscription.CurrentPeriodEnd is not { } periodEnd)
         {
-            // Unreachable - a Succeeded row always has both (MarkSucceeded sets them together).
+            // Unreachable - a Succeeded row always has one (MarkSucceeded sets it unconditionally,
+            // regardless of whether a payment method was ever saved).
             throw new InvalidOperationException(
-                $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no payment method or period end.");
+                $"Billing subscription {command.SubscriptionId.Value} is Succeeded but has no period end.");
+        }
+
+        // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice -
+        // see PurchaseAdministratorSlotHandler's own identical guard for the full reasoning.
+        if (subscription.PaymentMethodId is not { Length: > 0 } paymentMethodId)
+        {
+            return ConversationErrors.BillingNoStoredPaymentMethod(command.SubscriptionId.Value);
         }
 
         // `25-43`: the price this subscription was actually last charged under - see this handler's
@@ -125,12 +133,14 @@ public sealed class ChangeSubscriptionSeatsHandler(
         }
 
         var now = clock.UtcNow;
-        var periodLengthDays = (decimal)BillingSubscription.PeriodLength.TotalDays;
-        var remainingDays = Math.Clamp((decimal)(periodEnd - now).TotalDays, 0m, periodLengthDays);
+        var periodStart = periodEnd - BillingSubscription.PeriodLength;
 
         var oldPrice = SubscriptionTierBands.ComputeSeatPriceRub(subscription.RequestedSeats, oldBasePrice.AmountRub, oldExtraPrice.AmountRub);
         var newPrice = SubscriptionTierBands.ComputeSeatPriceRub(command.RequestedSeats, newBasePrice.AmountRub, newExtraPrice.AmountRub);
-        var proratedAmount = Math.Round((newPrice - oldPrice) * remainingDays / periodLengthDays, 2, MidpointRounding.AwayFromZero);
+        // `26-299`: BillingProration.Prorate, not a hand-rolled remaining-days fraction - see that type's
+        // own remarks for the floor rule this now applies (a day-one upgrade charges the full delta,
+        // never a few cents short from the seconds already elapsed that day).
+        var proratedAmount = BillingProration.Prorate(newPrice - oldPrice, now, periodStart, BillingSubscription.PeriodLength);
 
         var idempotenceKey = idGenerator.NewId(now).ToString();
         var description = $"AGO Chat - upgrade to {newTier} tier, {command.RequestedSeats} seats (prorated)";

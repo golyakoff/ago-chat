@@ -199,6 +199,26 @@ public class RenewNowHandlerTests
         Assert.Null(fixture.YooKassa.LastChargeRequest);
     }
 
+    // `26-299`: reachable now that `savePaymentMethod` is the operator's own checkout-time choice - pay
+    // early against nothing on file is an honest, mappable failure, never a crash.
+    [Fact]
+    public async Task HandleAsync_WhenNoPaymentMethodIsStored_ReturnsNoStoredPaymentMethod()
+    {
+        var fixture = CreateFixture();
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_base", 5, SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - TimeSpan.FromDays(20));
+        subscription.MarkSucceeded(paymentMethodId: null, Now - TimeSpan.FromDays(20));
+        fixture.Subscriptions.Seed(subscription);
+
+        var result = await fixture.Handler.HandleAsync(
+            new Application.UseCases.RenewNow.RenewNow(OperatorId, SiteId, subscription.Id), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Billing.NoStoredPaymentMethod", result.Error!.Value.Code);
+        Assert.Null(fixture.YooKassa.LastChargeRequest);
+    }
+
     [Fact]
     public async Task HandleAsync_WhenTheSubscriptionDoesNotExistForThisSite_ReturnsSubscriptionNotFound()
     {
