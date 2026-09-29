@@ -44,6 +44,44 @@ public class RegisterExternalPersonHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WithAnEmail_RecordsItAsAnEmailContactDetail()
+    {
+        // `26-268`§3/`adr/0188`: the one promise this slice adds - an email carried on the event becomes
+        // an Email contact detail, Visitor-sourced and unverified like Phone/Name already are.
+        var store = new FakePersonRegistrationStore();
+        var handler = new RegisterExternalPersonHandler(store, new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator("🦊", "🍐"));
+
+        await handler.HandleAsync(
+            new Application.UseCases.RegisterExternalPerson.RegisterExternalPerson(
+                SiteId, PersonId, "+79990000001", "Anna", RegisteredAt, "anna@example.com"),
+            CancellationToken.None);
+
+        var (_, details) = Assert.Single(store.Registered);
+        Assert.Equal(3, details.Count);
+        var email = Assert.Single(details, d => d.Kind == VisitorContactDetailKind.Email);
+        Assert.Equal("anna@example.com", email.Value);
+        Assert.Equal(VisitorContactDetailSource.Visitor, email.Source);
+        Assert.False(email.Verified);
+        Assert.Equal(RegisteredAt, email.RecordedAt);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithNoEmail_RecordsNoEmailContactDetail()
+    {
+        // Additive and backward-safe (CLAUDE.md rule 4's own spirit): an event with no Email field at
+        // all - an un-updated publisher's payload - must still register the person, with no Email row.
+        var store = new FakePersonRegistrationStore();
+        var handler = new RegisterExternalPersonHandler(store, new FakeIdGenerator(), new FakeVisitorEmojiPairGenerator());
+
+        await handler.HandleAsync(
+            new Application.UseCases.RegisterExternalPerson.RegisterExternalPerson(SiteId, PersonId, "+79990000001", "Anna", RegisteredAt),
+            CancellationToken.None);
+
+        var (_, details) = Assert.Single(store.Registered);
+        Assert.DoesNotContain(details, d => d.Kind == VisitorContactDetailKind.Email);
+    }
+
+    [Fact]
     public async Task HandleAsync_WithNoName_RecordsOnlyThePhone()
     {
         var store = new FakePersonRegistrationStore();

@@ -57,7 +57,7 @@ public sealed class PersonRegisteredConsumer(
             var outcome = await handler.HandleAsync(
                 new RegisterExternalPerson(
                     new SiteId(contract.AccountId), new VisitorId(contract.PersonId), contract.Phone, contract.Name,
-                    contract.OccurredAt),
+                    contract.OccurredAt, contract.Email),
                 cancellationToken);
 
             if (outcome == PersonRegistrationOutcome.SiteUnknown)
