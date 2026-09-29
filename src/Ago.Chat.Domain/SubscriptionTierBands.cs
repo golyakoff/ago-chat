@@ -92,7 +92,7 @@ public static class SubscriptionTierBands
 
     /// <summary>`25-41`: the extra-Administrator charge's own key - flat, not banded, unlike
     /// <see cref="BaseSeatPriceKey"/>/<see cref="ExtraSeatPriceKey"/> above. `ago-business` decision
-    /// `0012`'s own "+500₽/мес per Administrator beyond two" prices this identically regardless of
+    /// `0012`'s own "+1000₽/мес per Administrator beyond two" prices this identically regardless of
     /// how many are bought, so there is no second, marginal key the way seats need one - one key,
     /// one <see cref="Application.Abstractions.IPriceCatalogRepository.FindCurrentAsync"/> read, the
     /// amount simply multiplied by the count purchased (<c>PurchaseAdministratorSlotHandler</c>'s own
@@ -201,15 +201,15 @@ public static class SubscriptionTierBands
     /// <para><b>`25-29` correction: a priced third administrator is real in `0012`, only unbuilt here.</b>
     /// This paragraph used to read "`0012` calls a third administrator on a paid tier 'кастом' (custom)
     /// with no number attached" - read directly against `0012` while investigating `25-29`, that is
-    /// false: `0012`'s own "## Business" section states a real price, "+500 ₽/мес за каждого [администратора]
-    /// сверх двух" (+500 ₽/mo for each administrator beyond two). The "custom, no public price" posture
+    /// false: `0012`'s own "## Business" section states a real price, "+1000 ₽/мес за каждого [администратора]
+    /// сверх двух" (+1000 ₽/mo for each administrator beyond two). The "custom, no public price" posture
     /// belongs to `0008`'s seat table past five seats (and `0012`'s own unreleased 6-10 "Premium" seat
     /// band), never to a third Administrator - conflating the two was this comment's own error, not a
     /// fact about the pricing document. <b>The real gap `25-29` found and did not close:</b> the
     /// Administrator-promotion guard (`ChangeOperatorRoleHandler`, `25-25`) refuses a promotion past
     /// <see cref="BusinessAdminsIncluded"/> outright - there is no purchase path that raises this
     /// ceiling the way `ChangeSubscriptionSeatsHandler` raises <see cref="Site.SeatLimit"/>, so no site
-    /// can ever legally hold a third Administrator today and there is nothing yet for a +500 ₽ charge
+    /// can ever legally hold a third Administrator today and there is nothing yet for a +1000 ₽ charge
     /// to attach to. Charging it for real needs a purchasable "how many extra Administrators" count
     /// persisted somewhere (mirroring `BillingSubscription.RequestedSeats`) and a matching change to
     /// that handler's own guard - new persisted state, and therefore a migration, which `25-29`'s own

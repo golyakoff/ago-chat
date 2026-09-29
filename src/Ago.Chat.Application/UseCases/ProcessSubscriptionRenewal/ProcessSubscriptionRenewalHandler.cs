@@ -129,13 +129,32 @@ public sealed class ProcessSubscriptionRenewalHandler(
         var seatAmount = SubscriptionTierBands.ComputeSeatPriceRub(subscription.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
         var description = $"AGO Chat - {subscription.Tier} tier renewal, {subscription.RequestedSeats} seats";
 
+        // `26-275`: purchased extra Administrators bill on every renewal, not once at purchase time -
+        // the identical "read the currently-effective price fresh, never cache it, never charge a
+        // missing price as zero" discipline `basePrice`/`extraPrice` just above already establish for
+        // seats. Skipped entirely, not resolved and found missing, when nothing was ever purchased
+        // (`ExtraAdministratorsPurchased == 0`) - the identical "zero purchased means nothing to look
+        // up" shape `PurchaseAdministratorSlotHandler`'s own old-price lookup already uses, so a
+        // deployment that never sells this add-on is never forced to publish a price for it just to
+        // let ordinary renewals proceed.
+        var adminAmount = 0m;
+        if (subscription.ExtraAdministratorsPurchased > 0)
+        {
+            var adminPrice = await prices.FindCurrentAsync(SubscriptionTierBands.AdminExtraPriceKey, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"Billing subscription {command.SubscriptionId.Value} is due for renewal but "
+                    + $"'{SubscriptionTierBands.AdminExtraPriceKey.Value}' has no published price - see this handler's own remarks.");
+            adminAmount = subscription.ExtraAdministratorsPurchased * adminPrice.AmountRub;
+            description += $"; {subscription.ExtraAdministratorsPurchased} extra Administrator(s)";
+        }
+
         // `25-84`: the auto-bill path's own settlement, folded into the charge this renewal was going to
         // make anyway - see ResolveOverageLinesAsync for what is and is not swept, and
         // `DownloadOverageInvoiceLine`'s own remarks for why "a line item" is realised as an amount, a
         // description and a ledger row rather than an invoice aggregate this codebase does not have.
         var overageLines = await ResolveOverageLinesAsync(subscription, now, cancellationToken);
         var overageAmount = overageLines.Sum(line => line.AmountRub);
-        var amount = seatAmount + overageAmount;
+        var amount = seatAmount + adminAmount + overageAmount;
         if (overageAmount > 0m)
         {
             description += $"; attachment download overage {overageAmount} RUB";

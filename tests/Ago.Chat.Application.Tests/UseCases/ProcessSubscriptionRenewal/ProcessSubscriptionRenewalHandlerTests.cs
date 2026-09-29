@@ -266,4 +266,123 @@ public class ProcessSubscriptionRenewalHandlerTests
         Assert.IsType<SubscriptionRenewalOutcome.Renewed>(outcome);
         Assert.Equal(490m, yooKassa.LastChargeRequest!.AmountRub);
     }
+
+    // ----------------------------------------------------------------------------------------------
+    // `26-275`: the extra-Administrator charge's own recurring correctness - purchased once
+    // (`PurchaseAdministratorSlotHandler`'s own prorated first charge), it must keep billing on every
+    // renewal after that, not silently lapse into free. Fixtures built by hand rather than through
+    // `CreateDueRenewal` above, the same "no overage price seeded, an empty catalog is the honest
+    // fixture" shape `HandleAsync_WhenTheDueSubscriptionIsAnOption_...` already uses, since these tests
+    // are not about overage at all.
+    // ----------------------------------------------------------------------------------------------
+
+    /// <summary>The bug this item fixes: two extra Administrators, purchased once, must appear on
+    /// every renewal charge afterwards - `seatAmount + admins × adminPrice`, exactly the same
+    /// "read the currently-effective price fresh" discipline `basePrice`/`extraPrice` already prove for
+    /// seats. Before this item's fix, the renewal amount was `seatAmount` alone - this test is red
+    /// against that code and green only once the admin contribution is actually added.</summary>
+    [Fact]
+    public async Task HandleAsync_WithPurchasedExtraAdministrators_ChargesForThemOnEveryRenewal()
+    {
+        var subscriptionId = new BillingSubscriptionId(Guid.NewGuid());
+        var createdAt = Now - BillingSubscription.PeriodLength;
+        var subscription = BillingSubscription.Create(
+            subscriptionId, SiteId, "pmt_base", requestedSeats: 3, tier: SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt);
+        subscription.MarkSucceeded("card_on_file", createdAt);
+
+        var subscriptions = new FakeBillingSubscriptionRepository();
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 490m, createdAt);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 200m, createdAt);
+        var adminPriceVersion = prices.SeedVersion(SubscriptionTierBands.AdminExtraPriceKey, 1000m, createdAt);
+        // The purchase itself, already settled before this renewal - `ApplyAdministratorPurchase` is
+        // what `AdministratorSlotChangeApplier` calls in production once the prorated first charge
+        // succeeds (`PurchaseAdministratorSlotHandler`'s own remarks).
+        subscription.ApplyAdministratorPurchase(newExtraAdministratorCount: 2, adminPriceVersion);
+        subscriptions.Seed(subscription);
+
+        var site = new Site(SiteId, "pk-" + SiteId.Value, allowedOrigins: [], tier: SubscriptionTierBands.Starter);
+        var sites = new FakeSiteRepository();
+        sites.Seed(site);
+
+        var thresholds = new FakeDownloadThresholdReadStore();
+        var overageReads = new FakeDownloadOverageReadStore();
+        var yooKassa = new FakeYooKassaPaymentsClient();
+        var applier = new FakeSubscriptionRenewalApplier();
+        var handler = new ProcessSubscriptionRenewalHandler(
+            subscriptions, sites, yooKassa, prices, thresholds, overageReads, applier, new FakeClock(Now));
+
+        var outcome = await handler.HandleAsync(
+            new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(subscriptionId),
+            CancellationToken.None);
+
+        Assert.IsType<SubscriptionRenewalOutcome.Renewed>(outcome);
+        // 490 seats + 2 x 1000 admin = 2490. No overage seeded, so this is the whole charge.
+        Assert.Equal(2490m, yooKassa.LastChargeRequest!.AmountRub);
+        Assert.Contains("extra Administrator", yooKassa.LastChargeRequest.Description);
+    }
+
+    /// <summary>A subscription that never purchased an extra Administrator (the overwhelming majority)
+    /// must never be charged for one, and must never require `admin-extra` to be published at all -
+    /// the identical "zero purchased means nothing to look up" shape
+    /// `PurchaseAdministratorSlotHandler`'s own old-price lookup already establishes. Proven here by
+    /// seeding no `admin-extra` price whatsoever and still renewing successfully.</summary>
+    [Fact]
+    public async Task HandleAsync_WithNoExtraAdministratorsPurchased_NeverRequiresAnAdminPriceToBePublished()
+    {
+        var fixture = CreateDueRenewal();
+
+        var outcome = await RenewAsync(fixture);
+
+        Assert.IsType<SubscriptionRenewalOutcome.Renewed>(outcome);
+        Assert.Equal(490m, fixture.YooKassa.LastChargeRequest!.AmountRub);
+    }
+
+    /// <summary>The missing-price guard mirrors the seat-pricing one exactly: a subscription that
+    /// really did purchase extra Administrators must never renew at a silently-lower price because
+    /// `admin-extra` disappeared from the catalog between the purchase and this renewal - the identical
+    /// "unreachable in a correctly configured deployment, thrown rather than translated" posture
+    /// `basePrice`/`extraPrice` already use just above.</summary>
+    [Fact]
+    public async Task HandleAsync_WithPurchasedExtraAdministrators_ButNoAdminPricePublished_ThrowsRatherThanChargingZero()
+    {
+        var subscriptionId = new BillingSubscriptionId(Guid.NewGuid());
+        var createdAt = Now - BillingSubscription.PeriodLength;
+        var subscription = BillingSubscription.Create(
+            subscriptionId, SiteId, "pmt_base", requestedSeats: 3, tier: SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt);
+        subscription.MarkSucceeded("card_on_file", createdAt);
+
+        var subscriptions = new FakeBillingSubscriptionRepository();
+        var prices = new FakePriceCatalogRepository();
+        prices.SeedVersion(SubscriptionTierBands.BaseSeatPriceKey, 490m, createdAt);
+        prices.SeedVersion(SubscriptionTierBands.ExtraSeatPriceKey, 200m, createdAt);
+        // The purchase happened under some past version (its exact sequence is irrelevant here - this
+        // renewal never calls FindVersionAsync, only FindCurrentAsync, the identical "read fresh, never
+        // the subscription's own stored one" discipline `basePrice`/`extraPrice` use above). `admin-extra`
+        // is deliberately never seeded into this catalog at all - unpublished by renewal time is exactly
+        // this test's fixture.
+        subscription.ApplyAdministratorPurchase(newExtraAdministratorCount: 1, adminExtraPriceVersion: 1);
+        subscriptions.Seed(subscription);
+
+        var site = new Site(SiteId, "pk-" + SiteId.Value, allowedOrigins: [], tier: SubscriptionTierBands.Starter);
+        var sites = new FakeSiteRepository();
+        sites.Seed(site);
+
+        var thresholds = new FakeDownloadThresholdReadStore();
+        var overageReads = new FakeDownloadOverageReadStore();
+        var yooKassa = new FakeYooKassaPaymentsClient();
+        var applier = new FakeSubscriptionRenewalApplier();
+        var handler = new ProcessSubscriptionRenewalHandler(
+            subscriptions, sites, yooKassa, prices, thresholds, overageReads, applier, new FakeClock(Now));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => handler.HandleAsync(
+                new Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewal(subscriptionId),
+                CancellationToken.None));
+
+        Assert.Null(yooKassa.LastChargeRequest);
+        Assert.Empty(applier.RenewedSuccessfully);
+    }
 }

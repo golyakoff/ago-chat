@@ -111,7 +111,7 @@ public sealed class BillingSubscription
     /// <see cref="ApplySeatIncreaseImmediately"/>) - never elsewhere, since those are the only
     /// moments a real charge happens.</summary>
     /// <summary>`25-41`: how many Administrator seats beyond the tier-included two this subscription
-    /// has bought, at `ago-business` decision `0012`'s flat +500₽/mo each - the identical "purchasable
+    /// has bought, at `ago-business` decision `0012`'s flat +1000₽/mo each - the identical "purchasable
     /// count, mirroring <see cref="RequestedSeats"/>" shape that field's own remarks already establish,
     /// restated for a flat add-on instead of a banded one. Zero for every row until
     /// <see cref="ApplyAdministratorPurchase"/> is first called, and zero forever for an option row
