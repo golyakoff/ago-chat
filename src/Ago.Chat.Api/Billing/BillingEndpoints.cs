@@ -1,5 +1,6 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
@@ -289,10 +290,23 @@ public static class BillingEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        // `26-304`: the wire request carries the ChannelKind member name, not the bare enum - parsed
+        // here, at the boundary, the same "reject a bad kind string with a clean 400, not an exception"
+        // shape RequestChannelLinkFromConsoleHandler's own Enum.TryParse guard already applies, restated
+        // at the endpoint rather than the handler because PurchaseChannelAddOn's own command deliberately
+        // keeps ChannelKind typed as the real enum (see PurchaseChannelAddOn's own remarks) - unlike that
+        // console feature's command, which carries the raw string all the way to its handler.
+        if (!TryParseChannelKind(request.ChannelKind, out var channelKind))
+        {
+            return ConversationErrors.BillingInvalidChannelKind(
+                $"'{request.ChannelKind}' is not a recognized channel kind - expected one of: "
+                + $"{string.Join(", ", Enum.GetNames<ChannelKind>())}.").ToProblem(httpContext);
+        }
+
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new PurchaseChannelAddOn(
-                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(baseSubscriptionId), request.ChannelKind),
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(baseSubscriptionId), channelKind),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
@@ -324,15 +338,47 @@ public static class BillingEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        // `26-304`: both enum-shaped fields on this request arrive as member-name strings on the wire -
+        // parsed here, at the boundary, so PreviewBillingPurchase's own command can keep BillingPurchaseKind/
+        // ChannelKind typed as the real enums it already switches on (PreviewBillingPurchaseHandler's own
+        // `query.Kind switch` is unchanged by this item).
+        if (!Enum.TryParse<BillingPurchaseKind>(request.Kind, ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
+        {
+            return ConversationErrors.BillingPreviewRequestInvalid(
+                $"'{request.Kind}' is not a recognized billing purchase kind - expected one of: "
+                + $"{string.Join(", ", Enum.GetNames<BillingPurchaseKind>())}.").ToProblem(httpContext);
+        }
+
+        ChannelKind? channelKind = null;
+        if (request.ChannelKind is not null)
+        {
+            if (!TryParseChannelKind(request.ChannelKind, out var parsedChannelKind))
+            {
+                return ConversationErrors.BillingPreviewRequestInvalid(
+                    $"'{request.ChannelKind}' is not a recognized channel kind - expected one of: "
+                    + $"{string.Join(", ", Enum.GetNames<ChannelKind>())}.").ToProblem(httpContext);
+            }
+
+            channelKind = parsedChannelKind;
+        }
+
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new PreviewBillingPurchase(
-                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId), request.Kind,
-                request.RequestedSeats, request.RequestedExtraAdministrators, request.ChannelKind),
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId), kind,
+                request.RequestedSeats, request.RequestedExtraAdministrators, channelKind),
             cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
+
+    /// <summary>`26-304`: the one place both billing wire endpoints below parse a <see cref="ChannelKind"/>
+    /// member-name string - <see langword="false"/> for <see langword="null"/>, blank, or any name that
+    /// is not a real, defined member (<c>Enum.TryParse</c> alone accepts a bare integer string like
+    /// <c>"2"</c>, which <c>Enum.IsDefined</c> here still rejects unless it happens to name a real member -
+    /// the same double-check <c>RequestChannelLinkFromConsoleHandler</c>'s own guard already applies).</summary>
+    private static bool TryParseChannelKind(string? raw, out ChannelKind channelKind) =>
+        Enum.TryParse(raw, ignoreCase: true, out channelKind) && Enum.IsDefined(channelKind);
 
     private static async Task<IResult> HandleGetBillingStatusAsync(
         Guid siteId, GetBillingStatusHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
@@ -351,13 +397,24 @@ public static class BillingEndpoints
 
     public sealed record PurchaseAdministratorSlotRequest(int RequestedExtraAdministrators);
 
-    public sealed record PurchaseChannelAddOnRequest(ChannelKind ChannelKind);
+    /// <summary>`26-304`: <see cref="ChannelKind"/>'s own member name (e.g. <c>"Telegram"</c>), not the
+    /// bare enum - <see cref="HandlePurchaseChannelAddOnAsync"/> parses and validates it before this
+    /// request ever reaches <see cref="PurchaseChannelAddOn"/>'s own, still-enum-typed field. Before
+    /// `26-304` this field bound directly to <see cref="Domain.ChannelKind"/>, which `System.Text.Json`
+    /// serialized/deserialized as a numeric ordinal with no converter registered on this wire.</summary>
+    public sealed record PurchaseChannelAddOnRequest(string ChannelKind);
 
     public sealed record SetNextPeriodCompositionRequest(int RequestedSeats, int RequestedExtraAdministrators);
 
     /// <summary>`26-299`: the flattened, discriminated preview request - <see cref="Kind"/> decides which
     /// of <see cref="RequestedSeats"/>/<see cref="RequestedExtraAdministrators"/>/<see cref="ChannelKind"/>
-    /// the handler reads (`PreviewBillingPurchase`'s own remarks).</summary>
+    /// the handler reads (`PreviewBillingPurchase`'s own remarks).
+    ///
+    /// <para><b>`26-304`: <see cref="Kind"/> and <see cref="ChannelKind"/> are member-name strings on this
+    /// wire, not bare enums</b> - <see cref="HandlePreviewBillingPurchaseAsync"/> parses and validates both
+    /// before <see cref="PreviewBillingPurchase"/>'s own, still-enum-typed fields are ever constructed.
+    /// <see cref="ChannelKind"/> stays optional (<see langword="null"/> for a <c>Seats</c>/<c>Administrators</c>
+    /// preview, exactly as before) - only its wire representation changed.</para></summary>
     public sealed record PreviewBillingPurchaseRequest(
-        BillingPurchaseKind Kind, int? RequestedSeats, int? RequestedExtraAdministrators, ChannelKind? ChannelKind);
+        string Kind, int? RequestedSeats, int? RequestedExtraAdministrators, string? ChannelKind);
 }

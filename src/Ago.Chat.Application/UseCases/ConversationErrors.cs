@@ -583,6 +583,15 @@ public static class ConversationErrors
     public static Error BillingPreviewRequestInvalid(string reason) =>
         new("Billing.PreviewRequestInvalid", reason);
 
+    /// <summary>`26-304`: `PurchaseChannelAddOnEndpoint`'s own wire-shape guard for its `ChannelKind`
+    /// request field - the same "reject a bad enum string with a clean 400, not an exception" discipline
+    /// <see cref="ChannelLinkInvalidKind"/> already applies for the console's own channel-identity-linking
+    /// feature, restated here for billing's unrelated channel-add-on purchase, whose request field is now
+    /// wire-typed as a <see cref="Domain.ChannelKind"/> member-name string rather than a bare enum
+    /// ordinal.</summary>
+    public static Error BillingInvalidChannelKind(string reason) =>
+        new("Billing.InvalidChannelKind", reason);
+
     /// <summary>`13-03`: a site's `Permission.SiteManageOperators` holder tried to assign a seat beyond
     /// the site's own current `seat_limit` - `402 Payment Required`, the identical reasoning
     /// <see cref="OperatorInviteSeatLimitReached"/> already gives for the same underlying constraint on

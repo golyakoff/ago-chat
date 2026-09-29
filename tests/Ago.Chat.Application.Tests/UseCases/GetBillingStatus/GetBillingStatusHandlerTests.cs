@@ -453,10 +453,12 @@ public class GetBillingStatusHandlerTests
         Assert.True(result.IsSuccess);
         Assert.Equal(2, result.Value.ChannelCount);
         Assert.Equal(2, result.Value.ConnectedChannels.Count);
-        var telegramDto = Assert.Single(result.Value.ConnectedChannels, c => c.Kind == ChannelKind.Telegram);
+        // `26-304`: Kind is now the member-name string, not the bare enum - compared against
+        // ChannelKind.Telegram.ToString() rather than the enum value itself.
+        var telegramDto = Assert.Single(result.Value.ConnectedChannels, c => c.Kind == ChannelKind.Telegram.ToString());
         Assert.Equal(telegram.Id.Value, telegramDto.SubscriptionId);
         Assert.False(telegramDto.CancelRequested);
-        var maxDto = Assert.Single(result.Value.ConnectedChannels, c => c.Kind == ChannelKind.Max);
+        var maxDto = Assert.Single(result.Value.ConnectedChannels, c => c.Kind == ChannelKind.Max.ToString());
         Assert.True(maxDto.CancelRequested);
 
         // A channel already flagged to not renew must not count toward the recurring total: 890 (5

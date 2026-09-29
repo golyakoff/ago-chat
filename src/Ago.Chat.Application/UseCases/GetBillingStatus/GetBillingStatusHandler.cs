@@ -142,7 +142,9 @@ public sealed class GetBillingStatusHandler(
         var connectedChannels = connectedChannelOptions
             .Select(o => (Option: o, Kind: TryResolveChannelKind(o.OptionKey!.Value)))
             .Where(x => x.Kind is not null)
-            .Select(x => new BillingConnectedChannelDto(x.Kind!.Value, x.Option.Id.Value, x.Option.CancelRequested, x.Option.CurrentPeriodEnd))
+            // `26-304`: ToString() here, not the bare enum - BillingConnectedChannelDto.Kind's own wire
+            // shape is now the member-name string every other ChannelKind-on-wire DTO already uses.
+            .Select(x => new BillingConnectedChannelDto(x.Kind!.Value.ToString(), x.Option.Id.Value, x.Option.CancelRequested, x.Option.CurrentPeriodEnd))
             .ToList();
         var channelAddOnPrice = await prices.FindCurrentAsync(ChannelAddOnPricing.ChannelAddOnKey, cancellationToken);
 
