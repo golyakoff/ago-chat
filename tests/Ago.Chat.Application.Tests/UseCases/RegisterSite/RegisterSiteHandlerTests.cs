@@ -94,6 +94,8 @@ public class RegisterSiteHandlerTests
                 Permission.ChannelManage.Value,
                 // `26-268`: BookingCreate joins the Admin set too, unchanged.
                 Permission.BookingCreate.Value,
+                // `26-275`: CustomerErase joins the Admin set - Admin-only, never Operator.
+                Permission.CustomerErase.Value,
             ],
             registration.AdminRole.Permissions);
     }
