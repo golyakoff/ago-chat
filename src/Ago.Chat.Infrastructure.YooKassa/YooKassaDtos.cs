@@ -38,10 +38,19 @@ public sealed record YooKassaConfirmationRequest(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("return_url")] string ReturnUrl);
 
+/// <summary><see cref="Paid"/> and <see cref="PaymentMethod"/> are populated on a `26-286` re-query
+/// (<c>GET /payments/{id}</c>) - the create-payment reply this same shape also models leaves them at
+/// their defaults, which is harmless because that path only ever reads <see cref="Id"/> and
+/// <see cref="Confirmation"/>. On a re-query these two are the authoritative facts the webhook path acts
+/// on: <see cref="Status"/>=`succeeded`/`Paid`=true is the only combination that grants, and
+/// <see cref="PaymentMethod"/>.<see cref="YooKassaPaymentMethod.Id"/> is the saved card id stored on the
+/// subscription - both read from ЮKassa's own reply here, never from the notification body.</summary>
 public sealed record YooKassaPaymentResponse(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("confirmation")] YooKassaConfirmationResponse? Confirmation);
+    [property: JsonPropertyName("paid")] bool Paid,
+    [property: JsonPropertyName("confirmation")] YooKassaConfirmationResponse? Confirmation,
+    [property: JsonPropertyName("payment_method")] YooKassaPaymentMethod? PaymentMethod);
 
 public sealed record YooKassaConfirmationResponse(
     [property: JsonPropertyName("type")] string Type,

@@ -114,5 +114,43 @@ public sealed class YooKassaPaymentsApiClient(HttpClient httpClient) : IYooKassa
             null, response.StatusCode);
     }
 
+    /// <summary>`26-286`: <c>GET /payments/{id}</c>, the authoritative re-query the webhook path runs
+    /// before it applies anything (ЮKassa's own documented way to verify a console-configured HTTP
+    /// notification - there is no signature to check). A `404` is a real, expected answer - a payment id
+    /// ЮKassa has no record of - and comes back as <see cref="GetPaymentResult.NotFound"/> rather than
+    /// throwing; everything else that is not a clean `2xx` (401/403/429/5xx, a network fault) throws, the
+    /// same terminal/transient split the two write calls above use. Deliberately <b>not</b> in that
+    /// method's <see cref="TerminalRefusalStatusCodes"/> list: for a re-query only `404` is a benign
+    /// "no such payment", while a `401`/`403` means our own credentials are wrong - a condition that must
+    /// surface (and let ЮKassa retry the notification), never be mistaken for "payment does not exist"
+    /// and silently drop a real grant.</summary>
+    public async Task<GetPaymentResult> GetPaymentAsync(string paymentId, CancellationToken cancellationToken)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Get, $"payments/{Uri.EscapeDataString(paymentId)}");
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new GetPaymentResult.NotFound();
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadFromJsonAsync<YooKassaPaymentResponse>(cancellationToken);
+            if (body?.Id is not { Length: > 0 } id)
+            {
+                throw new HttpRequestException(
+                    $"ЮKassa payment re-query returned {(int)response.StatusCode} with no payment id.");
+            }
+
+            return new GetPaymentResult.Found(id, body.Status, body.Paid, body.PaymentMethod?.Id);
+        }
+
+        var transientErrorText = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException(
+            $"ЮKassa API returned {(int)response.StatusCode} for GET payments/{paymentId}: {Truncate(transientErrorText)}",
+            null, response.StatusCode);
+    }
+
     private static string Truncate(string text) => text.Length > 500 ? text[..500] : text;
 }

@@ -1,6 +1,5 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
-using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
@@ -10,7 +9,6 @@ using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.YooKassa;
-using Microsoft.AspNetCore.Http.Extensions;
 
 namespace Ago.Chat.Api.Billing;
 
@@ -32,8 +30,6 @@ namespace Ago.Chat.Api.Billing;
 /// </summary>
 public static class BillingEndpoints
 {
-    public const string YooKassaSignatureHeaderName = "Webhook-Signature";
-
     public static void MapBillingEndpoints(this WebApplication app)
     {
         app.MapCreateCheckoutSessionEndpoint();
@@ -117,48 +113,47 @@ public static class BillingEndpoints
     }
 
     /// <summary>
-    /// Verify (this method's own pre-check, before <see cref="ProcessYooKassaWebhookHandler"/> is even
-    /// constructed - the same "endpoint verifies auth, Application handler orchestrates the use case"
-    /// split `MaxWebhookEndpoints.HandleAsync` already establishes for MAX's own secret-header check) -
-    /// idempotency ledger - terminal state, in that order, matching this item's own backlog. The raw
-    /// body is read as text <i>before</i> any JSON parsing, and that same raw string is what the
-    /// signature is verified against - reserializing a parsed object would almost certainly change the
-    /// byte sequence ЮKassa actually signed (`IYooKassaWebhookSignatureVerifier`'s own remarks).
+    /// `26-286`: ЮKassa does not sign its console-configured HTTP notifications (there is no
+    /// `Webhook-Signature` header and no shared webhook key - `adr/0071`'s HMAC assumption, made without
+    /// network access to confirm it, was wrong and would have rejected every real notification). Its own
+    /// documented verification, and what this endpoint now does, is: (1) an IP allowlist check that the
+    /// request came from one of ЮKassa's published notification networks
+    /// (<see cref="YooKassaWebhookSourceGuard"/>), then (2) hand the notified payment id to
+    /// <see cref="ProcessYooKassaWebhookHandler"/>, which re-queries the payment from ЮKassa's own API and
+    /// acts on the authoritative status - never on anything this request body claims.
+    ///
+    /// <para>The re-query is the real guarantee; the IP check is defense-in-depth (see
+    /// <see cref="YooKassaWebhookSourceGuard"/>). Nothing in the request body is trusted except the
+    /// payment id, and even that only as a lookup key the re-query then validates against ЮKassa itself.
+    /// Everything short of a source-IP rejection acks `200` - a body that does not parse, an unknown
+    /// payment id, a non-terminal status - so ЮKassa does not retry something that will never change
+    /// outcome (the same reasoning `MaxWebhookEndpoints`' own remarks give).</para>
     /// </summary>
     private static async Task<IResult> HandleYooKassaWebhookAsync(
         HttpContext httpContext,
-        IYooKassaWebhookSignatureVerifier verifier,
         ProcessYooKassaWebhookHandler handler,
         CancellationToken cancellationToken)
     {
+        if (!YooKassaWebhookSourceGuard.IsAllowed(httpContext.Connection.RemoteIpAddress))
+        {
+            // Not from one of ЮKassa's published notification networks - rejected before the body is
+            // even read. `Program.cs`'s UseForwardedHeaders has already resolved RemoteIpAddress from the
+            // gateway's X-Forwarded-For, so this is the real client IP, not the gateway's.
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
         using var reader = new StreamReader(httpContext.Request.Body);
         var rawBody = await reader.ReadToEndAsync(cancellationToken);
-
-        var signatureHeader = httpContext.Request.Headers[YooKassaSignatureHeaderName].ToString();
-        // GetEncodedUrl() reconstructs the request's own absolute URL from scheme+host+path+query -
-        // matching what ЮKassa itself targeted requires this host's ForwardedHeadersMiddleware to have
-        // already resolved the external scheme/host from the gateway's forwarded headers
-        // (`ForwardedHeadersTests`' own precedent), which Program.cs already configures for every other
-        // reason (rate-limit bucket resolution). Not confirmed against a real ЮKassa signature - see
-        // YooKassaWebhookSignatureVerifier's own remarks.
-        var requestUrl = httpContext.Request.GetEncodedUrl();
-
-        if (!verifier.Verify(httpContext.Request.Method, requestUrl, rawBody, signatureHeader))
-        {
-            return Results.Unauthorized();
-        }
 
         var parsed = YooKassaWebhookParser.TryParse(rawBody);
         if (parsed is null)
         {
-            // Signed by a real ЮKassa webhook key but not a shape this item understands - acked 200
-            // rather than rejected, the same "do not burn the provider's retry budget on something that
-            // will never parse differently" reasoning MaxWebhookEndpoints' own remarks give.
+            // From an allowlisted source but not a shape this endpoint understands - acked 200 rather
+            // than rejected, since retrying will never make it parse differently.
             return Results.Ok();
         }
 
-        await handler.HandleAsync(
-            new ProcessYooKassaWebhook(parsed.YooKassaPaymentId, parsed.EventType, parsed.PaymentMethodId), cancellationToken);
+        await handler.HandleAsync(new ProcessYooKassaWebhook(parsed.YooKassaPaymentId), cancellationToken);
 
         return Results.Ok();
     }

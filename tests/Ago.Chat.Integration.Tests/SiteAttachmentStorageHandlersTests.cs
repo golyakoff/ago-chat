@@ -988,6 +988,9 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
         public Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
             ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException("`25-84`'s own checkout never charges a stored method - see PurchaseDownloadOverageHandler's own remarks.");
+
+        public Task<GetPaymentResult> GetPaymentAsync(string paymentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("`26-286`'s webhook re-query is not exercised by this checkout-side test.");
     }
 
     private sealed class NoOpOutboxWriter : IOutboxWriter

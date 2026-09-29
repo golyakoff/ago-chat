@@ -410,19 +410,20 @@ public static class TenantScopeExemptions
         // consumer/adapter category above, not the broker itself.
         // ---------------------------------------------------------------------------------------
         ["Ago.Chat.Application.UseCases.ProcessYooKassaWebhook.ProcessYooKassaWebhookHandler.HandleAsync"] =
-            "`13-02`/`adr/0025`. Carries no SiteId at all, by design: the input is ЮKassa's own payment id, which "
-            + "no external caller can choose a site with - IBillingWebhookApplier resolves the one billing_subscriptions "
-            + "row that payment id names and acts on *that* row's own SiteId, a fact CreateCheckoutSessionHandler "
-            + "already established (gated by SiteConfigure the ordinary way) at checkout-session creation, never a "
-            + "value this webhook call supplies itself. Structurally the same category as "
-            + "ReceiveChannelMessageHandler above (the site is a fact established by our own prior write, not a "
-            + "caller's claim) with an even narrower attack surface: this handler cannot even be reached with an "
-            + "unverified payload at all - HandleYooKassaWebhookAsync (the endpoint) rejects a missing/invalid "
-            + "`Webhook-Signature` header before this handler is ever constructed, so every payment id this method "
-            + "ever sees is one ЮKassa itself signed with a key only this deployment and ЮKassa hold. There is also "
-            + "no principal to check a permission for - nobody asked for this write, ЮKassa's own webhook delivery "
-            + "did, the same 'no principal' category SendOfflineAutoReplyHandler/DeliverChannelMessageHandler above "
-            + "are in for the identical reason.",
+            "`13-02`/`26-286` (`adr/0190`, supersedes `adr/0071`). Carries no SiteId at all, by design: the input is ЮKassa's own "
+            + "payment id, which no external caller can choose a site with - IBillingWebhookApplier resolves the one "
+            + "billing_subscriptions row that payment id names and acts on *that* row's own SiteId, a fact "
+            + "CreateCheckoutSessionHandler already established (gated by SiteConfigure the ordinary way) at "
+            + "checkout-session creation, never a value this webhook call supplies itself. Structurally the same "
+            + "category as ReceiveChannelMessageHandler above (the site is a fact established by our own prior write, "
+            + "not a caller's claim), and the payment id itself is not even trusted as a fact: this handler re-queries "
+            + "the payment from ЮKassa's own Payments API by that id and drives every decision from the authoritative "
+            + "status, so a forged notification resolves to a payment ЮKassa does not report as succeeded and grants "
+            + "nothing. The endpoint (HandleYooKassaWebhookAsync) additionally rejects any source IP outside ЮKassa's "
+            + "published notification networks before this handler is constructed. There is also no principal to check "
+            + "a permission for - nobody asked for this write, ЮKassa's own webhook delivery did, the same 'no "
+            + "principal' category SendOfflineAutoReplyHandler/DeliverChannelMessageHandler above are in for the "
+            + "identical reason.",
         ["Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewalHandler.HandleAsync"] =
             "`13-03`, worker side (Ago.Chat.Worker), the same category as AutoCloseConversationHandler above: the "
             + "only input is a BillingSubscriptionId that SubscriptionRenewalJob's own candidate scan "
