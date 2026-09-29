@@ -267,4 +267,19 @@ public class MintDemoTenantHandlerTests
         Assert.Contains("conversation:read", registration.OperatorRole.Permissions);
         Assert.Contains("site:configure", registration.AdminRole.Permissions);
     }
+
+    /// <summary>`26-273`: the demo tenant's Operator role holds `booking:reschedule`, matching what
+    /// `RegisterSiteHandler` grants a real tenant's Operator (`26-208`/`adr/0187`). Found during
+    /// `26-268` #1 as a pre-existing gap: `MintDemoTenantHandler.OperatorRolePermissions` never carried
+    /// it, so the live demo operator could not demonstrate «Перенести оператором» at all.</summary>
+    [Fact]
+    public async Task TheMintedOperatorHoldsBookingReschedule()
+    {
+        var harness = CreateHandler();
+
+        await MintAsync(harness);
+
+        var registration = Assert.Single(harness.Registrations.Registered);
+        Assert.Contains("booking:reschedule", registration.OperatorRole.Permissions);
+    }
 }

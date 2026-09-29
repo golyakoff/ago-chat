@@ -75,12 +75,17 @@ public sealed class MintDemoTenantHandler(
             // ordinary operator work, calendar:configure joins Admin below instead.
             Permission.BookingConfirm.Value, Permission.BookingReject.Value, Permission.BookingCancel.Value,
             Permission.BookingMarkNoShow.Value, Permission.CustomerRead.Value, Permission.CustomerEdit.Value,
+            // `26-273`: BookingReschedule joins the Operator set here too, the same restatement this
+            // class's own remarks already accept - a demo operator that cannot demonstrate «Перенести
+            // оператором» is exactly the "half a console is a worse demonstration than none" case this
+            // class's own remarks already state above. This closes the gap `26-268` found and left open
+            // (BookingReschedule from `26-208`/`adr/0187` was never added here); see
+            // RegisterSiteHandler.OperatorRolePermissions' own remarks for the fuller history.
+            Permission.BookingReschedule.Value,
             // `26-268`: BookingCreate joins the Operator set here too, the same restatement this class's
             // own remarks already accept - a demo tenant that cannot demonstrate «Добавить вручную» is
             // exactly the "half a console is a worse demonstration than none" case this class's own
-            // remarks already state above. Note: `BookingReschedule` (`26-208`) was never added to this
-            // array at all - a pre-existing gap, left as found, not fixed by this change (out of scope
-            // for 26-268).
+            // remarks already state above.
             Permission.BookingCreate.Value,
             // `23-69`: ConversationMarkSpam joins the Operator set here too, the same restatement this
             // class's own remarks already accept - see RegisterSiteHandler's own array for why this
