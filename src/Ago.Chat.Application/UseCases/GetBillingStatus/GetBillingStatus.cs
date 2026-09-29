@@ -164,8 +164,16 @@ public sealed record BillingStatusDto(
 /// <c>CancelSubscriptionHandler</c> endpoint with (that handler already accepts any
 /// <see cref="Domain.BillingSubscription"/> id, base or option - no new cancel mechanism was needed for
 /// this direction, see <c>SetNextPeriodComposition</c>'s own remarks).</summary>
+/// <param name="Kind">`26-304`: <see cref="Domain.ChannelKind"/>'s own member name via <c>ToString()</c> -
+/// e.g. <c>"Telegram"</c>, <c>"Max"</c> - a raw string, never the bare enum, the identical wire split
+/// <see cref="Contracts.OwnerSiteChannelEntitlementDto.Kind"/> already draws for the same enum. Before
+/// `26-304` this field carried the bare <see cref="Domain.ChannelKind"/> enum, which
+/// <c>System.Text.Json</c> serialized as a numeric ordinal with no converter registered - fragile (a
+/// reorder of that enum would silently shift every already-connected channel's wire value) and the one
+/// place on this DTO's own wire shape that did not already match <see cref="BillingSubscriptionSummaryDto.Status"/>'s
+/// "a client reads a name, not an ordinal" precedent right above.</param>
 public sealed record BillingConnectedChannelDto(
-    ChannelKind Kind, Guid SubscriptionId, bool CancelRequested, DateTimeOffset? CurrentPeriodEnd);
+    string Kind, Guid SubscriptionId, bool CancelRequested, DateTimeOffset? CurrentPeriodEnd);
 
 /// <summary>
 /// `25-23`: the Operator seat-purchase formula's own currently-effective numbers, read the identical

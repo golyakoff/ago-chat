@@ -332,6 +332,14 @@ public static class ErrorExtensions
                 // whitespace payment token, the identical "brand-new code this item's own new route can
                 // actually produce" shape every other 400 in this group already states for itself.
                 or "Billing.InvalidPaymentToken"
+                // `26-304`: `PurchaseChannelAddOnEndpoint`'s own wire-shape guard - an unrecognised or
+                // blank `ChannelKind` string, the caller's own mistake to fix, the identical "brand-new
+                // code this item's own new route can actually produce" shape every other 400 in this
+                // group already states for itself. Found live by this item's own new endpoint test: this
+                // code fell through to this switch's `500` default until added here, exactly the
+                // `Operator.NotFound`/`Billing.SubscriptionNotFound` gap `25-98`'s own remarks a few
+                // lines up already describe for two other codes.
+                or "Billing.InvalidChannelKind"
                 // `Billing.SeatCountUnchanged` - the identical shape `Conversation.TransferTargetIsCurrentOperator`
                 // already gives a few lines up: "a real client mistake (naming the state that already
                 // holds)", not a conflict with anything concurrent - the caller asked to change to what
