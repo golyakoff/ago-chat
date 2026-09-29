@@ -190,6 +190,7 @@ using Ago.Chat.Application.UseCases.UpdateWidgetConfig;
 using Ago.Chat.Application.UseCases.UpdateSiteAllowedOriginsAsOwner;
 using Ago.Chat.Application.UseCases.RecordVisitorContactDetail;
 using Ago.Chat.Application.UseCases.RegisterExternalPerson;
+using Ago.Chat.Application.UseCases.ErasePerson;
 using Ago.Chat.Application.UseCases.GetConsentRequirement;
 using Ago.Chat.Application.UseCases.RecordVisitorConsent;
 using Ago.Chat.Application.UseCases.ListVisitorContactDetails;
@@ -1458,6 +1459,11 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<AddPersonNoteHandler>();
         services.AddScoped<GetPersonNotesHandler>();
         services.AddScoped<RegisterExternalPersonHandler>();
+        // `adr/0189`/`26-275` slice #3: the opposite direction - the calendar erased its own half of a
+        // person and told chat, via `PersonErased`, to erase the rest. Registered here for the identical
+        // reason `RegisterExternalPersonHandler` is: `Ago.Chat.Worker`'s own consumer resolves it through
+        // a scope, the same shape every other consumer-called handler on this page already takes.
+        services.AddScoped<ErasePersonHandler>();
         // `26-269`: the client-detail hub's "which dialog do I open for this person" read - registered
         // alongside the rest of the person registry's handlers above for the identical reason.
         services.AddScoped<GetPersonConversationsHandler>();

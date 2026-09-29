@@ -611,6 +611,23 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddHostedService<PersonRegisteredConsumer>();
 
+// `adr/0189`/`26-275` slice #3: the opposite direction - the calendar erased its own half of a person
+// (Option A, issue 1815) and told chat, via `PersonErased`, to erase the rest. The consumer only flags
+// the cascade (`ErasePersonHandler`, one write); `PersonErasureJob` is the bounded, ordered removal off
+// its own timer, the identical "stamp the conversations, wait, then remove the parent row" shape
+// SiteErasureJobOptions/SiteErasureJob just above already take, one aggregate down.
+builder.Services
+    .AddOptions<PersonErasedConsumerOptions>()
+    .Bind(builder.Configuration.GetSection(PersonErasedConsumerOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<PersonErasedConsumer>();
+
+builder.Services
+    .AddOptions<PersonErasureJobOptions>()
+    .Bind(builder.Configuration.GetSection(PersonErasureJobOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddHostedService<PersonErasureJob>();
+
 // `16-03`: tenant export. SiteExportJobOptions is bound both as IOptions<T> (SiteExportJob itself,
 // the same shape SiteErasureJobOptions uses) and as a plain singleton value
 // (SiteExportArchiveWriter, the same "plain value, not IOptions<T>" shape RegisterSiteRateLimitOptions
