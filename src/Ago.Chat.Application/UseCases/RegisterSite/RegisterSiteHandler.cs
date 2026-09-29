@@ -150,6 +150,13 @@ public sealed class RegisterSiteHandler(
             // with a single admin-operator (the common small-business shape this item targets) must not
             // be locked out of «Добавить вручную» for lacking a second, Operator-only role assignment.
             Permission.BookingCreate.Value,
+            // `26-275`: CustomerErase joins the Admin set - the author's stated "admin-only" requirement
+            // for deleting a client, the same Admin-only, compliance-shaped placement SiteErase/
+            // ConversationErase already have (Permission.CustomerErase's own remarks on why this is a
+            // third, distinct blast radius rather than a reuse of either). Never added to the Operator
+            // set above - `23-102`'s fourth-restatement note applies here too, the matching entry being
+            // ModulePermissions__calendar__Admin__* in `ago-deploy`.
+            Permission.CustomerErase.Value,
         ];
 
     public async Task<Result<RegisteredSite>> HandleAsync(RegisterSite command, CancellationToken cancellationToken)

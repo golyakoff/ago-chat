@@ -122,6 +122,11 @@ public sealed class MintDemoTenantHandler(
             // `26-268`: BookingCreate joins the Admin set too - the same restatement this class's own
             // remarks already accept (RegisterSiteHandler.AdminRolePermissions' own identical addition).
             Permission.BookingCreate.Value,
+            // `26-275`: CustomerErase joins the Admin set here too, the same restatement this class's own
+            // remarks already accept (RegisterSiteHandler.AdminRolePermissions' own identical addition) -
+            // the live demo admin must be able to demonstrate deleting a client the same as every other
+            // Admin-only capability it already holds.
+            Permission.CustomerErase.Value,
         ];
 
     public async Task<Result<MintedDemoTenant>> HandleAsync(

@@ -184,6 +184,18 @@ public readonly record struct Permission(string Value)
 
     public static readonly Permission CustomerRead = new("customer:read");
     public static readonly Permission CustomerEdit = new("customer:edit");
+
+    // `26-275`: a third, distinct blast radius alongside SiteErase/ConversationErase above -
+    // person-scoped erasure, neither one-conversation nor one-whole-account. Deleting a client (the
+    // calendar's Клиенты list) erases the Person across both stores; this permission gates only the
+    // calendar's erase-initiation endpoint (a later slice) - chat's own PersonErased consumer needs no
+    // permission check, the same trusted-internal-event posture RegisterExternalPersonHandler already
+    // has for PersonRegistered. Admin-role-only (AdminRolePermissions below), never Operator - the same
+    // granular-permission reasoning SiteErase/ConversationErase's own remarks already give for their own
+    // placement. Per adr/0093 this string must match Ago.Calendar.Domain.Permission.CustomerErase
+    // byte-for-byte.
+    public static readonly Permission CustomerErase = new("customer:erase");
+
     public static readonly Permission CalendarConfigure = new("calendar:configure");
 
     // `23-69`: dedicated, not a reuse of ConversationClose - the same granular-permission reasoning
