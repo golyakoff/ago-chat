@@ -44,5 +44,20 @@ internal sealed class VisitorConfiguration : IEntityTypeConfiguration<Visitor>
         // above, applied to the new nullable preference column - ChannelIdentityConfiguration's own
         // primary key is what this points at.
         builder.HasOne<ChannelIdentity>().WithMany().HasForeignKey(v => v.PreferredChannelIdentityId);
+
+        // `adr/0189`/`26-275` slice #3: the identical shadow-property shape `SiteConfiguration`'s own
+        // `ErasureRequestedAt` already establishes - this column has exactly one legitimate writer
+        // (`PersonErasureStore`, via `IPersonErasureStore`'s own targeted `UPDATE`) and is read only by
+        // `PersonErasureJob`'s bounded-batch claim query (`Ago.Chat.Worker`), both raw Npgsql, never
+        // through `Visitor`'s own load-mutate-`SaveChangesAsync` path - the same reasoning
+        // `SiteConfiguration`'s own remarks give in full, applied one aggregate down. Unlike `sites`,
+        // there is no `ErasureRequestedBy`/`ErasureRecordId` pair alongside it: a person's erasure is a
+        // trusted internal event between two products, not an operator's own request, so there is no
+        // operator to attribute it to and no `erasure_records` receipt to point at
+        // (`IPersonErasureStore`'s own remarks).
+        builder.Property<DateTimeOffset?>("ErasureRequestedAt").HasColumnName("erasure_requested_at");
+        builder.HasIndex("ErasureRequestedAt")
+            .HasDatabaseName("ix_visitors_erasure_pending")
+            .HasFilter("erasure_requested_at is not null");
     }
 }

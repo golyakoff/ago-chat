@@ -307,6 +307,9 @@ public static class ServiceCollectionExtensions
         // consumer-side write that creates a Person a module minted an id for (decision 2).
         services.AddScoped<IPersonNoteRepository, PersonNoteRepository>();
         services.AddScoped<IPersonRegistrationStore, PersonRegistrationStore>();
+        // `adr/0189`/`26-275` slice #3: the other direction of decision 2 - the calendar erased its own
+        // half of a person and told chat, via `PersonErased`, to erase the rest.
+        services.AddScoped<IPersonErasureStore, PersonErasureStore>();
         // `14-14`: unverified contact details - reachable from exactly three handlers, the same
         // narrow-by-design shape INoteRepository's own remarks describe for itself.
         services.AddScoped<IVisitorContactDetailRepository, VisitorContactDetailRepository>();

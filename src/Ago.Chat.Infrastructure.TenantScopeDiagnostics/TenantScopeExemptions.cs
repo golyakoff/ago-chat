@@ -473,6 +473,23 @@ public static class TenantScopeExemptions
             + "caller and can reach no other tenant's row, the idempotent-on-person-id create (CLAUDE.md rule 5) "
             + "this handler's own remarks describe.",
 
+        ["Ago.Chat.Application.UseCases.ErasePerson.ErasePersonHandler.HandleAsync"] =
+            "`adr/0189`/`26-275` slice #3, consumer side (Ago.Chat.Worker) - the opposite direction of "
+            + "RegisterExternalPersonHandler's own entry immediately above: the calendar erased its own half of a "
+            + "person (Option A, issue 1815) and published PersonErased for chat to erase the rest. The identical "
+            + "category and reasoning that entry states, restated for the erasure direction: AccountId comes off "
+            + "the PersonErased envelope this deployment's own calendar published - the account id that is site id "
+            + "is tenant id (adr/0093), a fact the calendar's own erase-initiation write already established (that "
+            + "write is gated by `customer:erase` on the calendar's own side, not here) - never a claim an external "
+            + "caller could make. There is also no principal to check a permission for: nobody asked for this "
+            + "cascade, a broker delivery did, and adr/0016 has no representation for that caller exactly as it has "
+            + "none for a visitor. What the account id is used for is narrow and self-scoping: "
+            + "IPersonErasureStore.RequestErasureIfPresentAsync only ever flags a visitor whose own site_id column "
+            + "already equals it (`personId AND accountId` together in the WHERE clause), so a PersonErased naming "
+            + "the right person under the wrong account is UnknownPerson, not a cross-tenant write - the identical "
+            + "'cannot reach another tenant's row' guarantee IPersonRegistrationStore's own entry describes for the "
+            + "opposite direction.",
+
         // ---------------------------------------------------------------------------------------
         // The two deliberate cross-tenant/owner-only surfaces in the codebase.
         // ---------------------------------------------------------------------------------------
