@@ -177,4 +177,26 @@ public sealed class PriceCatalogIntegrationTests(PostgresFixture fixture)
         Assert.Equal(500m, final.Versions.Single(v => v.Sequence == 2).AmountRub);
         Assert.Equal(999m, final.Versions.Single(v => v.Sequence == 3).AmountRub);
     }
+
+    /// <summary>`26-275`: `Stage26SeedAdminExtraPrice`'s own reason for existing - proven the identical
+    /// way `Stage25AddPricedResourceCatalog`'s seat-pricing seed would be, against
+    /// <see cref="PostgresFixture"/>'s real "migrations applied once, from scratch" database rather than
+    /// against a fake. Before that migration, `admin-extra` had never been published by any migration
+    /// (only by hand, on the live stand) - a fresh deployment's <see cref="PriceCatalogRepository.FindCurrentAsync"/>
+    /// for this key returned <see langword="null"/>, and every extra-Administrator purchase or renewal
+    /// charge refused with <see cref="PriceCatalogErrors.PriceNotConfigured"/>. This is red against a
+    /// database migrated without that migration present and green once it runs - the fails-before this
+    /// item's own report names.</summary>
+    [Fact]
+    public async Task Migrations_SeedTheAdminExtraPrice_AtOneThousandRoubles()
+    {
+        await using var db = fixture.CreateDbContext();
+        var repository = new PriceCatalogRepository(db);
+
+        var current = await repository.FindCurrentAsync(SubscriptionTierBands.AdminExtraPriceKey, CancellationToken.None);
+
+        Assert.NotNull(current);
+        Assert.Equal(1000m, current!.AmountRub);
+        Assert.Equal(1, current.Sequence);
+    }
 }
