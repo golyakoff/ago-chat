@@ -24,6 +24,13 @@ public sealed class ResilientYooKassaPaymentsClient(IYooKassaPaymentsClient inne
     public Task<CreatePaymentResult> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken) =>
         inner.CreatePaymentAsync(request, cancellationToken);
 
+    // `26-286`: passed through unwrapped, the same reasoning CreatePaymentAsync just above states - the
+    // re-query runs inside one inbound webhook request this host must ack fast; a transient failure
+    // surfaces as an ordinary 5xx and ЮKassa's own webhook retry re-drives the whole notification, so
+    // there is no background loop here for BillingResiliencePipeline to keep alive.
+    public Task<GetPaymentResult> GetPaymentAsync(string paymentId, CancellationToken cancellationToken) =>
+        inner.GetPaymentAsync(paymentId, cancellationToken);
+
     public Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
         ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken) =>
         pipeline.Pipeline.ExecuteAsync(async token => await inner.ChargeStoredPaymentMethodAsync(request, token), cancellationToken).AsTask();

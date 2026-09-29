@@ -22,6 +22,16 @@ public interface IYooKassaPaymentsClient
     /// file, rather than starting a fresh checkout.</summary>
     Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
         ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken);
+
+    /// <summary>`26-286`: re-query a payment by its id and read back its <b>authoritative</b> state -
+    /// ЮKassa's own documented way to verify a console-configured HTTP notification (there is no HMAC
+    /// signature or shared "webhook key" on those, `adr/0071` was wrong on that point (superseded by
+    /// `adr/0190`) - the real
+    /// mechanism is "never trust the notification body's status; fetch the payment object and act on
+    /// what the API says"). The one call the webhook path makes before applying anything: it is what
+    /// turns a forged or replayed notification into a no-op, because a forger cannot make ЮKassa's own
+    /// Payments API report a payment as `succeeded` that is not.</summary>
+    Task<GetPaymentResult> GetPaymentAsync(string paymentId, CancellationToken cancellationToken);
 }
 
 /// <summary><paramref name="IdempotenceKey"/> is this call's own retry-safety, not the webhook ledger's
@@ -69,4 +79,24 @@ public abstract record ChargeStoredPaymentMethodResult
     public sealed record Success(string PaymentId) : ChargeStoredPaymentMethodResult;
 
     public sealed record Refused(string Reason) : ChargeStoredPaymentMethodResult;
+}
+
+/// <summary>`26-286`: the authoritative payment object <see cref="IYooKassaPaymentsClient.GetPaymentAsync"/>
+/// reads back. <see cref="NotFound"/> is the answer for a payment id ЮKassa has no record of - a forged
+/// or mistyped notification - and is a legitimate, expected outcome the webhook path acks `200` for, not
+/// an error. Everything the caller acts on (<see cref="Found.Status"/>, <see cref="Found.Paid"/>,
+/// <see cref="Found.PaymentMethodId"/>) comes from ЮKassa's own reply here, never from the notification
+/// body. Only <see cref="NotFound"/> and a successful read are values; a transient/misconfigured response
+/// (401/403/429/5xx, a network fault) throws, the same terminal/transient split
+/// <see cref="CreatePaymentResult"/> already establishes - a re-query that could not complete must never
+/// be mistaken for "payment does not exist" and silently drop a real grant.</summary>
+public abstract record GetPaymentResult
+{
+    private GetPaymentResult()
+    {
+    }
+
+    public sealed record Found(string PaymentId, string Status, bool Paid, string? PaymentMethodId) : GetPaymentResult;
+
+    public sealed record NotFound : GetPaymentResult;
 }

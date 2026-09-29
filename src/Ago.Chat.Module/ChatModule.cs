@@ -900,7 +900,7 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<AnalyticsOptions>>().Value);
 
-        // `13-02`/`adr/0025`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
+        // `13-02`/`adr/0071`: bound here, with WebhookSecretCipherOptions/ChannelCredentialCipherOptions
         // above. `25-43`: BaseSeatPriceRub/PricePerExtraSeatRub moved off this options type entirely -
         // they are owner-published data now (IPriceCatalogRepository, registered below), not
         // configuration, so the positive-value .Validate() predicates this section used to carry for
@@ -912,7 +912,7 @@ public sealed class ChatModule : IProductModule
             .ValidateOnStart();
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<BillingOptions>>().Value);
 
-        // `13-02`/`adr/0025`: our own fixed ЮKassa application credentials - see YooKassaOptions' own
+        // `13-02`/`adr/0071` (webhook half superseded by `adr/0190`): our own fixed ЮKassa application credentials - see YooKassaOptions' own
         // remarks for the contrast with WebhookSecretCipherOptions' per-tenant ciphertext shape right
         // above (a different reason to change, a different validation - non-empty strings, not a
         // base64-32-byte key).
@@ -921,7 +921,6 @@ public sealed class ChatModule : IProductModule
             .Bind(configuration.GetSection(YooKassaOptions.SectionName))
             .Validate(o => !string.IsNullOrWhiteSpace(o.ShopId), "Billing:YooKassa:ShopId must be set.")
             .Validate(o => !string.IsNullOrWhiteSpace(o.SecretKey), "Billing:YooKassa:SecretKey must be set.")
-            .Validate(o => !string.IsNullOrWhiteSpace(o.WebhookKey), "Billing:YooKassa:WebhookKey must be set.")
             .ValidateOnStart();
         services.AddHttpClient<YooKassaPaymentsApiClient>((sp, client) =>
         {
@@ -946,8 +945,11 @@ public sealed class ChatModule : IProductModule
             sp.GetRequiredService<IOptionsMonitor<ResiliencePipelineOptions>>().Get(BillingResiliencePipeline.PipelineName)));
         services.AddScoped<IYooKassaPaymentsClient>(sp => new ResilientYooKassaPaymentsClient(
             sp.GetRequiredService<YooKassaPaymentsApiClient>(), sp.GetRequiredService<BillingResiliencePipeline>()));
-        services.AddSingleton<IYooKassaWebhookSignatureVerifier>(sp =>
-            new YooKassaWebhookSignatureVerifier(sp.GetRequiredService<IOptions<YooKassaOptions>>().Value));
+        // `26-286`: no webhook-signature verifier is registered - ЮKassa does not sign its
+        // console-configured HTTP notifications, so there is nothing to verify a signature against. The
+        // webhook is authenticated by re-querying the payment (ProcessYooKassaWebhookHandler, through the
+        // IYooKassaPaymentsClient registered right above) and by an IP allowlist in the endpoint,
+        // superseding `adr/0071`'s HMAC scheme (`adr/0190`).
         services.AddScoped<CreateCheckoutSessionHandler>();
         // `25-84`
         services.AddScoped<PurchaseDownloadOverageHandler>();

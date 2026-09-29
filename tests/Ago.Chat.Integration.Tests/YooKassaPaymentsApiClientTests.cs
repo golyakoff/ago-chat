@@ -142,6 +142,74 @@ public sealed class YooKassaPaymentsApiClientTests
             new CreatePaymentRequest(500m, "test", "https://console.example/return", "idem-key-6"), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task GetPaymentAsync_WhenYooKassaReturnsThePayment_ReadsBackTheAuthoritativeStatusAndSavedMethod()
+    {
+        string? capturedAuthorization = null;
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapGet("payments/{id}", (string id, HttpContext context) =>
+            {
+                capturedAuthorization = context.Request.Headers.Authorization.ToString();
+                return Results.Json(new
+                {
+                    id,
+                    status = "succeeded",
+                    paid = true,
+                    payment_method = new { id = "card_saved_1" },
+                });
+            }));
+
+        var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
+
+        var result = await client.GetPaymentAsync("pmt_requery", CancellationToken.None);
+
+        var found = Assert.IsType<GetPaymentResult.Found>(result);
+        Assert.Equal("pmt_requery", found.PaymentId);
+        Assert.Equal("succeeded", found.Status);
+        Assert.True(found.Paid);
+        Assert.Equal("card_saved_1", found.PaymentMethodId);
+        Assert.StartsWith("Basic ", capturedAuthorization);
+    }
+
+    [Fact]
+    public async Task GetPaymentAsync_WhenYooKassaHasNoSuchPayment_ReturnsNotFoundRatherThanThrowing()
+    {
+        // A forged or mistyped notification id - a real, expected 404, not an error to throw on.
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapGet("payments/{id}", () => Results.Json(
+                new { code = "not_found", description = "Payment not found" }, statusCode: StatusCodes.Status404NotFound)));
+
+        var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
+
+        var result = await client.GetPaymentAsync("pmt_forged", CancellationToken.None);
+
+        Assert.IsType<GetPaymentResult.NotFound>(result);
+    }
+
+    [Fact]
+    public async Task GetPaymentAsync_WhenOurOwnCredentialsAreRejected_ThrowsRatherThanTreatingItAsMissing()
+    {
+        // A 401 means our Basic-auth is wrong, not that the payment is absent - it must surface (and let
+        // ЮKassa retry the notification), never be mistaken for "no such payment" and drop a real grant.
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapGet("payments/{id}", () => Results.StatusCode(StatusCodes.Status401Unauthorized)));
+
+        var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetPaymentAsync("pmt_x", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetPaymentAsync_WhenYooKassaReturns500_Throws()
+    {
+        await using var host = await BuildFakeYooKassaHostAsync(app =>
+            app.MapGet("payments/{id}", () => Results.StatusCode(StatusCodes.Status500InternalServerError)));
+
+        var client = BuildClient(host.BaseUrl, "shop_1", "secret_1");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetPaymentAsync("pmt_x", CancellationToken.None));
+    }
+
     private static YooKassaPaymentsApiClient BuildClient(string baseUrl, string shopId, string secretKey)
     {
         var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl) };
