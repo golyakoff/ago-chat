@@ -11,18 +11,11 @@
 /// <para><b>Its own file, not folded into <see cref="SubscriptionTierBands"/> or
 /// <see cref="DownloadOveragePricing"/>.</b> The identical split those two types' own remarks already
 /// draw between "the seat ladder" and "a per-gigabyte meter" applies again here, for a third shape:
-/// no band, no per-unit rate, just one number. Unlike <see cref="DownloadOveragePricing"/>, this file
-/// carries no arithmetic helper at all - there is nothing to compute, because reading and charging
-/// against this key belongs to whichever tenant-facing purchase flow this item's own Scope
-/// deliberately excludes ("out of scope, deliberately: anything that reads this price to charge a
-/// tenant or grant a channel entitlement").</para>
+/// no band, no per-unit rate, just one number.</para>
 ///
 /// <para><b>The price itself is not here</b>, the identical split <see cref="DownloadOveragePricing"/>'s
 /// own remarks draw for its own key: <see cref="ChannelAddOnKey"/> is a <see cref="PriceKey"/>,
-/// resolved through <c>IPriceCatalogRepository</c> by whatever eventually reads it - nothing does yet,
-/// deliberately, since this item builds only the half the platform owner needs first in the causal
-/// chain: the key existing for the owner's own publish screen to show and set a real figure against,
-/// before anyone can buy anything at it.</para>
+/// resolved through <c>IPriceCatalogRepository</c> by whatever reads it.</para>
 ///
 /// <para><b>Not <c>ChannelEntitlementOptionKeys</c>'s own <c>"channel-" + kind</c> naming.</b> That
 /// type answers a different question - which <see cref="Application.Abstractions.IBillingOptionEntitlementProvider"/>
@@ -36,6 +29,37 @@
 public static class ChannelAddOnPricing
 {
     /// <summary>`25-101`'s own priced resource, registered in <see cref="PricedResourceKeys"/> the
-    /// same change that adds this key - see this type's own remarks for why nothing reads it yet.</summary>
+    /// same change that added this key.</summary>
     public static readonly PriceKey ChannelAddOnKey = new("channel-addon");
+
+    /// <summary>
+    /// `26-278`: the option-key -&gt; price-key resolution `ProcessSubscriptionRenewalHandler`'s own
+    /// option branch needs, so it can charge a channel option's recurring fee instead of throwing on
+    /// every option row. Every <paramref name="optionKey"/> spelled <c>"channel-" + kind</c>
+    /// (<see cref="ChannelEntitlementOptionKeys.For"/>'s own naming convention) resolves to this flat
+    /// <see cref="ChannelAddOnKey"/> - one price, independent of which kind, this type's own remarks
+    /// already state. <see langword="null"/> for every other option key (in particular, an AI option -
+    /// <c>ai-*</c>) - `ago-business` decision `0012` deliberately publishes no price for AI usage yet
+    /// ("нет, и поэтому цены не публикуются"), and a <see langword="null"/> here is what keeps
+    /// <see cref="Application.UseCases.ProcessSubscriptionRenewal.ProcessSubscriptionRenewalHandler"/>
+    /// throwing for that case exactly as it already did, unchanged.
+    ///
+    /// <para><b>Domain, not Application.</b> "Which price key a `channel-*` option resolves to" is a
+    /// stable fact about this codebase's own vocabulary - identical in every deployment - not a
+    /// deployment-configured mapping (contrast <see cref="Application.Abstractions.IBillingOptionEntitlementProvider"/>,
+    /// genuinely opaque to this assembly and resolved only by what a deployment declares). The
+    /// alternative, a <see langword="switch"/> living in the renewal handler itself, would scatter this
+    /// pricing policy across layers instead of keeping it beside the vocabulary it is a fact about - the
+    /// identical placement judgement <see cref="ChannelEntitlementOptionKeys"/>'s own remarks already
+    /// make for the sibling option-key -&gt; module-key question.</para>
+    ///
+    /// <para>A prefix check, not a per-<see cref="ChannelKind"/> <see langword="switch"/> the way
+    /// <see cref="ChannelEntitlementOptionKeys.For"/> is - that type enumerates every kind because a
+    /// missing arm there must fail to compile the moment a new kind is added unpriced-for-entitlement;
+    /// here, by contrast, every <c>channel-*</c> key (present or future) is priced identically on
+    /// purpose, so a new <see cref="ChannelKind"/> needs no matching edit to this method at all - the
+    /// one property a flat, kind-independent price is supposed to have.</para>
+    /// </summary>
+    public static PriceKey? PriceKeyFor(BillingOptionKey optionKey) =>
+        optionKey.Value.StartsWith("channel-", StringComparison.Ordinal) ? ChannelAddOnKey : null;
 }

@@ -102,19 +102,61 @@ public sealed class ProcessSubscriptionRenewalHandler(
 
         if (subscription.IsOption)
         {
-            // `23-86` deliberately does not invent a price for an option's own recurring charge - "no
-            // price, anywhere" (this item's own Scope); the seat-pricing formula below is meaningless
-            // for an option row (RequestedSeats is always zero there - BillingSubscription.OptionKey's
-            // own remarks). Charging Rub 0 or reusing the seat formula would both be silently wrong, so
-            // this refuses loudly instead - the same "unreachable, thrown rather than translated" shape
-            // the PaymentMethodId guard just above already uses. No production code path creates a
-            // due-for-renewal option row today (that is `23-115`'s own scope, "a tenant can buy an
-            // option themselves") - reaching this is itself the signal that a price source for an
-            // option's recurring charge still needs to be supplied before that item ships.
-            throw new InvalidOperationException(
-                $"Billing subscription {command.SubscriptionId.Value} is an option subscription (key "
-                + $"'{subscription.OptionKey!.Value.Value}') due for renewal, but no price source for an option's "
-                + "recurring charge exists yet - see this item's own report.");
+            // `26-278`: the seat-pricing formula below is still meaningless for an option row
+            // (RequestedSeats is always zero there - BillingSubscription.OptionKey's own remarks), so
+            // this branch still never falls through to it - it now charges its own flat price instead of
+            // always throwing. `ChannelAddOnPricing.PriceKeyFor` answers "does this codebase know how to
+            // price this option key at all" - `null` for anything this codebase has not wired a price
+            // for yet (today, only an AI option - `ai-*`; `0012`'s own "для ИИ - нет, и поэтому цены не
+            // публикуются"), in which case this refuses exactly as loudly as before this item, unchanged.
+            var optionPriceKey = ChannelAddOnPricing.PriceKeyFor(subscription.OptionKey!.Value);
+            if (optionPriceKey is null)
+            {
+                // The identical "unreachable, thrown rather than translated" shape the PaymentMethodId
+                // guard just above already uses - no production code path creates a due-for-renewal
+                // option row this codebase does not know how to price at all.
+                throw new InvalidOperationException(
+                    $"Billing subscription {command.SubscriptionId.Value} is an option subscription (key "
+                    + $"'{subscription.OptionKey!.Value.Value}') due for renewal, but no price source for an option's "
+                    + "recurring charge exists yet - see this item's own report.");
+            }
+
+            // `26-278`'s own author decision (2026-09-29): a missing `channel-addon` price at renewal
+            // THROWS, matching the seat prices just below rather than skipping the way the download
+            // overage sweep does (ResolveOverageLinesAsync's own remarks). A channel option reached
+            // `Succeeded` at least once already - it was bought at this exact price - so this deployment
+            // un-publishing it before the next renewal is a regression, not an ordinary "not for sale"
+            // state; a loud, repeating failure is the correct reaction, the identical posture
+            // BaseSeatPriceKey/ExtraSeatPriceKey's own missing-price guards already take for a base row.
+            var optionPrice = await prices.FindCurrentAsync(optionPriceKey.Value, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"Billing subscription {command.SubscriptionId.Value} is an option subscription (key "
+                    + $"'{subscription.OptionKey!.Value.Value}') due for renewal but "
+                    + $"'{optionPriceKey.Value.Value}' has no published price - see this handler's own remarks.");
+
+            var optionIdempotenceKey = $"renewal:{command.SubscriptionId.Value}:{now:yyyy-MM-dd}";
+            var optionChargeResult = await yooKassa.ChargeStoredPaymentMethodAsync(
+                new ChargeStoredPaymentMethodRequest(
+                    optionPrice.AmountRub, $"AGO Chat - {subscription.OptionKey!.Value.Value} add-on renewal", paymentMethodId, optionIdempotenceKey),
+                cancellationToken);
+
+            switch (optionChargeResult)
+            {
+                case ChargeStoredPaymentMethodResult.Success:
+                    // `25-43`: meaningless for an option row - priced flat, not by seats
+                    // (BillingSubscription.CreateOption's own convention) - so `0`/`0` is passed exactly
+                    // as SubscriptionRenewalApplier.ApplyRenewalSuccessAsync's own option branch already
+                    // expects, and that branch is what grants the entitlement on success.
+                    await applier.ApplyRenewalSuccessAsync(command.SubscriptionId, now, 0, 0, [], cancellationToken);
+                    return new SubscriptionRenewalOutcome.Renewed();
+
+                case ChargeStoredPaymentMethodResult.Refused refused:
+                    await applier.ApplyRenewalFailureAsync(command.SubscriptionId, now, cancellationToken);
+                    return new SubscriptionRenewalOutcome.ChargeRefused(refused.Reason);
+
+                default:
+                    throw new InvalidOperationException($"Unhandled {nameof(ChargeStoredPaymentMethodResult)} case: {optionChargeResult.GetType().Name}.");
+            }
         }
 
         var basePrice = await prices.FindCurrentAsync(SubscriptionTierBands.BaseSeatPriceKey, cancellationToken)

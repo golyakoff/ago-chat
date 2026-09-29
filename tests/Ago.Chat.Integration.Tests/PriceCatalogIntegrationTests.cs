@@ -199,4 +199,26 @@ public sealed class PriceCatalogIntegrationTests(PostgresFixture fixture)
         Assert.Equal(1000m, current!.AmountRub);
         Assert.Equal(1, current.Sequence);
     }
+
+    /// <summary>`26-278`: `Stage26SeedChannelAddOnPrice`'s own reason for existing - the identical
+    /// fails-before this file's own <see cref="Migrations_SeedTheAdminExtraPrice_AtOneThousandRoubles"/>
+    /// already proves for its sibling seed, against <see cref="PostgresFixture"/>'s real "migrations
+    /// applied once, from scratch" database rather than a fake. Before that migration, `channel-addon`
+    /// had never been published by any migration (only by hand, on the live stand) - a fresh
+    /// deployment's <see cref="PriceCatalogRepository.FindCurrentAsync"/> for this key returned
+    /// <see langword="null"/>, and every channel add-on purchase or renewal charge refused with
+    /// <see cref="PriceCatalogErrors.PriceNotConfigured"/>. Red against a database migrated without that
+    /// migration present, green once it runs - the fails-before this item's own report names.</summary>
+    [Fact]
+    public async Task Migrations_SeedTheChannelAddOnPrice_AtOneHundredRoubles()
+    {
+        await using var db = fixture.CreateDbContext();
+        var repository = new PriceCatalogRepository(db);
+
+        var current = await repository.FindCurrentAsync(ChannelAddOnPricing.ChannelAddOnKey, CancellationToken.None);
+
+        Assert.NotNull(current);
+        Assert.Equal(100m, current!.AmountRub);
+        Assert.Equal(1, current.Sequence);
+    }
 }

@@ -4,6 +4,7 @@ using Ago.Chat.Application.Abstractions;
 using Ago.Chat.Application.UseCases.CancelSubscription;
 using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
+using Ago.Chat.Application.UseCases.PurchaseChannelAddOn;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
@@ -40,6 +41,7 @@ public static class BillingEndpoints
         app.MapCancelSubscriptionEndpoint();
         app.MapChangeSubscriptionSeatsEndpoint();
         app.MapPurchaseAdministratorSlotEndpoint();
+        app.MapPurchaseChannelAddOnEndpoint();
         app.MapGetBillingStatusEndpoint();
     }
 
@@ -73,6 +75,16 @@ public static class BillingEndpoints
     public static void MapPurchaseAdministratorSlotEndpoint(this WebApplication app) =>
         app.MapPost(
             "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/administrators", HandlePurchaseAdministratorSlotAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+    /// <summary>`26-278`: the identical prorated, charge-then-apply purchase shape immediately above,
+    /// restated for a connected-channel add-on - <c>{baseSubscriptionId}</c>, not a bare
+    /// <c>{siteId}</c>, names exactly which of the site's own <see cref="Domain.BillingSubscription"/>
+    /// rows this purchase charges against and aligns its own new option's period to
+    /// (<see cref="PurchaseChannelAddOn"/>'s own remarks).</summary>
+    public static void MapPurchaseChannelAddOnEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{baseSubscriptionId:guid}/channels", HandlePurchaseChannelAddOnAsync)
             .RequireAuthorization("RequireOperatorIdentity");
 
     /// <summary>Split out from <see cref="MapBillingEndpoints"/> as its own public extension method -
@@ -200,6 +212,23 @@ public static class BillingEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
 
+    private static async Task<IResult> HandlePurchaseChannelAddOnAsync(
+        Guid siteId,
+        Guid baseSubscriptionId,
+        PurchaseChannelAddOnRequest request,
+        PurchaseChannelAddOnHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new PurchaseChannelAddOn(
+                user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(baseSubscriptionId), request.ChannelKind),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
     private static async Task<IResult> HandleGetBillingStatusAsync(
         Guid siteId, GetBillingStatusHandler handler, HttpContext httpContext, CancellationToken cancellationToken)
     {
@@ -214,4 +243,6 @@ public static class BillingEndpoints
     public sealed record ChangeSubscriptionSeatsRequest(int RequestedSeats);
 
     public sealed record PurchaseAdministratorSlotRequest(int RequestedExtraAdministrators);
+
+    public sealed record PurchaseChannelAddOnRequest(ChannelKind ChannelKind);
 }
