@@ -21,8 +21,9 @@ namespace Ago.Chat.Application.UseCases.RegisterExternalPerson;
 /// operator's queue with no mnemonic the day they finally open a chat.</para>
 ///
 /// <para>The contact details are recorded with source <see cref="VisitorContactDetailSource.Visitor"/>:
-/// the person typed the phone and the name into a booking form themselves, and no operator stood between
-/// them and this row. Never <c>Verified</c> - a booking form proves nothing about who controls the number
+/// the person typed the phone, the name, and - `26-268`§3/`adr/0188` - optionally an email, into a
+/// booking form or gave them to an operator over the phone, and no operator stood between them and this
+/// row. Never <c>Verified</c> - a booking form proves nothing about who controls the number
 /// (<c>VisitorContactDetail</c>'s own remarks); the calendar's own verified-phone fact stays the calendar's.</para>
 /// </summary>
 public sealed class RegisterExternalPersonHandler(
@@ -36,7 +37,7 @@ public sealed class RegisterExternalPersonHandler(
         var (creature, food) = emojiPairs.NextPair();
         person.AssignEmojiPair(creature, food);
 
-        var details = new List<VisitorContactDetail>(2);
+        var details = new List<VisitorContactDetail>(3);
         if (!string.IsNullOrWhiteSpace(command.Phone))
         {
             details.Add(VisitorContactDetail.RecordFromVisitor(
@@ -49,6 +50,17 @@ public sealed class RegisterExternalPersonHandler(
             details.Add(VisitorContactDetail.RecordFromVisitor(
                 new VisitorContactDetailId(idGenerator.NewId(command.RegisteredAt)), person.Id,
                 VisitorContactDetailKind.Name, command.Name, command.RegisteredAt));
+        }
+
+        // `26-268`§3/`adr/0188`: optional, and only ever present from a manual-booking mint today - the
+        // identical Visitor-sourced, never-Verified treatment Phone/Name already get above. The
+        // publishing module already shape-validated it (`EnterManualBookingHandler`); this consumer's
+        // own job is only to record what it was told, the same trust boundary Phone/Name already draw.
+        if (!string.IsNullOrWhiteSpace(command.Email))
+        {
+            details.Add(VisitorContactDetail.RecordFromVisitor(
+                new VisitorContactDetailId(idGenerator.NewId(command.RegisteredAt)), person.Id,
+                VisitorContactDetailKind.Email, command.Email, command.RegisteredAt));
         }
 
         return await registrations.RegisterIfAbsentAsync(person, details, cancellationToken);
