@@ -30,6 +30,7 @@ using Ago.Chat.Application.UseCases.CloseConversation;
 using Ago.Chat.Application.UseCases.ConfirmAttachment;
 using Ago.Chat.Application.UseCases.CreateAttachment;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+using Ago.Chat.Application.UseCases.CreateTokenPayment;
 using Ago.Chat.Application.UseCases.AddConversationNote;
 using Ago.Chat.Application.UseCases.AddPersonNote;
 using Ago.Chat.Application.UseCases.RecordAcceptance;
@@ -138,6 +139,7 @@ using Ago.Chat.Application.UseCases.MarkConversationRead;
 using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
+using Ago.Chat.Application.UseCases.RenewNow;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
 using Ago.Chat.Application.UseCases.ReceiveChannelAttachment;
 using Ago.Chat.Application.UseCases.RecordUnread;
@@ -951,6 +953,9 @@ public sealed class ChatModule : IProductModule
         // IYooKassaPaymentsClient registered right above) and by an IP allowlist in the endpoint,
         // superseding `adr/0071`'s HMAC scheme (`adr/0190`).
         services.AddScoped<CreateCheckoutSessionHandler>();
+        // `26-291`: the YooKassa Android SDK's own token-payment sibling - see CreateTokenPaymentHandler's
+        // own remarks for why this is a separate handler rather than a branch inside the one above.
+        services.AddScoped<CreateTokenPaymentHandler>();
         // `25-84`
         services.AddScoped<PurchaseDownloadOverageHandler>();
         services.AddScoped<ProcessYooKassaWebhookHandler>();
@@ -976,6 +981,9 @@ public sealed class ChatModule : IProductModule
         services.AddScoped<PurchaseChannelAddOnHandler>();
         // `13-04`: the console billing screen's own bootstrap read - GetBillingStatus's own remarks.
         services.AddScoped<GetBillingStatusHandler>();
+        // `26-296`: pay-early - reuses ISubscriptionRenewalApplier (registered above) rather than a
+        // second applier, see RenewNowHandler's own remarks.
+        services.AddScoped<RenewNowHandler>();
 
         // `19-01`: bound here, not a host's own Program.cs - GenerateReplyDraftHandler is registered
         // for every host below, the same "plain value, not IOptions<T>" shape MessageSendRateLimitOptions/

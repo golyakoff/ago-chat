@@ -319,6 +319,10 @@ public static class ErrorExtensions
                 // (ConversationErrors.BillingInvalidSeatCount's own remarks) - the caller's own mistake
                 // to fix, not a conflict with anything concurrent.
                 or "Billing.InvalidSeatCount"
+                // `26-291`: the SDK token-payment endpoint's own caller-mistake check - an empty or
+                // whitespace payment token, the identical "brand-new code this item's own new route can
+                // actually produce" shape every other 400 in this group already states for itself.
+                or "Billing.InvalidPaymentToken"
                 // `Billing.SeatCountUnchanged` - the identical shape `Conversation.TransferTargetIsCurrentOperator`
                 // already gives a few lines up: "a real client mistake (naming the state that already
                 // holds)", not a conflict with anything concurrent - the caller asked to change to what
@@ -464,6 +468,11 @@ public static class ErrorExtensions
                 // conflict with the row's own current state, the identical shape
                 // `TenantSuspension.NotSuspended` already gives a few lines up.
                 or "Billing.SubscriptionNotActive"
+                // `26-296`: renew-now's own same-day guard - a real conflict with this subscription's
+                // own current state (it already recorded a renewal today), resolved by waiting, never by
+                // fixing the request body - the identical shape `TenantSuspension.NotSuspended` already
+                // gives a few lines up.
+                or "Billing.SubscriptionAlreadyRenewedToday"
                 // `Document.PublishConflict` - PublishedDocumentErrors.PublishConflict's own remarks
                 // name it "`409`, not the caller's mistake to fix and not a transient dependency failure
                 // either" in as many words.

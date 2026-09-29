@@ -985,6 +985,10 @@ public sealed class SiteAttachmentStorageHandlersTests(PostgresFixture fixture)
             Task.FromResult<CreatePaymentResult>(
                 new CreatePaymentResult.Success(PaymentId, "https://yookassa.example/confirm/" + PaymentId));
 
+        public Task<CreatePaymentWithTokenResult> CreatePaymentWithTokenAsync(
+            CreatePaymentWithTokenRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("`26-291`'s own token flow is not exercised by this checkout-side test.");
+
         public Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
             ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException("`25-84`'s own checkout never charges a stored method - see PurchaseDownloadOverageHandler's own remarks.");

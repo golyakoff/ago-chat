@@ -35,6 +35,13 @@ public sealed class FakeBillingSubscriptionRepository : IBillingSubscriptionRepo
         Task.FromResult(
             _all.Where(s => s.SiteId == siteId && s.OptionKey is null).OrderByDescending(s => s.CreatedAt).FirstOrDefault());
 
+    /// <summary>`26-295`: mirrors <c>BillingSubscriptionRepository.ListOptionsForSiteAsync</c>'s own
+    /// predicate exactly - every <c>OptionKey is not null</c> row for the site, whatever its own
+    /// status.</summary>
+    public Task<IReadOnlyList<BillingSubscription>> ListOptionsForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<BillingSubscription>>(
+            _all.Where(s => s.SiteId == siteId && s.OptionKey is not null).ToList());
+
     /// <summary>Mirrors <c>BillingSubscriptionRepository.ListDueForRenewalAsync</c>'s own predicate
     /// exactly - a fake that quietly used a different rule than the adapter would let a test pass
     /// against a condition production does not implement.</summary>

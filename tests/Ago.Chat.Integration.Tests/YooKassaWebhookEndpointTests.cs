@@ -251,6 +251,10 @@ public class YooKassaWebhookEndpointTests(PostgresFixture fixture)
         public Task<CreatePaymentResult> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The webhook path never creates a payment.");
 
+        public Task<CreatePaymentWithTokenResult> CreatePaymentWithTokenAsync(
+            CreatePaymentWithTokenRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The webhook path never creates a token payment.");
+
         public Task<ChargeStoredPaymentMethodResult> ChargeStoredPaymentMethodAsync(
             ChargeStoredPaymentMethodRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The webhook path never charges a stored method.");

@@ -527,6 +527,9 @@ public sealed class RetryAfterOnRateLimitedEndpointsTests
         public Task<BillingSubscription?> GetBaseForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A rate-limited caller must never reach a billing lookup.");
 
+        public Task<IReadOnlyList<BillingSubscription>> ListOptionsForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A rate-limited caller must never reach a billing lookup.");
+
         public Task<IReadOnlyList<BillingSubscriptionId>> ListDueForRenewalAsync(
             DateTimeOffset now, int batchSize, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Not part of the rate-limited path under test.");
