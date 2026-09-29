@@ -13,6 +13,20 @@ public interface IYooKassaPaymentsClient
 {
     Task<CreatePaymentResult> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken);
 
+    /// <summary>`26-291`: the YooKassa Android SDK's own tokenization half
+    /// (`docs/backlog/26-289-yookassa-android-sdk.md`) - the app collects card/SBP/SberPay details
+    /// entirely inside the SDK's own UI and exchanges them for a one-time, single-use `payment_token`;
+    /// this call is what redeems that token into a real payment, `POST /payments` with `payment_token`
+    /// in place of <see cref="CreatePaymentRequest"/>'s `confirmation` object. Same ShopId/SecretKey
+    /// Basic auth and `Idempotence-Key` discipline as <see cref="CreatePaymentAsync"/> - the two differ
+    /// only in which field tells ЮKassa how the buyer is paying, never in who is allowed to call
+    /// `POST /payments` or how. Unlike the redirect flow, the SDK's own confirmation step (3DS/SberPay)
+    /// runs inside the app, not a browser this codebase redirects - so this call's own result carries a
+    /// `Status` and an optional `ConfirmationUrl` for the app to hand to its own confirmation intent,
+    /// rather than assuming a browser confirmation always exists.</summary>
+    Task<CreatePaymentWithTokenResult> CreatePaymentWithTokenAsync(
+        CreatePaymentWithTokenRequest request, CancellationToken cancellationToken);
+
     /// <summary>`13-03`: the recurring-charge half - a "charge on file" payment against a
     /// <see cref="BillingSubscription.PaymentMethodId"/> a prior <see cref="CreatePaymentAsync"/> call
     /// already saved (`save_payment_method = true`), with no `confirmation` object and nobody's browser
@@ -39,6 +53,32 @@ public interface IYooKassaPaymentsClient
 /// every payment-creation call so a client's own network retry of this exact request cannot create two
 /// payments for one checkout attempt.</summary>
 public sealed record CreatePaymentRequest(decimal AmountRub, string Description, string ReturnUrl, string IdempotenceKey);
+
+/// <summary>`26-291`: <see cref="CreatePaymentRequest"/>'s own token-payment sibling - carries a
+/// <paramref name="PaymentToken"/> (the SDK's one-time, single-use tokenization result, opaque here by
+/// design: this port never inspects or validates its shape, only forwards it) in place of a return URL,
+/// since a token payment's own confirmation step - when ЮKassa's reply says one is needed - happens
+/// inside the app's own SDK confirmation intent, never a browser redirect.</summary>
+public sealed record CreatePaymentWithTokenRequest(decimal AmountRub, string Description, string PaymentToken, string IdempotenceKey);
+
+/// <summary>`26-291`: the identical terminal/transient split <see cref="CreatePaymentResult"/> already
+/// establishes, reshaped for the token flow's own two differences: <see cref="Success.Status"/> is
+/// carried explicitly (a token payment can come back already `succeeded`, not only `pending`), and
+/// <see cref="Success.ConfirmationUrl"/> is honestly nullable - present only when ЮKassa's own reply
+/// says a further confirmation step (3DS/SberPay) is needed, absent when the charge captured outright.
+/// The webhook re-query (`adr/0190`) remains the only thing that ever grants an entitlement - this
+/// result, like <see cref="CreatePaymentResult"/>'s, is never treated as proof of payment on its
+/// own.</summary>
+public abstract record CreatePaymentWithTokenResult
+{
+    private CreatePaymentWithTokenResult()
+    {
+    }
+
+    public sealed record Success(string PaymentId, string Status, string? ConfirmationUrl) : CreatePaymentWithTokenResult;
+
+    public sealed record Refused(string Reason) : CreatePaymentWithTokenResult;
+}
 
 /// <summary>
 /// The terminal/transient split <c>TelegramApiClient</c>/<c>MaxApiClient</c> already established for

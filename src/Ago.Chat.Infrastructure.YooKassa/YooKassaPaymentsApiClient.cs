@@ -71,6 +71,51 @@ public sealed class YooKassaPaymentsApiClient(HttpClient httpClient) : IYooKassa
             null, response.StatusCode);
     }
 
+    /// <summary>`26-291`: the SDK tokenization half - same endpoint, same terminal/transient split as
+    /// <see cref="CreatePaymentAsync"/>, `payment_token` in the request body in place of a `confirmation`
+    /// object. Unlike <see cref="CreatePaymentAsync"/>, a missing `confirmation_url` in the reply is not
+    /// itself an error here - ЮKassa answers with one only when a further confirmation step (3DS/SberPay)
+    /// is actually needed; a token payment that captures outright legitimately has none.</summary>
+    public async Task<CreatePaymentWithTokenResult> CreatePaymentWithTokenAsync(
+        CreatePaymentWithTokenRequest request, CancellationToken cancellationToken)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "payments")
+        {
+            Content = JsonContent.Create(new YooKassaCreatePaymentWithTokenRequest(
+                Amount: new YooKassaAmount(request.AmountRub.ToString("F2", CultureInfo.InvariantCulture), "RUB"),
+                Capture: true,
+                PaymentToken: request.PaymentToken,
+                Description: request.Description)),
+        };
+        httpRequest.Headers.Add("Idempotence-Key", request.IdempotenceKey);
+
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadFromJsonAsync<YooKassaPaymentResponse>(cancellationToken);
+            if (body?.Id is not { Length: > 0 } paymentId)
+            {
+                throw new HttpRequestException(
+                    $"ЮKassa token payment creation returned {(int)response.StatusCode} with no payment id.");
+            }
+
+            return new CreatePaymentWithTokenResult.Success(paymentId, body.Status, body.Confirmation?.ConfirmationUrl);
+        }
+
+        if (TerminalRefusalStatusCodes.Contains(response.StatusCode))
+        {
+            var error = await response.Content.ReadFromJsonAsync<YooKassaErrorResponse>(cancellationToken);
+            return new CreatePaymentWithTokenResult.Refused(
+                $"ЮKassa refused the token payment ({(int)response.StatusCode}): {error?.Description ?? error?.Code ?? "no reason given"}");
+        }
+
+        var tokenTransientErrorText = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new HttpRequestException(
+            $"ЮKassa API returned {(int)response.StatusCode} for POST payments (token): {Truncate(tokenTransientErrorText)}",
+            null, response.StatusCode);
+    }
+
     /// <summary>`13-03`: the charge-on-file half - same endpoint, same terminal/transient split as
     /// <see cref="CreatePaymentAsync"/>, no `confirmation` object in the request and no
     /// `confirmation_url` expected back in the response (there is no browser to redirect).</summary>

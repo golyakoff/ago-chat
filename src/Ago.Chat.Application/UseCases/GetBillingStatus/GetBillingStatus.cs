@@ -80,6 +80,48 @@ public sealed record GetBillingStatus(OperatorId RequestedBy, SiteId SiteId);
 /// console decides how to render "not priced yet" versus "priced at ₽N", this DTO only states the
 /// fact.</para>
 /// </summary>
+/// <param name="ChannelCount">`26-295`: how many `channel-*` option rows
+/// (<see cref="Ago.Chat.Domain.ChannelEntitlementOptionKeys"/>'s own naming convention, resolved through
+/// <see cref="Ago.Chat.Domain.ChannelAddOnPricing.PriceKeyFor"/> rather than a re-typed `"channel-"`
+/// literal) are currently <see cref="BillingSubscriptionStatus.Succeeded"/> for this site - "connected",
+/// in the console's own vocabulary. Zero for a site that has never bought one, the ordinary state, never
+/// a fabricated number.</param>
+/// <param name="ChannelAddOnPriceRub">The currently-effective published price for
+/// <see cref="Ago.Chat.Domain.ChannelAddOnPricing.ChannelAddOnKey"/> - <see langword="null"/> exactly when
+/// nobody has ever published a version, the identical honest-null <see cref="AdminExtraPriceRub"/> already
+/// uses for the identical reason (an add-on nobody has priced yet is the ordinary "built, not yet for
+/// sale" state, `25-43`'s own second decision).</param>
+/// <param name="NextChargeRub">
+/// `26-295`/`docs/backlog/26-290-console-billing-redesign.md` Case 3: the predictable recurring total the
+/// site's <b>base</b> subscription will next be charged - seats (<see cref="Ago.Chat.Domain.SubscriptionTierBands.ComputeSeatPriceRub"/>)
+/// plus purchased extra Administrators plus <see cref="ChannelCount"/> connected channels at
+/// <see cref="ChannelAddOnPriceRub"/> each, every component read at the identical currently-effective
+/// price <see cref="SeatPricing"/>/<see cref="AdminExtraPriceRub"/> already carry - never a second,
+/// independently-read figure that could silently drift from them.
+///
+/// <para><b>Deliberately excludes download overage.</b> `ProcessSubscriptionRenewalHandler`'s own
+/// recurring charge also sweeps whatever metered attachment-download overage a tenant owes
+/// (`25-84`), but that figure is variable and only knowable at the moment of an actual renewal (which
+/// months are outstanding, whether the site is on auto-bill or manual, what the per-gigabyte price is
+/// that day) - showing it here ahead of time would mean inventing a number, which `CLAUDE.md` forbids.
+/// This field is labelled, and must be presented, as the recurring <i>subscription</i> charge - not a
+/// full invoice estimate.</para>
+///
+/// <para><b>Each connected channel's own <see cref="BillingSubscription"/> option row can renew on its
+/// own date</b> (`adr/0159`'s own alignment rule keeps a freshly-purchased option's period aligned to the
+/// base at purchase time, but the two can still drift apart across a base seat/tier change or a lapsed-
+/// and-repurchased option) - this field is the steady-state recurring total assuming every component
+/// renews together, not a single dated line item. `<see cref="Ago.Chat.Application.UseCases.GetBillingStatus.BillingSubscriptionSummaryDto.CurrentPeriodEnd"/>`
+/// remains the one authoritative renewal <i>date</i> this DTO carries, for the base subscription only.</para>
+///
+/// <para><see langword="null"/> when there is no base subscription at all (the free tier, nothing to
+/// renew), when it is not currently <see cref="BillingSubscriptionStatus.Succeeded"/> or
+/// <see cref="BillingSubscriptionStatus.PastDue"/> (<see cref="BillingSubscriptionStatus.Pending"/> has
+/// not yet been confirmed to renew anything; <see cref="BillingSubscriptionStatus.Failed"/>/
+/// <see cref="BillingSubscriptionStatus.Lapsed"/> have nothing left to renew), or when a component this
+/// total needs (a purchased extra Administrator, or a connected channel) has no currently-published price
+/// to read - never a total silently missing a piece it could not honestly price.</para>
+/// </param>
 public sealed record BillingStatusDto(
     string Tier,
     int SeatLimit,
@@ -90,7 +132,10 @@ public sealed record BillingStatusDto(
     int AdminsUsed,
     int ExtraAdministratorsPurchased,
     BillingSeatPricingDto SeatPricing,
-    decimal? AdminExtraPriceRub);
+    decimal? AdminExtraPriceRub,
+    int ChannelCount,
+    decimal? ChannelAddOnPriceRub,
+    decimal? NextChargeRub);
 
 /// <summary>
 /// `25-23`: the Operator seat-purchase formula's own currently-effective numbers, read the identical

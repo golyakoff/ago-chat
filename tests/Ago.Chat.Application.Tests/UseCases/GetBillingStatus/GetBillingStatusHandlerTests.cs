@@ -246,4 +246,176 @@ public class GetBillingStatusHandlerTests
         Assert.Equal(baseSubscription.Id.Value, result.Value.LatestSubscription!.SubscriptionId);
         Assert.Equal(5, result.Value.LatestSubscription.RequestedSeats);
     }
+
+    // ----------------------------------------------------------------------------------------------
+    // `26-295`: ChannelCount/ChannelAddOnPriceRub/NextChargeRub - the console billing redesign's own
+    // missing status fields.
+    // ----------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task HandleAsync_WhenSiteHasNeverCheckedOut_ReportsZeroChannels_AndNullChannelPriceAndNextCharge()
+    {
+        var fixture = CreateFixture(tier: "free", seatLimit: 1);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(0, result.Value.ChannelCount);
+        Assert.Null(result.Value.ChannelAddOnPriceRub);
+        // No base subscription at all - nothing to renew, so NextChargeRub must not fabricate a figure.
+        Assert.Null(result.Value.NextChargeRub);
+    }
+
+    [Fact]
+    public async Task HandleAsync_CountsOnlySucceededChannelOptions_NotPendingOrLapsedOnes_AndNeverAnAiOption()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var baseSubscription = SeedSucceededBase(fixture, requestedSeats: 5);
+
+        var connected = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_telegram", new BillingOptionKey("channel-telegram"), Now);
+        connected.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+        fixture.Subscriptions.Seed(connected);
+
+        // Still Pending - not yet confirmed, must not count as "connected".
+        var pending = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_whatsapp", new BillingOptionKey("channel-whatsapp"), Now);
+        fixture.Subscriptions.Seed(pending);
+
+        // Lapsed - was once connected, no longer is.
+        var lapsed = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_vk", new BillingOptionKey("channel-vk"), Now - BillingSubscription.PeriodLength);
+        lapsed.MarkSucceeded("card_abc", Now - BillingSubscription.PeriodLength, alignedPeriodEnd: Now);
+        lapsed.MarkLapsed();
+        fixture.Subscriptions.Seed(lapsed);
+
+        // A succeeded, non-channel option (an AI add-on) - ChannelAddOnPricing.PriceKeyFor returns null
+        // for it, so it must not inflate the channel count either.
+        var aiOption = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_ai", new BillingOptionKey("ai-processing"), Now);
+        aiOption.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+        fixture.Subscriptions.Seed(aiOption);
+
+        fixture.Prices.SeedVersion(ChannelAddOnPricing.ChannelAddOnKey, 100m, Now);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, result.Value.ChannelCount);
+        Assert.Equal(100m, result.Value.ChannelAddOnPriceRub);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenChannelAddOnHasNoPublishedPrice_ReportsNullPrice_ButStillCountsConnectedChannels()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var baseSubscription = SeedSucceededBase(fixture, requestedSeats: 5);
+        var connected = BillingSubscription.CreateOption(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "pmt_telegram", new BillingOptionKey("channel-telegram"), Now);
+        connected.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+        fixture.Subscriptions.Seed(connected);
+        // ChannelAddOnPricing.ChannelAddOnKey is never seeded here - "built, not yet for sale".
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, result.Value.ChannelCount);
+        Assert.Null(result.Value.ChannelAddOnPriceRub);
+        // The channel component cannot be honestly priced - the whole total must be null, not a figure
+        // silently missing a piece.
+        Assert.Null(result.Value.NextChargeRub);
+    }
+
+    [Theory]
+    [InlineData(3, 0, 0, 490)] // base seats only, no extras, no channels
+    [InlineData(5, 0, 0, 890)] // 2 extra seats past the base
+    [InlineData(3, 2, 0, 1490)] // 2 purchased extra Administrators at 500 each
+    [InlineData(3, 0, 2, 690)] // 2 connected channels at 100 each
+    [InlineData(5, 1, 2, 1590)] // every component combined: 890 (seats) + 500 (1 admin) + 200 (2 channels)
+    public async Task HandleAsync_ComputesNextChargeRub_AsSeatsPlusAdminsPlusChannels_AtCurrentlyEffectivePrices(
+        int requestedSeats, int extraAdministrators, int channelCount, decimal expectedNextChargeRub)
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var baseSubscription = SeedSucceededBase(fixture, requestedSeats: requestedSeats);
+        if (extraAdministrators > 0)
+        {
+            baseSubscription.ApplyAdministratorPurchase(extraAdministrators, adminExtraPriceVersion: 1);
+            fixture.Prices.SeedVersion(SubscriptionTierBands.AdminExtraPriceKey, 500m, Now);
+        }
+
+        for (var i = 0; i < channelCount; i++)
+        {
+            var channel = BillingSubscription.CreateOption(
+                new BillingSubscriptionId(Guid.NewGuid()), SiteId, $"pmt_channel_{i}", new BillingOptionKey($"channel-fake{i}"), Now);
+            channel.MarkSucceeded("card_abc", Now, alignedPeriodEnd: baseSubscription.CurrentPeriodEnd);
+            fixture.Subscriptions.Seed(channel);
+        }
+
+        if (channelCount > 0)
+        {
+            fixture.Prices.SeedVersion(ChannelAddOnPricing.ChannelAddOnKey, 100m, Now);
+        }
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(expectedNextChargeRub, result.Value.NextChargeRub);
+    }
+
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Failed")]
+    [InlineData("Lapsed")]
+    public async Task HandleAsync_WhenTheBaseSubscriptionIsNotSucceededOrPastDue_ReportsNullNextCharge(string status)
+    {
+        var fixture = CreateFixture(tier: "free", seatLimit: 1);
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_1", requestedSeats: 5, tier: SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now);
+        switch (status)
+        {
+            case "Failed":
+                subscription.MarkFailed();
+                break;
+            case "Lapsed":
+                subscription.MarkSucceeded("card_abc", Now);
+                subscription.MarkLapsed();
+                break;
+        }
+
+        fixture.Subscriptions.Seed(subscription);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value.NextChargeRub);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTheBaseSubscriptionIsPastDue_StillComputesNextCharge_NotJustSucceeded()
+    {
+        var fixture = CreateFixture(tier: SubscriptionTierBands.Starter, seatLimit: 5);
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, "yk_payment_1", requestedSeats: 5, tier: SubscriptionTierBands.Starter,
+            baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - BillingSubscription.PeriodLength);
+        subscription.MarkSucceeded("card_abc", Now - BillingSubscription.PeriodLength);
+        subscription.RecordRenewalFailure(Now);
+        fixture.Subscriptions.Seed(subscription);
+
+        var result = await fixture.Handler.HandleAsync(new Application.UseCases.GetBillingStatus.GetBillingStatus(RequestedBy, SiteId), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("PastDue", result.Value.LatestSubscription!.Status);
+        Assert.Equal(890m, result.Value.NextChargeRub);
+    }
+
+    private static BillingSubscription SeedSucceededBase(Fixture fixture, int requestedSeats)
+    {
+        var subscription = BillingSubscription.Create(
+            new BillingSubscriptionId(Guid.NewGuid()), SiteId, $"yk_payment_{Guid.NewGuid():N}", requestedSeats,
+            tier: SubscriptionTierBands.Starter, baseSeatPriceVersion: 1, extraSeatPriceVersion: 1, createdAt: Now - BillingSubscription.PeriodLength);
+        subscription.MarkSucceeded("card_abc", Now - BillingSubscription.PeriodLength);
+        fixture.Subscriptions.Seed(subscription);
+        return subscription;
+    }
 }

@@ -24,6 +24,14 @@ public sealed class ResilientYooKassaPaymentsClient(IYooKassaPaymentsClient inne
     public Task<CreatePaymentResult> CreatePaymentAsync(CreatePaymentRequest request, CancellationToken cancellationToken) =>
         inner.CreatePaymentAsync(request, cancellationToken);
 
+    // `26-291`: passed through unwrapped, the identical reasoning CreatePaymentAsync's own remarks give -
+    // a token payment is the SDK's own first-payment call, the same "one ordinary synchronous call inside
+    // one caller-initiated HTTP request" shape as the redirect flow's own first payment, never a
+    // background loop this decorator's pipeline needs to keep alive.
+    public Task<CreatePaymentWithTokenResult> CreatePaymentWithTokenAsync(
+        CreatePaymentWithTokenRequest request, CancellationToken cancellationToken) =>
+        inner.CreatePaymentWithTokenAsync(request, cancellationToken);
+
     // `26-286`: passed through unwrapped, the same reasoning CreatePaymentAsync just above states - the
     // re-query runs inside one inbound webhook request this host must ack fast; a transient failure
     // surfaces as an ordinary 5xx and ЮKassa's own webhook retry re-drives the whole notification, so

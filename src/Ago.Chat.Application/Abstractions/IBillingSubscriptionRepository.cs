@@ -51,6 +51,21 @@ public interface IBillingSubscriptionRepository
     /// own remarks describe.</summary>
     Task<BillingSubscription?> GetBaseForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
 
+    /// <summary>`26-295`: <see cref="GetBaseForSiteAsync"/>'s own complement - every option row
+    /// (<see cref="BillingSubscription.IsOption"/>) for the site, whatever its
+    /// <see cref="BillingSubscriptionStatus"/>, in no particular order. The real gap the console billing
+    /// redesign named: nothing before this let a caller ask "what has this site bought beyond its base
+    /// tier" at all, so `GetBillingStatusHandler` had no way to report a connected-channel count. Not
+    /// filtered to <see cref="BillingSubscriptionStatus.Succeeded"/> here - the caller decides what
+    /// "connected" means (a lapsed or pending option is a fact worth knowing about too), the identical
+    /// "the repository answers what exists, the handler decides what counts" split
+    /// <see cref="GetLatestForSiteAsync"/>'s own remarks already draw for a different distinction.
+    /// Unbounded, deliberately: unlike <see cref="ListDueForRenewalAsync"/>'s own cross-tenant sweep, this
+    /// is one site's own row count, which is small by construction (one option per channel kind this
+    /// codebase knows about, plus at most one AI add-on) - the same low-cardinality reasoning
+    /// <see cref="GetLatestForSiteAsync"/>'s own remarks already give for needing no new index.</summary>
+    Task<IReadOnlyList<BillingSubscription>> ListOptionsForSiteAsync(SiteId siteId, CancellationToken cancellationToken);
+
     /// <summary>`13-03`: the recurring-charge job's own candidate list - every row a `Succeeded`
     /// renewal or a `PastDue` retry is owed right now (<see cref="BillingSubscription.IsDueForRenewal"/>/
     /// <see cref="BillingSubscription.IsRetryDue"/>'s own predicates, expressed as one `WHERE` clause so

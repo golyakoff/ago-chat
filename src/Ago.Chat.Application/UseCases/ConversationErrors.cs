@@ -451,6 +451,27 @@ public static class ConversationErrors
     public static Error BillingPaymentProviderRefused(string reason) =>
         new("Billing.PaymentProviderRefused", reason);
 
+    /// <summary>`26-291`: `CreateTokenPaymentHandler`'s own first guard - an empty or whitespace-only
+    /// payment token from the SDK, the caller's own mistake to fix before ЮKassa is ever called (the
+    /// identical "validate the value, translate the throw at the Application boundary" shape every other
+    /// `*.Invalid` code in this file already uses).</summary>
+    public static Error BillingInvalidPaymentToken(string reason) =>
+        new("Billing.InvalidPaymentToken", reason);
+
+    /// <summary>`26-296`: `RenewNowHandler`'s own idempotency guard - this subscription already recorded
+    /// a renewal attempt today (an earlier pay-early call that already succeeded, a double-click of this
+    /// same endpoint, or the automatic sweep firing for the same due date). ЮKassa's own idempotence key
+    /// (`renewal:{id}:{date}`, shared with the automatic sweep) already stops a same-day double-fire from
+    /// charging the card twice, but this handler also commits a domain-side effect (extending
+    /// <see cref="Domain.BillingSubscription.CurrentPeriodEnd"/>) that a second, otherwise-identical
+    /// success would repeat even though the money moved only once - this guard is what stops that second
+    /// extension from ever being attempted. `409`, not `400`/`402`: the remedy is "wait until tomorrow",
+    /// never "fix the request" or "retry now".</summary>
+    public static Error BillingSubscriptionAlreadyRenewedToday(Guid subscriptionId) =>
+        new(
+            "Billing.SubscriptionAlreadyRenewedToday",
+            $"Billing subscription {subscriptionId} already recorded a renewal today; try again tomorrow.");
+
     // `16-03`: same shared vocabulary, same reason - RequestSiteExportHandler/GetSiteExportStatusHandler
     // add their own codes here rather than a separate error class.
     public static Error ExportNotFound(Guid exportId) =>

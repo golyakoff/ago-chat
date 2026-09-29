@@ -19,6 +19,14 @@ namespace Ago.Chat.Application.UseCases.GetBillingStatus;
 /// <see cref="Ago.Chat.Application.Abstractions.IPriceCatalogRepository.FindCurrentAsync"/> reads for the
 /// seat-pricing keys `GetPricingForOwnerHandler` already reads the identical way. Six independent reads
 /// now, not three; the same freshness reasoning above covers every one of them.</para>
+///
+/// <para><b>`26-295`: two more reads joined the same lock-free shape</b> -
+/// <see cref="Ago.Chat.Application.Abstractions.IBillingSubscriptionRepository.ListOptionsForSiteAsync"/>
+/// (the site's own channel add-on rows) and one more <c>FindCurrentAsync</c> for
+/// <see cref="Ago.Chat.Domain.ChannelAddOnPricing.ChannelAddOnKey"/> - see <see cref="BillingStatusDto"/>'s
+/// own remarks on <c>ChannelCount</c>/<c>ChannelAddOnPriceRub</c>/<c>NextChargeRub</c> for what they
+/// answer. The identical freshness reasoning above covers these too: a write landing between this read
+/// and the next call changes what that <i>next</i> call reports, never this one.</para>
 /// </summary>
 public sealed class GetBillingStatusHandler(
     ISiteRepository sites, IBillingSubscriptionRepository subscriptions,
@@ -113,6 +121,33 @@ public sealed class GetBillingStatusHandler(
         // unlike the two seat-pricing keys above.
         var adminExtraPrice = await prices.FindCurrentAsync(SubscriptionTierBands.AdminExtraPriceKey, cancellationToken);
 
+        // `26-295`: every option row for the site, narrowed to the ones ChannelAddOnPricing.PriceKeyFor
+        // recognises as a channel add-on (rather than re-typing the "channel-" prefix literal here) and
+        // currently Succeeded - a Pending/Failed/Lapsed option is not "connected". Reused for both
+        // ChannelCount and the channelAmount component of NextChargeRub below, so the two can never
+        // report a different count of the same thing.
+        var options = await subscriptions.ListOptionsForSiteAsync(query.SiteId, cancellationToken);
+        var connectedChannelCount = options.Count(o =>
+            o.Status == BillingSubscriptionStatus.Succeeded && ChannelAddOnPricing.PriceKeyFor(o.OptionKey!.Value) is not null);
+        var channelAddOnPrice = await prices.FindCurrentAsync(ChannelAddOnPricing.ChannelAddOnKey, cancellationToken);
+
+        // `26-295`: see BillingStatusDto's own remarks on NextChargeRub for the full reasoning - null
+        // whenever there is no base subscription currently expected to renew, or a component this total
+        // needs has no currently-published price to read honestly.
+        decimal? nextChargeRub = null;
+        if (latest is not null && latest.Status is BillingSubscriptionStatus.Succeeded or BillingSubscriptionStatus.PastDue)
+        {
+            var adminUnpriced = latest.ExtraAdministratorsPurchased > 0 && adminExtraPrice is null;
+            var channelsUnpriced = connectedChannelCount > 0 && channelAddOnPrice is null;
+            if (!adminUnpriced && !channelsUnpriced)
+            {
+                var seatAmount = SubscriptionTierBands.ComputeSeatPriceRub(latest.RequestedSeats, basePrice.AmountRub, extraPrice.AmountRub);
+                var adminAmount = latest.ExtraAdministratorsPurchased * (adminExtraPrice?.AmountRub ?? 0m);
+                var channelAmount = connectedChannelCount * (channelAddOnPrice?.AmountRub ?? 0m);
+                nextChargeRub = seatAmount + adminAmount + channelAmount;
+            }
+        }
+
         return new BillingStatusDto(
             site.Tier,
             site.SeatLimit,
@@ -123,6 +158,9 @@ public sealed class GetBillingStatusHandler(
             adminHolderIds.Count,
             latest?.ExtraAdministratorsPurchased ?? 0,
             seatPricing,
-            adminExtraPrice?.AmountRub);
+            adminExtraPrice?.AmountRub,
+            connectedChannelCount,
+            channelAddOnPrice?.AmountRub,
+            nextChargeRub);
     }
 }

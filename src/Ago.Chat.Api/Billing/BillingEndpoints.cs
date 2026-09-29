@@ -5,8 +5,10 @@ using Ago.Chat.Application.UseCases.ChangeSubscriptionSeats;
 using Ago.Chat.Application.UseCases.PurchaseAdministratorSlot;
 using Ago.Chat.Application.UseCases.PurchaseChannelAddOn;
 using Ago.Chat.Application.UseCases.CreateCheckoutSession;
+using Ago.Chat.Application.UseCases.CreateTokenPayment;
 using Ago.Chat.Application.UseCases.GetBillingStatus;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
+using Ago.Chat.Application.UseCases.RenewNow;
 using Ago.Chat.Domain;
 using Ago.Chat.Infrastructure.YooKassa;
 
@@ -33,13 +35,31 @@ public static class BillingEndpoints
     public static void MapBillingEndpoints(this WebApplication app)
     {
         app.MapCreateCheckoutSessionEndpoint();
+        app.MapCreateTokenPaymentEndpoint();
         app.MapYooKassaWebhookEndpoint();
         app.MapCancelSubscriptionEndpoint();
         app.MapChangeSubscriptionSeatsEndpoint();
         app.MapPurchaseAdministratorSlotEndpoint();
         app.MapPurchaseChannelAddOnEndpoint();
         app.MapGetBillingStatusEndpoint();
+        app.MapRenewNowEndpoint();
     }
+
+    /// <summary>`26-291`: the YooKassa Android SDK's own token-payment counterpart to
+    /// <see cref="MapCreateCheckoutSessionEndpoint"/> right below - same route family, same
+    /// `RequireOperatorIdentity` gate, a `/token` suffix rather than a second top-level resource because
+    /// this is the identical use case (create a pending payment, save the subscription) reaching the
+    /// same port a second way (`CreateTokenPaymentHandler`'s own remarks).</summary>
+    public static void MapCreateTokenPaymentEndpoint(this WebApplication app) =>
+        app.MapPost("/api/v1/sites/{siteId:guid}/billing/checkout-sessions/token", HandleCreateTokenPaymentAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
+
+    /// <summary>`26-296`: pay-early - the identical `RequireOperatorIdentity` + `Permission.SiteConfigure`
+    /// gate (via `RenewNowHandler`) every other billing write in this file already uses.</summary>
+    public static void MapRenewNowEndpoint(this WebApplication app) =>
+        app.MapPost(
+            "/api/v1/sites/{siteId:guid}/billing/subscriptions/{subscriptionId:guid}/renew-now", HandleRenewNowAsync)
+            .RequireAuthorization("RequireOperatorIdentity");
 
     /// <summary>`13-04`: the console billing screen's own bootstrap read - `GetBillingStatus`'s own
     /// remarks on why this did not already exist. Same `Permission.SiteConfigure` gate every other
@@ -108,6 +128,35 @@ public static class BillingEndpoints
         var user = httpContext.User;
         var result = await handler.HandleAsync(
             new CreateCheckoutSession(user.GetOperatorId(), new SiteId(siteId), request.RequestedSeats), cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleCreateTokenPaymentAsync(
+        Guid siteId,
+        CreateTokenPaymentRequest request,
+        CreateTokenPaymentHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new CreateTokenPayment(user.GetOperatorId(), new SiteId(siteId), request.RequestedSeats, request.PaymentToken),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
+    }
+
+    private static async Task<IResult> HandleRenewNowAsync(
+        Guid siteId,
+        Guid subscriptionId,
+        RenewNowHandler handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var user = httpContext.User;
+        var result = await handler.HandleAsync(
+            new RenewNow(user.GetOperatorId(), new SiteId(siteId), new BillingSubscriptionId(subscriptionId)), cancellationToken);
 
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok(result.Value);
     }
@@ -234,6 +283,8 @@ public static class BillingEndpoints
     }
 
     public sealed record CreateCheckoutSessionRequest(int RequestedSeats);
+
+    public sealed record CreateTokenPaymentRequest(int RequestedSeats, string PaymentToken);
 
     public sealed record ChangeSubscriptionSeatsRequest(int RequestedSeats);
 

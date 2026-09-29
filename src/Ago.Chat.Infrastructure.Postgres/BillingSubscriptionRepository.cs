@@ -45,6 +45,16 @@ public sealed class BillingSubscriptionRepository(AgoChatDbContext db) : IBillin
             .OrderByDescending(s => s.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
+    /// <summary>`26-295`: the identical `site_id` FK-backed query <see cref="GetLatestForSiteAsync"/>/
+    /// <see cref="GetBaseForSiteAsync"/> already use, narrowed the opposite way - `OptionKey IS NOT NULL`
+    /// rather than `IS NULL` - and returning every matching row instead of just the newest one. No new
+    /// index, the identical "low-frequency, single-operator-driven console read" reasoning those two
+    /// methods' own remarks already give.</summary>
+    public async Task<IReadOnlyList<BillingSubscription>> ListOptionsForSiteAsync(SiteId siteId, CancellationToken cancellationToken) =>
+        await db.BillingSubscriptions
+            .Where(s => s.SiteId == siteId && s.OptionKey != null)
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<BillingSubscriptionId>> ListDueForRenewalAsync(
         DateTimeOffset now, int batchSize, CancellationToken cancellationToken)
     {
