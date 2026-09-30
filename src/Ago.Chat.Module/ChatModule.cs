@@ -142,6 +142,7 @@ using Ago.Chat.Application.UseCases.MintVisitorChannelLinkCode;
 using Ago.Chat.Application.UseCases.ProcessSubscriptionRenewal;
 using Ago.Chat.Application.UseCases.ProcessYooKassaWebhook;
 using Ago.Chat.Application.UseCases.RenewNow;
+using Ago.Chat.Application.UseCases.SetModuleTriggerWordsForSite;
 using Ago.Chat.Application.UseCases.SetNextPeriodComposition;
 using Ago.Chat.Application.UseCases.PreviewBillingPurchase;
 using Ago.Chat.Application.UseCases.ReceiveChannelMessage;
@@ -819,6 +820,10 @@ public sealed class ChatModule : IProductModule
         // own remarks) rather than RequirePlatformOwner.
         services.AddScoped<EnableModuleForSiteHandler>();
         services.AddScoped<DisableModuleForSiteHandler>();
+        // `26-320`: the tenant admin's own edit of an already-enabled module's trigger words - the write
+        // half `26-316` left out. Gated by IPermissionChecker on `site:configure` like its enable/disable
+        // siblings above, never RequirePlatformOwner (SetModuleTriggerWordsForSiteHandler's own remarks).
+        services.AddScoped<SetModuleTriggerWordsForSiteHandler>();
         // `23-01`: the console's own read of this route group - see the handler's own remarks for why
         // it exists at all (the endpoint used to call IEnabledModuleReadStore directly, ungated).
         services.AddScoped<ListEnabledModulesForSiteHandler>();

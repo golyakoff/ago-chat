@@ -896,6 +896,20 @@ public static class ConversationErrors
     public static Error ModuleDisableOwnerGrantRefused(string reason) =>
         new("Module.DisableOwnerGrantRefused", reason);
 
+    /// <summary>`26-320`: the sibling of <see cref="ModuleDisableOwnerGrantRefused"/> for the tenant's own
+    /// trigger-word edit (<see cref="SetModuleTriggerWordsForSite.SetModuleTriggerWordsForSiteHandler"/>) -
+    /// the row named is a platform-owner grant (<see cref="Domain.EnabledModule.GrantedByOwner"/>), whose
+    /// trigger words stay owner-managed for the same reason its on/off toggle does: a tenant must not be
+    /// able to re-point, from their own settings, a routing string a platform owner deliberately set.
+    /// Its own code rather than a reuse of <see cref="ModuleDisableOwnerGrantRefused"/> so a client
+    /// branching on <c>type</c> (`api-design.md`) can tell "you cannot turn this off" from "you cannot
+    /// re-word this trigger" - two different acts on the same owner-managed row, with two different
+    /// messages a person acts on. `409`, the identical status
+    /// <see cref="ModuleDisableOwnerGrantRefused"/> uses: the caller's identity is not in question, only
+    /// whether this act is allowed against this row's current state.</summary>
+    public static Error ModuleTriggerWordsOwnerGrantRefused(string reason) =>
+        new("Module.TriggerWordsOwnerGrantRefused", reason);
+
     /// <summary>`23-13`: the request set <c>Force</c> but carried no non-blank reason, or one longer
     /// than <see cref="RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler.MaxReasonLength"/> -
     /// checked first, before this handler touches the module or the row it is revoking (that handler's

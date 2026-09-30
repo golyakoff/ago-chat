@@ -240,6 +240,65 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
     }
 
     // ------------------------------------------------------------------------------------------
+    // `26-320`: the tenant admin's own edit of an already-enabled module's trigger words, end-to-end.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The item's own headline: a tenant admin edits an enabled module's trigger words from their
+    /// own settings, and the `GET` listing the console reads reflects the new set - no platform-owner action.</summary>
+    [Fact]
+    public async Task DemoAdminToken_CanEditTriggerWordsOfTheirOwnModule_ThenTheListingReflectsThem()
+    {
+        var moduleKey = UniqueModuleKey();
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        await client.PutAsJsonAsync($"{Route}/{moduleKey}", new { triggerWords = new[] { $"/{moduleKey}" } });
+
+        var edit = await client.PutAsJsonAsync(
+            $"{Route}/{moduleKey}/trigger-words", new { triggerWords = new[] { $"/{moduleKey}", "/booking" } });
+        Assert.Equal(HttpStatusCode.OK, edit.StatusCode);
+
+        var listing = await client.GetFromJsonAsync<ModuleEndpoints.EnabledModulesResponse>(Route);
+        var enabled = Assert.Single(listing!.Modules, m => m.ModuleKey == moduleKey);
+        Assert.Equal([$"/{moduleKey}", "/booking"], enabled.TriggerWords);
+    }
+
+    /// <summary>The platform-owner grant stays an override for trigger words too: a tenant cannot re-word a
+    /// module a platform owner granted (`GrantedByOwner`), so this returns `409` and leaves the words as they
+    /// were - the mirror of the disable refusal above, proving the new code's own status mapping.</summary>
+    [Fact]
+    public async Task DemoAdminToken_CannotEditTriggerWordsOfAPlatformOwnerGrant()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), fixture.SeededSiteId, new ModuleKey(moduleKey), [$"/{moduleKey}"],
+                new Uri("https://calendar.example.com"), new ModuleCredential("an-owner-granted-secret-of-sixteen-plus"),
+                DateTimeOffset.UtcNow, grantedByOwner: true));
+            await db.SaveChangesAsync();
+        }
+
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var response = await client.PutAsJsonAsync(
+            $"{Route}/{moduleKey}/trigger-words", new { triggerWords = new[] { "/booking" } });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Equal("Module.TriggerWordsOwnerGrantRefused", problem!.Title);
+
+        // The words are untouched.
+        await using var db2 = fixture.CreateDbContext();
+        var row = await db2.EnabledModules.AsNoTracking()
+            .SingleAsync(m => m.SiteId == fixture.SeededSiteId && m.ModuleKey == new ModuleKey(moduleKey));
+        Assert.Equal([$"/{moduleKey}"], row.TriggerWords);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // `23-83`/`adr/0151`: rotate and verify stay gone from the tenant surface - a `404`, no route to
     // reach at all (the same "routing found nothing" distinction, unchanged by `26-316`).
     // ------------------------------------------------------------------------------------------
@@ -320,6 +379,10 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddSingleton<IModulePermissionsProvider, StubModulePermissionsProvider>();
         builder.Services.AddScoped<Application.UseCases.EnableModuleForSite.EnableModuleForSiteHandler>();
         builder.Services.AddScoped<Application.UseCases.DisableModuleForSite.DisableModuleForSiteHandler>();
+        // `26-320`: the tenant admin's own trigger-word edit - a Chat-side-only write (no module call), so
+        // it needs no gateway or secret beyond the permission checker, repository, read store and clock
+        // already registered above.
+        builder.Services.AddScoped<Application.UseCases.SetModuleTriggerWordsForSite.SetModuleTriggerWordsForSiteHandler>();
 
         builder.Services.AddHttpContextAccessor();
         // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog

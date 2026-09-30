@@ -1280,12 +1280,15 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // `26-316`'s reinstated enable/disable toggle - so every handler that group resolves must be
         // registered here or endpoint construction fails for the group as a whole (a "failure to infer
         // one or more parameters" at host build). Rotate/verify stay gone from the tenant surface
-        // (`23-83`/`adr/0151`), so only these three are needed; the enable/disable ports they compose
+        // (`23-83`/`adr/0151`), so only the read plus enable/disable/trigger-words are needed; the ports they compose
         // (registration gateway, secret/entry-point/permissions providers, credential generator, role and
         // site repositories) are all already registered above for the owner handlers.
         builder.Services.AddScoped<ListEnabledModulesForSiteHandler>();
         builder.Services.AddScoped<Application.UseCases.EnableModuleForSite.EnableModuleForSiteHandler>();
         builder.Services.AddScoped<Application.UseCases.DisableModuleForSite.DisableModuleForSiteHandler>();
+        // `26-320`: the tenant trigger-words edit is part of the same MapModuleEndpoints group, so its
+        // handler must be registered here too or the group's endpoint construction fails as a whole.
+        builder.Services.AddScoped<Application.UseCases.SetModuleTriggerWordsForSite.SetModuleTriggerWordsForSiteHandler>();
         builder.Services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
         // `23-83`/`adr/0151`: the platform owner's own rotate/verify, added once the tenant's own
