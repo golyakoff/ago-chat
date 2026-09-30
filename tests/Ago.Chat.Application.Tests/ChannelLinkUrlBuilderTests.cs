@@ -13,11 +13,13 @@ public class ChannelLinkUrlBuilderTests
     }
 
     [Fact]
-    public void BuildUrl_ForMax_BuildsTheDeepLinkWithAnAtSign()
+    public void BuildUrl_ForMax_BuildsTheDeepLinkWithoutAnAtSign()
     {
-        var url = ChannelLinkUrlBuilder.BuildUrl(ChannelKind.Max, "example_shop_bot");
+        // `26-319`: MAX's public bot deep link is `https://max.ru/<botName>`, no `@`
+        // (dev.max.ru/docs/chatbots/bots-coding/prepare). The bot's own handle is `id<digits>_bot`.
+        var url = ChannelLinkUrlBuilder.BuildUrl(ChannelKind.Max, "id663313676809_bot");
 
-        Assert.Equal("https://max.ru/@example_shop_bot", url);
+        Assert.Equal("https://max.ru/id663313676809_bot", url);
     }
 
     [Fact]

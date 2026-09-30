@@ -49,9 +49,13 @@ public static class ChannelLinkUrlBuilder
             // path itself (confirmed against Telegram's own documented deep-link form, `t.me/<username>`).
             ChannelKind.Telegram => $"https://t.me/{handle}",
 
-            // MAX's own public bot surface mirrors Telegram's shape but keeps the `@` in the path -
-            // `max.ru/@<username>`, per this item's own worked example in `docs/backlog/25-148-*.md`.
-            ChannelKind.Max => $"https://max.ru/@{handle}",
+            // MAX's own public bot deep link is `https://max.ru/<botName>` - NO leading `@` in the path
+            // (confirmed against MAX's official docs, dev.max.ru/docs/chatbots/bots-coding/prepare:
+            // `https://max.ru/<botName>?start=<payload>`; a bot's own handle is `id<digits>_bot`, which
+            // MAX assigns and does not let the owner change). `26-319`: the `@` here was wrong - a
+            // 25-148 design-time assumption that MAX mirrored a (mis-remembered) Telegram `@` form -
+            // and produced `max.ru/@id..._bot`, which MAX answers with "чат не найден".
+            ChannelKind.Max => $"https://max.ru/{handle}",
 
             // VK's own community deep link, `vk.me/club<id>` - `handle` here is the bare numeric
             // community id (`25-147`'s own read-time-derivation decision; never stored with the "club"
