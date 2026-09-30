@@ -17,9 +17,17 @@ namespace Ago.Chat.Application.UseCases.GetSeatAssignmentSummary;
 /// <para><b>`25-170`: one row per seeded role, not one Operator-role-only number.</b> The Admin role now
 /// gets the identical over-limit visibility the Operator role always had - see
 /// <see cref="RoleSeatAssignmentSummaryDto"/>'s own remarks.</para>
+///
+/// <para><b>`26-312`: each role's own limit now includes the platform owner's live grant on top of
+/// whatever billing currently grants</b> (<see cref="RoleSeatLimits.LimitFor"/> alone, unmodified,
+/// undercounted it whenever the owner had hand-granted an extra seat) - the identical additive term
+/// <see cref="GetOwnerSeatSummary.GetOwnerSeatSummaryHandler"/> already applies for the owner console's
+/// own read of the same two counts, read live rather than cached for the same reason that read is
+/// (<see cref="IOwnerSeatGrantStore.GetEffectiveExtraAsync"/>'s own remarks, CLAUDE.md rule 8).</para>
 /// </summary>
 public sealed class GetSeatAssignmentSummaryHandler(
-    IOperatorRoleRepository operatorRoles, ISiteRepository sites, IPermissionChecker permissions)
+    IOperatorRoleRepository operatorRoles, ISiteRepository sites, IPermissionChecker permissions,
+    IOwnerSeatGrantStore grants, IClock clock)
 {
     public async Task<Result<SeatAssignmentSummaryDto>> HandleAsync(
         GetSeatAssignmentSummary query, CancellationToken cancellationToken)
@@ -37,11 +45,15 @@ public sealed class GetSeatAssignmentSummaryHandler(
             return ConversationErrors.SiteNotFound(query.SiteId.Value);
         }
 
+        var now = clock.UtcNow;
+
         var roles = new List<RoleSeatAssignmentSummaryDto>(2);
         foreach (var roleName in new[] { RoleSeatLimits.OperatorRoleName, RoleSeatLimits.AdminRoleName })
         {
             var held = await operatorRoles.GetHeldSeatHolderIdsAsync(query.SiteId, roleName, cancellationToken);
-            var limit = RoleSeatLimits.LimitFor(roleName, site);
+            var extra = await grants.GetEffectiveExtraAsync(
+                query.SiteId, RoleSeatLimits.OwnerGrantRoleFor(roleName), now, cancellationToken);
+            var limit = RoleSeatLimits.LimitFor(roleName, site) + extra;
             roles.Add(new RoleSeatAssignmentSummaryDto(roleName, held.Count, limit, held.Count > limit));
         }
 
