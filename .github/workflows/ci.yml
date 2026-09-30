@@ -188,8 +188,15 @@ jobs:
             name="ago-chat-$(echo "${project#Ago.Chat.}" | tr '[:upper:]' '[:lower:]')"
             repo="ghcr.io/${{ github.repository_owner }}/${name}"
             echo "::group::${repo}"
+            # `26-313`: the container does not mount the repo, so a repo-root `.trivyignore` would be
+            # invisible - the ignore file is bind-mounted in explicitly and named with the global
+            # `--ignorefile` flag (before the `image` subcommand). It carries exactly one time-boxed
+            # entry (`.trivyignore.yaml`, CVE-2026-84782) with an `expired_at` that makes the exception
+            # lapse on its own; see that file's own comment for why it exists and when it must go.
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "${{ github.workspace }}/.trivyignore.yaml:/.trivyignore.yaml:ro" \
               aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+              --ignorefile /.trivyignore.yaml \
               image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 --format table \
               "${repo}:${{ github.sha }}" || fail=1
             echo "::endgroup::"

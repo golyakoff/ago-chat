@@ -1,0 +1,17 @@
+# Time-boxed vulnerability exceptions for the image scan (ci.yml `publish-images`).
+#
+# `26-313`: this file exists ONLY to unblock image publishing while a base-image CVE has no fix we can
+# apply ourselves. Every entry MUST carry an `expired_at`, so a forgotten exception re-blocks the gate
+# on its own rather than silently living forever. The project's default posture is still "Critical/High
+# blocks the publish, and the fix is to bump the dependency" (docs/runbooks/vulnerability-response.md in
+# ago-root) - this is the deliberate, author-approved exception to that, not a new standing policy.
+vulnerabilities:
+  - id: CVE-2026-84782
+    # openssl (libssl3t64) information-disclosure. Fixed by Ubuntu in 3.0.13-0ubuntu3.16, but our
+    # runtime is mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled - a chiseled image with no apt, so
+    # we CANNOT pull the patched package ourselves; it only arrives when Microsoft republishes that base
+    # tag. Author-approved on 2026-09-30 to unblock deploys until then.
+    statement: >-
+      openssl CVE in Microsoft's dotnet chiseled base; no in-image fix possible (no apt).
+      Remove this entry the moment 10.0-noble-chiseled ships openssl >= 3.0.13-0ubuntu3.16.
+    expired_at: 2026-10-14
