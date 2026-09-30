@@ -420,6 +420,11 @@ public static class ErrorExtensions
                 // intent rather than by fixing the request body - the same shape
                 // ChannelCredential.AlreadyConnected already gives its own conflict.
                 or "Module.RevokePurchaseRequiresForce"
+                // `26-316`: the mirror of Module.RevokePurchaseRequiresForce - a tenant tried to
+                // disable a module a platform owner granted (an override this self-service path must not
+                // silently undo). A real conflict with the row's own current state, not a malformed
+                // request, the same shape as its sibling one line up.
+                or "Module.DisableOwnerGrantRefused"
                 // `23-68`: the identical "a real conflict, resolved by an explicit second statement of
                 // intent" shape Module.RevokePurchaseRequiresForce already gives its own override,
                 // restated for the seat-restore override - restoring this seat would put the site over

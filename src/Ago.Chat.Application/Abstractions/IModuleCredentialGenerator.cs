@@ -7,11 +7,12 @@
 /// "a non-empty string came back", the same gap <see cref="IIdGenerator"/>/<see cref="IClock"/> close
 /// for identity and time).
 ///
-/// <para><b>Not used by <c>EnableModuleForSiteAsOwnerHandler</c></b> (the only registration path left
-/// after `23-83`/`adr/0151` removed the tenant's own self-service enable). That handler still accepts
-/// a caller-supplied <see cref="Domain.ModuleCredential"/>, unchanged from `22-02` - see
-/// <c>RotateModuleCredentialAsOwnerHandler</c>'s own remarks for why rotation mints instead and
-/// enabling does not.</para>
+/// <para><b>Not used by <c>EnableModuleForSiteAsOwnerHandler</c></b> - that handler still accepts a
+/// caller-supplied <see cref="Domain.ModuleCredential"/>, unchanged from `22-02` (a platform owner
+/// running a runbook can carry one). <c>RotateModuleCredentialAsOwnerHandler</c> mints instead, and so
+/// does `26-316`'s tenant self-service <c>EnableModuleForSiteHandler</c>: a tenant clicking a toggle has
+/// no credential to supply and no reason to, so the enable path that a tenant reaches generates one here
+/// exactly as rotation does.</para>
 /// </summary>
 public interface IModuleCredentialGenerator
 {

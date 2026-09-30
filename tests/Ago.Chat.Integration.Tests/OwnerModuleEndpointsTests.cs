@@ -1276,15 +1276,16 @@ public sealed class OwnerModuleEndpointsTests(OperatorOidcFixture fixture)
         // re-proving that.
         builder.Services.AddSingleton<IModulePermissionsProvider>(new AnyKeyModulePermissionsProvider(ModulePermissionSet.Empty));
 
-        // `23-83`/`adr/0151`: the tenant's own self-service handlers that used to be registered here
-        // (EnableModuleForSiteHandler/RotateModuleCredentialHandler/RevokeModuleForSiteHandler/
-        // VerifyModuleRegistrationHandler) are gone - `Api.Modules.ModuleEndpoints` maps only the GET
-        // route now, and that handler is the one still registered below.
-        // `23-01`: MapModuleEndpoints maps the whole self-service group at once, including
-        // the GET route's own handler - an unregistered handler here fails endpoint
-        // construction for the group as a whole (ModuleEndpointsTests's own remarks), which
-        // is exactly what this file's own fails-before run demonstrated.
+        // `23-01`/`26-316`: MapModuleEndpoints maps the whole tenant group at once - the GET read plus
+        // `26-316`'s reinstated enable/disable toggle - so every handler that group resolves must be
+        // registered here or endpoint construction fails for the group as a whole (a "failure to infer
+        // one or more parameters" at host build). Rotate/verify stay gone from the tenant surface
+        // (`23-83`/`adr/0151`), so only these three are needed; the enable/disable ports they compose
+        // (registration gateway, secret/entry-point/permissions providers, credential generator, role and
+        // site repositories) are all already registered above for the owner handlers.
         builder.Services.AddScoped<ListEnabledModulesForSiteHandler>();
+        builder.Services.AddScoped<Application.UseCases.EnableModuleForSite.EnableModuleForSiteHandler>();
+        builder.Services.AddScoped<Application.UseCases.DisableModuleForSite.DisableModuleForSiteHandler>();
         builder.Services.AddScoped<EnableModuleForSiteAsOwnerHandler>();
         builder.Services.AddScoped<RevokeModuleForSiteAsOwnerHandler>();
         // `23-83`/`adr/0151`: the platform owner's own rotate/verify, added once the tenant's own

@@ -24,13 +24,16 @@ using Microsoft.IdentityModel.Tokens;
 namespace Ago.Chat.Integration.Tests;
 
 /// <summary>
-/// `19-03`/`22-11` built `PUT`/rotate/revoke/verify on `/api/v1/sites/{siteId}/modules` alongside the
-/// `GET` this file also proves; `23-83`/`adr/0151` removed all four writes, not re-plumbed - a tenant
-/// operator never turns a module on for themselves, only the platform (`OwnerModuleEndpointsTests`'
-/// own route) or a payment the system has not built yet (`adr/0151`'s own "what this does not
-/// decide"). This file now proves two things instead of five: the surviving read still works exactly
-/// as `23-01` left it, and every removed route is actually gone for a tenant - not merely refused for
-/// lacking a permission, refused because there is no route left to reach at all.
+/// `19-03`/`22-11` built `PUT`/rotate/revoke/verify on `/api/v1/sites/{siteId}/modules`; `23-83`/`adr/0151`
+/// removed all four. `26-316` (author decision в, self-serve) brings back enable and disable as a tenant
+/// admin's own on/off toggle - now keyed by module in the path (`PUT`/`DELETE .../modules/{moduleKey}`),
+/// safe because `adr/0150`/`adr/0154` moved the provisioning secret and entry point to configuration, so
+/// nothing secret rides in the request. Rotate and verify stay gone from the tenant surface (owner-only).
+///
+/// <para>This file proves: the read still works as `23-01` left it; enable then disable toggles what the
+/// read returns end-to-end; the toggle refuses without `site:configure` and never reaches a site the
+/// caller does not administer; a platform-owner grant cannot be turned off from here; and rotate/verify
+/// are still absent (a `404`, no route to reach at all).</para>
 /// </summary>
 [Collection(OperatorOidcCollection.Name)]
 public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
@@ -121,43 +124,125 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
     }
 
     // ------------------------------------------------------------------------------------------
-    // `23-83`/`adr/0151`: the fails-before proof for a removal. Before this item, each of these four
-    // calls reached a handler (and, for `PUT`, actually registered a module - the "must not become the
-    // normal path" claim this file used to name for the boundary between this route and the owner's
-    // own). After it, there is no route to dispatch to at all: MapGroup's `RequireAuthorization`
-    // middleware never runs, because ASP.NET Core's own endpoint-routing middleware has nothing
-    // matching this verb+path pair to hand to it - the same reason `NoToken_CannotListModules` above
-    // gets a `401` (a route was found, authentication was not) while every test below gets a `404` (no
-    // route was found at all, so authentication was never asked about). That distinction is the whole
-    // proof that this is a removed route, not merely a route that now always refuses.
+    // `26-316`: the self-serve toggle, end-to-end over real HTTP + real Postgres. The external module
+    // deployment is stubbed (it lives in another repository), everything else is the production wiring.
     // ------------------------------------------------------------------------------------------
 
-    /// <summary>
-    /// `23-83`: <b>405, not 404, and the difference is the point.</b> The collection path itself
-    /// survives - `GET` on it stays, because a tenant seeing which products are on their account is
-    /// ordinary and carries no secret. So what was removed is the <i>method</i>, not the resource, and
-    /// ASP.NET answers a known path with an unmapped verb the way HTTP says to. Asserting 404 here
-    /// would have been asserting that the read had gone too.
-    /// </summary>
+    /// <summary>The item's own headline: enabling a module for the caller's own site makes it appear in
+    /// the same `GET` listing the console reads - a tenant admin turned a product on with no
+    /// platform-owner action.</summary>
     [Fact]
-    public async Task AdminToken_CanNoLongerEnableAModule_TheWriteMethodIsGone()
+    public async Task DemoAdminToken_CanEnableAModuleForTheirOwnSite_ThenItAppearsInTheListing()
     {
+        var moduleKey = UniqueModuleKey();
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var enable = await client.PutAsJsonAsync($"{Route}/{moduleKey}", new { triggerWords = new[] { $"/{moduleKey}" } });
+        Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
+
+        var listing = await client.GetFromJsonAsync<ModuleEndpoints.EnabledModulesResponse>(Route);
+        var enabled = Assert.Single(listing!.Modules, m => m.ModuleKey == moduleKey);
+        Assert.False(enabled.GrantedByOwner);
+    }
+
+    /// <summary>The toggle's other half: disable removes the module from the same listing (`GetForSiteAsync`
+    /// stops returning it), and does so non-destructively - the row is tombstoned in the database, not
+    /// deleted, so a later re-enable and the erasure job can both still find the module's history.</summary>
+    [Fact]
+    public async Task DemoAdminToken_CanDisableAModule_ThenItDisappearsFromTheListing()
+    {
+        var moduleKey = UniqueModuleKey();
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        await client.PutAsJsonAsync($"{Route}/{moduleKey}", new { triggerWords = new[] { $"/{moduleKey}" } });
+
+        var disable = await client.DeleteAsync($"{Route}/{moduleKey}");
+        Assert.Equal(HttpStatusCode.OK, disable.StatusCode);
+
+        var listing = await client.GetFromJsonAsync<ModuleEndpoints.EnabledModulesResponse>(Route);
+        Assert.DoesNotContain(listing!.Modules, m => m.ModuleKey == moduleKey);
+
+        // Non-destructive: the tombstoned row is still in the table (the erasure job's own history read).
+        await using var db = fixture.CreateDbContext();
+        var row = await db.EnabledModules.AsNoTracking()
+            .SingleAsync(m => m.SiteId == fixture.SeededSiteId && m.ModuleKey == new ModuleKey(moduleKey));
+        Assert.NotNull(row.RevokedAt);
+    }
+
+    /// <summary>"Only ever affects the caller's own site": the same admin, holding `site:configure` on
+    /// their own site, cannot enable a module for a tenant they do not administer.</summary>
+    [Fact]
+    public async Task DemoAdminToken_CannotEnableAModuleForAnotherTenant()
+    {
+        var victimSiteId = new SiteId(Guid.NewGuid());
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Sites.Add(new Site(victimSiteId, $"site_{victimSiteId.Value:N}", []));
+            await db.SaveChangesAsync();
+        }
+
+        var moduleKey = UniqueModuleKey();
         var token = await fixture.GetDemoAdminAccessTokenAsync();
         await using var host = await BuildTestHostAsync();
         using var client = CreateClient(host, token);
 
         var response = await client.PutAsJsonAsync(
-            Route, new
-            {
-                moduleKey = "faq",
-                triggerWords = new[] { "/faq" },
-                entryPoint = "https://faq.example.com",
-                credential = "a-shared-secret-of-sixteen-plus-chars",
-                provisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars",
-            });
+            $"/api/v1/sites/{victimSiteId.Value}/modules/{moduleKey}", new { triggerWords = new[] { $"/{moduleKey}" } });
 
-        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Equal("Conversation.Forbidden", problem!.Title);
     }
+
+    /// <summary>The route exists now, so an unauthenticated caller is refused at authentication (`401`),
+    /// not routing - the mirror of the `404` rotate/verify still get for a route that does not exist.</summary>
+    [Fact]
+    public async Task NoToken_CannotEnableAModule()
+    {
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        _ = token;
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token: null);
+
+        var response = await client.PutAsJsonAsync($"{Route}/{UniqueModuleKey()}", new { triggerWords = new[] { "/x" } });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    /// <summary>The platform-owner grant stays an override: a tenant cannot disable a module a platform
+    /// owner granted (`GrantedByOwner`), so this returns `409` and leaves it enabled.</summary>
+    [Fact]
+    public async Task DemoAdminToken_CannotDisableAPlatformOwnerGrant()
+    {
+        var moduleKey = UniqueModuleKey();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.EnabledModules.Add(new EnabledModule(
+                new EnabledModuleId(Guid.NewGuid()), fixture.SeededSiteId, new ModuleKey(moduleKey), [$"/{moduleKey}"],
+                new Uri("https://calendar.example.com"), new ModuleCredential("an-owner-granted-secret-of-sixteen-plus"),
+                DateTimeOffset.UtcNow, grantedByOwner: true));
+            await db.SaveChangesAsync();
+        }
+
+        var token = await fixture.GetDemoAdminAccessTokenAsync();
+        await using var host = await BuildTestHostAsync();
+        using var client = CreateClient(host, token);
+
+        var response = await client.DeleteAsync($"{Route}/{moduleKey}");
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.Equal("Module.DisableOwnerGrantRefused", problem!.Title);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // `23-83`/`adr/0151`: rotate and verify stay gone from the tenant surface - a `404`, no route to
+    // reach at all (the same "routing found nothing" distinction, unchanged by `26-316`).
+    // ------------------------------------------------------------------------------------------
 
     [Fact]
     public async Task AdminToken_CanNoLongerRotateACredential_TheRouteIsGone()
@@ -168,22 +253,6 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
 
         var response = await client.PostAsJsonAsync(
             $"{Route}/faq/rotate", new { provisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars" });
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task AdminToken_CanNoLongerRevokeAModule_TheRouteIsGone()
-    {
-        var token = await fixture.GetDemoAdminAccessTokenAsync();
-        await using var host = await BuildTestHostAsync();
-        using var client = CreateClient(host, token);
-
-        using var request = new HttpRequestMessage(HttpMethod.Delete, $"{Route}/faq")
-        {
-            Content = JsonContent.Create(new { provisioningSecret = "a-provisioning-secret-of-sixteen-plus-chars" }),
-        };
-        var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -202,26 +271,7 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    /// <summary>The removal is not merely "this token cannot" - nobody can, because there is nothing
-    /// to authenticate for. Routing runs before authentication in the ASP.NET Core pipeline, so an
-    /// unauthenticated caller gets the identical `404` an authenticated one does above.</summary>
-    [Fact]
-    public async Task NoToken_IsRefusedTheSameWay_OnTheRemovedEnableWrite()
-    {
-        await using var host = await BuildTestHostAsync();
-        using var client = CreateClient(host, token: null);
-
-        var response = await client.PutAsJsonAsync(
-            Route, new
-            {
-                moduleKey = "faq",
-                triggerWords = new[] { "/faq" },
-                entryPoint = "https://faq.example.com",
-                credential = "a-shared-secret-of-sixteen-plus-chars",
-            });
-
-        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
-    }
+    private static string UniqueModuleKey() => $"ss-{Guid.NewGuid():N}";
 
     private static HttpClient CreateClient(WebApplication host, string? token)
     {
@@ -246,10 +296,7 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
             options.UseNpgsql(provider.GetRequiredService<Npgsql.NpgsqlDataSource>()));
 
         // The production registrations for this route, exactly as ChatModule/AddPostgresPersistence
-        // make them. `23-83`: only the GET route's own handler is left in this group - see
-        // `ModuleEndpoints`'s own remarks for why `EnableModuleForSiteHandler`/
-        // `RotateModuleCredentialHandler`/`RevokeModuleForSiteHandler`/`VerifyModuleRegistrationHandler`
-        // are not registered here any more; they no longer exist.
+        // make them. `26-316`: enable/disable are back on this group (rotate/verify stay owner-only).
         builder.Services.AddScoped<IOperatorRepository, OperatorRepository>();
         // `25-170`: ResolveOperatorIdentityHandler now composes IOperatorRoleRepository instead of
         // IPermissionChecker - CanSignIn is the one-rule "does any held role still hold its own seat" form.
@@ -259,6 +306,20 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
         builder.Services.AddScoped<IEnabledModuleRepository, EnabledModuleRepository>();
         builder.Services.AddScoped<IEnabledModuleReadStore, EnabledModuleReadStore>();
         builder.Services.AddScoped<ListEnabledModulesForSiteHandler>();
+
+        // `26-316`: the self-serve enable/disable handlers and their ports. DB-backed collaborators are
+        // the real production types (so the toggle really writes and clears rows); the external module
+        // deployment and the deployment-configured secret/entry point/permission map are stubbed - the
+        // module lives in another repository, and this test is about Chat's own side of the toggle.
+        builder.Services.AddScoped<IRoleRepository, RoleRepository>();
+        builder.Services.AddScoped<ISiteRepository, SiteRepository>();
+        builder.Services.AddScoped<IModuleCredentialGenerator, ModuleCredentialGenerator>();
+        builder.Services.AddSingleton<IModuleRegistrationGateway, StubModuleRegistrationGateway>();
+        builder.Services.AddSingleton<IModuleProvisioningSecretProvider, StubModuleProvisioningSecretProvider>();
+        builder.Services.AddSingleton<IModuleEntryPointProvider, StubModuleEntryPointProvider>();
+        builder.Services.AddSingleton<IModulePermissionsProvider, StubModulePermissionsProvider>();
+        builder.Services.AddScoped<Application.UseCases.EnableModuleForSite.EnableModuleForSiteHandler>();
+        builder.Services.AddScoped<Application.UseCases.DisableModuleForSite.DisableModuleForSiteHandler>();
 
         builder.Services.AddHttpContextAccessor();
         // `23-73`: OperatorIdentityClaimsTransformation's own new dependencies - the watchdog
@@ -298,5 +359,50 @@ public sealed class ModuleEndpointsTests(OperatorOidcFixture fixture)
 
         await app.StartAsync();
         return app;
+    }
+
+    /// <summary>`26-316`: the external module deployment's own half of a registration, stubbed to succeed -
+    /// it lives in another repository (`adr/0065`), so an integration test of Chat's own toggle records
+    /// the call and returns success rather than reaching a real module over HTTP.</summary>
+    private sealed class StubModuleRegistrationGateway : IModuleRegistrationGateway
+    {
+        public Task RegisterAsync(
+            ModuleRegistrationTarget module, ModuleCredential credential, ModuleProvisioningSecret provisioningSecret,
+            string displayName, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task RotateAsync(
+            ModuleRegistrationTarget module, ModuleCredential newCredential, ModuleProvisioningSecret provisioningSecret,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task RevokeAsync(
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<ModuleRegistrationRemoteStatus> GetStatusAsync(
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+            Task.FromResult(new ModuleRegistrationRemoteStatus(Exists: true, DateTimeOffset.UtcNow, HasCredentialInGracePeriod: false));
+
+        public Task<TenantDataErasureResult> EraseTenantDataAsync(
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantDataErasureResult(TenantExisted: false, Confirmed: true));
+
+        public Task<ModuleTenantExportResult> ExportTenantDataAsync(
+            ModuleRegistrationTarget module, ModuleProvisioningSecret provisioningSecret, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The self-serve toggle never exports tenant data.");
+    }
+
+    private sealed class StubModuleProvisioningSecretProvider : IModuleProvisioningSecretProvider
+    {
+        public ModuleProvisioningSecret? TryGet() => new("a-provisioning-secret-of-sixteen-plus-chars");
+    }
+
+    private sealed class StubModuleEntryPointProvider : IModuleEntryPointProvider
+    {
+        public Uri? TryGet(ModuleKey moduleKey) => new("https://calendar.example.com");
+    }
+
+    private sealed class StubModulePermissionsProvider : IModulePermissionsProvider
+    {
+        public ModulePermissionSet Get(ModuleKey moduleKey) => ModulePermissionSet.Empty;
     }
 }

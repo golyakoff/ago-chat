@@ -5,9 +5,10 @@ namespace Ago.Chat.Application.Abstractions;
 /// <summary>
 /// `20-07`: the hot read path - "a site's enabled modules and their trigger arrays" - adr/0004's Dapper
 /// side. Two real callers: the module-registration trigger-overlap check (registration time, low
-/// frequency - `23-83`/`adr/0151`: only <c>EnableModuleForSiteAsOwnerHandler</c> registers a module at
-/// all now, the tenant's own self-service <c>EnableModuleForSiteHandler</c> having been removed rather
-/// than kept) and the message pipeline's trigger match (every visitor message, on every site
+/// frequency - `23-83`/`adr/0151` left <c>EnableModuleForSiteAsOwnerHandler</c> the only registration
+/// path, and `26-316` reinstated the tenant's own self-service <c>EnableModuleForSiteHandler</c> beside
+/// it once the provisioning secret and entry point moved to configuration) and the message pipeline's
+/// trigger match (every visitor message, on every site
 /// with at least one module enabled - the reason this is a read store and not a plain EF query
 /// through <see cref="IEnabledModuleRepository"/>, matching `caching.md`'s reasoning for every other
 /// per-message read in this codebase).

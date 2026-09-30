@@ -1,5 +1,7 @@
 ﻿using Ago.Chat.Api.Auth;
 using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.DisableModuleForSite;
+using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Domain;
 
@@ -7,31 +9,34 @@ namespace Ago.Chat.Api.Modules;
 
 /// <summary>
 /// `19-03`/`22-11` built a tenant's own self-service write surface here: register a module, rotate
-/// its credential, revoke it, verify its registration. `23-83`/`adr/0151` removes all four, not
-/// re-plumbed - only the read stays.
+/// its credential, revoke it, verify its registration. `23-83`/`adr/0151` removed all four; `26-316`
+/// brings back enable and disable (the on/off toggle a tenant admin actually needs), and rotate/verify
+/// stay on the owner surface.
 ///
-/// <para><b>Why the writes are gone rather than repaired.</b> `19-03`'s own original comment recorded
-/// the mistake without knowing it was one: <i>"this item needed a real console screen to register the
-/// FAQ module for a site, so this is that endpoint."</i> That welded two incompatible ideas together -
-/// a tenant turning a product on for themselves, and turning a product on meaning proving to the
-/// module that the *platform* authorised it (`adr/0095`'s deployment-wide
-/// <see cref="Domain.ModuleProvisioningSecret"/>). Together they required a tenant operator, the
-/// least trusted caller in this system, to hold a secret that works against every other tenant the
-/// deployment serves - `23-65`/`adr/0150` had already taken that same secret out of the platform
-/// owner's own hands (who could read it from the cluster anyway) while this route kept demanding it
-/// from someone who never could. `adr/0151`'s own answer: a tenant never turns a capability on for
-/// themselves - the platform does, or the system does on a payment - so the fix is not making the
-/// field reachable from configuration the way the owner's routes now are; it is removing the write
-/// entirely. `23-84` found that the console's own form never sent the required fields in the first
-/// place, so this capability is establishedly not one any tenant could ever have exercised.</para>
+/// <para><b>Why enable/disable were gone, and why they are safe again.</b> `19-03`'s own comment welded
+/// two ideas together - a tenant turning a product on for themselves, and proving to the module that the
+/// <em>platform</em> authorised it (`adr/0095`'s deployment-wide
+/// <see cref="Domain.ModuleProvisioningSecret"/>). Together they required a tenant operator, the least
+/// trusted caller here, to hold a cross-tenant secret in a browser request body, so `adr/0151` removed
+/// the route rather than repair it. What has changed since: `23-65`/`adr/0150` (the provisioning secret)
+/// and `23-92`/`adr/0154` (the entry point) moved <em>both</em> of those inputs out of the request body
+/// and into <c>Ago.Chat.Api</c>'s own configuration. With nothing secret left for a tenant to send,
+/// `26-316`'s author decision (self-serve, option в) reinstates enable and disable as a one-click toggle:
+/// <see cref="EnableModuleForSiteHandler"/> mints the per-site credential itself and reads the secret and
+/// entry point from configuration, and <see cref="Application.Abstractions.IPermissionChecker"/> on
+/// `site:configure` - not <c>RequirePlatformOwner</c> - is the gate, so the call only ever affects the
+/// caller's own site.</para>
 ///
-/// <para><b>What replaces them.</b> Enabling and revoking a module already had a platform-owner
-/// counterpart (<see cref="Api.Owner.OwnerModuleEndpoints"/>, `22-17`). Rotating a credential and
-/// verifying a registration did not - `23-83` adds them there
-/// (<see cref="Application.UseCases.RotateModuleCredentialAsOwner.RotateModuleCredentialAsOwnerHandler"/>,
-/// <see cref="Application.UseCases.VerifyModuleRegistrationAsOwner.VerifyModuleRegistrationAsOwnerHandler"/>),
-/// so nothing that was genuinely possible before this item becomes impossible after it - it becomes
-/// the platform's own act instead of a tenant's.</para>
+/// <para><b>Rotate and verify stay on the owner surface</b> (`23-83`,
+/// <see cref="Api.Owner.OwnerModuleEndpoints"/>) - they still need the provisioning secret for an
+/// operation a tenant has no reason to perform, so nothing this item adds re-opens the hole `adr/0151`
+/// closed. The platform-owner grant path also stays as an override: a module a platform owner granted
+/// (<see cref="Domain.EnabledModule.GrantedByOwner"/>) refuses the tenant's own `DELETE` here
+/// (<see cref="DisableModuleForSiteHandler"/>).</para>
+///
+/// <para><b>Generic across every module, never calendar-specific.</b> The module key is a route
+/// parameter and the trigger words are a request-body field; nothing in this file names "calendar" or
+/// "faq" - the same `adr/0065` decision-2 boundary the read side already keeps.</para>
 ///
 /// <para><b>The read stays</b> - a tenant seeing which products are on their account is ordinary and
 /// carries no secret. <see cref="ListEnabledModulesForSiteHandler"/>, `Permission.SiteConfigure` via
@@ -45,6 +50,13 @@ public static class ModuleEndpoints
             .RequireAuthorization("RequireOperatorIdentity");
 
         group.MapGet("", HandleGetAsync);
+
+        // `26-316`: the tenant admin's own enable/disable, keyed by module in the path exactly like the
+        // owner surface's own routes (`OwnerModuleEndpoints`). Both dispatch to a handler that gates on
+        // `site:configure` against the route's siteId - the same shape every other write on a
+        // `/sites/{siteId}/...` route already uses.
+        group.MapPut("/{moduleKey}", HandleEnableAsync);
+        group.MapDelete("/{moduleKey}", HandleDisableAsync);
     }
 
     /// <summary>`23-01`: dispatches to <see cref="ListEnabledModulesForSiteHandler"/> rather than
@@ -63,12 +75,54 @@ public static class ModuleEndpoints
                 m.ModuleKey.Value, m.TriggerWords, m.EntryPoint.ToString(), m.GrantedByOwner, m.ExpiresAt))]));
     }
 
+    /// <summary>`26-316`: the tenant admin's own enable - `PUT /api/v1/sites/{siteId}/modules/{moduleKey}`.
+    /// The handler gates on `site:configure` against the route's siteId (never a body-supplied tenant),
+    /// mints the per-site credential itself, and reads the entry point and provisioning secret from
+    /// configuration - see <see cref="EnableModuleForSiteHandler"/>'s own remarks.</summary>
+    private static async Task<IResult> HandleEnableAsync(
+        Guid siteId, string moduleKey, EnableModuleRequest request, EnableModuleForSiteHandler handler,
+        HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new EnableModuleForSite(
+                httpContext.User.GetOperatorId(), new SiteId(siteId), moduleKey, request.TriggerWords),
+            cancellationToken);
+
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new EnableModuleResponse(moduleKey, request.TriggerWords, EntryPoint: null));
+    }
+
+    /// <summary>`26-316`: the tenant admin's own disable - `DELETE /api/v1/sites/{siteId}/modules/{moduleKey}`.
+    /// Non-destructive (stamps the row and deactivates the module-side registration; calendars and bookings
+    /// survive), and refuses a platform-owner grant - see <see cref="DisableModuleForSiteHandler"/>.</summary>
+    private static async Task<IResult> HandleDisableAsync(
+        Guid siteId, string moduleKey, DisableModuleForSiteHandler handler, HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new DisableModuleForSite(httpContext.User.GetOperatorId(), new SiteId(siteId), moduleKey),
+            cancellationToken);
+
+        return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok();
+    }
+
+    /// <summary>`26-316`: the body <c>PUT .../modules/{moduleKey}</c> takes - only the trigger words, the
+    /// one thing <c>Ago.Chat.*</c> cannot know for the caller (it never learns what a module means -
+    /// `ModuleKey`'s own remarks). No credential (the handler mints one), no entry point or provisioning
+    /// secret (both from configuration), no expiry (a self-service grant never expires).</summary>
+    public sealed record EnableModuleRequest(IReadOnlyList<string> TriggerWords);
+
     /// <param name="GrantedByOwner">`22-17`: <see langword="true"/> when the platform owner enabled this
     /// module rather than the tenant's own operator - the wire-visible half of that item's own audit
     /// distinction.</param>
+    /// <param name="EntryPoint">`26-316`: <see langword="null"/> on the enable echo - a tenant enabling a
+    /// module never supplied an entry point (it comes from configuration) and has no use for it back, the
+    /// same "the response carries nothing the caller neither sent nor needs" hygiene the owner grant's own
+    /// response already applies. Non-null only on the read (`GET`), which projects the stored value.</param>
     /// <param name="ExpiresAt"><see langword="null"/> for a grant that does not expire.</param>
     public sealed record EnableModuleResponse(
-        string ModuleKey, IReadOnlyList<string> TriggerWords, string EntryPoint, bool GrantedByOwner = false,
+        string ModuleKey, IReadOnlyList<string> TriggerWords, string? EntryPoint, bool GrantedByOwner = false,
         DateTimeOffset? ExpiresAt = null);
 
     public sealed record EnabledModulesResponse(IReadOnlyList<EnableModuleResponse> Modules);
