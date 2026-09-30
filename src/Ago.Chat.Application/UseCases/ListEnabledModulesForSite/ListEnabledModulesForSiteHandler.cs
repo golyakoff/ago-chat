@@ -20,11 +20,13 @@ namespace Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 /// never calls <see cref="IPermissionChecker"/> - the inline shape would have stayed invisible to
 /// that guard exactly as this handler's absence did.
 ///
-/// <para><b>Gated on <see cref="Permission.SiteConfigure"/>, the same permission its four write
-/// siblings used before `23-83`/`adr/0151` removed all four</b> (<c>EnableModuleForSiteHandler</c>,
+/// <para><b>Gated on <see cref="Permission.SiteConfigure"/>, the same permission its write siblings
+/// use.</b> `23-83`/`adr/0151` removed the original four (<c>EnableModuleForSiteHandler</c>,
 /// <c>RevokeModuleForSiteHandler</c>, <c>RotateModuleCredentialHandler</c>,
-/// <c>VerifyModuleRegistrationHandler</c> - a tenant never provisions a module for themselves, so this
-/// read is now the entire tenant-facing surface on this route group, not one of five). Not a new,
+/// <c>VerifyModuleRegistrationHandler</c>); `26-316` reinstated enable/disable
+/// (<c>EnableModuleForSiteHandler</c>/<c>DisableModuleForSiteHandler</c>) once the secret and entry point
+/// moved to configuration, each gated on this same `site:configure`, so this read sits beside them under
+/// one permission again. Not a new,
 /// narrower permission of its own, though: `authorization.md`'s own precedent for this route group
 /// already answers the "read vs.
 /// write" question: `docs/architecture/authorization.md`'s section on `site:configure` states plainly

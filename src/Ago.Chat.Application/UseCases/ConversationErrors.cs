@@ -885,6 +885,17 @@ public static class ConversationErrors
     public static Error ModuleRevokePurchaseRequiresForce(string reason) =>
         new("Module.RevokePurchaseRequiresForce", reason);
 
+    /// <summary>`26-316`: the mirror of <see cref="ModuleRevokePurchaseRequiresForce"/> from the tenant's
+    /// own side - a tenant admin's self-service disable
+    /// (<see cref="DisableModuleForSite.DisableModuleForSiteHandler"/>) named a module a platform owner
+    /// granted (<see cref="Domain.EnabledModule.GrantedByOwner"/>). `26-316`'s decision keeps the owner
+    /// grant as an override, so the tenant cannot turn it off from their own settings; the message names
+    /// what the row is and what to do next, never merely the rule. `409`, the identical status
+    /// <see cref="ModuleRevokePurchaseRequiresForce"/> uses: the caller's identity is not in question,
+    /// only whether this act is allowed against this row's current state.</summary>
+    public static Error ModuleDisableOwnerGrantRefused(string reason) =>
+        new("Module.DisableOwnerGrantRefused", reason);
+
     /// <summary>`23-13`: the request set <c>Force</c> but carried no non-blank reason, or one longer
     /// than <see cref="RevokeModuleForSiteAsOwner.RevokeModuleForSiteAsOwnerHandler.MaxReasonLength"/> -
     /// checked first, before this handler touches the module or the row it is revoking (that handler's

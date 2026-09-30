@@ -130,6 +130,8 @@ using Ago.Chat.Application.UseCases.ListModuleTaskChannelPriorityList;
 using Ago.Chat.Application.UseCases.ListChannelIdentitiesForVisitor;
 using Ago.Chat.Application.UseCases.GetWebhookDeliveries;
 using Ago.Chat.Application.UseCases.GetWidgetConfig;
+using Ago.Chat.Application.UseCases.DisableModuleForSite;
+using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
 using Ago.Chat.Application.UseCases.ListMessageArchives;
 using Ago.Chat.Application.UseCases.ListMyTenancies;
@@ -806,10 +808,17 @@ public sealed class ChatModule : IProductModule
         // rather than a bound options class or a switch on the module key.
         services.AddSingleton<IModulePermissionsProvider, ConfiguredModulePermissionsProvider>();
 
-        // `23-83`/`adr/0151`: the tenant's own self-service enable/rotate/revoke/verify handlers that
-        // used to be registered here are gone, not merely unrouted - see `Api.Modules.ModuleEndpoints`'s
-        // own remarks for why. Only the read (`ListEnabledModulesForSiteHandler` below) survives on the
-        // tenant's own side.
+        // `23-83`/`adr/0151`: the tenant's own self-service rotate/verify handlers that used to be
+        // registered here are gone, not merely unrouted - see `Api.Modules.ModuleEndpoints`'s own
+        // remarks for why (they need the deployment-wide provisioning secret directly and moved to the
+        // owner surface instead).
+        // `26-316`: enable/disable, by contrast, are back - now that `adr/0150`/`adr/0154` read the
+        // provisioning secret and entry point from configuration rather than the request body, a tenant
+        // admin can turn a module on and off for their own site with nothing secret to hold, gated by
+        // IPermissionChecker on `site:configure` (EnableModuleForSiteHandler/DisableModuleForSiteHandler's
+        // own remarks) rather than RequirePlatformOwner.
+        services.AddScoped<EnableModuleForSiteHandler>();
+        services.AddScoped<DisableModuleForSiteHandler>();
         // `23-01`: the console's own read of this route group - see the handler's own remarks for why
         // it exists at all (the endpoint used to call IEnabledModuleReadStore directly, ungated).
         services.AddScoped<ListEnabledModulesForSiteHandler>();
