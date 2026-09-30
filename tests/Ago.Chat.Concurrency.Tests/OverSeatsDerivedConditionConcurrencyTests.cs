@@ -102,7 +102,8 @@ public sealed class OverSeatsDerivedConditionConcurrencyTests(ConcurrencyTestFix
         // land before or after it.
         await using var summaryDb = fixture.CreateDbContext();
         var summaryHandler = new GetSeatAssignmentSummaryHandler(
-            new OperatorRoleRepository(summaryDb), new SiteRepository(summaryDb), new AlwaysAllowPermissionChecker());
+            new OperatorRoleRepository(summaryDb), new SiteRepository(summaryDb), new AlwaysAllowPermissionChecker(),
+            new OwnerSeatGrantStore(summaryDb), new Ago.Platform.Hosting.SystemClock());
         var summary = await summaryHandler.HandleAsync(
             new GetSeatAssignmentSummary(new OperatorId(Guid.NewGuid()), siteId), CancellationToken.None);
 
