@@ -425,6 +425,11 @@ public static class ErrorExtensions
                 // silently undo). A real conflict with the row's own current state, not a malformed
                 // request, the same shape as its sibling one line up.
                 or "Module.DisableOwnerGrantRefused"
+                // `26-320`: the sibling of Module.DisableOwnerGrantRefused for the tenant's own
+                // trigger-word edit - re-wording a platform-owner grant's trigger is refused for the same
+                // reason turning it off is. A real conflict with the row's own current state, not a
+                // malformed request, the same 409 shape as its sibling one line up.
+                or "Module.TriggerWordsOwnerGrantRefused"
                 // `23-68`: the identical "a real conflict, resolved by an explicit second statement of
                 // intent" shape Module.RevokePurchaseRequiresForce already gives its own override,
                 // restated for the seat-restore override - restoring this seat would put the site over

@@ -3,6 +3,7 @@ using Ago.Chat.Api.Http;
 using Ago.Chat.Application.UseCases.DisableModuleForSite;
 using Ago.Chat.Application.UseCases.EnableModuleForSite;
 using Ago.Chat.Application.UseCases.ListEnabledModulesForSite;
+using Ago.Chat.Application.UseCases.SetModuleTriggerWordsForSite;
 using Ago.Chat.Domain;
 
 namespace Ago.Chat.Api.Modules;
@@ -57,6 +58,15 @@ public static class ModuleEndpoints
         // `/sites/{siteId}/...` route already uses.
         group.MapPut("/{moduleKey}", HandleEnableAsync);
         group.MapDelete("/{moduleKey}", HandleDisableAsync);
+
+        // `26-320`: the tenant admin's own edit of an already-enabled module's trigger words - the write
+        // half `26-316` left out. A separate route from the enable `PUT` above, not a field folded onto its
+        // body: enabling a module registers it (mints a credential, calls the module deployment, seeds
+        // permissions), while this only re-words an existing row's Chat-side routing strings - two different
+        // acts, the same "a separate route per distinct act, not one write that does several things" shape
+        // the owner surface's own quantity/unconditional-grant routes already use (`OwnerModuleEndpoints`).
+        // Gated on `site:configure` against the route's siteId by the handler, exactly like its siblings.
+        group.MapPut("/{moduleKey}/trigger-words", HandleSetTriggerWordsAsync);
     }
 
     /// <summary>`23-01`: dispatches to <see cref="ListEnabledModulesForSiteHandler"/> rather than
@@ -107,6 +117,27 @@ public static class ModuleEndpoints
         return result.IsFailure ? result.Error!.Value.ToProblem(httpContext) : Results.Ok();
     }
 
+    /// <summary>`26-320`: the tenant admin's own trigger-word edit -
+    /// <c>PUT /api/v1/sites/{siteId}/modules/{moduleKey}/trigger-words</c>. The handler gates on
+    /// `site:configure` against the route's siteId (never a body-supplied tenant), refuses an owner-granted
+    /// module and a module this site does not have enabled, and reuses the owner path's own reserved-word
+    /// and cross-module-collision validation - see <see cref="SetModuleTriggerWordsForSiteHandler"/>'s own
+    /// remarks. Returns the replacement set on success, the same "echo what the caller set" shape
+    /// <see cref="HandleEnableAsync"/> uses.</summary>
+    private static async Task<IResult> HandleSetTriggerWordsAsync(
+        Guid siteId, string moduleKey, SetTriggerWordsRequest request, SetModuleTriggerWordsForSiteHandler handler,
+        HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var result = await handler.HandleAsync(
+            new SetModuleTriggerWordsForSite(
+                httpContext.User.GetOperatorId(), new SiteId(siteId), moduleKey, request.TriggerWords),
+            cancellationToken);
+
+        return result.IsFailure
+            ? result.Error!.Value.ToProblem(httpContext)
+            : Results.Ok(new SetTriggerWordsResponse(moduleKey, request.TriggerWords));
+    }
+
     /// <summary>`26-316`: the body <c>PUT .../modules/{moduleKey}</c> takes - only the trigger words, the
     /// one thing <c>Ago.Chat.*</c> cannot know for the caller (it never learns what a module means -
     /// `ModuleKey`'s own remarks). No credential (the handler mints one), no entry point or provisioning
@@ -126,4 +157,13 @@ public static class ModuleEndpoints
         DateTimeOffset? ExpiresAt = null);
 
     public sealed record EnabledModulesResponse(IReadOnlyList<EnableModuleResponse> Modules);
+
+    /// <summary>`26-320`: the body <c>PUT .../modules/{moduleKey}/trigger-words</c> takes - the complete
+    /// replacement set of trigger words, the same "the caller sends the whole list, this replaces not
+    /// merges" shape <see cref="SetModuleTriggerWordsForSite"/>'s own remarks describe.</summary>
+    public sealed record SetTriggerWordsRequest(IReadOnlyList<string> TriggerWords);
+
+    /// <summary>`26-320`: echoes the words that were set - the same "confirm what the caller sent" hygiene
+    /// <see cref="EnableModuleResponse"/> applies to the enable echo.</summary>
+    public sealed record SetTriggerWordsResponse(string ModuleKey, IReadOnlyList<string> TriggerWords);
 }

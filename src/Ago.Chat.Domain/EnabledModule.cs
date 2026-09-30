@@ -184,6 +184,26 @@ public sealed class EnabledModule
     public EnabledModule WithCredential(ModuleCredential newCredential) =>
         new(Id, SiteId, ModuleKey, TriggerWords, EntryPoint, newCredential, EnabledAt, GrantedByOwner, ExpiresAt, RevokedAt);
 
+    /// <summary>`26-320`: the write a tenant admin's own trigger-word edit persists - a new instance with
+    /// only <see cref="TriggerWords"/> replaced, the identical "reconstruct rather than mutate" shape
+    /// <see cref="WithCredential"/> already uses (this type has no setters to mutate in place). The
+    /// replacement runs back through this type's own constructor, so every trigger-word invariant this
+    /// aggregate already owns - non-empty list, at most <see cref="MaxTriggerWords"/>, no blank or
+    /// over-length word, no two spellings of the same word in different casing - is re-checked in the one
+    /// place it lives, rather than duplicated in the Application handler that calls this. That is why the
+    /// mutator belongs on the aggregate at all: the alternative - the handler building a raw
+    /// <see cref="EnabledModule"/> with the new words - would put the invariant in a second place free to
+    /// drift from this one, exactly the split `Ago.Chat.Domain`'s own aggregates exist to prevent.
+    ///
+    /// <para>Every other field carries over unchanged, for the same reason
+    /// <see cref="WithCredential"/>'s own remarks give: replacing the trigger words is not a re-grant, so
+    /// it must not silently clear an expiry, flip <see cref="GrantedByOwner"/>, or un-revoke a row. Whether
+    /// an <em>owner</em>-granted module's words may be replaced at all is a policy the calling handler
+    /// decides (`26-320` refuses it on the tenant path); this method itself is neutral on who owns the
+    /// row, the same way <see cref="WithCredential"/> is.</para></summary>
+    public EnabledModule WithTriggerWords(IReadOnlyList<string> newTriggerWords) =>
+        new(Id, SiteId, ModuleKey, newTriggerWords, EntryPoint, Credential, EnabledAt, GrantedByOwner, ExpiresAt, RevokedAt);
+
     /// <summary>`22-30`: the write `RevokeModuleForSiteAsOwnerHandler` now persists instead of a
     /// delete - see <see cref="RevokedAt"/>'s own remarks for why. Refuses to stamp a row that is
     /// already revoked, the same "no such thing as re-doing an irreversible act" posture
