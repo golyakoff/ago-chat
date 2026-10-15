@@ -748,6 +748,9 @@ public static class ErrorExtensions
             // A bare slug, not a resolvable URL - matches AuthEndpoints' own `type` values
             // ("rate-limited", "site-not-found"), not a dereferenceable RFC 7807 type URI.
             type: error.Code,
-            extensions: new Dictionary<string, object?> { ["traceId"] = httpContext.TraceIdentifier });
+            // `26-330`: the W3C trace id Jaeger indexes, not `TraceIdentifier` (Kestrel's request counter,
+            // which no tracing backend knows). Falls back to it only when nothing is tracing the request,
+            // so the field never disappears from a body clients already read.
+            extensions: new Dictionary<string, object?> { ["traceId"] = TraceCorrelation.CurrentTraceId() ?? httpContext.TraceIdentifier });
     }
 }

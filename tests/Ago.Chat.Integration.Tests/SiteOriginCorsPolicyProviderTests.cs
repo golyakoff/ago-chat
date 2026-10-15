@@ -41,6 +41,8 @@ public sealed class SiteOriginCorsPolicyProviderTests(SiteCachingFixture fixture
 
         Assert.NotNull(policy);
         Assert.Contains("https://shop.example.com", policy.Origins);
+        // `26-330`: a browser only lets page JS read the trace id header if the policy exposes it.
+        Assert.Contains("X-Trace-Id", policy.ExposedHeaders);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
-﻿using Ago.Chat.Application.UseCases.CheckCorsOrigin;
+﻿using Ago.Chat.Api.Http;
+using Ago.Chat.Application.UseCases.CheckCorsOrigin;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 
 namespace Ago.Chat.Api.Cors;
@@ -41,6 +42,9 @@ public sealed class SiteOriginCorsPolicyProvider : ICorsPolicyProvider
         return new CorsPolicyBuilder(origin)
             .AllowAnyHeader()
             .AllowAnyMethod()
+            // `26-330`: a browser hides every non-safelisted response header from page JS unless it is
+            // listed here, so without this the widget could never read the trace id it was just given.
+            .WithExposedHeaders(TraceCorrelation.HeaderName)
             .Build();
     }
 }

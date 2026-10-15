@@ -20,6 +20,7 @@ using Ago.Chat.Infrastructure.Keycloak;
 using Ago.Chat.Infrastructure.TenantScopeDiagnostics;
 using Ago.Chat.Application.UseCases.CreateOperatorInvite;
 using Microsoft.Extensions.Options;
+using Ago.Chat.Api.Http;
 using Ago.Chat.Api.Hubs;
 using Ago.Chat.Api.Me;
 using Ago.Chat.Api.Operators;
@@ -73,6 +74,11 @@ var app = builder.Build();
 // is what makes that assumption true, by rewriting it from `X-Forwarded-For` before anything else
 // runs.
 app.UseForwardedHeaders();
+
+// `26-330`: X-Trace-Id on every response, so a caller can quote the trace of any request. Before CORS
+// and authentication on purpose - a request those two reject is exactly the one somebody will ask
+// about.
+app.UseTraceIdResponseHeader();
 
 // `8-08`/`adr/0056`: run before anything can listen, and deliberately not as an IHostedService -
 // GenericWebHostService opens the socket before any service registered after it, so a hosted service
