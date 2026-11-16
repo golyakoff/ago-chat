@@ -188,7 +188,7 @@
          Testcontainers package's pinned version in this project. -->
     <PackageVersion Include="Testcontainers.Keycloak" Version="4.14.0" />
     <!-- AttachmentFixture builds the bucket directly via the S3 API, same version ago-platform pins. -->
-    <PackageVersion Include="AWSSDK.S3" Version="4.0.102.5" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.1.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
