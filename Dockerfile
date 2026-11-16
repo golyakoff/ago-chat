@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 #
 # One Dockerfile for all four hosts (Api, Worker, Webhooks, Migrator) - they share the same dependency
 # closure (Module -> Application, Infrastructure.Postgres -> Domain), so three near-identical
@@ -16,7 +16,7 @@ ARG PROJECT_NAME
 # legitimate thing to do, and it should say "unknown" out loud rather than lie or refuse.
 ARG GIT_COMMIT=unknown
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG PROJECT_NAME
 ARG GIT_COMMIT
 WORKDIR /src
