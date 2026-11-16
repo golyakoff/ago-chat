@@ -164,7 +164,7 @@
   </ItemGroup>
 
   <ItemGroup Label="Testing">
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.1" />
     <!-- Ago.Platform.Caching.Redis's own resilience pipeline type (ResiliencePipeline), needed
          directly by tests that construct a RedisCache by hand against a Testcontainers Redis. -->
     <PackageVersion Include="Polly.Core" Version="8.7.0" />
