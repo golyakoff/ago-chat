@@ -120,7 +120,7 @@
     <!-- `6-06`: Ago.Chat.LoadDriver's own real SignalR client - the same package a real widget/console
          host would ship, matching this repo's .NET 10 / ASP.NET Core 10.0.11 pin above rather than an
          older LTS line. -->
-    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup Label="Persistence">
